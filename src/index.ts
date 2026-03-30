@@ -15,6 +15,7 @@ import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerContextCommands } from "./commands/context.js";
 import { registerHooksCommands } from "./commands/hooks.js";
+import { registerPingCommand } from "./commands/ping.js";
 import { registerSpecCommands } from "./commands/spec.js";
 import { registerTaskCommands } from "./commands/task.js";
 
@@ -30,6 +31,7 @@ registerContextCommands(program);
 registerSpecCommands(program);
 registerTaskCommands(program);
 registerHooksCommands(program);
+registerPingCommand(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
