@@ -47,9 +47,7 @@ export function registerHooksCommands(program: Command) {
 
       if (existsSync(hookPath)) {
         console.log(`A pre-commit hook already exists at ${hookPath}.`);
-        console.log(
-          "To replace it, run: prim hooks uninstall && prim hooks install"
-        );
+        console.log("To replace it, run: prim hooks uninstall && prim hooks install");
         return;
       }
 

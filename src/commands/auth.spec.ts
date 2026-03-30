@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
 import { Command } from "commander";
+import { describe, expect, it } from "vitest";
 import { registerAuthCommands } from "./auth.js";
 
 describe("registerAuthCommands", () => {

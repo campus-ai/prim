@@ -97,11 +97,12 @@ export function registerSpecCommands(program: Command) {
       await client.patch(`/api/cli/contexts/${contextId}`, {
         name: opts.name,
         text,
+        skipTiptapLifecycle: !!text,
       });
 
-      // Invalidate TipTap Y.Doc so the web UI re-seeds from the updated text
+      // Inject content into the TipTap Y.Doc to preserve version history
       if (text) {
-        await client.post(`/api/cli/contexts/${contextId}/reseed`);
+        await client.post(`/api/cli/contexts/${contextId}/inject`);
       }
 
       console.log(`Updated spec: ${contextId}`);
