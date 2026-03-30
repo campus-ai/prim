@@ -34,9 +34,9 @@ export function registerContextCommands(program: Command) {
         params.set("scope", opts.scope);
       }
 
-      const contexts = (await client.get(
-        `/api/cli/contexts?${params.toString()}`
-      )) as Array<Record<string, unknown>>;
+      const contexts = (await client.get(`/api/cli/contexts?${params.toString()}`)) as Array<
+        Record<string, unknown>
+      >;
       printContextList(contexts);
     });
 
@@ -46,9 +46,7 @@ export function registerContextCommands(program: Command) {
     .description("Get a context by ID")
     .action(async (contextId: string) => {
       const client = getClient();
-      const ctx = (await client.get(
-        `/api/cli/contexts/${contextId}`
-      )) as Record<string, unknown>;
+      const ctx = (await client.get(`/api/cli/contexts/${contextId}`)) as Record<string, unknown>;
 
       console.log(JSON.stringify(ctx, null, 2));
     });
@@ -79,9 +77,7 @@ export function registerContextCommands(program: Command) {
           text = readFileSync(opts.file, "utf-8");
         }
 
-        const taskIds = opts.taskId
-          ? opts.taskId.split(",").map((id) => id.trim())
-          : undefined;
+        const taskIds = opts.taskId ? opts.taskId.split(",").map((id) => id.trim()) : undefined;
 
         const result = (await client.post("/api/cli/contexts", {
           scope: opts.scope,
@@ -92,7 +88,7 @@ export function registerContextCommands(program: Command) {
         })) as { _id: string };
 
         console.log(`Created context: ${result._id}`);
-      }
+      },
     );
 
   // ── update ────────────────────────────────────────────────────────────
@@ -102,26 +98,21 @@ export function registerContextCommands(program: Command) {
     .option("-n, --name <name>", "New name")
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
-    .action(
-      async (
-        contextId: string,
-        opts: { name?: string; text?: string; file?: string }
-      ) => {
-        const client = getClient();
+    .action(async (contextId: string, opts: { name?: string; text?: string; file?: string }) => {
+      const client = getClient();
 
-        let text = opts.text;
-        if (opts.file) {
-          text = readFileSync(opts.file, "utf-8");
-        }
-
-        await client.patch(`/api/cli/contexts/${contextId}`, {
-          name: opts.name,
-          text,
-        });
-
-        console.log(`Updated context: ${contextId}`);
+      let text = opts.text;
+      if (opts.file) {
+        text = readFileSync(opts.file, "utf-8");
       }
-    );
+
+      await client.patch(`/api/cli/contexts/${contextId}`, {
+        name: opts.name,
+        text,
+      });
+
+      console.log(`Updated context: ${contextId}`);
+    });
 
   // ── delete ────────────────────────────────────────────────────────────
   context

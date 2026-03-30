@@ -6,12 +6,12 @@
  * prim auth clear             — Remove the saved token
  */
 
-import { randomBytes, createHash } from "node:crypto";
 import { exec } from "node:child_process";
-import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createServer } from "node:http";
 import { platform } from "node:os";
+import { dirname } from "node:path";
 import type { Command } from "commander";
 import { REFRESH_TOKEN_PATH, TOKEN_FILE_PATH, getConvexUrl } from "../client.js";
 
@@ -39,12 +39,7 @@ function generatePkce(): { verifier: string; challenge: string } {
 
 function openBrowser(url: string): void {
   const os = platform();
-  const cmd =
-    os === "darwin"
-      ? "open"
-      : os === "win32"
-        ? "start"
-        : "xdg-open";
+  const cmd = os === "darwin" ? "open" : os === "win32" ? "start" : "xdg-open";
 
   exec(`${cmd} "${url}"`);
 }
@@ -58,17 +53,14 @@ function saveToken(token: string): void {
 }
 
 export function registerAuthCommands(program: Command) {
-  const auth = program
-    .command("auth")
-    .description("Manage CLI authentication");
+  const auth = program.command("auth").description("Manage CLI authentication");
 
   auth
     .command("login")
     .description("Authenticate via browser (WorkOS OAuth)")
     .action(async () => {
       const convexUrl = getConvexUrl();
-      const siteUrl = convexUrl
-        .replace(".convex.cloud", ".convex.site");
+      const siteUrl = convexUrl.replace(".convex.cloud", ".convex.site");
 
       // Fetch broker config
       let config: {
@@ -81,9 +73,7 @@ export function registerAuthCommands(program: Command) {
         const res = await fetch(`${siteUrl}/mcp/config`);
         config = (await res.json()) as typeof config;
       } catch {
-        console.error(
-          "Failed to fetch MCP config. Is the Convex backend running?"
-        );
+        console.error("Failed to fetch MCP config. Is the Convex backend running?");
         process.exit(1);
       }
 
@@ -115,7 +105,8 @@ export function registerAuthCommands(program: Command) {
         }
 
         if (!code) {
-          const error = url.searchParams.get("error_description") ?? "No authorization code received";
+          const error =
+            url.searchParams.get("error_description") ?? "No authorization code received";
           res.writeHead(400, { "Content-Type": "text/html" });
           res.end(`<h1>Authentication failed: ${error}</h1>`);
           server.close();
@@ -123,9 +114,7 @@ export function registerAuthCommands(program: Command) {
         }
 
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(
-          "<h1>Authentication successful!</h1><p>You can close this tab.</p>"
-        );
+        res.end("<h1>Authentication successful!</h1><p>You can close this tab.</p>");
 
         // Exchange code for tokens
         exchangeCode(siteUrl, code, verifier, `http://${LOCALHOST}:${port}/callback`)
@@ -150,26 +139,21 @@ export function registerAuthCommands(program: Command) {
       });
 
       const redirectUri = `http://${LOCALHOST}:${port}/callback`;
-      const authorizeUrl = config.authorization_endpoint
-        ?? "https://api.workos.com/user_management/authorize";
+      const authorizeUrl =
+        config.authorization_endpoint ?? "https://api.workos.com/user_management/authorize";
       const authUrl = new URL(authorizeUrl);
       authUrl.searchParams.set("client_id", config.client_id);
       authUrl.searchParams.set("redirect_uri", redirectUri);
       authUrl.searchParams.set("response_type", "code");
       authUrl.searchParams.set("provider", "authkit");
-      authUrl.searchParams.set(
-        "scope",
-        config.default_scopes.join(" ")
-      );
+      authUrl.searchParams.set("scope", config.default_scopes.join(" "));
       authUrl.searchParams.set("state", state);
       authUrl.searchParams.set("code_challenge", challenge);
       authUrl.searchParams.set("code_challenge_method", "S256");
 
       console.log("Opening browser for authentication...");
       openBrowser(authUrl.toString());
-      console.log(
-        `If the browser doesn't open, visit:\n${authUrl.toString()}\n`
-      );
+      console.log(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
       console.log("Waiting for callback...");
 
       // Timeout
@@ -206,7 +190,10 @@ export function registerAuthCommands(program: Command) {
             if (res.ok) {
               console.log("Server token revoked.");
             } else {
-              console.warn("Server revocation failed (status %d) — clearing local files anyway.", res.status);
+              console.warn(
+                "Server revocation failed (status %d) — clearing local files anyway.",
+                res.status,
+              );
             }
           } catch {
             console.warn("Could not reach server for revocation — clearing local files anyway.");
@@ -240,16 +227,14 @@ async function exchangeCode(
   siteUrl: string,
   code: string,
   codeVerifier: string,
-  redirectUri: string
+  redirectUri: string,
 ): Promise<string> {
   const response = await fetch(`${siteUrl}/mcp/broker/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       code,
-      // biome-ignore lint/style/useNamingConvention: OAuth field
       code_verifier: codeVerifier,
-      // biome-ignore lint/style/useNamingConvention: OAuth field
       redirect_uri: redirectUri,
     }),
   });
