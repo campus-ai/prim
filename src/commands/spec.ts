@@ -99,11 +99,6 @@ export function registerSpecCommands(program: Command) {
         text,
       });
 
-      // Invalidate TipTap Y.Doc so the web UI re-seeds from the updated text
-      if (text) {
-        await client.post(`/api/cli/contexts/${contextId}/reseed`);
-      }
-
       console.log(`Updated spec: ${contextId}`);
     });
 
