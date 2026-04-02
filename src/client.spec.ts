@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock fs/os before importing client
 vi.mock("node:fs", () => ({
@@ -30,7 +30,7 @@ describe("client", () => {
     });
 
     it("returns undefined when no token source is available", async () => {
-      delete process.env.PRIM_TOKEN;
+      process.env.PRIM_TOKEN = undefined;
       const { getAuthToken } = await import("./client.js");
       expect(getAuthToken()).toBeUndefined();
     });
@@ -44,7 +44,7 @@ describe("client", () => {
     });
 
     it("throws when no URL is configured", async () => {
-      delete process.env.VITE_CONVEX_URL;
+      process.env.VITE_CONVEX_URL = undefined;
       const { getConvexUrl } = await import("./client.js");
       expect(() => getConvexUrl()).toThrow("VITE_CONVEX_URL not found");
     });

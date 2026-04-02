@@ -86,12 +86,10 @@ export function getConvexUrl(): string {
     return envVars.VITE_CONVEX_URL;
   }
 
-  throw new Error(
-    "VITE_CONVEX_URL not found. Set it in your environment or .env.local file."
-  );
+  throw new Error("VITE_CONVEX_URL not found. Set it in your environment or .env.local file.");
 }
 
-function getSiteUrl(): string {
+export function getSiteUrl(): string {
   return getConvexUrl().replace(".convex.cloud", ".convex.site");
 }
 
@@ -156,7 +154,7 @@ async function request(
   method: string,
   path: string,
   body?: unknown,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   const siteUrl = getSiteUrl();
   const url = `${siteUrl}${path}`;
