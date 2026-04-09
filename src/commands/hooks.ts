@@ -6,7 +6,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 
@@ -30,6 +30,33 @@ function getGitRoot(): string {
   }).trim();
 }
 
+export function containsPrimHook(content: string): boolean {
+  return content.includes("prim-pre-commit");
+}
+
+export function installToDotGit(gitRoot: string): void {
+  const hooksDir = resolve(gitRoot, ".git", "hooks");
+  const hookPath = resolve(hooksDir, "pre-commit");
+
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+
+  if (existsSync(hookPath)) {
+    const existing = readFileSync(hookPath, "utf-8");
+    if (containsPrimHook(existing)) {
+      console.log("Prim pre-commit hook is already installed at .git/hooks/pre-commit.");
+      return;
+    }
+    console.log(`A pre-commit hook already exists at ${hookPath}.`);
+    console.log("To replace it, run: prim hooks uninstall && prim hooks install");
+    return;
+  }
+
+  writeFileSync(hookPath, HOOK_SCRIPT, { mode: 0o755 });
+  console.log(`Installed pre-commit hook at ${hookPath}`);
+}
+
 export function registerHooksCommands(program: Command) {
   const hooks = program.command("hooks").description("Manage git hooks");
 
@@ -38,21 +65,7 @@ export function registerHooksCommands(program: Command) {
     .description("Install the prim pre-commit hook")
     .action(() => {
       const gitRoot = getGitRoot();
-      const hooksDir = resolve(gitRoot, ".git", "hooks");
-      const hookPath = resolve(hooksDir, "pre-commit");
-
-      if (!existsSync(hooksDir)) {
-        mkdirSync(hooksDir, { recursive: true });
-      }
-
-      if (existsSync(hookPath)) {
-        console.log(`A pre-commit hook already exists at ${hookPath}.`);
-        console.log("To replace it, run: prim hooks uninstall && prim hooks install");
-        return;
-      }
-
-      writeFileSync(hookPath, HOOK_SCRIPT, { mode: 0o755 });
-      console.log(`Installed pre-commit hook at ${hookPath}`);
+      installToDotGit(gitRoot);
     });
 
   hooks
