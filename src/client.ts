@@ -45,6 +45,14 @@ export const TOKEN_FILE_PATH = join(homedir(), ".config", "prim", "token");
 
 export const REFRESH_TOKEN_PATH = TOKEN_FILE_PATH.replace("/token", "/refresh_token");
 
+export const TOKEN_EXPIRES_PATH = join(homedir(), ".config", "prim", "token_expires_at");
+
+export function getTokenExpiresAt(): number | undefined {
+  if (!existsSync(TOKEN_EXPIRES_PATH)) return undefined;
+  const val = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
+  return Number.isNaN(val) ? undefined : val;
+}
+
 /**
  * Resolve an auth token from multiple sources.
  *
@@ -122,6 +130,7 @@ export async function refreshToken(): Promise<string | undefined> {
   const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
+    expires_in?: number;
   };
 
   if (!data.access_token) {
@@ -133,6 +142,11 @@ export async function refreshToken(): Promise<string | undefined> {
 
   if (data.refresh_token) {
     writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
+  }
+
+  if (data.expires_in) {
+    const expiresAt = Date.now() + data.expires_in * 1000;
+    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
   }
 
   return data.access_token;

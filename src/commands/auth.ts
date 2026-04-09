@@ -13,7 +13,7 @@ import { createServer } from "node:http";
 import { platform } from "node:os";
 import { dirname } from "node:path";
 import type { Command } from "commander";
-import { REFRESH_TOKEN_PATH, TOKEN_FILE_PATH, getConvexUrl } from "../client.js";
+import { REFRESH_TOKEN_PATH, TOKEN_EXPIRES_PATH, TOKEN_FILE_PATH, getConvexUrl } from "../client.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -247,6 +247,7 @@ async function exchangeCode(
   const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
+    expires_in?: number;
   };
 
   if (!data.access_token) {
@@ -261,6 +262,11 @@ async function exchangeCode(
       mkdirSync(dir, { recursive: true });
     }
     writeFileSync(refreshPath, data.refresh_token, { mode: FILE_MODE });
+  }
+
+  if (data.expires_in) {
+    const expiresAt = Date.now() + data.expires_in * 1000;
+    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: FILE_MODE });
   }
 
   return data.access_token;
