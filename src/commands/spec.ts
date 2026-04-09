@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { extractPatterns } from "../lib/extract-patterns.js";
 
 export function registerSpecCommands(program: Command) {
   const spec = program.command("spec").description("Manage spec documents");
@@ -81,32 +82,55 @@ export function registerSpecCommands(program: Command) {
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
     .option("-n, --name <name>", "New name")
-    .action(async (contextId: string, opts: { text?: string; file?: string; name?: string }) => {
-      const client = getClient();
+    .option("--no-auto-map", "Skip automatic file pattern mapping")
+    .option("-m, --map <patterns...>", "Additional file patterns to map")
+    .action(
+      async (
+        contextId: string,
+        opts: { text?: string; file?: string; name?: string; autoMap: boolean; map?: string[] },
+      ) => {
+        const client = getClient();
 
-      let text = opts.text;
-      if (opts.file) {
-        text = readFileSync(opts.file, "utf-8");
-      }
+        let text = opts.text;
+        if (opts.file) {
+          text = readFileSync(opts.file, "utf-8");
+        }
 
-      if (!(text || opts.name)) {
-        console.error("Provide --text, --file, or --name to update.");
-        process.exit(1);
-      }
+        if (!(text || opts.name)) {
+          console.error("Provide --text, --file, or --name to update.");
+          process.exit(1);
+        }
 
-      await client.patch(`/api/cli/contexts/${contextId}`, {
-        name: opts.name,
-        text,
-        skipTiptapLifecycle: !!text,
-      });
+        await client.patch(`/api/cli/contexts/${contextId}`, {
+          name: opts.name,
+          text,
+          skipTiptapLifecycle: !!text,
+        });
 
-      // Inject content into the TipTap Y.Doc to preserve version history
-      if (text) {
-        await client.post(`/api/cli/contexts/${contextId}/inject`);
-      }
+        // Inject content into the TipTap Y.Doc to preserve version history
+        if (text) {
+          await client.post(`/api/cli/contexts/${contextId}/inject`);
+        }
 
-      console.log(`Updated spec: ${contextId}`);
-    });
+        console.log(`Updated spec: ${contextId}`);
+
+        // Auto-map file patterns from text content
+        const allPatterns: string[] = [...(opts.map ?? [])];
+        if (text && opts.autoMap) {
+          allPatterns.push(...extractPatterns(text));
+        }
+        if (allPatterns.length > 0) {
+          const unique = [...new Set(allPatterns)];
+          const mapResult = (await client.post(`/api/cli/contexts/${contextId}/map`, {
+            patterns: unique,
+          })) as { filePatterns: string[] };
+          console.log(`Auto-mapped ${mapResult.filePatterns.length} pattern(s):`);
+          for (const p of mapResult.filePatterns) {
+            console.log(`  ${p}`);
+          }
+        }
+      },
+    );
 
   // ── sync ──────────────────────────────────────────────────────────────
   spec
@@ -170,6 +194,16 @@ export function registerSpecCommands(program: Command) {
           console.log(`  ${p}`);
         }
       }
+    });
+
+  // ── auto-map ────────────────────────────────────────────────────────
+  spec
+    .command("auto-map <contextId>")
+    .description("Trigger server-side semantic discovery of file patterns for a spec")
+    .action(async (contextId: string) => {
+      const client = getClient();
+      await client.post(`/api/cli/contexts/${contextId}/auto-map`);
+      console.log(`Auto-mapping triggered for spec: ${contextId}`);
     });
 
   // ── import-mappings ───────────────────────────────────────────────────

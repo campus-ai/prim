@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { extractPatterns } from "../lib/extract-patterns.js";
 
 export function registerContextCommands(program: Command) {
   const context = program.command("context").description("Manage contexts");
@@ -61,6 +62,8 @@ export function registerContextCommands(program: Command) {
     .option("-f, --file <path>", "Read text content from file")
     .option("--task-id <taskId>", "Link to task(s), comma-separated")
     .option("--spec", "Mark as a spec document")
+    .option("--no-auto-map", "Skip automatic file pattern mapping")
+    .option("-m, --map <patterns...>", "File patterns to map (spec only)")
     .action(
       async (opts: {
         scope: string;
@@ -69,6 +72,8 @@ export function registerContextCommands(program: Command) {
         file?: string;
         taskId?: string;
         spec?: boolean;
+        autoMap: boolean;
+        map?: string[];
       }) => {
         const client = getClient();
 
@@ -88,6 +93,24 @@ export function registerContextCommands(program: Command) {
         })) as { _id: string };
 
         console.log(`Created context: ${result._id}`);
+
+        // Auto-map file patterns for spec documents
+        if (opts.spec) {
+          const allPatterns: string[] = [...(opts.map ?? [])];
+          if (text && opts.autoMap) {
+            allPatterns.push(...extractPatterns(text));
+          }
+          if (allPatterns.length > 0) {
+            const unique = [...new Set(allPatterns)];
+            const mapResult = (await client.post(`/api/cli/contexts/${result._id}/map`, {
+              patterns: unique,
+            })) as { filePatterns: string[] };
+            console.log(`Auto-mapped ${mapResult.filePatterns.length} pattern(s):`);
+            for (const p of mapResult.filePatterns) {
+              console.log(`  ${p}`);
+            }
+          }
+        }
       },
     );
 

@@ -24,6 +24,7 @@ describe("registerSpecCommands", () => {
     expect(subcommands).toContain("sync");
     expect(subcommands).toContain("map");
     expect(subcommands).toContain("unmap");
+    expect(subcommands).toContain("auto-map");
     expect(subcommands).toContain("import-mappings");
   });
 });
