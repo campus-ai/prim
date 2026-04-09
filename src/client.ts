@@ -47,6 +47,14 @@ export const REFRESH_TOKEN_PATH = TOKEN_FILE_PATH.replace("/token", "/refresh_to
 
 export const TOKEN_EXPIRES_PATH = join(homedir(), ".config", "prim", "token_expires_at");
 
+const REFRESH_THRESHOLD_MS = 60_000; // refresh 60s before expiry
+
+function isTokenExpiringSoon(): boolean {
+  if (!existsSync(TOKEN_EXPIRES_PATH)) return false;
+  const expiresAt = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
+  return !Number.isNaN(expiresAt) && Date.now() >= expiresAt - REFRESH_THRESHOLD_MS;
+}
+
 export function getTokenExpiresAt(): number | undefined {
   if (!existsSync(TOKEN_EXPIRES_PATH)) return undefined;
   const val = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
@@ -177,6 +185,14 @@ async function request(
     _cachedToken = getAuthToken();
   }
 
+  // Proactive refresh: avoid 401 round-trip by refreshing before expiry
+  if (_cachedToken && isTokenExpiringSoon()) {
+    const newToken = await refreshToken();
+    if (newToken) {
+      _cachedToken = newToken;
+    }
+  }
+
   const doFetch = async (token: string | undefined) => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -205,6 +221,9 @@ async function request(
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Authentication expired. Run `prim auth login` to re-authenticate.");
+    }
     const errorBody = (await res.json().catch(() => null)) as {
       error?: string;
     } | null;
