@@ -70,6 +70,20 @@ export function containsPrimHook(content: string): boolean {
   return content.includes("prim-pre-commit");
 }
 
+export async function askConfirmation(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`${question} [y/N] `);
+    const normalized = answer.trim().toLowerCase();
+    return normalized === "y" || normalized === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 export function installToHusky(gitRoot: string): void {
   const hookPath = resolve(gitRoot, ".husky", "pre-commit");
 
@@ -121,8 +135,20 @@ export function registerHooksCommands(program: Command) {
   hooks
     .command("install")
     .description("Install the prim pre-commit hook")
-    .action(() => {
+    .action(async () => {
       const gitRoot = getGitRoot();
+
+      if (detectHusky(gitRoot)) {
+        const confirmed = await askConfirmation(
+          "Husky detected. Install prim hook into .husky/pre-commit instead of .git/hooks/pre-commit?",
+        );
+        if (confirmed) {
+          installToHusky(gitRoot);
+          return;
+        }
+        console.log("Falling back to .git/hooks/pre-commit install.");
+      }
+
       installToDotGit(gitRoot);
     });
 
