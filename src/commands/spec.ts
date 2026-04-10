@@ -172,6 +172,16 @@ export function registerSpecCommands(program: Command) {
       }
     });
 
+  // ── auto-map ─────────────────────────────────────────────────────────
+  spec
+    .command("auto-map <contextId>")
+    .description("Trigger auto-mapping of file patterns for a spec")
+    .action(async (contextId: string) => {
+      const client = getClient();
+      await client.post(`/api/cli/contexts/${contextId}/auto-map`);
+      console.log(`Auto-mapping triggered for spec: ${contextId}`);
+    });
+
   // ── import-mappings ───────────────────────────────────────────────────
   spec
     .command("import-mappings")
