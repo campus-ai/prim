@@ -20,6 +20,7 @@ import {
   getAuthToken,
   getConvexUrl,
   getTokenExpiresAt,
+  saveTokenExpiry,
 } from "../client.js";
 
 const FILE_MODE = 0o600;
@@ -306,10 +307,7 @@ async function exchangeCode(
     writeFileSync(refreshPath, data.refresh_token, { mode: FILE_MODE });
   }
 
-  if (data.expires_in) {
-    const expiresAt = Date.now() + data.expires_in * 1000;
-    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: FILE_MODE });
-  }
+  saveTokenExpiry(data.access_token, data.expires_in);
 
   return data.access_token;
 }

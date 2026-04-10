@@ -55,6 +55,30 @@ function isTokenExpiringSoon(): boolean {
   return !Number.isNaN(expiresAt) && Date.now() >= expiresAt - REFRESH_THRESHOLD_MS;
 }
 
+/**
+ * Extract the `exp` claim from a JWT without verifying the signature.
+ * Returns the expiry as a Unix timestamp in milliseconds, or undefined.
+ */
+function getJwtExpiry(token: string): number | undefined {
+  const parts = token.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
+      exp?: number;
+    };
+    return payload.exp ? payload.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveTokenExpiry(token: string, expiresIn?: number): void {
+  const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : getJwtExpiry(token);
+  if (expiresAt) {
+    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
+  }
+}
+
 export function getTokenExpiresAt(): number | undefined {
   if (!existsSync(TOKEN_EXPIRES_PATH)) return undefined;
   const val = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
@@ -152,10 +176,7 @@ export async function refreshToken(): Promise<string | undefined> {
     writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
   }
 
-  if (data.expires_in) {
-    const expiresAt = Date.now() + data.expires_in * 1000;
-    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
-  }
+  saveTokenExpiry(data.access_token, data.expires_in);
 
   return data.access_token;
 }
