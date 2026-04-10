@@ -80,4 +80,18 @@ describe("client", () => {
       expect(REFRESH_TOKEN_PATH).toContain(".config/prim/refresh_token");
     });
   });
+
+  describe("TOKEN_EXPIRES_PATH", () => {
+    it("is sibling to token file", async () => {
+      const { TOKEN_EXPIRES_PATH } = await import("./client.js");
+      expect(TOKEN_EXPIRES_PATH).toContain(".config/prim/token_expires_at");
+    });
+  });
+
+  describe("getTokenExpiresAt", () => {
+    it("returns undefined when no expiry file exists", async () => {
+      const { getTokenExpiresAt } = await import("./client.js");
+      expect(getTokenExpiresAt()).toBeUndefined();
+    });
+  });
 });

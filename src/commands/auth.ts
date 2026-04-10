@@ -13,7 +13,14 @@ import { createServer } from "node:http";
 import { platform } from "node:os";
 import { dirname } from "node:path";
 import type { Command } from "commander";
-import { REFRESH_TOKEN_PATH, TOKEN_FILE_PATH, getConvexUrl } from "../client.js";
+import {
+  REFRESH_TOKEN_PATH,
+  TOKEN_EXPIRES_PATH,
+  TOKEN_FILE_PATH,
+  getAuthToken,
+  getConvexUrl,
+  getTokenExpiresAt,
+} from "../client.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -202,19 +209,54 @@ export function registerAuthCommands(program: Command) {
       }
 
       let removed = false;
-      if (existsSync(TOKEN_FILE_PATH)) {
-        rmSync(TOKEN_FILE_PATH);
-        removed = true;
-      }
-      if (existsSync(REFRESH_TOKEN_PATH)) {
-        rmSync(REFRESH_TOKEN_PATH);
-        removed = true;
+      for (const filePath of [TOKEN_FILE_PATH, REFRESH_TOKEN_PATH, TOKEN_EXPIRES_PATH]) {
+        if (existsSync(filePath)) {
+          rmSync(filePath);
+          removed = true;
+        }
       }
 
       if (removed) {
         console.log("Local tokens removed.");
       } else {
         console.log("No saved tokens found.");
+      }
+    });
+
+  auth
+    .command("status")
+    .description("Check authentication status and token expiry")
+    .action(() => {
+      const token = getAuthToken();
+      if (!token) {
+        console.log("Not authenticated. Run `prim auth login` to authenticate.");
+        process.exit(1);
+      }
+
+      console.log("Authenticated.");
+      console.log(`Token file: ${TOKEN_FILE_PATH}`);
+
+      const expiresAt = getTokenExpiresAt();
+      if (expiresAt) {
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
+          console.log("Access token: expired");
+        } else {
+          const minutes = Math.floor(remaining / 60_000);
+          const seconds = Math.floor((remaining % 60_000) / 1000);
+          console.log(`Access token expires in: ${minutes}m ${seconds}s`);
+        }
+      } else {
+        console.log("Access token expiry: unknown (no metadata)");
+      }
+
+      const hasRefresh = existsSync(REFRESH_TOKEN_PATH);
+      console.log(`Refresh token: ${hasRefresh ? "present" : "missing"}`);
+
+      if (!hasRefresh) {
+        console.log(
+          "Warning: No refresh token. Re-run `prim auth login` when access token expires.",
+        );
       }
     });
 }
@@ -247,6 +289,7 @@ async function exchangeCode(
   const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
+    expires_in?: number;
   };
 
   if (!data.access_token) {
@@ -261,6 +304,11 @@ async function exchangeCode(
       mkdirSync(dir, { recursive: true });
     }
     writeFileSync(refreshPath, data.refresh_token, { mode: FILE_MODE });
+  }
+
+  if (data.expires_in) {
+    const expiresAt = Date.now() + data.expires_in * 1000;
+    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: FILE_MODE });
   }
 
   return data.access_token;

@@ -11,7 +11,7 @@ describe("registerAuthCommands", () => {
     expect(auth).toBeDefined();
   });
 
-  it("registers login, set-token, and clear subcommands", () => {
+  it("registers login, set-token, clear, and status subcommands", () => {
     const program = new Command();
     registerAuthCommands(program);
 
@@ -21,5 +21,6 @@ describe("registerAuthCommands", () => {
     expect(subcommands).toContain("login");
     expect(subcommands).toContain("set-token");
     expect(subcommands).toContain("clear");
+    expect(subcommands).toContain("status");
   });
 });

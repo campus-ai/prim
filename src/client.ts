@@ -45,6 +45,22 @@ export const TOKEN_FILE_PATH = join(homedir(), ".config", "prim", "token");
 
 export const REFRESH_TOKEN_PATH = TOKEN_FILE_PATH.replace("/token", "/refresh_token");
 
+export const TOKEN_EXPIRES_PATH = join(homedir(), ".config", "prim", "token_expires_at");
+
+const REFRESH_THRESHOLD_MS = 60_000; // refresh 60s before expiry
+
+function isTokenExpiringSoon(): boolean {
+  if (!existsSync(TOKEN_EXPIRES_PATH)) return false;
+  const expiresAt = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
+  return !Number.isNaN(expiresAt) && Date.now() >= expiresAt - REFRESH_THRESHOLD_MS;
+}
+
+export function getTokenExpiresAt(): number | undefined {
+  if (!existsSync(TOKEN_EXPIRES_PATH)) return undefined;
+  const val = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
+  return Number.isNaN(val) ? undefined : val;
+}
+
 /**
  * Resolve an auth token from multiple sources.
  *
@@ -122,6 +138,7 @@ export async function refreshToken(): Promise<string | undefined> {
   const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
+    expires_in?: number;
   };
 
   if (!data.access_token) {
@@ -133,6 +150,11 @@ export async function refreshToken(): Promise<string | undefined> {
 
   if (data.refresh_token) {
     writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
+  }
+
+  if (data.expires_in) {
+    const expiresAt = Date.now() + data.expires_in * 1000;
+    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
   }
 
   return data.access_token;
@@ -163,6 +185,14 @@ async function request(
     _cachedToken = getAuthToken();
   }
 
+  // Proactive refresh: avoid 401 round-trip by refreshing before expiry
+  if (_cachedToken && isTokenExpiringSoon()) {
+    const newToken = await refreshToken();
+    if (newToken) {
+      _cachedToken = newToken;
+    }
+  }
+
   const doFetch = async (token: string | undefined) => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -191,6 +221,9 @@ async function request(
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Authentication expired. Run `prim auth login` to re-authenticate.");
+    }
     const errorBody = (await res.json().catch(() => null)) as {
       error?: string;
     } | null;
