@@ -14,7 +14,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
-import { autoMapPatterns } from "../lib/auto-map.js";
 
 export function registerSpecCommands(program: Command) {
   const spec = program.command("spec").description("Manage spec documents");
@@ -82,12 +81,10 @@ export function registerSpecCommands(program: Command) {
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
     .option("-n, --name <name>", "New name")
-    .option("--no-auto-map", "Skip automatic file pattern mapping")
-    .option("-m, --map <patterns...>", "Additional file patterns to map")
     .action(
       async (
         contextId: string,
-        opts: { text?: string; file?: string; name?: string; autoMap: boolean; map?: string[] },
+        opts: { text?: string; file?: string; name?: string },
       ) => {
         const client = getClient();
 
@@ -113,8 +110,6 @@ export function registerSpecCommands(program: Command) {
         }
 
         console.log(`Updated spec: ${contextId}`);
-
-        await autoMapPatterns(client, contextId, { text, autoMap: opts.autoMap, map: opts.map });
       },
     );
 

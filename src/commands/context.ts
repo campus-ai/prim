@@ -13,7 +13,6 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
-import { autoMapPatterns } from "../lib/auto-map.js";
 
 export function registerContextCommands(program: Command) {
   const context = program.command("context").description("Manage contexts");
@@ -62,8 +61,6 @@ export function registerContextCommands(program: Command) {
     .option("-f, --file <path>", "Read text content from file")
     .option("--task-id <taskId>", "Link to task(s), comma-separated")
     .option("--spec", "Mark as a spec document")
-    .option("--no-auto-map", "Skip automatic file pattern mapping")
-    .option("-m, --map <patterns...>", "File patterns to map (spec only)")
     .action(
       async (opts: {
         scope: string;
@@ -72,8 +69,6 @@ export function registerContextCommands(program: Command) {
         file?: string;
         taskId?: string;
         spec?: boolean;
-        autoMap: boolean;
-        map?: string[];
       }) => {
         const client = getClient();
 
@@ -93,10 +88,6 @@ export function registerContextCommands(program: Command) {
         })) as { _id: string };
 
         console.log(`Created context: ${result._id}`);
-
-        if (opts.spec) {
-          await autoMapPatterns(client, result._id, { text, autoMap: opts.autoMap, map: opts.map });
-        }
       },
     );
 
