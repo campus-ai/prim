@@ -107,6 +107,8 @@ prim hooks uninstall  # Remove pre-commit hook
 
 The pre-commit hook automatically syncs specs when you commit changes to files that match a spec's file patterns (set via `prim spec map`).
 
+If your project uses [Husky](https://typicode.github.io/husky/), `prim hooks install` will detect it and offer to install into `.husky/pre-commit` instead. In non-interactive environments, it falls back to `.git/hooks/pre-commit`.
+
 Local settings can be configured in `.primrc.json`:
 
 ```json
