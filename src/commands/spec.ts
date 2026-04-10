@@ -81,37 +81,32 @@ export function registerSpecCommands(program: Command) {
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
     .option("-n, --name <name>", "New name")
-    .action(
-      async (
-        contextId: string,
-        opts: { text?: string; file?: string; name?: string },
-      ) => {
-        const client = getClient();
+    .action(async (contextId: string, opts: { text?: string; file?: string; name?: string }) => {
+      const client = getClient();
 
-        let text = opts.text;
-        if (opts.file) {
-          text = readFileSync(opts.file, "utf-8");
-        }
+      let text = opts.text;
+      if (opts.file) {
+        text = readFileSync(opts.file, "utf-8");
+      }
 
-        if (!(text || opts.name)) {
-          console.error("Provide --text, --file, or --name to update.");
-          process.exit(1);
-        }
+      if (!(text || opts.name)) {
+        console.error("Provide --text, --file, or --name to update.");
+        process.exit(1);
+      }
 
-        await client.patch(`/api/cli/contexts/${contextId}`, {
-          name: opts.name,
-          text,
-          skipTiptapLifecycle: !!text,
-        });
+      await client.patch(`/api/cli/contexts/${contextId}`, {
+        name: opts.name,
+        text,
+        skipTiptapLifecycle: !!text,
+      });
 
-        // Inject content into the TipTap Y.Doc to preserve version history
-        if (text) {
-          await client.post(`/api/cli/contexts/${contextId}/inject`);
-        }
+      // Inject content into the TipTap Y.Doc to preserve version history
+      if (text) {
+        await client.post(`/api/cli/contexts/${contextId}/inject`);
+      }
 
-        console.log(`Updated spec: ${contextId}`);
-      },
-    );
+      console.log(`Updated spec: ${contextId}`);
+    });
 
   // ── sync ──────────────────────────────────────────────────────────────
   spec
@@ -175,6 +170,16 @@ export function registerSpecCommands(program: Command) {
           console.log(`  ${p}`);
         }
       }
+    });
+
+  // ── auto-map ─────────────────────────────────────────────────────────
+  spec
+    .command("auto-map <contextId>")
+    .description("Trigger auto-mapping of file patterns for a spec")
+    .action(async (contextId: string) => {
+      const client = getClient();
+      await client.post(`/api/cli/contexts/${contextId}/auto-map`);
+      console.log(`Auto-mapping triggered for spec: ${contextId}`);
     });
 
   // ── import-mappings ───────────────────────────────────────────────────
