@@ -36,23 +36,15 @@ describe("client", () => {
     });
   });
 
-  describe("getConvexUrl", () => {
-    it("returns VITE_CONVEX_URL from environment", async () => {
-      process.env.VITE_CONVEX_URL = "https://test.convex.cloud";
-      const { getConvexUrl } = await import("./client.js");
-      expect(getConvexUrl()).toBe("https://test.convex.cloud");
-    });
-
-    it("throws when no URL is configured", async () => {
-      process.env.VITE_CONVEX_URL = undefined;
-      const { getConvexUrl } = await import("./client.js");
-      expect(() => getConvexUrl()).toThrow("VITE_CONVEX_URL not found");
+  describe("getSiteUrl", () => {
+    it("returns the production API URL", async () => {
+      const { getSiteUrl } = await import("./client.js");
+      expect(getSiteUrl()).toBe("https://api.getprimitive.ai");
     });
   });
 
   describe("getClient", () => {
     it("returns a client with get/post/patch/delete methods", async () => {
-      process.env.VITE_CONVEX_URL = "https://test.convex.cloud";
       const { getClient } = await import("./client.js");
       const client = getClient();
 

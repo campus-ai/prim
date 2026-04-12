@@ -1,8 +1,7 @@
 /**
  * REST client for the prim CLI.
  *
- * Calls /api/cli/* endpoints on the Convex site URL with bearer auth.
- * Reads deployment URL from environment or .env.local.
+ * Calls /api/cli/* endpoints on the Primitive API with bearer auth.
  *
  * Auth priority:
  *   1. PRIM_TOKEN env var
@@ -114,23 +113,10 @@ export function getAuthToken(): string | undefined {
   return undefined;
 }
 
-export function getConvexUrl(): string {
-  // 1. Check environment variable
-  if (process.env.VITE_CONVEX_URL) {
-    return process.env.VITE_CONVEX_URL;
-  }
-
-  // 2. Check .env.local / .env files
-  const envVars = loadEnvFile();
-  if (envVars.VITE_CONVEX_URL) {
-    return envVars.VITE_CONVEX_URL;
-  }
-
-  throw new Error("VITE_CONVEX_URL not found. Set it in your environment or .env.local file.");
-}
+const API_URL = "https://api.getprimitive.ai";
 
 export function getSiteUrl(): string {
-  return getConvexUrl().replace(".convex.cloud", ".convex.site");
+  return API_URL;
 }
 
 /**

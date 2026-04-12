@@ -18,7 +18,7 @@ import {
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
   getAuthToken,
-  getConvexUrl,
+  getSiteUrl,
   getTokenExpiresAt,
   saveTokenExpiry,
 } from "../client.js";
@@ -67,8 +67,7 @@ export function registerAuthCommands(program: Command) {
     .command("login")
     .description("Authenticate via browser (WorkOS OAuth)")
     .action(async () => {
-      const convexUrl = getConvexUrl();
-      const siteUrl = convexUrl.replace(".convex.cloud", ".convex.site");
+      const siteUrl = getSiteUrl();
 
       // Fetch broker config
       let config: {
@@ -189,7 +188,7 @@ export function registerAuthCommands(program: Command) {
         const refreshTokenValue = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
         if (refreshTokenValue) {
           try {
-            const siteUrl = getConvexUrl().replace(".convex.cloud", ".convex.site");
+            const siteUrl = getSiteUrl();
             const res = await fetch(`${siteUrl}/mcp/broker/revoke`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
