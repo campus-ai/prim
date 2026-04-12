@@ -9,7 +9,7 @@
  *   prim hooks install|uninstall
  *
  * Configuration:
- *   Set VITE_CONVEX_URL in your environment or .env.local file.
+ *   Connects to https://api.getprimitive.ai by default.
  */
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";

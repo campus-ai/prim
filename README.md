@@ -18,21 +18,7 @@ npx @primitive/cli spec list
 
 ## Configuration
 
-### 1. Set your Convex deployment URL
-
-Create a `.env.local` file in your project directory:
-
-```
-VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
-```
-
-Or set it as an environment variable:
-
-```bash
-export VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
-```
-
-### 2. Authenticate
+### 1. Authenticate
 
 ```bash
 prim auth login
