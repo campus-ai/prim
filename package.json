@@ -1,6 +1,6 @@
 {
   "name": "@primitive.ai/prim",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "CLI for managing Primitive specs, contexts, and git hooks",
   "type": "module",
   "license": "MIT",
