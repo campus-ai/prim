@@ -18,8 +18,8 @@ import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerContextCommands } from "./commands/context.js";
 import { registerHooksCommands } from "./commands/hooks.js";
+import { registerProjectCommands } from "./commands/project.js";
 import { registerSpecCommands } from "./commands/spec.js";
-import { registerTaskCommands } from "./commands/task.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
@@ -34,7 +34,7 @@ program
 registerAuthCommands(program);
 registerContextCommands(program);
 registerSpecCommands(program);
-registerTaskCommands(program);
+registerProjectCommands(program);
 registerHooksCommands(program);
 
 // Surface API / network errors as clean one-liners
