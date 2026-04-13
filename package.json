@@ -28,8 +28,8 @@
   },
   "packageManager": "pnpm@9.15.9",
   "bin": {
-    "prim": "./dist/index.js",
-    "prim-pre-commit": "./dist/hooks/pre-commit.js"
+    "prim": "dist/index.js",
+    "prim-pre-commit": "dist/hooks/pre-commit.js"
   },
   "main": "./dist/index.js",
   "files": [

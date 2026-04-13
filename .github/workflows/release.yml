@@ -37,14 +37,4 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Debug OIDC environment
-        run: |
-          echo "npm version: $(npm --version)"
-          echo "node version: $(node --version)"
-          echo "OIDC URL set: $(if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then echo YES; else echo NO; fi)"
-          echo "OIDC token set: $(if [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then echo YES; else echo NO; fi)"
-          echo "NPM_CONFIG_USERCONFIG: ${NPM_CONFIG_USERCONFIG:-not set}"
-          echo "NODE_AUTH_TOKEN set: $(if [ -n "$NODE_AUTH_TOKEN" ]; then echo YES; else echo NO; fi)"
-          npm config list
-
       - run: npm publish --tag ${{ steps.npm-tag.outputs.tag }} --access public --provenance
