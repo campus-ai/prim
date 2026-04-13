@@ -37,12 +37,6 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Mint OIDC token for npm
-        run: |
-          response=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://registry.npmjs.org")
-          token=$(echo "$response" | jq -r '.value')
-          echo "::add-mask::$token"
-          echo "NODE_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
-
       - run: pnpm publish --tag ${{ steps.npm-tag.outputs.tag }} --access public --provenance --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
