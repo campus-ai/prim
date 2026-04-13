@@ -26,4 +26,6 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag_name: ${{ needs.release-please.outputs.tag_name }}
-    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
