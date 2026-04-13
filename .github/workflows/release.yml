@@ -23,8 +23,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
+      - run: npm install -g npm@latest
       - run: pnpm install
       - run: pnpm build
 
@@ -37,6 +37,4 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - run: pnpm publish --tag ${{ steps.npm-tag.outputs.tag }} --access public --provenance --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --tag ${{ steps.npm-tag.outputs.tag }} --access public --provenance
