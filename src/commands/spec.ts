@@ -4,7 +4,7 @@
  * Specs are contexts with isSpecDocument=true. These commands provide
  * spec-specific views and operations on top of the unified context API.
  *
- * prim spec list [--task-id <id>]
+ * prim spec list [--project-id <id>]
  * prim spec get <context-id>
  * prim spec update <context-id> --text <text> | --file <path>
  * prim spec sync <context-id>
@@ -21,17 +21,17 @@ export function registerSpecCommands(program: Command) {
   spec
     .command("list")
     .description("List spec documents")
-    .option("-t, --task-id <taskId>", "List spec for a specific root task")
-    .action(async (opts: { taskId?: string }) => {
+    .option("-t, --project-id <projectId>", "List spec for a specific root project")
+    .action(async (opts: { projectId?: string }) => {
       const client = getClient();
 
-      if (opts.taskId) {
-        const specs = (await client.get(`/api/cli/specs?rootTaskId=${opts.taskId}`)) as Array<
+      if (opts.projectId) {
+        const specs = (await client.get(`/api/cli/specs?rootTaskId=${opts.projectId}`)) as Array<
           Record<string, unknown>
         >;
 
         if (specs.length === 0) {
-          console.log("No spec document found for this task.");
+          console.log("No spec document found for this project.");
           return;
         }
 
@@ -48,7 +48,8 @@ export function registerSpecCommands(program: Command) {
       }
 
       for (const ctx of contexts) {
-        const scope = (ctx.scope as string) ?? "task";
+        const scope =
+          (ctx.scope as string) === "task" ? "project" : ((ctx.scope as string) ?? "project");
         const review = ctx.specReviewStatus ?? "—";
         const name = ctx.name ?? "(unnamed)";
         console.log(`${ctx._id}  ${scope.padEnd(8)} ${String(review).padEnd(10)} ${name}`);
@@ -110,7 +111,7 @@ export function registerSpecCommands(program: Command) {
   // ── sync ──────────────────────────────────────────────────────────────
   spec
     .command("sync <contextId>")
-    .description("Trigger spec ↔ task DAG synchronization")
+    .description("Trigger spec ↔ project DAG synchronization")
     .action(async (contextId: string) => {
       const client = getClient();
 
@@ -126,7 +127,7 @@ export function registerSpecCommands(program: Command) {
 
       console.log(`Triggered sync for spec: ${contextId}`);
       if (ctx.specRootTaskId) {
-        console.log(`Root task: ${ctx.specRootTaskId}`);
+        console.log(`Root project: ${ctx.specRootTaskId}`);
       }
     });
 
@@ -189,9 +190,9 @@ function printSpec(ctx: Record<string, unknown>) {
 
   console.log(`ID:              ${ctx._id}`);
   console.log(`Name:            ${name}`);
-  console.log(`Scope:           ${ctx.scope ?? "task"}`);
+  console.log(`Scope:           ${ctx.scope === "task" ? "project" : (ctx.scope ?? "project")}`);
   console.log(`Review Status:   ${review}`);
-  console.log(`Root Task:       ${ctx.specRootTaskId ?? "—"}`);
+  console.log(`Root Project:    ${ctx.specRootTaskId ?? "—"}`);
   console.log(`Sync Version:    ${ctx.syncVersion ?? 0}`);
   console.log(`Index Status:    ${ctx.indexStatus ?? "—"}`);
   console.log(`File Patterns:   ${patterns?.length ? patterns.join(", ") : "—"}`);
