@@ -11,6 +11,9 @@
  * Configuration:
  *   Connects to https://api.getprimitive.ai by default.
  */
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerContextCommands } from "./commands/context.js";
@@ -18,12 +21,15 @@ import { registerHooksCommands } from "./commands/hooks.js";
 import { registerSpecCommands } from "./commands/spec.js";
 import { registerTaskCommands } from "./commands/task.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
+
 const program = new Command();
 
 program
   .name("prim")
   .description("CLI for managing Primitive specs and contexts")
-  .version("0.1.0-alpha.1");
+  .version(pkg.version);
 
 registerAuthCommands(program);
 registerContextCommands(program);
