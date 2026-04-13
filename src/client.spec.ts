@@ -86,4 +86,66 @@ describe("client", () => {
       expect(getTokenExpiresAt()).toBeUndefined();
     });
   });
+
+  describe("refreshToken", () => {
+    it("returns undefined when no refresh token file exists", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const { refreshToken } = await import("./client.js");
+      expect(await refreshToken()).toBeUndefined();
+    });
+
+    it("returns undefined when refresh token file is empty", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("" as never);
+      const { refreshToken } = await import("./client.js");
+      expect(await refreshToken()).toBeUndefined();
+    });
+
+    it("returns new access token on successful refresh", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("refresh-tok" as never);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: "new-tok",
+            refresh_token: "new-refresh",
+            expires_in: 3600,
+          }),
+        ),
+      );
+      const { refreshToken } = await import("./client.js");
+      const result = await refreshToken();
+      expect(result).toBe("new-tok");
+      expect(fs.writeFileSync).toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it("returns undefined on server error without throwing", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("refresh-tok" as never);
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 500 }));
+      const { refreshToken } = await import("./client.js");
+      expect(await refreshToken()).toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+
+    it("returns undefined on network error without throwing", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("refresh-tok" as never);
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new TypeError("fetch failed"));
+      const { refreshToken } = await import("./client.js");
+      // Should return undefined, NOT throw
+      expect(await refreshToken()).toBeUndefined();
+      fetchSpy.mockRestore();
+    });
+  });
 });
