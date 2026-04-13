@@ -1,6 +1,6 @@
 # @primitive.ai/prim
 
-The official CLI for [Primitive](https://getprimitive.ai). Manage specs, contexts, tasks, and git hooks from the command line.
+The official CLI for [Primitive](https://getprimitive.ai). Manage specs, contexts, projects, and git hooks from the command line.
 
 > [!WARNING]
 > This project is in **alpha**. Commands and APIs may change between releases.
@@ -45,16 +45,16 @@ prim auth status             # Check authentication status
 
 ### Specs
 
-Specs are documents that drive implementation. They can be synced to a task DAG and mapped to file patterns for automatic pre-commit hook integration.
+Specs are documents that drive implementation. They can be synced to a project DAG and mapped to file patterns for automatic pre-commit hook integration.
 
 ```bash
 prim spec list                        # List all specs
-prim spec list --task-id <id>         # Find spec for a root task
+prim spec list --project-id <id>      # Find spec for a root project
 prim spec get <id>                    # Show spec details
 prim spec get <id> --text-only        # Print raw spec text
 prim spec update <id> --file spec.md  # Update spec from file
 prim spec update <id> --name "New"    # Rename a spec
-prim spec sync <id>                   # Trigger spec-to-task sync
+prim spec sync <id>                   # Trigger spec-to-project sync
 prim spec map <id> -p "src/auth/**"   # Map file patterns to a spec
 prim spec unmap <id>                  # Clear all file patterns
 prim spec unmap <id> -p "src/auth/**" # Remove specific pattern
@@ -64,24 +64,24 @@ prim spec auto-map <id>              # Auto-detect file patterns
 ### Contexts
 
 ```bash
-prim context list                     # List all contexts
-prim context list --scope task        # Filter by scope
-prim context list --task-id <id>      # List contexts for a task
-prim context get <id>                 # Get context details
-prim context create -s task -n "Name" # Create a context
-prim context create -s task -n "Name" --file path/to/file
-prim context update <id> --name "New" # Update a context
-prim context delete <id>              # Delete a context
-prim context link <id> --task <tid>   # Link context to task
-prim context unlink <id> --task <tid> # Unlink context from task
+prim context list                        # List all contexts
+prim context list --scope project        # Filter by scope
+prim context list --project-id <id>      # List contexts for a project
+prim context get <id>                    # Get context details
+prim context create -s project -n "Name" # Create a context
+prim context create -s project -n "Name" --file path/to/file
+prim context update <id> --name "New"    # Update a context
+prim context delete <id>                 # Delete a context
+prim context link <id> --project <pid>   # Link context to project
+prim context unlink <id> --project <pid> # Unlink context from project
 ```
 
-### Tasks
+### Projects
 
 ```bash
-prim task create -n "Task name"                    # Create a task
-prim task create -n "Task name" -d "Description"   # Create with description
-prim task create -n "Task name" --spec <contextId> # Create and link a spec
+prim project create -n "Project name"                    # Create a project
+prim project create -n "Project name" -d "Description"   # Create with description
+prim project create -n "Project name" --spec <contextId> # Create and link a spec
 ```
 
 ### Hooks
