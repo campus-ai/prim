@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.9](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2026-04-14)
+
+
+### Bug Fixes
+
+* **hooks:** send staged diff to sync-diff endpoint ([#18](https://github.com/campus-ai/prim/issues/18)) ([d2a4873](https://github.com/campus-ai/prim/commit/d2a487334946b3cf2b340c0e1a89f13abaea9473))
+
 ## [0.1.0-alpha.8](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2026-04-13)
 
 
