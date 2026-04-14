@@ -114,7 +114,7 @@ async function main() {
 
   console.log(`[prim] ${String(affectedContexts.size)} spec(s) affected by staged changes:`);
 
-  for (const [contextId] of affectedContexts) {
+  for (const [contextId, affected] of affectedContexts) {
     try {
       const ctx = (await client.get(`/api/cli/contexts/${contextId}`, {
         signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
@@ -130,9 +130,17 @@ async function main() {
         continue;
       }
 
-      await client.post(`/api/cli/contexts/${contextId}/sync`, undefined, {
-        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
-      });
+      const diffContent = getStagedDiff(affected.matchedFiles);
+      if (!diffContent) {
+        console.log(`  [skip] ${contextId} — no diff content`);
+        continue;
+      }
+
+      await client.post(
+        `/api/cli/contexts/${contextId}/sync-diff`,
+        { diffContent, affectedFiles: affected.matchedFiles },
+        { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
+      );
 
       console.log(`  [synced] ${contextId} — ${(ctx.name as string) ?? "(unnamed)"}`);
     } catch (error) {
