@@ -172,13 +172,8 @@ async function main() {
   process.exit(0);
 }
 
-// Only auto-run when executed directly (not when imported by tests)
-const isDirectExecution =
-  typeof process !== "undefined" &&
-  process.argv[1] &&
-  import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"));
-
-if (isDirectExecution) {
+// Skip auto-run during tests
+if (!process.env.VITEST) {
   main().catch((error) => {
     console.error("[prim] Pre-commit hook error:", error);
     // Don't block the commit
