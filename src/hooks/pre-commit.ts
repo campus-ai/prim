@@ -32,6 +32,12 @@ function getStagedFiles(): string[] {
     .filter((f) => f.length > 0);
 }
 
+function getStagedDiff(files: string[]): string {
+  return execSync(`git diff --cached -- ${files.map((f) => `"${f}"`).join(" ")}`, {
+    encoding: "utf-8",
+  });
+}
+
 /**
  * Simple glob-style matching: supports * and ** wildcards.
  */
