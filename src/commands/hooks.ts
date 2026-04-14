@@ -20,7 +20,7 @@ if command -v prim-pre-commit >/dev/null 2>&1; then
 elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
   ./node_modules/.bin/prim-pre-commit
 else
-  npx --yes @primitive.ai/prim pre-commit-hook 2>/dev/null || true
+  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
 fi
 `;
 
@@ -33,7 +33,7 @@ if command -v prim-pre-commit >/dev/null 2>&1; then
 elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
   ./node_modules/.bin/prim-pre-commit
 else
-  npx --yes @primitive.ai/prim pre-commit-hook 2>/dev/null || true
+  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
 fi
 ${PRIM_BLOCK_END}`;
 
