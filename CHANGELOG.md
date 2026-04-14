@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.10](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2026-04-14)
+
+
+### Bug Fixes
+
+* **hooks:** replace import.meta.url execution guard with VITEST check ([0e2a6d7](https://github.com/campus-ai/prim/commit/0e2a6d7b189bbcdf3fc5920cdabd4630e03ae6bc))
+
 ## [0.1.0-alpha.9](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2026-04-14)
 
 
