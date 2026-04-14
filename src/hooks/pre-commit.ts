@@ -16,7 +16,7 @@
 import { execSync } from "node:child_process";
 import { getClient } from "../client.js";
 
-interface ServerSpecMapping {
+export interface ServerSpecMapping {
   _id: string;
   name: string;
   filePatterns: string[];
@@ -32,10 +32,16 @@ function getStagedFiles(): string[] {
     .filter((f) => f.length > 0);
 }
 
+function getStagedDiff(files: string[]): string {
+  return execSync(`git diff --cached -- ${files.map((f) => `"${f}"`).join(" ")}`, {
+    encoding: "utf-8",
+  });
+}
+
 /**
  * Simple glob-style matching: supports * and ** wildcards.
  */
-function matchPattern(filePath: string, pattern: string): boolean {
+export function matchPattern(filePath: string, pattern: string): boolean {
   const regexStr = pattern
     .replaceAll("**", "§GLOBSTAR§")
     .replaceAll("*", "[^/]*")
@@ -44,12 +50,12 @@ function matchPattern(filePath: string, pattern: string): boolean {
   return regex.test(filePath);
 }
 
-interface AffectedContext {
+export interface AffectedContext {
   contextId: string;
   matchedFiles: string[];
 }
 
-function findAffectedContexts(
+export function findAffectedContexts(
   stagedFiles: string[],
   specs: ServerSpecMapping[],
 ): Map<string, AffectedContext> {
@@ -77,15 +83,27 @@ function findAffectedContexts(
   return affected;
 }
 
-const HOOK_TIMEOUT_MS = 10_000;
+export const HOOK_TIMEOUT_MS = 10_000;
 
-async function main() {
-  const stagedFiles = getStagedFiles();
+export interface SyncDeps {
+  getClient: () => import("../client.js").CliClient;
+  getStagedFiles: () => string[];
+  getStagedDiff: (files: string[]) => string;
+}
+
+const defaultDeps: SyncDeps = {
+  getClient,
+  getStagedFiles,
+  getStagedDiff,
+};
+
+export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<string[]> {
+  const stagedFiles = deps.getStagedFiles();
   if (stagedFiles.length === 0) {
-    process.exit(0);
+    return [];
   }
 
-  const client = getClient();
+  const client = deps.getClient();
   let mappings: ServerSpecMapping[] = [];
 
   try {
@@ -93,22 +111,24 @@ async function main() {
       signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
     })) as ServerSpecMapping[];
   } catch {
-    process.exit(0);
+    return [];
   }
 
   if (mappings.length === 0) {
-    process.exit(0);
+    return [];
   }
 
   const affectedContexts = findAffectedContexts(stagedFiles, mappings);
 
   if (affectedContexts.size === 0) {
-    process.exit(0);
+    return [];
   }
 
   console.log(`[prim] ${String(affectedContexts.size)} spec(s) affected by staged changes:`);
 
-  for (const [contextId] of affectedContexts) {
+  const synced: string[] = [];
+
+  for (const [contextId, affected] of affectedContexts) {
     try {
       const ctx = (await client.get(`/api/cli/contexts/${contextId}`, {
         signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
@@ -124,22 +144,44 @@ async function main() {
         continue;
       }
 
-      await client.post(`/api/cli/contexts/${contextId}/sync`, undefined, {
-        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
-      });
+      const diffContent = deps.getStagedDiff(affected.matchedFiles);
+      if (!diffContent) {
+        console.log(`  [skip] ${contextId} — no diff content`);
+        continue;
+      }
+
+      await client.post(
+        `/api/cli/contexts/${contextId}/sync-diff`,
+        { diffContent, affectedFiles: affected.matchedFiles },
+        { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
+      );
 
       console.log(`  [synced] ${contextId} — ${(ctx.name as string) ?? "(unnamed)"}`);
+      synced.push(contextId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  [error] ${contextId} — ${message}`);
     }
   }
 
+  return synced;
+}
+
+async function main() {
+  await syncAffectedSpecs();
   process.exit(0);
 }
 
-main().catch((error) => {
-  console.error("[prim] Pre-commit hook error:", error);
-  // Don't block the commit
-  process.exit(0);
-});
+// Only auto-run when executed directly (not when imported by tests)
+const isDirectExecution =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"));
+
+if (isDirectExecution) {
+  main().catch((error) => {
+    console.error("[prim] Pre-commit hook error:", error);
+    // Don't block the commit
+    process.exit(0);
+  });
+}
