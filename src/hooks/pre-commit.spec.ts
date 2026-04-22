@@ -459,3 +459,64 @@ describe("syncAffectedSpecs — edge cases", () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// syncAffectedSpecs — truncation reporting
+// ---------------------------------------------------------------------------
+
+describe("syncAffectedSpecs — truncation reporting", () => {
+  it("announces truncation when the server clips the diff", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({
+      analyzing: true,
+      truncated: true,
+      sizeChars: 524_288,
+      limitChars: 262_144,
+    }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+    });
+
+    try {
+      const result = await syncAffectedSpecs(deps);
+      expect(result).toEqual(["ctx-123"]);
+      const synced = logSpy.mock.calls.find((c) => String(c[0]).includes("[synced]"));
+      expect(synced?.[0]).toContain("truncated: 512 KiB → 256 KiB analyzed");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("omits truncation suffix when the server reports a full analysis", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({
+      analyzing: true,
+      truncated: false,
+      sizeChars: 1024,
+      limitChars: 262_144,
+    }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+    });
+
+    try {
+      await syncAffectedSpecs(deps);
+      const synced = logSpy.mock.calls.find((c) => String(c[0]).includes("[synced]"));
+      expect(synced?.[0]).not.toContain("truncated");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

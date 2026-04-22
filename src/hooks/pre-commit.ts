@@ -55,6 +55,13 @@ export interface AffectedContext {
   matchedFiles: string[];
 }
 
+export interface SyncDiffResponse {
+  analyzing: boolean;
+  truncated?: boolean;
+  sizeChars?: number;
+  limitChars?: number;
+}
+
 export function findAffectedContexts(
   stagedFiles: string[],
   specs: ServerSpecMapping[],
@@ -150,13 +157,22 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
         continue;
       }
 
-      await client.post(
+      const response = (await client.post(
         `/api/cli/contexts/${contextId}/sync-diff`,
         { diffContent, affectedFiles: affected.matchedFiles },
         { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
-      );
+      )) as SyncDiffResponse;
 
-      console.log(`  [synced] ${contextId} — ${(ctx.name as string) ?? "(unnamed)"}`);
+      const name = (ctx.name as string) ?? "(unnamed)";
+      if (response.truncated && response.sizeChars && response.limitChars) {
+        const sizeKiB = Math.round(response.sizeChars / 1024);
+        const limitKiB = Math.round(response.limitChars / 1024);
+        console.log(
+          `  [synced] ${contextId} — ${name} (truncated: ${String(sizeKiB)} KiB → ${String(limitKiB)} KiB analyzed)`,
+        );
+      } else {
+        console.log(`  [synced] ${contextId} — ${name}`);
+      }
       synced.push(contextId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
