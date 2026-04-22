@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.11](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-04-22)
+
+
+### Features
+
+* **hooks:** warn when the server truncates a large sync-diff ([#23](https://github.com/campus-ai/prim/issues/23)) ([7877966](https://github.com/campus-ai/prim/commit/787796619d1a23adcd611a76221c143cdd9df8b8))
+
 ## [0.1.0-alpha.10](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2026-04-14)
 
 
