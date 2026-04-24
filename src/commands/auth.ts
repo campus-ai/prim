@@ -14,6 +14,7 @@ import { platform } from "node:os";
 import { dirname } from "node:path";
 import type { Command } from "commander";
 import {
+  DEFAULT_API_URL,
   REFRESH_TOKEN_PATH,
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
@@ -22,8 +23,6 @@ import {
   getTokenExpiresAt,
   saveTokenExpiry,
 } from "../client.js";
-
-const DEFAULT_API_URL = "https://api.getprimitive.ai";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -230,7 +229,7 @@ export function registerAuthCommands(program: Command) {
     .description("Check authentication status and token expiry")
     .action(() => {
       const siteUrl = getSiteUrl();
-      const isDefault = siteUrl === DEFAULT_API_URL;
+      const isDefault = new URL(siteUrl).origin === new URL(DEFAULT_API_URL).origin;
       console.log(`Environment: ${siteUrl}${isDefault ? " (default)" : ""}`);
 
       const token = getAuthToken();

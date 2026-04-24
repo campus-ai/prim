@@ -41,12 +41,23 @@ function loadEnvFile(): Record<string, string> {
   return envVars;
 }
 
-const DEFAULT_API_URL = "https://api.getprimitive.ai";
+export const DEFAULT_API_URL = "https://api.getprimitive.ai";
+
+function validateUrl(raw: string): string {
+  try {
+    return new URL(raw).origin;
+  } catch {
+    console.error(
+      `Invalid PRIM_API_URL: "${raw}". Must be a valid URL (e.g. https://staging.getprimitive.ai).`,
+    );
+    process.exit(1);
+  }
+}
 
 function resolveApiUrl(): string {
-  if (process.env.PRIM_API_URL) return process.env.PRIM_API_URL;
+  if (process.env.PRIM_API_URL) return validateUrl(process.env.PRIM_API_URL);
   const envVars = loadEnvFile();
-  if (envVars.PRIM_API_URL) return envVars.PRIM_API_URL;
+  if (envVars.PRIM_API_URL) return validateUrl(envVars.PRIM_API_URL);
   return DEFAULT_API_URL;
 }
 
@@ -57,32 +68,31 @@ const API_URL = resolveApiUrl();
  * e.g. "https://api.getprimitive.ai" → "api.getprimitive.ai"
  */
 function getEnvKey(): string {
-  try {
-    return new URL(API_URL).hostname;
-  } catch {
-    return "default";
-  }
+  return new URL(API_URL).hostname;
 }
 
 const CONFIG_BASE = join(homedir(), ".config", "prim");
 const ENV_DIR = join(CONFIG_BASE, "environments", getEnvKey());
 
+const LEGACY_TOKEN_FILES = ["token", "refresh_token", "token_expires_at"] as const;
+
 /**
  * Migrate flat token files from ~/.config/prim/ into
  * ~/.config/prim/environments/api.getprimitive.ai/ on first run.
+ * Handles partial migrations by checking each file independently.
  */
-function migrateTokensIfNeeded(): void {
-  const oldToken = join(CONFIG_BASE, "token");
+export function migrateTokensIfNeeded(): void {
   const defaultEnvDir = join(CONFIG_BASE, "environments", "api.getprimitive.ai");
-  const newToken = join(defaultEnvDir, "token");
+  const hasLegacyFiles = LEGACY_TOKEN_FILES.some((file) => existsSync(join(CONFIG_BASE, file)));
 
-  if (existsSync(oldToken) && !existsSync(newToken)) {
-    mkdirSync(defaultEnvDir, { recursive: true });
-    for (const file of ["token", "refresh_token", "token_expires_at"]) {
-      const src = join(CONFIG_BASE, file);
-      if (existsSync(src)) {
-        renameSync(src, join(defaultEnvDir, file));
-      }
+  if (!hasLegacyFiles) return;
+
+  mkdirSync(defaultEnvDir, { recursive: true });
+  for (const file of LEGACY_TOKEN_FILES) {
+    const src = join(CONFIG_BASE, file);
+    const dest = join(defaultEnvDir, file);
+    if (existsSync(src) && !existsSync(dest)) {
+      renameSync(src, dest);
     }
   }
 }
@@ -123,9 +133,16 @@ function getJwtExpiry(token: string): number | undefined {
   }
 }
 
+function ensureEnvDir(): void {
+  if (!existsSync(ENV_DIR)) {
+    mkdirSync(ENV_DIR, { recursive: true });
+  }
+}
+
 export function saveTokenExpiry(token: string, expiresIn?: number): void {
   const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : getJwtExpiry(token);
   if (expiresAt) {
+    ensureEnvDir();
     writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
   }
 }
@@ -206,6 +223,7 @@ export async function refreshToken(): Promise<string | undefined> {
   }
 
   // Save new tokens
+  ensureEnvDir();
   writeFileSync(TOKEN_FILE_PATH, data.access_token, { mode: 0o600 });
 
   if (data.refresh_token) {

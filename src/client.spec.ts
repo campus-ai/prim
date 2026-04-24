@@ -15,9 +15,16 @@ vi.mock("node:os", () => ({
 describe("client", () => {
   const originalEnv = { ...process.env };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     process.env = { ...originalEnv };
+    // Reset mock implementations to defaults so they don't leak between tests
+    const fs = await import("node:fs");
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.readFileSync).mockReturnValue("");
+    vi.mocked(fs.writeFileSync).mockReset();
+    vi.mocked(fs.mkdirSync).mockReset();
+    vi.mocked(fs.renameSync).mockReset();
   });
 
   afterEach(() => {
@@ -102,6 +109,67 @@ describe("client", () => {
     it("returns undefined when no expiry file exists", async () => {
       const { getTokenExpiresAt } = await import("./client.js");
       expect(getTokenExpiresAt()).toBeUndefined();
+    });
+  });
+
+  describe("migrateTokensIfNeeded", () => {
+    it("migrates legacy flat token files to the prod environment directory", async () => {
+      const fs = await import("node:fs");
+      const existsSyncMock = vi.mocked(fs.existsSync);
+      const mkdirSyncMock = vi.mocked(fs.mkdirSync);
+      const renameSyncMock = vi.mocked(fs.renameSync);
+
+      // Simulate legacy files existing, no new-location files
+      existsSyncMock.mockImplementation((p) => {
+        const path = String(p);
+        if (path.includes("environments/")) return false;
+        if (path.endsWith(".config/prim/token")) return true;
+        if (path.endsWith(".config/prim/refresh_token")) return true;
+        if (path.endsWith(".config/prim/token_expires_at")) return true;
+        return false;
+      });
+
+      // Module-level migrateTokensIfNeeded() runs on import
+      await import("./client.js");
+
+      expect(mkdirSyncMock).toHaveBeenCalledWith(
+        expect.stringContaining("environments/api.getprimitive.ai"),
+        { recursive: true },
+      );
+      expect(renameSyncMock).toHaveBeenCalledTimes(3);
+      expect(renameSyncMock).toHaveBeenCalledWith(
+        expect.stringContaining(".config/prim/token"),
+        expect.stringContaining("environments/api.getprimitive.ai/token"),
+      );
+    });
+
+    it("skips migration when no legacy files exist", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const renameSyncMock = vi.mocked(fs.renameSync);
+
+      await import("./client.js");
+
+      expect(renameSyncMock).not.toHaveBeenCalled();
+    });
+
+    it("skips individual files that already exist at destination", async () => {
+      const fs = await import("node:fs");
+      const existsSyncMock = vi.mocked(fs.existsSync);
+      const renameSyncMock = vi.mocked(fs.renameSync);
+
+      // Legacy token exists, but destination token already exists (partial prior migration)
+      existsSyncMock.mockImplementation((p) => {
+        const path = String(p);
+        if (path.endsWith("environments/api.getprimitive.ai/token")) return true;
+        if (path.endsWith(".config/prim/token")) return true;
+        return false;
+      });
+
+      await import("./client.js");
+
+      // Should not rename token since destination exists; no other legacy files to migrate
+      expect(renameSyncMock).not.toHaveBeenCalled();
     });
   });
 });
