@@ -23,6 +23,8 @@ import {
   saveTokenExpiry,
 } from "../client.js";
 
+const DEFAULT_API_URL = "https://api.getprimitive.ai";
+
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
 const CALLBACK_PORT = 19_876;
@@ -227,6 +229,10 @@ export function registerAuthCommands(program: Command) {
     .command("status")
     .description("Check authentication status and token expiry")
     .action(() => {
+      const siteUrl = getSiteUrl();
+      const isDefault = siteUrl === DEFAULT_API_URL;
+      console.log(`Environment: ${siteUrl}${isDefault ? " (default)" : ""}`);
+
       const token = getAuthToken();
       if (!token) {
         console.log("Not authenticated. Run `prim auth login` to authenticate.");

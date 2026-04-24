@@ -3,14 +3,18 @@
  *
  * Calls /api/cli/* endpoints on the Primitive API with bearer auth.
  *
+ * Environment:
+ *   PRIM_API_URL env var or .env.local override the default API URL.
+ *   Tokens are scoped by hostname under ~/.config/prim/environments/.
+ *
  * Auth priority:
  *   1. PRIM_TOKEN env var
- *   2. ~/.config/prim/token file
+ *   2. ~/.config/prim/environments/{hostname}/token file
  *   3. .env.local PRIM_TOKEN
  *   4. Unauthenticated (will fail with 401)
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -37,14 +41,62 @@ function loadEnvFile(): Record<string, string> {
   return envVars;
 }
 
+const DEFAULT_API_URL = "https://api.getprimitive.ai";
+
+function resolveApiUrl(): string {
+  if (process.env.PRIM_API_URL) return process.env.PRIM_API_URL;
+  const envVars = loadEnvFile();
+  if (envVars.PRIM_API_URL) return envVars.PRIM_API_URL;
+  return DEFAULT_API_URL;
+}
+
+const API_URL = resolveApiUrl();
+
 /**
- * Path to the stored auth token file.
+ * Derive a directory name from the API URL hostname.
+ * e.g. "https://api.getprimitive.ai" → "api.getprimitive.ai"
  */
-export const TOKEN_FILE_PATH = join(homedir(), ".config", "prim", "token");
+function getEnvKey(): string {
+  try {
+    return new URL(API_URL).hostname;
+  } catch {
+    return "default";
+  }
+}
 
-export const REFRESH_TOKEN_PATH = TOKEN_FILE_PATH.replace("/token", "/refresh_token");
+const CONFIG_BASE = join(homedir(), ".config", "prim");
+const ENV_DIR = join(CONFIG_BASE, "environments", getEnvKey());
 
-export const TOKEN_EXPIRES_PATH = join(homedir(), ".config", "prim", "token_expires_at");
+/**
+ * Migrate flat token files from ~/.config/prim/ into
+ * ~/.config/prim/environments/api.getprimitive.ai/ on first run.
+ */
+function migrateTokensIfNeeded(): void {
+  const oldToken = join(CONFIG_BASE, "token");
+  const defaultEnvDir = join(CONFIG_BASE, "environments", "api.getprimitive.ai");
+  const newToken = join(defaultEnvDir, "token");
+
+  if (existsSync(oldToken) && !existsSync(newToken)) {
+    mkdirSync(defaultEnvDir, { recursive: true });
+    for (const file of ["token", "refresh_token", "token_expires_at"]) {
+      const src = join(CONFIG_BASE, file);
+      if (existsSync(src)) {
+        renameSync(src, join(defaultEnvDir, file));
+      }
+    }
+  }
+}
+
+migrateTokensIfNeeded();
+
+/**
+ * Path to the stored auth token file, scoped by environment.
+ */
+export const TOKEN_FILE_PATH = join(ENV_DIR, "token");
+
+export const REFRESH_TOKEN_PATH = join(ENV_DIR, "refresh_token");
+
+export const TOKEN_EXPIRES_PATH = join(ENV_DIR, "token_expires_at");
 
 const REFRESH_THRESHOLD_MS = 60_000; // refresh 60s before expiry
 
@@ -112,8 +164,6 @@ export function getAuthToken(): string | undefined {
 
   return undefined;
 }
-
-const API_URL = "https://api.getprimitive.ai";
 
 export function getSiteUrl(): string {
   return API_URL;
