@@ -1,0 +1,28 @@
+name: setup.md probe
+
+on:
+  pull_request:
+    paths:
+      - 'setup.md'
+      - '.github/workflows/setup-md-probe.yml'
+  schedule:
+    - cron: '0 12 * * *'
+
+jobs:
+  local-sentinel:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify local setup.md sentinel
+        run: grep -q '<!-- PRIMITIVE_SETUP_V1 -->' setup.md
+
+  live-url:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify pinned URL resolves with sentinel
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/campus-ai/prim/v1/setup.md \
+            | grep -q '<!-- PRIMITIVE_SETUP_V1 -->'
