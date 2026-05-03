@@ -39,7 +39,7 @@ The CLI auto-refreshes expired tokens. On unrecoverable expiry it throws `Authen
 ```
 npx --yes @primitive.ai/prim spec get <id> --text-only > spec.md
 ```
-`npx --yes @primitive.ai/prim spec update --file` replaces the entire body. Fetch first if you're only changing part of it.
+`npx --yes @primitive.ai/prim spec update <id> --file <path>` replaces the entire body. Fetch first if you're only changing part of it.
 
 ### Update a spec from a local file and apply to the project
 ```
@@ -83,7 +83,7 @@ npx --yes @primitive.ai/prim hooks uninstall
 1. Fetches the org's spec→file-pattern mappings.
 2. Glob-matches staged files against each spec's patterns (`*` and `**` supported).
 3. For each affected spec, sends `git diff --cached` to `/api/cli/contexts/:id/sync-diff`. The backend runs an **LLM over (current spec + diff)** to produce edits, updates the spec text, then applies the new spec to the project.
-4. Prints `[synced] <id> — <name>` (or `[error]` / `[skip]`) per affected spec to stderr.
+4. Prints `[synced] <id> — <name>` or `[skip]` per affected spec to stdout, and `[error]` lines to stderr.
 
 What that means:
 
