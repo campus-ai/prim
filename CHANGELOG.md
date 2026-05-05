@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-alpha.12](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-05-05)
+
+
+### Features
+
+* **git:** add a git context helper for branch / sha / repoFullName / prNumber ([d949ac5](https://github.com/campus-ai/prim/commit/d949ac5a676ac51b1cf5b95a93b2309e7989c689))
+* **mappings:** scope spec mappings to the current branch ([2655bdd](https://github.com/campus-ai/prim/commit/2655bdd110544030a3abb5629877fc89f28a45e0))
+* **spec:** add `prim spec create` with --branch and --pr flags ([71b73cf](https://github.com/campus-ai/prim/commit/71b73cfcdda468328e4246daca198e3d42644278))
+* **sync-diff:** send branch context with diff payloads and handle "not_linked" responses ([57cc004](https://github.com/campus-ai/prim/commit/57cc0047c751c686da4675b5d33c4b584e2c95b4))
+
 ## [0.1.0-alpha.11](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-04-22)
 
 
