@@ -15,11 +15,18 @@
  */
 import { execSync } from "node:child_process";
 import { getClient } from "../client.js";
+import { type GitContext, getGitContext } from "../utils/git.js";
 
 export interface ServerSpecMapping {
   _id: string;
   name: string;
   filePatterns: string[];
+  linkedBranches?: Array<{
+    branch: string;
+    prNumber?: number;
+    prState?: "draft" | "open" | "closed" | "merged";
+    prReviewDecision?: "approved" | "changes_requested" | "review_required";
+  }>;
 }
 
 function getStagedFiles(): string[] {
@@ -96,12 +103,14 @@ export interface SyncDeps {
   getClient: () => import("../client.js").CliClient;
   getStagedFiles: () => string[];
   getStagedDiff: (files: string[]) => string;
+  getGitContext: () => GitContext;
 }
 
 const defaultDeps: SyncDeps = {
   getClient,
   getStagedFiles,
   getStagedDiff,
+  getGitContext,
 };
 
 export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<string[]> {
@@ -111,10 +120,21 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
   }
 
   const client = deps.getClient();
+  const gitCtx = deps.getGitContext();
+
+  let mappingsUrl = "/api/cli/specs/mappings";
+  if (gitCtx.repoFullName && gitCtx.branch) {
+    const params = new URLSearchParams({
+      repoFullName: gitCtx.repoFullName,
+      branch: gitCtx.branch,
+    });
+    mappingsUrl = `${mappingsUrl}?${params.toString()}`;
+  }
+
   let mappings: ServerSpecMapping[] = [];
 
   try {
-    mappings = (await client.get("/api/cli/specs/mappings", {
+    mappings = (await client.get(mappingsUrl, {
       signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
     })) as ServerSpecMapping[];
   } catch {
@@ -125,6 +145,7 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
     return [];
   }
 
+  const specsById = new Map(mappings.map((s) => [s._id, s]));
   const affectedContexts = findAffectedContexts(stagedFiles, mappings);
 
   if (affectedContexts.size === 0) {
@@ -164,14 +185,25 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
       )) as SyncDiffResponse;
 
       const name = (ctx.name as string) ?? "(unnamed)";
+      const spec = specsById.get(contextId);
+      const link = spec?.linkedBranches?.find((l) => l.branch === gitCtx.branch);
+      let linkSuffix = "";
+      if (link) {
+        const prBits = link.prNumber
+          ? ` #${String(link.prNumber)}${link.prState ? ` ${link.prState}` : ""}`
+          : "";
+        linkSuffix = ` (linked to ${link.branch}${prBits})`;
+      } else if (gitCtx.branch && spec?.linkedBranches?.length === 0) {
+        linkSuffix = ` (auto-linking to ${gitCtx.branch})`;
+      }
       if (response.truncated && response.sizeChars && response.limitChars) {
         const sizeKiB = Math.round(response.sizeChars / 1024);
         const limitKiB = Math.round(response.limitChars / 1024);
         console.log(
-          `  [synced] ${contextId} — ${name} (truncated: ${String(sizeKiB)} KiB → ${String(limitKiB)} KiB analyzed)`,
+          `  [synced] ${contextId} — ${name} (truncated: ${String(sizeKiB)} KiB → ${String(limitKiB)} KiB analyzed)${linkSuffix}`,
         );
       } else {
-        console.log(`  [synced] ${contextId} — ${name}`);
+        console.log(`  [synced] ${contextId} — ${name}${linkSuffix}`);
       }
       synced.push(contextId);
     } catch (error) {
