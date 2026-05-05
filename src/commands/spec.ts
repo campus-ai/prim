@@ -6,6 +6,7 @@
  *
  * prim spec list [--project-id <id>]
  * prim spec get <context-id>
+ * prim spec create --scope <scope> --name <name> [--branch <branch>] [--pr <pr>]
  * prim spec update <context-id> --text <text> | --file <path>
  * prim spec sync <context-id>
  */
@@ -13,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { getGitContext } from "../utils/git.js";
 
 export function registerSpecCommands(program: Command) {
   const spec = program.command("spec").description("Manage spec documents");
@@ -73,6 +75,69 @@ export function registerSpecCommands(program: Command) {
 
       printSpec(ctx);
     });
+
+  // ── create ────────────────────────────────────────────────────────────
+  spec
+    .command("create")
+    .description("Create a new spec document")
+    .requiredOption("-s, --scope <scope>", "Scope: project, global, external")
+    .requiredOption("-n, --name <name>", "Spec name")
+    .option("-t, --text <text>", "Spec text content")
+    .option("-f, --file <path>", "Read text content from file")
+    .option("--project-id <projectId>", "Link to project(s), comma-separated")
+    .option("--branch <branch>", "Link spec to this branch on the current repo")
+    .option("--pr <prNumber>", "Optional PR number to attach to the link")
+    .action(
+      async (opts: {
+        scope: string;
+        name: string;
+        text?: string;
+        file?: string;
+        projectId?: string;
+        branch?: string;
+        pr?: string;
+      }) => {
+        const client = getClient();
+
+        let text = opts.text;
+        if (opts.file) {
+          text = readFileSync(opts.file, "utf-8");
+        }
+
+        const taskIds = opts.projectId
+          ? opts.projectId.split(",").map((id) => id.trim())
+          : undefined;
+
+        let linkedBranch: { repoFullName: string; branch: string; prNumber?: number } | undefined;
+        if (opts.branch) {
+          const { repoFullName } = getGitContext();
+          if (!repoFullName) {
+            console.warn(
+              "[prim] --branch supplied but origin remote is not GitHub; skipping link.",
+            );
+          } else {
+            linkedBranch = { repoFullName, branch: opts.branch };
+            if (opts.pr) {
+              const n = Number.parseInt(opts.pr, 10);
+              if (Number.isFinite(n)) linkedBranch.prNumber = n;
+            }
+          }
+        }
+
+        const result = (await client.post("/api/cli/contexts", {
+          scope: opts.scope === "project" ? "task" : opts.scope,
+          name: opts.name,
+          text,
+          taskIds,
+          isSpecDocument: true,
+          linkedBranch,
+        })) as { _id: string };
+
+        console.log(
+          `Created spec: ${result._id}${linkedBranch ? ` (linked to ${linkedBranch.branch})` : ""}`,
+        );
+      },
+    );
 
   // ── update ────────────────────────────────────────────────────────────
   spec

@@ -20,6 +20,7 @@ describe("registerSpecCommands", () => {
 
     expect(subcommands).toContain("list");
     expect(subcommands).toContain("get");
+    expect(subcommands).toContain("create");
     expect(subcommands).toContain("update");
     expect(subcommands).toContain("sync");
     expect(subcommands).toContain("map");
