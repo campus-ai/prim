@@ -135,36 +135,40 @@ export async function refreshToken(): Promise<string | undefined> {
 
   const siteUrl = getSiteUrl();
 
-  const response = await fetch(`${siteUrl}/mcp/broker/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshTokenValue }),
-  });
+  try {
+    const response = await fetch(`${siteUrl}/mcp/broker/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshTokenValue }),
+    });
 
-  if (!response.ok) {
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const data = (await response.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+    };
+
+    if (!data.access_token) {
+      return undefined;
+    }
+
+    // Save new tokens
+    writeFileSync(TOKEN_FILE_PATH, data.access_token, { mode: 0o600 });
+
+    if (data.refresh_token) {
+      writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
+    }
+
+    saveTokenExpiry(data.access_token, data.expires_in);
+
+    return data.access_token;
+  } catch {
     return undefined;
   }
-
-  const data = (await response.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-
-  if (!data.access_token) {
-    return undefined;
-  }
-
-  // Save new tokens
-  writeFileSync(TOKEN_FILE_PATH, data.access_token, { mode: 0o600 });
-
-  if (data.refresh_token) {
-    writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
-  }
-
-  saveTokenExpiry(data.access_token, data.expires_in);
-
-  return data.access_token;
 }
 
 /**
@@ -194,9 +198,13 @@ async function request(
 
   // Proactive refresh: avoid 401 round-trip by refreshing before expiry
   if (_cachedToken && isTokenExpiringSoon()) {
-    const newToken = await refreshToken();
-    if (newToken) {
-      _cachedToken = newToken;
+    try {
+      const newToken = await refreshToken();
+      if (newToken) {
+        _cachedToken = newToken;
+      }
+    } catch {
+      // Refresh failed; proceed with existing token
     }
   }
 
@@ -220,10 +228,14 @@ async function request(
 
   // Attempt refresh on 401
   if (res.status === 401) {
-    const newToken = await refreshToken();
-    if (newToken) {
-      _cachedToken = newToken;
-      res = await doFetch(newToken);
+    try {
+      const newToken = await refreshToken();
+      if (newToken) {
+        _cachedToken = newToken;
+        res = await doFetch(newToken);
+      }
+    } catch {
+      // Refresh failed; fall through to 401 error below
     }
   }
 
