@@ -67,6 +67,7 @@ export interface SyncDiffResponse {
   truncated?: boolean;
   sizeChars?: number;
   limitChars?: number;
+  reason?: string;
 }
 
 export function findAffectedContexts(
@@ -178,13 +179,26 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
         continue;
       }
 
-      const response = (await client.post(
-        `/api/cli/contexts/${contextId}/sync-diff`,
-        { diffContent, affectedFiles: affected.matchedFiles },
-        { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
-      )) as SyncDiffResponse;
+      const body: Record<string, unknown> = {
+        diffContent,
+        affectedFiles: affected.matchedFiles,
+      };
+      if (gitCtx.branch) body.branch = gitCtx.branch;
+      if (gitCtx.sha) body.sha = gitCtx.sha;
+      if (gitCtx.repoFullName) body.repoFullName = gitCtx.repoFullName;
+      if (gitCtx.prNumber !== null) body.prNumber = gitCtx.prNumber;
+
+      const response = (await client.post(`/api/cli/contexts/${contextId}/sync-diff`, body, {
+        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
+      })) as SyncDiffResponse;
 
       const name = (ctx.name as string) ?? "(unnamed)";
+      if (!response.analyzing && response.reason === "not_linked") {
+        console.log(
+          `  [skip] ${contextId} — ${name} — not linked to ${gitCtx.branch ?? "(no branch)"}`,
+        );
+        continue;
+      }
       const spec = specsById.get(contextId);
       const link = spec?.linkedBranches?.find((l) => l.branch === gitCtx.branch);
       let linkSuffix = "";
