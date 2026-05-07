@@ -26,6 +26,11 @@ export interface ServerSpecMapping {
     prNumber?: number;
     prState?: "draft" | "open" | "closed" | "merged";
     prReviewDecision?: "approved" | "changes_requested" | "review_required";
+    latestReviewSummary?: {
+      findingsCount?: number;
+      headSha: string;
+      status: "pending" | "completed" | "failed";
+    };
   }>;
 }
 
@@ -210,6 +215,15 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
       } else if (gitCtx.branch && spec?.linkedBranches?.length === 0) {
         linkSuffix = ` (auto-linking to ${gitCtx.branch})`;
       }
+      const review = link?.latestReviewSummary;
+      let reviewSuffix = "";
+      if (review?.status === "completed") {
+        const n = review.findingsCount ?? 0;
+        reviewSuffix = ` (reviewed: ${String(n)} finding${n === 1 ? "" : "s"})`;
+      } else if (review?.status === "failed") {
+        reviewSuffix = " (review failed)";
+      }
+      linkSuffix += reviewSuffix;
       if (response.truncated && response.sizeChars && response.limitChars) {
         const sizeKiB = Math.round(response.sizeChars / 1024);
         const limitKiB = Math.round(response.limitChars / 1024);
