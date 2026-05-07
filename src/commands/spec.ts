@@ -196,6 +196,35 @@ export function registerSpecCommands(program: Command) {
       }
     });
 
+  // ── review ────────────────────────────────────────────────────────────
+  spec
+    .command("review <contextId>")
+    .description("Manually trigger the PR Intent Review bot for a spec")
+    .requiredOption("--pr <prNumber>", "PR number to review against")
+    .option("--sha <headSha>", "Commit SHA the review runs against (defaults to current HEAD)")
+    .action(async (contextId: string, opts: { pr: string; sha?: string }) => {
+      const prNumber = Number.parseInt(opts.pr, 10);
+      if (!Number.isFinite(prNumber)) {
+        console.error("--pr must be an integer.");
+        process.exit(1);
+      }
+      const headSha = opts.sha ?? getGitContext().sha;
+      if (!headSha) {
+        console.error("Could not determine head SHA — pass --sha or run inside a git checkout.");
+        process.exit(1);
+      }
+
+      const client = getClient();
+      await client.post(`/api/cli/contexts/${contextId}/review`, {
+        prNumber,
+        headSha,
+      });
+
+      console.log(
+        `Scheduled review: ${contextId} against PR #${String(prNumber)} @ ${headSha.slice(0, 7)}`,
+      );
+    });
+
   // ── map ───────────────────────────────────────────────────────────────
   spec
     .command("map <contextId>")
