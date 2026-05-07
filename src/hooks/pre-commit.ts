@@ -30,6 +30,7 @@ export interface ServerSpecMapping {
       findingsCount?: number;
       headSha: string;
       status: "pending" | "completed" | "failed";
+      prCommentUrl?: string;
     };
   }>;
 }
@@ -219,7 +220,10 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
       let reviewSuffix = "";
       if (review?.status === "completed") {
         const n = review.findingsCount ?? 0;
-        reviewSuffix = ` (reviewed: ${String(n)} finding${n === 1 ? "" : "s"})`;
+        const urlSuffix = review.prCommentUrl
+          ? ` → ${review.prCommentUrl.replace(/^https?:\/\//, "")}`
+          : "";
+        reviewSuffix = ` (reviewed: ${String(n)} finding${n === 1 ? "" : "s"}${urlSuffix})`;
       } else if (review?.status === "failed") {
         reviewSuffix = " (review failed)";
       }
