@@ -225,6 +225,34 @@ export function registerSpecCommands(program: Command) {
       );
     });
 
+  // ── drift ─────────────────────────────────────────────────────────────
+  spec
+    .command("drift <contextId>")
+    .description("Dispatch the Claude Code drift-fix workflow against a PR")
+    .requiredOption("--pr <prNumber>", "PR number to dispatch the drift-fix workflow against")
+    .action(async (contextId: string, opts: { pr: string }) => {
+      const prNumber = Number.parseInt(opts.pr, 10);
+      if (!Number.isFinite(prNumber)) {
+        console.error("--pr must be an integer.");
+        process.exit(1);
+      }
+
+      const client = getClient();
+      const result = (await client.post(`/api/cli/contexts/${contextId}/drift`, {
+        prNumber,
+      })) as { dispatched: boolean; runUrl?: string };
+
+      if (result.dispatched) {
+        const ref = result.runUrl ? `: ${result.runUrl}` : "";
+        console.log(`Dispatched drift-fix workflow${ref}`);
+      } else {
+        console.error(
+          "Drift-fix dispatch failed. Likely causes: actions:write App scope not granted, primitive-drift-fix.yml workflow file missing, or no findings on the latest review.",
+        );
+        process.exit(1);
+      }
+    });
+
   // ── status ────────────────────────────────────────────────────────────
   spec
     .command("status <taskId>")

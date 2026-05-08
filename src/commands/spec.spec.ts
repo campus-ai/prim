@@ -25,6 +25,7 @@ describe("registerSpecCommands", () => {
     expect(subcommands).toContain("sync");
     expect(subcommands).toContain("review");
     expect(subcommands).toContain("status");
+    expect(subcommands).toContain("drift");
     expect(subcommands).toContain("map");
     expect(subcommands).toContain("unmap");
     expect(subcommands).toContain("auto-map");
