@@ -225,6 +225,39 @@ export function registerSpecCommands(program: Command) {
       );
     });
 
+  // ── status ────────────────────────────────────────────────────────────
+  spec
+    .command("status <taskId>")
+    .description(
+      "Show task status, auto-complete suppression flag, and the most-recent bot auto-completion",
+    )
+    .action(async (taskId: string) => {
+      const client = getClient();
+      const result = (await client.get(`/api/cli/tasks/${taskId}/status`)) as {
+        status: string;
+        autoCompleteSuppressed: boolean;
+        lastAutoCompleteActivity?: {
+          createdAt?: number;
+          explanation: string;
+          prNumber?: number;
+        };
+      };
+
+      console.log(`status: ${result.status}`);
+      console.log(`auto-complete suppressed: ${result.autoCompleteSuppressed ? "yes" : "no"}`);
+      const last = result.lastAutoCompleteActivity;
+      if (last) {
+        const when = last.createdAt ? new Date(last.createdAt).toISOString() : "—";
+        const pr = last.prNumber ? `#${String(last.prNumber)}` : "—";
+        console.log(`last auto-complete: ${when} (PR ${pr})`);
+        if (last.explanation) {
+          console.log(`  ${last.explanation}`);
+        }
+      } else {
+        console.log("last auto-complete: —");
+      }
+    });
+
   // ── map ───────────────────────────────────────────────────────────────
   spec
     .command("map <contextId>")
