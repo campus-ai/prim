@@ -19,6 +19,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { createPatch } from "diff";
+import { printJson } from "../output.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -141,15 +142,27 @@ export function runUninstall(cwd: string, opts: { target?: string }): number {
   return 0;
 }
 
-export function runStatus(cwd: string, opts: { target?: string }): number {
+export function runStatus(cwd: string, opts: { target?: string; json?: boolean }): number {
   const target = resolveTarget(cwd, opts.target);
   if (target === null) return 1;
-  if (!existsSync(target)) {
+
+  const fileExists = existsSync(target);
+  let installed = false;
+  if (fileExists) {
+    const content = readFileSync(target, "utf-8");
+    installed = content.includes(SKILL_BEGIN) && content.includes(SKILL_END);
+  }
+
+  if (opts.json) {
+    printJson({ installed, target });
+    return installed ? 0 : 1;
+  }
+
+  if (!fileExists) {
     console.log(`No rules file at ${target}`);
     return 1;
   }
-  const content = readFileSync(target, "utf-8");
-  if (content.includes(SKILL_BEGIN) && content.includes(SKILL_END)) {
+  if (installed) {
     console.log(`PRIM SKILL v1 installed at ${target}`);
     return 0;
   }
@@ -188,7 +201,8 @@ export function registerSkillCommands(program: Command) {
     .command("status")
     .description("Report whether the prim skill block is installed")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
-    .action((opts: { target?: string }) => {
+    .option("--json", "Output as JSON")
+    .action((opts: { target?: string; json?: boolean }) => {
       process.exit(runStatus(process.cwd(), opts));
     });
 }
