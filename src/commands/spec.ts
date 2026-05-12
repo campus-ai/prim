@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { printJson } from "../output.js";
 
 export function registerSpecCommands(program: Command) {
   const spec = program.command("spec").description("Manage spec documents");
@@ -22,13 +23,19 @@ export function registerSpecCommands(program: Command) {
     .command("list")
     .description("List spec documents")
     .option("-t, --project-id <projectId>", "List spec for a specific root project")
-    .action(async (opts: { projectId?: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (opts: { projectId?: string; json?: boolean }) => {
       const client = getClient();
 
       if (opts.projectId) {
         const specs = (await client.get(`/api/cli/specs?rootTaskId=${opts.projectId}`)) as Array<
           Record<string, unknown>
         >;
+
+        if (opts.json) {
+          printJson(specs[0] ?? null);
+          return;
+        }
 
         if (specs.length === 0) {
           console.log("No spec document found for this project.");
@@ -41,6 +48,11 @@ export function registerSpecCommands(program: Command) {
 
       // List all spec documents
       const contexts = (await client.get("/api/cli/specs")) as Array<Record<string, unknown>>;
+
+      if (opts.json) {
+        printJson(contexts);
+        return;
+      }
 
       if (contexts.length === 0) {
         console.log("No spec documents found.");
@@ -62,9 +74,15 @@ export function registerSpecCommands(program: Command) {
     .command("get <contextId>")
     .description("Get a spec document by ID")
     .option("--text-only", "Print only the text content (no metadata)")
-    .action(async (contextId: string, opts: { textOnly?: boolean }) => {
+    .option("--json", "Output as JSON (overrides --text-only)")
+    .action(async (contextId: string, opts: { textOnly?: boolean; json?: boolean }) => {
       const client = getClient();
       const ctx = (await client.get(`/api/cli/contexts/${contextId}`)) as Record<string, unknown>;
+
+      if (opts.json) {
+        printJson(ctx);
+        return;
+      }
 
       if (opts.textOnly) {
         console.log((ctx.text as string) ?? "");
@@ -81,38 +99,50 @@ export function registerSpecCommands(program: Command) {
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
     .option("-n, --name <name>", "New name")
-    .action(async (contextId: string, opts: { text?: string; file?: string; name?: string }) => {
-      const client = getClient();
+    .option("--json", "Output as JSON")
+    .action(
+      async (
+        contextId: string,
+        opts: { text?: string; file?: string; name?: string; json?: boolean },
+      ) => {
+        const client = getClient();
 
-      let text = opts.text;
-      if (opts.file) {
-        text = readFileSync(opts.file, "utf-8");
-      }
+        let text = opts.text;
+        if (opts.file) {
+          text = readFileSync(opts.file, "utf-8");
+        }
 
-      if (!(text || opts.name)) {
-        console.error("Provide --text, --file, or --name to update.");
-        process.exit(1);
-      }
+        if (!(text || opts.name)) {
+          console.error("Provide --text, --file, or --name to update.");
+          process.exit(1);
+        }
 
-      await client.patch(`/api/cli/contexts/${contextId}`, {
-        name: opts.name,
-        text,
-        skipTiptapLifecycle: !!text,
-      });
+        await client.patch(`/api/cli/contexts/${contextId}`, {
+          name: opts.name,
+          text,
+          skipTiptapLifecycle: !!text,
+        });
 
-      // Inject content into the TipTap Y.Doc to preserve version history
-      if (text) {
-        await client.post(`/api/cli/contexts/${contextId}/inject`);
-      }
+        // Inject content into the TipTap Y.Doc to preserve version history
+        if (text) {
+          await client.post(`/api/cli/contexts/${contextId}/inject`);
+        }
 
-      console.log(`Updated spec: ${contextId}`);
-    });
+        if (opts.json) {
+          printJson({ _id: contextId });
+          return;
+        }
+
+        console.log(`Updated spec: ${contextId}`);
+      },
+    );
 
   // ── sync ──────────────────────────────────────────────────────────────
   spec
     .command("sync <contextId>")
     .description("Trigger spec ↔ project DAG synchronization")
-    .action(async (contextId: string) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { json?: boolean }) => {
       const client = getClient();
 
       // First verify this is a spec document
@@ -124,6 +154,15 @@ export function registerSpecCommands(program: Command) {
       }
 
       await client.post(`/api/cli/contexts/${contextId}/sync`);
+
+      if (opts.json) {
+        printJson(
+          ctx.specRootTaskId
+            ? { _id: contextId, specRootTaskId: ctx.specRootTaskId }
+            : { _id: contextId },
+        );
+        return;
+      }
 
       console.log(`Triggered sync for spec: ${contextId}`);
       if (ctx.specRootTaskId) {
@@ -139,11 +178,17 @@ export function registerSpecCommands(program: Command) {
       "-p, --pattern <patterns...>",
       'Glob pattern(s) to associate, e.g. "src/auth/**"',
     )
-    .action(async (contextId: string, opts: { pattern: string[] }) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { pattern: string[]; json?: boolean }) => {
       const client = getClient();
       const result = (await client.post(`/api/cli/contexts/${contextId}/map`, {
         patterns: opts.pattern,
       })) as { filePatterns: string[] };
+
+      if (opts.json) {
+        printJson({ _id: contextId, filePatterns: result.filePatterns });
+        return;
+      }
 
       console.log(`Mapped patterns to spec ${contextId}:`);
       for (const p of result.filePatterns) {
@@ -156,11 +201,17 @@ export function registerSpecCommands(program: Command) {
     .command("unmap <contextId>")
     .description("Remove file pattern mappings from a spec (omit --pattern to clear all)")
     .option("-p, --pattern <patterns...>", "Specific pattern(s) to remove (omit to clear all)")
-    .action(async (contextId: string, opts: { pattern?: string[] }) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { pattern?: string[]; json?: boolean }) => {
       const client = getClient();
       const result = (await client.post(`/api/cli/contexts/${contextId}/unmap`, {
         patterns: opts.pattern,
       })) as { filePatterns: string[] };
+
+      if (opts.json) {
+        printJson({ _id: contextId, filePatterns: result.filePatterns });
+        return;
+      }
 
       if (result.filePatterns.length === 0) {
         console.log(`Cleared all file patterns from spec ${contextId}`);
@@ -176,9 +227,16 @@ export function registerSpecCommands(program: Command) {
   spec
     .command("auto-map <contextId>")
     .description("Trigger auto-mapping of file patterns for a spec")
-    .action(async (contextId: string) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { json?: boolean }) => {
       const client = getClient();
       await client.post(`/api/cli/contexts/${contextId}/auto-map`);
+
+      if (opts.json) {
+        printJson({ _id: contextId });
+        return;
+      }
+
       console.log(`Auto-mapping triggered for spec: ${contextId}`);
     });
 }
