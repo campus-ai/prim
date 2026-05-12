@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import updateNotifier from "update-notifier";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerContextCommands } from "./commands/context.js";
 import { registerHooksCommands } from "./commands/hooks.js";
@@ -24,6 +25,8 @@ import { registerSpecCommands } from "./commands/spec.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
+
+updateNotifier({ pkg }).notify();
 
 const program = new Command();
 
