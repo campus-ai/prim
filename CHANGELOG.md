@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.12](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-05-12)
+
+
+### Features
+
+* **notifier:** surface stale-version warnings ([804bba0](https://github.com/campus-ai/prim/commit/804bba0bf400df147163bb4c0676b8b53eaaba2b))
+
 ## [0.1.0-alpha.11](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-04-22)
 
 
