@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.13](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-05-12)
+
+
+### Bug Fixes
+
+* pin [@latest](https://github.com/latest) in setup.md procedure (force-update v1) ([#33](https://github.com/campus-ai/prim/issues/33)) ([b5a12df](https://github.com/campus-ai/prim/commit/b5a12dfd021eeee2e662d959a3d51b979c547380))
+
 ## [0.1.0-alpha.12](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-05-12)
 
 
