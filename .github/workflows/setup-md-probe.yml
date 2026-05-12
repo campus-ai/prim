@@ -15,15 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify local setup.md sentinel
-        run: grep -q '<!-- PRIMITIVE_SETUP_V1 -->' setup.md
+      - name: Verify local setup.md sentinel + @latest qualifier
+        run: |
+          set -euo pipefail
+          grep -q '<!-- PRIMITIVE_SETUP_V1 -->' setup.md
+          ! grep -nE 'npx --yes @primitive\.ai/prim[^@]' setup.md
 
   live-url:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Verify pinned URL resolves with sentinel
+      - name: Verify pinned URL serves sentinel + @latest qualifier
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/campus-ai/prim/v1/setup.md \
-            | grep -q '<!-- PRIMITIVE_SETUP_V1 -->'
+          body=$(curl -fsSL https://raw.githubusercontent.com/campus-ai/prim/v1/setup.md)
+          echo "$body" | grep -q '<!-- PRIMITIVE_SETUP_V1 -->'
+          ! echo "$body" | grep -nE 'npx --yes @primitive\.ai/prim[^@]'
