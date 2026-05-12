@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.14](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-05-12)
+
+
+### Features
+
+* **auth:** add --json to auth status ([a095531](https://github.com/campus-ai/prim/commit/a0955317c145638367360f5562c83d71303b3bd7))
+* **cli:** add printJson helper for structured output ([db5b0af](https://github.com/campus-ai/prim/commit/db5b0af10d2a58f6c2f6dc5053817f0625ab5cc4))
+* **context:** add --json to context commands ([6bb4228](https://github.com/campus-ai/prim/commit/6bb4228eec3dc324ef1949ef72f9afd11ca4bba8))
+* **project:** add --json to project create ([4805dbf](https://github.com/campus-ai/prim/commit/4805dbfaa22d08530b6e92a99eb45aafbc0dea2f))
+* **skill:** add --json to skill status ([db60ee7](https://github.com/campus-ai/prim/commit/db60ee73a9a19722b6653b53d2ef39739f1ea11a))
+* **spec:** add --json to spec commands ([3975dbb](https://github.com/campus-ai/prim/commit/3975dbbcf78292c87141a96d68385a7b31b35bc8))
+
 ## [0.1.0-alpha.13](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-05-12)
 
 
