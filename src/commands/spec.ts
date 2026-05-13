@@ -38,7 +38,7 @@ export function registerSpecCommands(program: Command) {
         }
 
         if (specs.length === 0) {
-          console.log("No spec document found for this project.");
+          console.error("No spec document found for this project.");
           return;
         }
 
@@ -55,7 +55,7 @@ export function registerSpecCommands(program: Command) {
       }
 
       if (contexts.length === 0) {
-        console.log("No spec documents found.");
+        console.error("No spec documents found.");
         return;
       }
 
@@ -66,7 +66,7 @@ export function registerSpecCommands(program: Command) {
         const name = ctx.name ?? "(unnamed)";
         console.log(`${ctx._id}  ${scope.padEnd(8)} ${String(review).padEnd(10)} ${name}`);
       }
-      console.log(`\n${contexts.length} spec(s)`);
+      console.error(`\n${contexts.length} spec(s)`);
     });
 
   // ── get ───────────────────────────────────────────────────────────────
@@ -133,7 +133,8 @@ export function registerSpecCommands(program: Command) {
           return;
         }
 
-        console.log(`Updated spec: ${contextId}`);
+        console.error(`Updated spec: ${contextId}`);
+        console.log(contextId);
       },
     );
 
@@ -164,10 +165,11 @@ export function registerSpecCommands(program: Command) {
         return;
       }
 
-      console.log(`Triggered sync for spec: ${contextId}`);
+      console.error(`Triggered sync for spec: ${contextId}`);
       if (ctx.specRootTaskId) {
-        console.log(`Root project: ${ctx.specRootTaskId}`);
+        console.error(`Root project: ${ctx.specRootTaskId}`);
       }
+      console.log(contextId);
     });
 
   // ── map ───────────────────────────────────────────────────────────────
@@ -190,10 +192,11 @@ export function registerSpecCommands(program: Command) {
         return;
       }
 
-      console.log(`Mapped patterns to spec ${contextId}:`);
+      console.error(`Mapped patterns to spec ${contextId}:`);
       for (const p of result.filePatterns) {
-        console.log(`  ${p}`);
+        console.error(`  ${p}`);
       }
+      console.log(contextId);
     });
 
   // ── unmap ─────────────────────────────────────────────────────────────
@@ -214,13 +217,14 @@ export function registerSpecCommands(program: Command) {
       }
 
       if (result.filePatterns.length === 0) {
-        console.log(`Cleared all file patterns from spec ${contextId}`);
+        console.error(`Cleared all file patterns from spec ${contextId}`);
       } else {
-        console.log(`Updated patterns for spec ${contextId}:`);
+        console.error(`Updated patterns for spec ${contextId}:`);
         for (const p of result.filePatterns) {
-          console.log(`  ${p}`);
+          console.error(`  ${p}`);
         }
       }
+      console.log(contextId);
     });
 
   // ── auto-map ─────────────────────────────────────────────────────────
@@ -237,7 +241,8 @@ export function registerSpecCommands(program: Command) {
         return;
       }
 
-      console.log(`Auto-mapping triggered for spec: ${contextId}`);
+      console.error(`Auto-mapping triggered for spec: ${contextId}`);
+      console.log(contextId);
     });
 }
 
