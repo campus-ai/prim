@@ -106,26 +106,27 @@ What that means:
 
 ## Output formats
 
-Every data-returning command accepts `--json`. With `--json` set, stdout is a single JSON document — pipe to `jq` instead of parsing text:
-
-- `id=$(npx --yes @primitive.ai/prim context create -s global -n foo --text "x" --json | jq -r ._id)` — capture an ID
-- `npx --yes @primitive.ai/prim spec list --json | jq -r '.[]._id'` — list every spec ID
-- `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; the exit code remains the authoritative signal
-
-Without `--json`, mutating commands (`context create/update/delete/link/unlink`, `spec update/sync/map/unmap/auto-map`, `project create`) emit the bare resource `_id` to **stdout** (one line, no prefix) and human-readable diagnostics to **stderr**. So this also works as a one-liner without `jq`:
-
-- `id=$(npx --yes @primitive.ai/prim context create -s global -n foo --text "x")`
-
-| Command | Without `--json` | With `--json` |
+| Command | Output | Where the ID is |
 |---|---|---|
-| Mutators above | stdout: bare `_id`; stderr: `Created/Updated/...` prefix (plus secondary lines: `Root project:`, `Linked spec:`, pattern lists) | stdout: `{ "_id": "<id>", … }` with extras where applicable (`spec sync` adds `specRootTaskId`; `context link/unlink` add `project`; `project create --spec` adds `spec`; `spec map/unmap` add `filePatterns`) |
-| `context list`, `spec list` (non-empty) | stdout: rows (first token = `_id`); stderr: `N context(s)` / `N spec(s)` summary | stdout: JSON array |
-| `context list`, `spec list` (empty) | stdout: (empty); stderr: `No contexts found.` / `No spec documents found.` | stdout: `[]` |
-| `spec list --project-id <pid>` | stdout: key:value block (or stdout empty + stderr `No spec document found for this project.` if none) | stdout: single object or `null` |
-| `context get <id>` | stdout: pretty-printed JSON (always JSON; `--json` accepted for symmetry) | stdout: pretty-printed JSON |
-| `spec get <id>` | stdout: human-readable key:value block (`ID:` line first) | stdout: JSON object |
-| `spec get <id> --text-only` | stdout: raw spec markdown, nothing else | stdout: JSON object (`--json` wins over `--text-only`) |
-| `auth status` | stdout: human readout; **exit code is the authoritative signal** (0 = authed) | stdout: JSON; exit code unchanged |
+| `npx --yes @primitive.ai/prim context create` | `Created context: <id>` | Match `^Created context: (\S+)` |
+| `npx --yes @primitive.ai/prim project create` | `Created project: <id>` | Match `^Created project: (\S+)` |
+| `npx --yes @primitive.ai/prim spec update` | `Updated spec: <id>` | Match `^Updated spec: (\S+)` |
+| `npx --yes @primitive.ai/prim spec sync` | `Triggered sync for spec: <id>` | Match `^Triggered sync for spec: (\S+)` |
+| `npx --yes @primitive.ai/prim context list`, `npx --yes @primitive.ai/prim spec list` | Table with trailing count line | First token of each row (skip the final `N spec(s)` / `N context(s)` summary line) |
+| `npx --yes @primitive.ai/prim spec list --project-id <pid>` | Single-spec block (key:value) | `ID:` line |
+| `npx --yes @primitive.ai/prim context get <id>` | Pretty-printed JSON | `._id` field |
+| `npx --yes @primitive.ai/prim spec get <id>` | Human-readable key:value block | `ID:` line |
+| `npx --yes @primitive.ai/prim spec get <id> --text-only` | Raw spec markdown, nothing else | n/a |
+
+### Structured output: `--json`
+
+Every data-returning command above accepts `--json`. With `--json` set, stdout is a single JSON document — pipe to `jq` instead of regex-parsing.
+
+- `npx --yes @primitive.ai/prim spec list --json | jq -r '.[]._id'` — list every spec ID
+- `id=$(npx --yes @primitive.ai/prim context create -n foo -s global --text "x" --json | jq -r ._id)` — capture an ID without regex
+- `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; exit code remains the authoritative signal
+
+Shapes follow the API response where one exists; mutators return `{ "_id": "<id>", … }` with whatever extra field the human output already conveyed (e.g. `spec sync` adds `specRootTaskId` when present, `context link` adds `project`). `spec list --project-id <id>` returns a single object (or `null` if no spec); the no-`--project-id` path returns the full array. With both `--json` and `--text-only` on `spec get`, `--json` wins.
 
 ## Pitfalls
 
