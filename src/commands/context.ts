@@ -105,7 +105,8 @@ export function registerContextCommands(program: Command) {
           return;
         }
 
-        console.log(`Created context: ${result._id}`);
+        console.error(`Created context: ${result._id}`);
+        console.log(result._id);
       },
     );
 
@@ -139,7 +140,8 @@ export function registerContextCommands(program: Command) {
           return;
         }
 
-        console.log(`Updated context: ${contextId}`);
+        console.error(`Updated context: ${contextId}`);
+        console.log(contextId);
       },
     );
 
@@ -157,7 +159,8 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.log(`Deleted context: ${contextId}`);
+      console.error(`Deleted context: ${contextId}`);
+      console.log(contextId);
     });
 
   // ── link ──────────────────────────────────────────────────────────────
@@ -177,7 +180,8 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.log(`Linked context ${contextId} to project ${opts.project}`);
+      console.error(`Linked context ${contextId} to project ${opts.project}`);
+      console.log(contextId);
     });
 
   // ── unlink ────────────────────────────────────────────────────────────
@@ -197,13 +201,14 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.log(`Unlinked context ${contextId} from project ${opts.project}`);
+      console.error(`Unlinked context ${contextId} from project ${opts.project}`);
+      console.log(contextId);
     });
 }
 
 function printContextList(contexts: Array<Record<string, unknown>>) {
   if (contexts.length === 0) {
-    console.log("No contexts found.");
+    console.error("No contexts found.");
     return;
   }
 
@@ -214,5 +219,5 @@ function printContextList(contexts: Array<Record<string, unknown>>) {
     const name = ctx.name ?? ctx.title ?? "(unnamed)";
     console.log(`${ctx._id}  ${scope.padEnd(8)} ${name}${spec}`);
   }
-  console.log(`\n${contexts.length} context(s)`);
+  console.error(`\n${contexts.length} context(s)`);
 }

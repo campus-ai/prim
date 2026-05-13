@@ -32,9 +32,10 @@ export function registerProjectCommands(program: Command) {
         return;
       }
 
-      console.log(`Created project: ${result._id}`);
+      console.error(`Created project: ${result._id}`);
       if (opts.spec) {
-        console.log(`Linked spec: ${opts.spec}`);
+        console.error(`Linked spec: ${opts.spec}`);
       }
+      console.log(result._id);
     });
 }
