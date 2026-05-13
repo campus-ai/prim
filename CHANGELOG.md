@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.14](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-05-13)
+
+
+### Features
+
+* **cli:** add --yes and --non-interactive global flags ([3002a37](https://github.com/campus-ai/prim/commit/3002a37329d8e4c0b2cb617995518be54ce768c3))
+* **hooks:** support non-interactive install with --target ([75b8e40](https://github.com/campus-ai/prim/commit/75b8e405cdf3d261154598776420e902a1b6f208))
+
 ## [0.1.0-alpha.13](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-05-12)
 
 
