@@ -105,8 +105,7 @@ export function registerContextCommands(program: Command) {
           return;
         }
 
-        console.error(`Created context: ${result._id}`);
-        console.log(result._id);
+        console.log(`Created context: ${result._id}`);
       },
     );
 
@@ -140,8 +139,7 @@ export function registerContextCommands(program: Command) {
           return;
         }
 
-        console.error(`Updated context: ${contextId}`);
-        console.log(contextId);
+        console.log(`Updated context: ${contextId}`);
       },
     );
 
@@ -159,8 +157,7 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.error(`Deleted context: ${contextId}`);
-      console.log(contextId);
+      console.log(`Deleted context: ${contextId}`);
     });
 
   // ── link ──────────────────────────────────────────────────────────────
@@ -180,8 +177,7 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.error(`Linked context ${contextId} to project ${opts.project}`);
-      console.log(contextId);
+      console.log(`Linked context ${contextId} to project ${opts.project}`);
     });
 
   // ── unlink ────────────────────────────────────────────────────────────
@@ -201,14 +197,13 @@ export function registerContextCommands(program: Command) {
         return;
       }
 
-      console.error(`Unlinked context ${contextId} from project ${opts.project}`);
-      console.log(contextId);
+      console.log(`Unlinked context ${contextId} from project ${opts.project}`);
     });
 }
 
 function printContextList(contexts: Array<Record<string, unknown>>) {
   if (contexts.length === 0) {
-    console.error("No contexts found.");
+    console.log("No contexts found.");
     return;
   }
 
@@ -219,5 +214,5 @@ function printContextList(contexts: Array<Record<string, unknown>>) {
     const name = ctx.name ?? ctx.title ?? "(unnamed)";
     console.log(`${ctx._id}  ${scope.padEnd(8)} ${name}${spec}`);
   }
-  console.error(`\n${contexts.length} context(s)`);
+  console.log(`\n${contexts.length} context(s)`);
 }
