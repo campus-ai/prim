@@ -33,7 +33,12 @@ const program = new Command();
 program
   .name("prim")
   .description("CLI for managing Primitive specs and contexts")
-  .version(pkg.version);
+  .version(pkg.version)
+  .option("-y, --yes", "auto-confirm prompts")
+  .option(
+    "--non-interactive",
+    "fail fast instead of prompting (also: CI=1, PRIM_NON_INTERACTIVE=1)",
+  );
 
 registerAuthCommands(program);
 registerContextCommands(program);
