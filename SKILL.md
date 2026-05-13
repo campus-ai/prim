@@ -83,9 +83,13 @@ npx --yes @primitive.ai/prim project create -n "<name>" --spec <contextId>     #
 
 ### Install the pre-commit hook
 ```
-npx --yes @primitive.ai/prim hooks install     # auto-detects Husky and prompts
+npx --yes @primitive.ai/prim hooks install                       # auto-detects Husky and prompts
+npx --yes @primitive.ai/prim hooks install --yes                 # confirm Husky (non-interactive)
+npx --yes @primitive.ai/prim hooks install --target=git-hooks    # force .git/hooks (skip Husky detection)
 npx --yes @primitive.ai/prim hooks uninstall
 ```
+Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set. The error message names both escapes.
+
 **Note:** `hooks uninstall` only removes `.git/hooks/pre-commit`. If the hook was installed into `.husky/pre-commit`, you must remove the prim block from that file manually.
 
 ## How the pre-commit hook behaves
