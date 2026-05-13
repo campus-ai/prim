@@ -118,6 +118,16 @@ What that means:
 | `npx --yes @primitive.ai/prim spec get <id>` | Human-readable key:value block | `ID:` line |
 | `npx --yes @primitive.ai/prim spec get <id> --text-only` | Raw spec markdown, nothing else | n/a |
 
+### Structured output: `--json`
+
+Every data-returning command above accepts `--json`. With `--json` set, stdout is a single JSON document — pipe to `jq` instead of regex-parsing.
+
+- `npx --yes @primitive.ai/prim spec list --json | jq -r '.[]._id'` — list every spec ID
+- `id=$(npx --yes @primitive.ai/prim context create -n foo -s global --text "x" --json | jq -r ._id)` — capture an ID without regex
+- `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; exit code remains the authoritative signal
+
+Shapes follow the API response where one exists; mutators return `{ "_id": "<id>", … }` with whatever extra field the human output already conveyed (e.g. `spec sync` adds `specRootTaskId` when present, `context link` adds `project`). `spec list --project-id <id>` returns a single object (or `null` if no spec); the no-`--project-id` path returns the full array. With both `--json` and `--text-only` on `spec get`, `--json` wins.
+
 ## Pitfalls
 
 - **`npx --yes @primitive.ai/prim spec sync` archives anything dropped from the spec.** Removed content is archived (recoverable), not deleted.

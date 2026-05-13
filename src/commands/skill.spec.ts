@@ -321,6 +321,18 @@ describe("runStatus", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("No PRIM SKILL block"));
     logSpy.mockRestore();
   });
+
+  it("emits {installed, target} JSON under --json (installed case)", () => {
+    const existing = `${SKILL_BEGIN}\nbody\n${SKILL_END}\n`;
+    fsFixture({ target: "/repo/CLAUDE.md", targetContent: existing });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runStatus("/repo", { json: true })).toBe(0);
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+      installed: true,
+      target: "/repo/CLAUDE.md",
+    });
+    logSpy.mockRestore();
+  });
 });
 
 afterEach(() => {

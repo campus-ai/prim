@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { printJson } from "../output.js";
 
 export function registerContextCommands(program: Command) {
   const context = program.command("context").description("Manage contexts");
@@ -23,7 +24,8 @@ export function registerContextCommands(program: Command) {
     .description("List contexts")
     .option("-s, --scope <scope>", "Filter by scope: project, global, external")
     .option("-t, --project-id <projectId>", "List contexts linked to a specific project")
-    .action(async (opts: { scope?: string; projectId?: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (opts: { scope?: string; projectId?: string; json?: boolean }) => {
       const client = getClient();
 
       const params = new URLSearchParams();
@@ -37,6 +39,12 @@ export function registerContextCommands(program: Command) {
       const contexts = (await client.get(`/api/cli/contexts?${params.toString()}`)) as Array<
         Record<string, unknown>
       >;
+
+      if (opts.json) {
+        printJson(contexts);
+        return;
+      }
+
       printContextList(contexts);
     });
 
@@ -44,11 +52,12 @@ export function registerContextCommands(program: Command) {
   context
     .command("get <contextId>")
     .description("Get a context by ID")
+    .option("--json", "Output as JSON (default behavior; accepted for symmetry)")
     .action(async (contextId: string) => {
       const client = getClient();
       const ctx = (await client.get(`/api/cli/contexts/${contextId}`)) as Record<string, unknown>;
 
-      console.log(JSON.stringify(ctx, null, 2));
+      printJson(ctx);
     });
 
   // ── create ────────────────────────────────────────────────────────────
@@ -61,6 +70,7 @@ export function registerContextCommands(program: Command) {
     .option("-f, --file <path>", "Read text content from file")
     .option("--project-id <projectId>", "Link to project(s), comma-separated")
     .option("--spec", "Mark as a spec document")
+    .option("--json", "Output as JSON")
     .action(
       async (opts: {
         scope: string;
@@ -69,6 +79,7 @@ export function registerContextCommands(program: Command) {
         file?: string;
         projectId?: string;
         spec?: boolean;
+        json?: boolean;
       }) => {
         const client = getClient();
 
@@ -89,6 +100,11 @@ export function registerContextCommands(program: Command) {
           isSpecDocument: opts.spec ?? false,
         })) as { _id: string };
 
+        if (opts.json) {
+          printJson({ _id: result._id });
+          return;
+        }
+
         console.log(`Created context: ${result._id}`);
       },
     );
@@ -100,29 +116,47 @@ export function registerContextCommands(program: Command) {
     .option("-n, --name <name>", "New name")
     .option("-t, --text <text>", "New text content")
     .option("-f, --file <path>", "Read text content from file")
-    .action(async (contextId: string, opts: { name?: string; text?: string; file?: string }) => {
-      const client = getClient();
+    .option("--json", "Output as JSON")
+    .action(
+      async (
+        contextId: string,
+        opts: { name?: string; text?: string; file?: string; json?: boolean },
+      ) => {
+        const client = getClient();
 
-      let text = opts.text;
-      if (opts.file) {
-        text = readFileSync(opts.file, "utf-8");
-      }
+        let text = opts.text;
+        if (opts.file) {
+          text = readFileSync(opts.file, "utf-8");
+        }
 
-      await client.patch(`/api/cli/contexts/${contextId}`, {
-        name: opts.name,
-        text,
-      });
+        await client.patch(`/api/cli/contexts/${contextId}`, {
+          name: opts.name,
+          text,
+        });
 
-      console.log(`Updated context: ${contextId}`);
-    });
+        if (opts.json) {
+          printJson({ _id: contextId });
+          return;
+        }
+
+        console.log(`Updated context: ${contextId}`);
+      },
+    );
 
   // ── delete ────────────────────────────────────────────────────────────
   context
     .command("delete <contextId>")
     .description("Delete a context")
-    .action(async (contextId: string) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { json?: boolean }) => {
       const client = getClient();
       await client.delete(`/api/cli/contexts/${contextId}`);
+
+      if (opts.json) {
+        printJson({ _id: contextId });
+        return;
+      }
+
       console.log(`Deleted context: ${contextId}`);
     });
 
@@ -131,11 +165,18 @@ export function registerContextCommands(program: Command) {
     .command("link <contextId>")
     .description("Link a context to a project")
     .requiredOption("--project <projectId>", "Project ID to link to")
-    .action(async (contextId: string, opts: { project: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { project: string; json?: boolean }) => {
       const client = getClient();
       await client.post(`/api/cli/contexts/${contextId}/link`, {
         taskId: opts.project,
       });
+
+      if (opts.json) {
+        printJson({ _id: contextId, project: opts.project });
+        return;
+      }
+
       console.log(`Linked context ${contextId} to project ${opts.project}`);
     });
 
@@ -144,11 +185,18 @@ export function registerContextCommands(program: Command) {
     .command("unlink <contextId>")
     .description("Unlink a context from a project")
     .requiredOption("--project <projectId>", "Project ID to unlink from")
-    .action(async (contextId: string, opts: { project: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (contextId: string, opts: { project: string; json?: boolean }) => {
       const client = getClient();
       await client.post(`/api/cli/contexts/${contextId}/unlink`, {
         taskId: opts.project,
       });
+
+      if (opts.json) {
+        printJson({ _id: contextId, project: opts.project });
+        return;
+      }
+
       console.log(`Unlinked context ${contextId} from project ${opts.project}`);
     });
 }
