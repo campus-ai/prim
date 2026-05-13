@@ -8,7 +8,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 
 const HOOK_SCRIPT = `#!/bin/sh
 # prim pre-commit hook — auto-syncs affected specs on commit
@@ -134,19 +134,43 @@ export function registerHooksCommands(program: Command) {
 
   hooks
     .command("install")
-    .description("Install the prim pre-commit hook")
-    .action(async () => {
+    .description("Install the prim pre-commit hook (auto-detects Husky; use --target to override)")
+    .addOption(
+      new Option("--target <where>", "install destination; bypasses Husky detection").choices([
+        "husky",
+        "git-hooks",
+      ]),
+    )
+    .action(async (opts: { target?: "husky" | "git-hooks" }, command: Command) => {
+      const globals = command.optsWithGlobals();
+      const nonInteractive = Boolean(
+        globals.nonInteractive || process.env.CI || process.env.PRIM_NON_INTERACTIVE,
+      );
       const gitRoot = getGitRoot();
 
+      if (opts.target === "husky") return installToHusky(gitRoot);
+      if (opts.target === "git-hooks") return installToDotGit(gitRoot);
+
       if (detectHusky(gitRoot)) {
-        const confirmed = await askConfirmation(
-          "Husky detected. Install prim hook into .husky/pre-commit instead of .git/hooks/pre-commit?",
-        );
-        if (confirmed) {
-          installToHusky(gitRoot);
-          return;
+        if (globals.yes) return installToHusky(gitRoot);
+        if (nonInteractive) {
+          throw new Error(
+            "--non-interactive set, refusing to prompt for Husky-hook installation. Pass --yes to confirm or --target=git-hooks to choose.",
+          );
         }
-        console.log("Falling back to .git/hooks/pre-commit install.");
+        if (!process.stdin.isTTY) {
+          console.error(
+            "Note: Husky detected but stdin is not a TTY — falling back to .git/hooks. Pass --yes for Husky or --non-interactive to fail fast.",
+          );
+        } else if (
+          await askConfirmation(
+            "Husky detected. Install prim hook into .husky/pre-commit instead of .git/hooks/pre-commit?",
+          )
+        ) {
+          return installToHusky(gitRoot);
+        } else {
+          console.log("Falling back to .git/hooks/pre-commit install.");
+        }
       }
 
       installToDotGit(gitRoot);

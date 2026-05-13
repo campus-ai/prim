@@ -291,3 +291,67 @@ describe("installToDotGit", () => {
     logSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// hooks install action (--yes / --non-interactive / --target / CI env)
+// ---------------------------------------------------------------------------
+
+describe("hooks install action", () => {
+  const originalIsTTY = process.stdin.isTTY;
+
+  beforeEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+    vi.unstubAllEnvs();
+  });
+
+  function buildProgram(): Command {
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive").exitOverride();
+    registerHooksCommands(program);
+    return program;
+  }
+
+  const huskyDetected = (p: string) => p === "/fake/root/.husky" || p === "/fake/root/.husky/_";
+
+  it("--yes installs to .husky when Husky is detected", async () => {
+    mockedExistsSync.mockImplementation(huskyDetected);
+    await buildProgram().parseAsync(["hooks", "install", "--yes"], { from: "user" });
+    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.husky/pre-commit");
+  });
+
+  it("--non-interactive throws when Husky is detected", async () => {
+    mockedExistsSync.mockImplementation(huskyDetected);
+    await expect(
+      buildProgram().parseAsync(["hooks", "install", "--non-interactive"], { from: "user" }),
+    ).rejects.toThrow(/--non-interactive set/);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("--target=husky bypasses Husky detection", async () => {
+    await buildProgram().parseAsync(["hooks", "install", "--target=husky"], { from: "user" });
+    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.husky/pre-commit");
+  });
+
+  it("--target=git-hooks installs to .git/hooks even in non-TTY without warning", async () => {
+    mockedExistsSync.mockImplementation(huskyDetected);
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.git/hooks/pre-commit");
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("CI=1 fails fast when Husky is detected (same as --non-interactive)", async () => {
+    mockedExistsSync.mockImplementation(huskyDetected);
+    vi.stubEnv("CI", "1");
+    await expect(buildProgram().parseAsync(["hooks", "install"], { from: "user" })).rejects.toThrow(
+      /--non-interactive set/,
+    );
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+  });
+});
