@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.15](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.14...v0.1.0-alpha.15) (2026-05-14)
+
+
+### Features
+
+* **cli:** opt CLI into spec ↔ PR linking via branch context ([#29](https://github.com/campus-ai/prim/issues/29)) ([f19a8a9](https://github.com/campus-ai/prim/commit/f19a8a9e36cb7e7a0eb5e25d2655945745112596))
+
 ## [0.1.0-alpha.14](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-05-13)
 
 
