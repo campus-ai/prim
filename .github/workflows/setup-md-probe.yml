@@ -1,0 +1,33 @@
+name: setup.md probe
+
+on:
+  pull_request:
+    paths:
+      - 'setup.md'
+      - '.github/workflows/setup-md-probe.yml'
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  local-sentinel:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify local setup.md sentinel + @latest qualifier
+        run: |
+          set -euo pipefail
+          grep -q '<!-- PRIMITIVE_SETUP_V1 -->' setup.md
+          ! grep -nE 'npx --yes @primitive\.ai/prim[^@]' setup.md
+
+  live-url:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify pinned URL serves sentinel + @latest qualifier
+        run: |
+          set -euo pipefail
+          body=$(curl -fsSL https://raw.githubusercontent.com/campus-ai/prim/v1/setup.md)
+          echo "$body" | grep -q '<!-- PRIMITIVE_SETUP_V1 -->'
+          ! echo "$body" | grep -nE 'npx --yes @primitive\.ai/prim[^@]'

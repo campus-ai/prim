@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.0-alpha.14](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-05-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** Mutating commands previously wrote `Created context: <id>` (and similar prefix lines) to stdout. They now write the bare _id to stdout and the human prefix to stderr. Scripts that parsed prefix-formatted stdout lines must either read stdout as the bare ID or switch to `--json | jq ._id`.
+
+### Features
+
+* add uniform --json flag across data-returning commands ([#36](https://github.com/campus-ai/prim/issues/36)) ([4800be2](https://github.com/campus-ai/prim/commit/4800be2423692baddb0b00279b5153da080df196))
+* **cli:** emit bare IDs on stdout; route human prefixes to stderr ([#42](https://github.com/campus-ai/prim/issues/42)) ([d0d6bd8](https://github.com/campus-ai/prim/commit/d0d6bd8bc7184ce4eb56c866e97e1933e3f0710c))
+* **cli:** non-interactive globals and hooks install --target ([#39](https://github.com/campus-ai/prim/issues/39)) ([b1bc0ed](https://github.com/campus-ai/prim/commit/b1bc0ed188a7dc6ef14f5b303e0643c8e1fef13f))
+
+## [0.1.0-alpha.13](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-05-12)
+
+
+### Bug Fixes
+
+* pin [@latest](https://github.com/latest) in setup.md procedure (force-update v1) ([#33](https://github.com/campus-ai/prim/issues/33)) ([b5a12df](https://github.com/campus-ai/prim/commit/b5a12dfd021eeee2e662d959a3d51b979c547380))
+
+## [0.1.0-alpha.12](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-05-12)
+
+
+### Features
+
+* prim skill install + pinned setup.md (v1) ([#27](https://github.com/campus-ai/prim/issues/27)) ([ff2f132](https://github.com/campus-ai/prim/commit/ff2f132918dfa19a1513a216bd483c3893f9bd72))
+* surface stale-version warnings via update-notifier ([#31](https://github.com/campus-ai/prim/issues/31)) ([1e845eb](https://github.com/campus-ai/prim/commit/1e845ebba3058f0d4013c7a6b3fc1d11d5e5ac11))
+
 ## [0.1.0-alpha.11](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-04-22)
 
 

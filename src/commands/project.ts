@@ -6,6 +6,7 @@
 
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { printJson } from "../output.js";
 
 export function registerProjectCommands(program: Command) {
   const project = program.command("project").description("Manage projects");
@@ -16,7 +17,8 @@ export function registerProjectCommands(program: Command) {
     .requiredOption("-n, --name <name>", "Project name")
     .option("-d, --description <description>", "Project description")
     .option("--spec <contextId>", "Link an existing spec as this project's spec")
-    .action(async (opts: { name: string; description?: string; spec?: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (opts: { name: string; description?: string; spec?: string; json?: boolean }) => {
       const client = getClient();
 
       const result = (await client.post("/api/cli/tasks", {
@@ -25,9 +27,15 @@ export function registerProjectCommands(program: Command) {
         specContextId: opts.spec,
       })) as { _id: string };
 
-      console.log(`Created project: ${result._id}`);
-      if (opts.spec) {
-        console.log(`Linked spec: ${opts.spec}`);
+      if (opts.json) {
+        printJson(opts.spec ? { _id: result._id, spec: opts.spec } : { _id: result._id });
+        return;
       }
+
+      console.error(`Created project: ${result._id}`);
+      if (opts.spec) {
+        console.error(`Linked spec: ${opts.spec}`);
+      }
+      console.log(result._id);
     });
 }

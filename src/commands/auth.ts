@@ -22,6 +22,7 @@ import {
   getTokenExpiresAt,
   saveTokenExpiry,
 } from "../client.js";
+import { printJson } from "../output.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -226,8 +227,25 @@ export function registerAuthCommands(program: Command) {
   auth
     .command("status")
     .description("Check authentication status and token expiry")
-    .action(() => {
+    .option("--json", "Output as JSON")
+    .action((opts: { json?: boolean }) => {
       const token = getAuthToken();
+
+      if (opts.json) {
+        const expiresAt = getTokenExpiresAt();
+        const expiresInMs = expiresAt ? expiresAt - Date.now() : null;
+        const refreshPresent = existsSync(REFRESH_TOKEN_PATH);
+        printJson({
+          authenticated: !!token,
+          tokenFile: token ? TOKEN_FILE_PATH : null,
+          accessTokenExpiresInMs: expiresInMs,
+          accessTokenExpired: expiresInMs !== null && expiresInMs <= 0,
+          refreshTokenPresent: refreshPresent,
+          warnings: !token || refreshPresent ? [] : ["no refresh token"],
+        });
+        process.exit(token ? 0 : 1);
+      }
+
       if (!token) {
         console.log("Not authenticated. Run `prim auth login` to authenticate.");
         process.exit(1);
