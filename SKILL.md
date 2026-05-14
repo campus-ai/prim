@@ -81,6 +81,47 @@ npx --yes @primitive.ai/prim project create -n "<name>" -d "<desc>"
 npx --yes @primitive.ai/prim project create -n "<name>" --spec <contextId>     # value is a context ID
 ```
 
+### Link a spec to a branch (and an optional PR)
+
+A branch-linked spec only auto-syncs from commits on its branch — so per-branch work doesn't mutate specs that aren't relevant. The link is the contract the pre-commit hook checks before every `sync-diff`.
+
+Two ways to bind a spec to a branch:
+
+```
+npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --branch <branch> --pr <n>   # explicit at creation; --pr is optional
+```
+
+Or implicitly: the pre-commit hook **auto-links an unlinked spec to the current branch** the first time it sees a sync on that branch — no flag needed. The `[synced]` line on that first sync prints ` (auto-linking to <branch>)`; subsequent syncs print ` (linked to <branch> #<pr> <state>)` once the link sticks.
+
+Inspect a spec's bindings via `npx --yes @primitive.ai/prim context get <id>`. The `linkedBranches[]` field lists every `(branch, prNumber, prState, prReviewDecision)` the spec is bound to. The editor UI surfaces the same data as a status pill.
+
+- **`--branch` requires a GitHub origin.** With `--branch`, the CLI reads `repoFullName` from `git remote get-url origin`. If origin isn't GitHub, the link is silently dropped with a warning on stderr — the spec is still created, just unlinked — fix it later from the editor UI.
+- **There is no `prim spec link` subcommand in v1.** To re-link a spec to a different branch, edit it from the spec editor. The CLI only ever auto-links on first sync or accepts `--branch` at creation.
+
+### Trigger PR Intent Review or dispatch drift-fix against a linked PR
+
+```
+npx --yes @primitive.ai/prim spec review <id> --pr <n>             # head SHA defaults to `git rev-parse HEAD`
+npx --yes @primitive.ai/prim spec review <id> --pr <n> --sha <s>   # explicit SHA
+npx --yes @primitive.ai/prim spec drift  <id> --pr <n>             # dispatch the Claude Code drift-fix workflow against the PR
+```
+
+The review bot runs server-side, posts a PR comment with findings, and the outcome surfaces on the **next** pre-commit sync's `[synced]` line as ` (reviewed: <n> finding(s) → <prCommentUrl>)` or ` (review failed)` — don't poll the API yourself.
+
+`spec drift` requires the `primitive-drift-fix.yml` workflow file checked into the repo and the GitHub App's `actions:write` scope granted on the org. The CLI errors out otherwise with a one-liner naming the likely causes.
+
+Neither `spec review` nor `spec drift` accepts `--json` in v1 — they emit a single human-readable line on stdout. Capture it as text or branch on `$?`.
+
+### Inspect a task's auto-completion state
+
+```
+npx --yes @primitive.ai/prim spec status <taskId>
+```
+
+Reports the task's `status`, whether `auto-complete suppressed: yes/no`, and the timestamp + PR # of the most-recent auto-completion activity (with the bot's explanation). Use this after a merge to verify the auto-complete bot acted — or to see *why* it didn't (suppressed via the dashboard, last activity from a different PR, etc.).
+
+`spec status` operates on a **task ID**, not a context/spec ID. Discover task IDs from `prim project create` output or from the editor URL. No `--json` support in v1; output is a fixed `key: value` block on stdout.
+
 ### Install the pre-commit hook
 ```
 npx --yes @primitive.ai/prim hooks install                       # auto-detects Husky and prompts
@@ -106,6 +147,8 @@ What that means:
 - **The hook is not `npx --yes @primitive.ai/prim spec sync`.** `npx --yes @primitive.ai/prim spec sync` re-applies the *existing* spec to the project. The hook calls `sync-diff` -- an LLM updates the spec from the code change, then applies the new spec to the project. The casual "just commit and the hook will sync" is ambiguous; when explaining to the user, specify which operation you mean.
 - **The hook never blocks the commit.** Failures (auth, network, backend) print `[error]` to stderr but exit 0, so a successful `git commit` doesn't prove the spec changed. Check the hook's `[synced]` / `[error]` / `[skip]` output, or verify with `npx --yes @primitive.ai/prim spec get <id>`.
 - **Diffs over 256 KiB are truncated.** The hook logs `(truncated: X KiB -> Y KiB analyzed)`. The LLM only sees the first 256 KiB of the diff.
+- **The hook is branch-aware.** It sends `repoFullName`, `branch`, `sha`, and `prNumber` (the last detected from `gh pr view` when `gh` is on `PATH`, silently null otherwise). The server filters mappings to specs linked to the current branch *or* unlinked (auto-link candidates); specs bound to other branches are silently excluded from the affected list — they don't surface as `[skip]` lines, they just don't appear. If you push an explicit `sync-diff` for an other-branch spec via the API, the hook logs `[skip] <id> — <name> — not linked to <branch>` and continues.
+- **Link state and review results piggyback on the synced line.** `[synced]` lines carry ` (linked to <branch> #<pr> <state>)` or ` (auto-linking to <branch>)`, and once a PR Intent Review completes they grow ` (reviewed: <n> finding(s) → <prCommentUrl>)` or ` (review failed)`. PR `<state>` (`open` / `closed` / `merged`) tracks GitHub webhook deliveries — give it a few seconds to settle after a state change.
 - **To suppress the hook for one commit** (e.g., when intentionally desyncing code from spec, or when committing unrelated changes), use `git commit --no-verify`.
 
 ## Output formats
@@ -116,7 +159,7 @@ Every data-returning command accepts `--json`. With `--json` set, stdout is a si
 - `npx --yes @primitive.ai/prim spec list --json | jq -r '.[]._id'` — list every spec ID
 - `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; the exit code remains the authoritative signal
 
-Without `--json`, mutating commands (`context create/update/delete/link/unlink`, `spec update/sync/map/unmap/auto-map`, `project create`) emit the bare resource `_id` to **stdout** (one line, no prefix) and human-readable diagnostics to **stderr**. So this also works as a one-liner without `jq`:
+Without `--json`, mutating commands (`context create/update/delete/link/unlink`, `spec create/update/sync/map/unmap/auto-map`, `project create`) emit the bare resource `_id` to **stdout** (one line, no prefix) and human-readable diagnostics to **stderr**. So this also works as a one-liner without `jq`:
 
 - `id=$(npx --yes @primitive.ai/prim context create -s global -n foo --text "x")`
 
@@ -139,6 +182,7 @@ Without `--json`, mutating commands (`context create/update/delete/link/unlink`,
 - **`npx --yes @primitive.ai/prim spec sync` rejects non-spec contexts** with "Context is not a spec document. Use `prim context` instead." Use `npx --yes @primitive.ai/prim spec list` to find spec IDs.
 - **`npx --yes @primitive.ai/prim context delete` is permanent.** Confirm with the user before deleting.
 - **Scope is set at creation.** To change it, delete and recreate the context.
+- **The hook silently excludes specs bound to other branches.** If you don't see a spec you expected to sync, check its `linkedBranches[]` via `npx --yes @primitive.ai/prim context get <id>` — it may be bound to a different branch. To re-bind, use the spec editor (no CLI subcommand in v1).
 
 ## After each task
 
