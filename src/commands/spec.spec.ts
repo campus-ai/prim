@@ -40,8 +40,12 @@ describe("registerSpecCommands", () => {
 
     expect(subcommands).toContain("list");
     expect(subcommands).toContain("get");
+    expect(subcommands).toContain("create");
     expect(subcommands).toContain("update");
     expect(subcommands).toContain("sync");
+    expect(subcommands).toContain("review");
+    expect(subcommands).toContain("status");
+    expect(subcommands).toContain("drift");
     expect(subcommands).toContain("map");
     expect(subcommands).toContain("unmap");
     expect(subcommands).toContain("auto-map");
@@ -98,6 +102,19 @@ describe("spec subcommands --json", () => {
     await program.parseAsync(["spec", "get", "s3", "--text-only", "--json"], { from: "user" });
 
     expect(lastJson(logSpy)).toEqual(ctx);
+  });
+
+  it("create emits {_id} under --json", async () => {
+    withClient({ post: vi.fn().mockResolvedValue({ _id: "s-new" }) });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const program = new Command();
+    registerSpecCommands(program);
+    await program.parseAsync(["spec", "create", "-s", "global", "-n", "fresh", "--json"], {
+      from: "user",
+    });
+
+    expect(lastJson(logSpy)).toEqual({ _id: "s-new" });
   });
 
   it("update emits {_id} under --json", async () => {
@@ -164,6 +181,19 @@ describe("spec subcommands --json", () => {
 describe("spec subcommands stdout/stderr split (no --json)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("create: prefix on stderr, bare id on stdout", async () => {
+    withClient({ post: vi.fn().mockResolvedValue({ _id: "s-new" }) });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const program = new Command();
+    registerSpecCommands(program);
+    await program.parseAsync(["spec", "create", "-s", "global", "-n", "fresh"], { from: "user" });
+
+    expect(logSpy.mock.calls.map((c) => String(c[0]))).toEqual(["s-new"]);
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("Created spec: s-new");
   });
 
   it("update: prefix on stderr, bare id on stdout", async () => {

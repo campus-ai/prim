@@ -6,6 +6,7 @@
  *
  * prim spec list [--project-id <id>]
  * prim spec get <context-id>
+ * prim spec create --scope <scope> --name <name> [--branch <branch>] [--pr <pr>]
  * prim spec update <context-id> --text <text> | --file <path>
  * prim spec sync <context-id>
  */
@@ -14,6 +15,7 @@ import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getClient } from "../client.js";
 import { printJson } from "../output.js";
+import { getGitContext } from "../utils/git.js";
 
 export function registerSpecCommands(program: Command) {
   const spec = program.command("spec").description("Manage spec documents");
@@ -91,6 +93,77 @@ export function registerSpecCommands(program: Command) {
 
       printSpec(ctx);
     });
+
+  // ── create ────────────────────────────────────────────────────────────
+  spec
+    .command("create")
+    .description("Create a new spec document")
+    .requiredOption("-s, --scope <scope>", "Scope: project, global, external")
+    .requiredOption("-n, --name <name>", "Spec name")
+    .option("-t, --text <text>", "Spec text content")
+    .option("-f, --file <path>", "Read text content from file")
+    .option("--project-id <projectId>", "Link to project(s), comma-separated")
+    .option("--branch <branch>", "Link spec to this branch on the current repo")
+    .option("--pr <prNumber>", "Optional PR number to attach to the link")
+    .option("--json", "Output as JSON")
+    .action(
+      async (opts: {
+        scope: string;
+        name: string;
+        text?: string;
+        file?: string;
+        projectId?: string;
+        branch?: string;
+        pr?: string;
+        json?: boolean;
+      }) => {
+        const client = getClient();
+
+        let text = opts.text;
+        if (opts.file) {
+          text = readFileSync(opts.file, "utf-8");
+        }
+
+        const taskIds = opts.projectId
+          ? opts.projectId.split(",").map((id) => id.trim())
+          : undefined;
+
+        let linkedBranch: { repoFullName: string; branch: string; prNumber?: number } | undefined;
+        if (opts.branch) {
+          const { repoFullName } = getGitContext();
+          if (!repoFullName) {
+            console.warn(
+              "[prim] --branch supplied but origin remote is not GitHub; skipping link.",
+            );
+          } else {
+            linkedBranch = { repoFullName, branch: opts.branch };
+            if (opts.pr) {
+              const n = Number.parseInt(opts.pr, 10);
+              if (Number.isFinite(n)) linkedBranch.prNumber = n;
+            }
+          }
+        }
+
+        const result = (await client.post("/api/cli/contexts", {
+          scope: opts.scope === "project" ? "task" : opts.scope,
+          name: opts.name,
+          text,
+          taskIds,
+          isSpecDocument: true,
+          linkedBranch,
+        })) as { _id: string };
+
+        if (opts.json) {
+          printJson({ _id: result._id });
+          return;
+        }
+
+        console.error(
+          `Created spec: ${result._id}${linkedBranch ? ` (linked to ${linkedBranch.branch})` : ""}`,
+        );
+        console.log(result._id);
+      },
+    );
 
   // ── update ────────────────────────────────────────────────────────────
   spec
@@ -170,6 +243,96 @@ export function registerSpecCommands(program: Command) {
         console.error(`Root project: ${ctx.specRootTaskId}`);
       }
       console.log(contextId);
+    });
+
+  // ── review ────────────────────────────────────────────────────────────
+  spec
+    .command("review <contextId>")
+    .description("Manually trigger the PR Intent Review bot for a spec")
+    .requiredOption("--pr <prNumber>", "PR number to review against")
+    .option("--sha <headSha>", "Commit SHA the review runs against (defaults to current HEAD)")
+    .action(async (contextId: string, opts: { pr: string; sha?: string }) => {
+      const prNumber = Number.parseInt(opts.pr, 10);
+      if (!Number.isFinite(prNumber)) {
+        console.error("--pr must be an integer.");
+        process.exit(1);
+      }
+      const headSha = opts.sha ?? getGitContext().sha;
+      if (!headSha) {
+        console.error("Could not determine head SHA — pass --sha or run inside a git checkout.");
+        process.exit(1);
+      }
+
+      const client = getClient();
+      await client.post(`/api/cli/contexts/${contextId}/review`, {
+        prNumber,
+        headSha,
+      });
+
+      console.log(
+        `Scheduled review: ${contextId} against PR #${String(prNumber)} @ ${headSha.slice(0, 7)}`,
+      );
+    });
+
+  // ── drift ─────────────────────────────────────────────────────────────
+  spec
+    .command("drift <contextId>")
+    .description("Dispatch the Claude Code drift-fix workflow against a PR")
+    .requiredOption("--pr <prNumber>", "PR number to dispatch the drift-fix workflow against")
+    .action(async (contextId: string, opts: { pr: string }) => {
+      const prNumber = Number.parseInt(opts.pr, 10);
+      if (!Number.isFinite(prNumber)) {
+        console.error("--pr must be an integer.");
+        process.exit(1);
+      }
+
+      const client = getClient();
+      const result = (await client.post(`/api/cli/contexts/${contextId}/drift`, {
+        prNumber,
+      })) as { dispatched: boolean; runUrl?: string };
+
+      if (result.dispatched) {
+        const ref = result.runUrl ? `: ${result.runUrl}` : "";
+        console.log(`Dispatched drift-fix workflow${ref}`);
+      } else {
+        console.error(
+          "Drift-fix dispatch failed. Likely causes: actions:write App scope not granted, primitive-drift-fix.yml workflow file missing, or no findings on the latest review.",
+        );
+        process.exit(1);
+      }
+    });
+
+  // ── status ────────────────────────────────────────────────────────────
+  spec
+    .command("status <taskId>")
+    .description(
+      "Show task status, auto-complete suppression flag, and the most-recent bot auto-completion",
+    )
+    .action(async (taskId: string) => {
+      const client = getClient();
+      const result = (await client.get(`/api/cli/tasks/${taskId}/status`)) as {
+        status: string;
+        autoCompleteSuppressed: boolean;
+        lastAutoCompleteActivity?: {
+          createdAt?: number;
+          explanation: string;
+          prNumber?: number;
+        };
+      };
+
+      console.log(`status: ${result.status}`);
+      console.log(`auto-complete suppressed: ${result.autoCompleteSuppressed ? "yes" : "no"}`);
+      const last = result.lastAutoCompleteActivity;
+      if (last) {
+        const when = last.createdAt ? new Date(last.createdAt).toISOString() : "—";
+        const pr = last.prNumber ? `#${String(last.prNumber)}` : "—";
+        console.log(`last auto-complete: ${when} (PR ${pr})`);
+        if (last.explanation) {
+          console.log(`  ${last.explanation}`);
+        }
+      } else {
+        console.log("last auto-complete: —");
+      }
     });
 
   // ── map ───────────────────────────────────────────────────────────────

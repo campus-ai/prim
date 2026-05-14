@@ -15,11 +15,24 @@
  */
 import { execSync } from "node:child_process";
 import { getClient } from "../client.js";
+import { type GitContext, getGitContext } from "../utils/git.js";
 
 export interface ServerSpecMapping {
   _id: string;
   name: string;
   filePatterns: string[];
+  linkedBranches?: Array<{
+    branch: string;
+    prNumber?: number;
+    prState?: "draft" | "open" | "closed" | "merged";
+    prReviewDecision?: "approved" | "changes_requested" | "review_required";
+    latestReviewSummary?: {
+      findingsCount?: number;
+      headSha: string;
+      status: "pending" | "completed" | "failed";
+      prCommentUrl?: string;
+    };
+  }>;
 }
 
 function getStagedFiles(): string[] {
@@ -60,6 +73,7 @@ export interface SyncDiffResponse {
   truncated?: boolean;
   sizeChars?: number;
   limitChars?: number;
+  reason?: string;
 }
 
 export function findAffectedContexts(
@@ -96,12 +110,14 @@ export interface SyncDeps {
   getClient: () => import("../client.js").CliClient;
   getStagedFiles: () => string[];
   getStagedDiff: (files: string[]) => string;
+  getGitContext: () => GitContext;
 }
 
 const defaultDeps: SyncDeps = {
   getClient,
   getStagedFiles,
   getStagedDiff,
+  getGitContext,
 };
 
 export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<string[]> {
@@ -111,10 +127,21 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
   }
 
   const client = deps.getClient();
+  const gitCtx = deps.getGitContext();
+
+  let mappingsUrl = "/api/cli/specs/mappings";
+  if (gitCtx.repoFullName && gitCtx.branch) {
+    const params = new URLSearchParams({
+      repoFullName: gitCtx.repoFullName,
+      branch: gitCtx.branch,
+    });
+    mappingsUrl = `${mappingsUrl}?${params.toString()}`;
+  }
+
   let mappings: ServerSpecMapping[] = [];
 
   try {
-    mappings = (await client.get("/api/cli/specs/mappings", {
+    mappings = (await client.get(mappingsUrl, {
       signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
     })) as ServerSpecMapping[];
   } catch {
@@ -125,6 +152,7 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
     return [];
   }
 
+  const specsById = new Map(mappings.map((s) => [s._id, s]));
   const affectedContexts = findAffectedContexts(stagedFiles, mappings);
 
   if (affectedContexts.size === 0) {
@@ -157,21 +185,57 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
         continue;
       }
 
-      const response = (await client.post(
-        `/api/cli/contexts/${contextId}/sync-diff`,
-        { diffContent, affectedFiles: affected.matchedFiles },
-        { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
-      )) as SyncDiffResponse;
+      const body: Record<string, unknown> = {
+        diffContent,
+        affectedFiles: affected.matchedFiles,
+      };
+      if (gitCtx.branch) body.branch = gitCtx.branch;
+      if (gitCtx.sha) body.sha = gitCtx.sha;
+      if (gitCtx.repoFullName) body.repoFullName = gitCtx.repoFullName;
+      if (gitCtx.prNumber !== null) body.prNumber = gitCtx.prNumber;
+
+      const response = (await client.post(`/api/cli/contexts/${contextId}/sync-diff`, body, {
+        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
+      })) as SyncDiffResponse;
 
       const name = (ctx.name as string) ?? "(unnamed)";
+      if (!response.analyzing && response.reason === "not_linked") {
+        console.log(
+          `  [skip] ${contextId} — ${name} — not linked to ${gitCtx.branch ?? "(no branch)"}`,
+        );
+        continue;
+      }
+      const spec = specsById.get(contextId);
+      const link = spec?.linkedBranches?.find((l) => l.branch === gitCtx.branch);
+      let linkSuffix = "";
+      if (link) {
+        const prBits = link.prNumber
+          ? ` #${String(link.prNumber)}${link.prState ? ` ${link.prState}` : ""}`
+          : "";
+        linkSuffix = ` (linked to ${link.branch}${prBits})`;
+      } else if (gitCtx.branch && spec?.linkedBranches?.length === 0) {
+        linkSuffix = ` (auto-linking to ${gitCtx.branch})`;
+      }
+      const review = link?.latestReviewSummary;
+      let reviewSuffix = "";
+      if (review?.status === "completed") {
+        const n = review.findingsCount ?? 0;
+        const urlSuffix = review.prCommentUrl
+          ? ` → ${review.prCommentUrl.replace(/^https?:\/\//, "")}`
+          : "";
+        reviewSuffix = ` (reviewed: ${String(n)} finding${n === 1 ? "" : "s"}${urlSuffix})`;
+      } else if (review?.status === "failed") {
+        reviewSuffix = " (review failed)";
+      }
+      linkSuffix += reviewSuffix;
       if (response.truncated && response.sizeChars && response.limitChars) {
         const sizeKiB = Math.round(response.sizeChars / 1024);
         const limitKiB = Math.round(response.limitChars / 1024);
         console.log(
-          `  [synced] ${contextId} — ${name} (truncated: ${String(sizeKiB)} KiB → ${String(limitKiB)} KiB analyzed)`,
+          `  [synced] ${contextId} — ${name} (truncated: ${String(sizeKiB)} KiB → ${String(limitKiB)} KiB analyzed)${linkSuffix}`,
         );
       } else {
-        console.log(`  [synced] ${contextId} — ${name}`);
+        console.log(`  [synced] ${contextId} — ${name}${linkSuffix}`);
       }
       synced.push(contextId);
     } catch (error) {

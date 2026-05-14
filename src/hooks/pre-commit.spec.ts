@@ -127,6 +127,9 @@ function makeDeps(overrides?: Partial<SyncDeps>): SyncDeps {
     getClient: overrides?.getClient ?? (() => makeMockClient()),
     getStagedFiles: overrides?.getStagedFiles ?? (() => []),
     getStagedDiff: overrides?.getStagedDiff ?? (() => "diff --git a/file ..."),
+    getGitContext:
+      overrides?.getGitContext ??
+      (() => ({ branch: null, sha: null, repoFullName: null, prNumber: null })),
     ...overrides,
   };
 }
@@ -515,6 +518,200 @@ describe("syncAffectedSpecs — truncation reporting", () => {
       await syncAffectedSpecs(deps);
       const synced = logSpy.mock.calls.find((c) => String(c[0]).includes("[synced]"));
       expect(synced?.[0]).not.toContain("truncated");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncAffectedSpecs — branch context (mappings filter + link suffix)
+// ---------------------------------------------------------------------------
+
+describe("syncAffectedSpecs — branch context", () => {
+  it("appends repoFullName and branch params to the mappings URL when both are set", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/foo",
+        sha: "abc123",
+        repoFullName: "campus-ai/prim",
+        prNumber: 42,
+      }),
+    });
+
+    await syncAffectedSpecs(deps);
+
+    const mappingsCall = get.mock.calls.find((c) => String(c[0]).includes("/specs/mappings"));
+    const url = String(mappingsCall?.[0]);
+    expect(url).toContain("repoFullName=campus-ai%2Fprim");
+    expect(url).toContain("branch=feat%2Ffoo");
+  });
+
+  it("omits params when branch or repoFullName is null", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/foo",
+        sha: null,
+        repoFullName: null,
+        prNumber: null,
+      }),
+    });
+
+    await syncAffectedSpecs(deps);
+
+    expect(get).toHaveBeenCalledWith("/api/cli/specs/mappings", expect.anything());
+  });
+
+  it("appends a (linked to <branch> #<pr> <state>) suffix when the spec is linked to the current branch", async () => {
+    const linkedMapping: ServerSpecMapping = {
+      ...SPEC_MAPPING,
+      linkedBranches: [{ branch: "feat/foo", prNumber: 42, prState: "open" }],
+    };
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [linkedMapping];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({ analyzing: true }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/foo",
+        sha: null,
+        repoFullName: "campus-ai/prim",
+        prNumber: null,
+      }),
+    });
+
+    try {
+      await syncAffectedSpecs(deps);
+      const synced = logSpy.mock.calls.find((c) => String(c[0]).includes("[synced]"));
+      expect(synced?.[0]).toContain("(linked to feat/foo #42 open)");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("appends an (auto-linking to <branch>) suffix when the spec has no links", async () => {
+    const unlinkedMapping: ServerSpecMapping = { ...SPEC_MAPPING, linkedBranches: [] };
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [unlinkedMapping];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({ analyzing: true }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/foo",
+        sha: null,
+        repoFullName: "campus-ai/prim",
+        prNumber: null,
+      }),
+    });
+
+    try {
+      await syncAffectedSpecs(deps);
+      const synced = logSpy.mock.calls.find((c) => String(c[0]).includes("[synced]"));
+      expect(synced?.[0]).toContain("(auto-linking to feat/foo)");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("includes branch, sha, repoFullName, prNumber in the sync-diff body when present", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({ analyzing: true }));
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/foo",
+        sha: "abc123",
+        repoFullName: "campus-ai/prim",
+        prNumber: 42,
+      }),
+    });
+
+    await syncAffectedSpecs(deps);
+
+    const body = post.mock.calls[0]?.[1];
+    expect(body).toMatchObject({
+      diffContent: expect.any(String),
+      affectedFiles: ["src/commands/hello.ts"],
+      branch: "feat/foo",
+      sha: "abc123",
+      repoFullName: "campus-ai/prim",
+      prNumber: 42,
+    });
+  });
+
+  it("omits null fields from the sync-diff body", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({ analyzing: true }));
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      // default getGitContext returns all-nulls
+    });
+
+    await syncAffectedSpecs(deps);
+
+    const body = post.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty("branch");
+    expect(body).not.toHaveProperty("sha");
+    expect(body).not.toHaveProperty("repoFullName");
+    expect(body).not.toHaveProperty("prNumber");
+  });
+
+  it("logs a [skip] line and does not record sync when the server reports not_linked", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.includes("/specs/mappings")) return [SPEC_MAPPING];
+      return SPEC_CONTEXT_RESPONSE;
+    });
+    const post = vi.fn(async () => ({ analyzing: false, reason: "not_linked" }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const deps = makeDeps({
+      getClient: () => makeMockClient({ get, post }),
+      getStagedFiles: () => ["src/commands/hello.ts"],
+      getGitContext: () => ({
+        branch: "feat/bar",
+        sha: null,
+        repoFullName: "campus-ai/prim",
+        prNumber: null,
+      }),
+    });
+
+    try {
+      const result = await syncAffectedSpecs(deps);
+      expect(result).toEqual([]);
+      const skip = logSpy.mock.calls.find(
+        (c) => String(c[0]).includes("[skip]") && String(c[0]).includes("not linked"),
+      );
+      expect(skip?.[0]).toContain("not linked to feat/bar");
     } finally {
       logSpy.mockRestore();
     }
