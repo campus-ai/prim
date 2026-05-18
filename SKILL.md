@@ -98,9 +98,23 @@ npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --
 ```
 `--branch` requires a GitHub origin; if `git remote get-url origin` isn't GitHub the link is silently dropped (stderr warning). There is no `prim spec link` subcommand in v1 — to rebind a spec to a different branch, edit it from the spec editor UI.
 
-Or implicitly: the pre-commit hook **auto-links an unlinked spec to the current branch** the first time it sees a sync on that branch — no flag needed. The `[synced]` line on that first sync prints ` (auto-linking to <branch>)`; subsequent syncs print ` (linked to <branch> #<pr> <state>)` once the link sticks.
+**When the spec already exists, check whether it's bound to your branch** before committing:
+```
+npx --yes @primitive.ai/prim context get <specId> --json | jq '.linkedBranches[]?.branch'
+```
+- Your branch appears → done; the hook keeps it fresh.
+- Empty or branch absent → the first commit's hook auto-binds it; no CLI step needed.
+- Bound only to another branch → the hook silently excludes it from your branch's syncs; rebind via the editor UI before committing.
 
-Inspect a spec's bindings via `npx --yes @primitive.ai/prim context get <id>`. The `linkedBranches[]` field lists every `(branch, prNumber, prState, prReviewDecision)` the spec is bound to. The editor UI surfaces the same data as a status pill.
+**After `gh pr create`**, no CLI step is required: the next commit's hook patches `linkedBranches[].prNumber` via `gh pr view`, and GitHub's webhook to Primitive sets the same field server-side within seconds. Confirm with:
+```
+npx --yes @primitive.ai/prim context get <specId> --json | jq .linkedBranches
+```
+
+**On every commit, read the `[synced]` line to verify link state** — it piggybacks the suffix:
+- `(auto-linking to <branch>)` — first sync; server is binding now.
+- `(linked to <branch> #<n> <state>)` — link is sticky.
+- `[skip] <id> — not linked to <branch>` — the spec is bound elsewhere; investigate before continuing.
 
 ### Trigger PR Intent Review or dispatch drift-fix against a linked PR
 
