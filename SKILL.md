@@ -83,20 +83,38 @@ npx --yes @primitive.ai/prim project create -n "<name>" --spec <contextId>     #
 
 ### Link a spec to a branch (and an optional PR)
 
-A branch-linked spec only auto-syncs from commits on its branch — so per-branch work doesn't mutate specs that aren't relevant. The link is the contract the pre-commit hook checks before every `sync-diff`.
+Linking is **automatic** once the pre-commit hook is installed and a spec is bound to your branch — every commit refreshes the link's metadata, including the PR number (detected from `gh pr view` when `gh` is on `PATH`). Your job is to bind the spec at the right moment so the hook can take over. Do this for every branch — never wait for the user to ask.
 
-Two ways to bind a spec to a branch:
-
+**At the start of branch work, install the hook** (skip if `.git/hooks/pre-commit` or `.husky/pre-commit` already invokes `prim-pre-commit`):
 ```
-npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --branch <branch> --pr <n>   # explicit at creation; --pr is optional
+npx --yes @primitive.ai/prim hooks install --yes
 ```
 
-Or implicitly: the pre-commit hook **auto-links an unlinked spec to the current branch** the first time it sees a sync on that branch — no flag needed. The `[synced]` line on that first sync prints ` (auto-linking to <branch>)`; subsequent syncs print ` (linked to <branch> #<pr> <state>)` once the link sticks.
+**When you create a spec for branch-scoped work, always pass `--branch`** (and `--pr` if a PR already exists):
+```
+br=$(git rev-parse --abbrev-ref HEAD)
+pr=$(gh pr view --json number -q .number 2>/dev/null)
+npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --branch "$br" ${pr:+--pr "$pr"}
+```
+`--branch` requires a GitHub origin; if `git remote get-url origin` isn't GitHub the link is silently dropped (stderr warning). There is no `prim spec link` subcommand in v1 — to rebind a spec to a different branch, edit it from the spec editor UI.
 
-Inspect a spec's bindings via `npx --yes @primitive.ai/prim context get <id>`. The `linkedBranches[]` field lists every `(branch, prNumber, prState, prReviewDecision)` the spec is bound to. The editor UI surfaces the same data as a status pill.
+**When the spec already exists, check whether it's bound to your branch** before committing:
+```
+npx --yes @primitive.ai/prim context get <specId> --json | jq '.linkedBranches[]?.branch'
+```
+- Your branch appears → done; the hook keeps it fresh.
+- Empty or branch absent → the first commit's hook auto-binds it; no CLI step needed.
+- Bound only to another branch → the hook silently excludes it from your branch's syncs; rebind via the editor UI before committing.
 
-- **`--branch` requires a GitHub origin.** With `--branch`, the CLI reads `repoFullName` from `git remote get-url origin`. If origin isn't GitHub, the link is silently dropped with a warning on stderr — the spec is still created, just unlinked — fix it later from the editor UI.
-- **There is no `prim spec link` subcommand in v1.** To re-link a spec to a different branch, edit it from the spec editor. The CLI only ever auto-links on first sync or accepts `--branch` at creation.
+**After `gh pr create`**, no CLI step is required: the next commit's hook patches `linkedBranches[].prNumber` via `gh pr view`, and GitHub's webhook to Primitive sets the same field server-side within seconds. Confirm with:
+```
+npx --yes @primitive.ai/prim context get <specId> --json | jq .linkedBranches
+```
+
+**On every commit, read the `[synced]` line to verify link state** — it piggybacks the suffix:
+- `(auto-linking to <branch>)` — first sync; server is binding now.
+- `(linked to <branch> #<n> <state>)` — link is sticky.
+- `[skip] <id> — not linked to <branch>` — the spec is bound elsewhere; investigate before continuing.
 
 ### Trigger PR Intent Review or dispatch drift-fix against a linked PR
 
