@@ -83,7 +83,7 @@ npx --yes @primitive.ai/prim project create -n "<name>" --spec <contextId>     #
 
 ### Link a spec to a branch (and an optional PR)
 
-A branch-linked spec only auto-syncs from commits on its branch — so per-branch work doesn't mutate specs that aren't relevant. The link is the contract the pre-commit hook checks before every `sync-diff`.
+Linking is **automatic** once the pre-commit hook is installed and a spec is bound to your branch — every commit refreshes the link's metadata, including the PR number (detected from `gh pr view` when `gh` is on `PATH`). Your job is to bind the spec at the right moment so the hook can take over. Do this for every branch — never wait for the user to ask.
 
 Two ways to bind a spec to a branch:
 
