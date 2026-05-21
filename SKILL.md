@@ -100,9 +100,9 @@ npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --
 
 **Decide whether a spec exists for this branch.** A spec is "for this branch" only if one of:
 - the user named a spec ID or title in conversation,
-- a spec was created with `--branch "<this branch>"` (visible via `npx --yes @primitive.ai/prim spec list --json | jq '.[] | select(.linkedBranches[]?.branch == "<br>")'`).
+- a spec was created with `--branch "$br"` (visible via `npx --yes @primitive.ai/prim spec list --json | jq --arg br "$br" '.[] | select(.linkedBranches[]?.branch == $br)'`, where `$br` is the same shell variable set in the recipe above).
 
-**Do not** browse `prim spec list` and pick the closest- or most-related-sounding spec. Topical proximity is not authorship — two specs that touch the same area of the codebase can describe entirely different intents. An irrelevant link pollutes drift signal and silently mis-attributes review findings; no link is strictly better than a wrong link.
+**Do not** browse `prim spec list` and pick the closest- or most-related-sounding spec. Topical proximity is not authorship — two specs that touch the same area of the codebase can describe entirely different intents. An irrelevant link pollutes drift signal and silently misattributes review findings; no link is strictly better than a wrong link.
 
 If neither signal applies, **stop and ask the user**:
 
