@@ -83,7 +83,7 @@ npx --yes @primitive.ai/prim project create -n "<name>" --spec <contextId>     #
 
 ### Link a spec to a branch (and an optional PR)
 
-Linking is **automatic** once the pre-commit hook is installed and a spec is bound to your branch — every commit refreshes the link's metadata, including the PR number (detected from `gh pr view` when `gh` is on `PATH`). Your job is to bind the spec at the right moment so the hook can take over. Do this for every branch — never wait for the user to ask.
+Linking is **automatic** once the pre-commit hook is installed and a spec is bound to your branch — every commit refreshes the link's metadata, including the PR number (detected from `gh pr view` when `gh` is on `PATH`). When a spec was authored for the work on this branch, bind it at the right moment so the hook can take over — do this without waiting for the user to ask. When no spec exists for the work, **do not bind one** — see "Decide whether a spec exists for this branch" below.
 
 **At the start of branch work, install the hook** (skip if `.git/hooks/pre-commit` or `.husky/pre-commit` already invokes `prim-pre-commit`):
 ```
@@ -98,7 +98,29 @@ npx --yes @primitive.ai/prim spec create -s project -n "<name>" --file <path> --
 ```
 `--branch` requires a GitHub origin; if `git remote get-url origin` isn't GitHub the link is silently dropped (stderr warning). There is no `prim spec link` subcommand in v1 — to rebind a spec to a different branch, edit it from the spec editor UI.
 
-**When the spec already exists, check whether it's bound to your branch** before committing:
+**Decide whether a spec exists for this branch.** A spec is "for this branch" only if one of:
+- the user named a spec ID or title in conversation,
+- a spec was created with `--branch "$br"` (visible via `npx --yes @primitive.ai/prim spec list --json | jq --arg br "$br" '.[] | select(.linkedBranches[]?.branch == $br)'`, where `$br` is the same shell variable set in the recipe above).
+
+**Do not** browse `prim spec list` and pick the closest- or most-related-sounding spec. Topical proximity is not authorship — two specs that touch the same area of the codebase can describe entirely different intents. An irrelevant link pollutes drift signal and silently misattributes review findings; no link is strictly better than a wrong link.
+
+If neither signal applies, **stop and ask the user**:
+
+> "I couldn't find a spec associated with this branch. Is there one I should link, or should I draft one from the PR description and our conversation?"
+
+Three legitimate answers:
+- **User names an existing spec** → proceed to "When the user has identified a spec for this branch" below.
+- **User declines a spec entirely** → leave the PR unlinked.
+- **User asks you to draft one** →
+  - Compose with these sections (drop any that would only restate the obvious): *Goal*, *Requirements / Behavior*, *Technical Approach*, *Key Decisions*, *Out of Scope*. Scope to what the PR actually changed; don't restate the unchanged system. Each fact appears in exactly one section.
+  - Voice: plain language; lead with the point; **intent before mechanism** ("users see each other's edits" before "we use WebSocket"); present tense, active voice; one idea per paragraph; cut sentences that don't earn their place.
+  - **Key Decisions** is a markdown table — columns *Decision | Rationale | Trade-offs*, one row per non-obvious choice.
+  - Title is just the feature name (no `Spec:` prefix); no numbered or parenthetical headers. Match length to PR complexity — a small fix is one screen; a substantial feature warrants the full shape.
+  - Do not paste the PR description verbatim — a spec captures *intent*, not a change log. If the rationale behind a non-obvious decision isn't in conversation, ask one or two targeted questions before drafting; do not invent rationale.
+  - Show the user the drafted text and wait for go-ahead before running `spec create`.
+  - Then create-and-link using the recipe above.
+
+**When the user has identified a spec for this branch, check whether it's bound to your branch** before committing:
 ```
 npx --yes @primitive.ai/prim context get <specId> --json | jq '.linkedBranches[]?.branch'
 ```
