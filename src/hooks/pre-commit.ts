@@ -16,6 +16,11 @@
 import { execSync } from "node:child_process";
 import { getClient } from "../client.js";
 import { type GitContext, getGitContext } from "../utils/git.js";
+import {
+  type DecisionsCheckResult,
+  checkAffectedDecisions,
+  formatDecisionsWarning,
+} from "./decisions-check.js";
 
 export interface ServerSpecMapping {
   _id: string;
@@ -247,8 +252,20 @@ export async function syncAffectedSpecs(deps: SyncDeps = defaultDeps): Promise<s
   return synced;
 }
 
+async function runDecisionsCheck(): Promise<DecisionsCheckResult> {
+  const stagedFiles = getStagedFiles();
+  if (stagedFiles.length === 0) {
+    return { decisions: [] };
+  }
+  return checkAffectedDecisions(stagedFiles);
+}
+
 async function main() {
-  await syncAffectedSpecs();
+  const [, decisionsResult] = await Promise.all([syncAffectedSpecs(), runDecisionsCheck()]);
+  const warning = formatDecisionsWarning(decisionsResult);
+  if (warning) {
+    console.error(warning);
+  }
   process.exit(0);
 }
 

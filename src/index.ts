@@ -18,6 +18,7 @@ import { Command } from "commander";
 import updateNotifier from "update-notifier";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerContextCommands } from "./commands/context.js";
+import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerProjectCommands } from "./commands/project.js";
 import { registerSkillCommands } from "./commands/skill.js";
@@ -46,6 +47,7 @@ registerSpecCommands(program);
 registerProjectCommands(program);
 registerHooksCommands(program);
 registerSkillCommands(program);
+registerDecisionsCommands(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
