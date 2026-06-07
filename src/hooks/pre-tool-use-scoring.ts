@@ -95,13 +95,22 @@ export function buildHookOutput(
         .map((r) => r.reason)
         .filter((s) => s.length > 0)
         .join("\n\n") || "[primitive] please confirm this edit";
-    return {
+    // M5: the server-side `additionalContext` carries the
+    // `To reconcile, run: prim reconcile dec_<short>` directive that
+    // Claude pattern-matches to drive the cooperative reconcile loop.
+    // Relay it on `ask` so the directive isn't dropped before the user
+    // picks a path forward.
+    const out: HookOutput = {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "ask",
         permissionDecisionReason: reason,
       },
     };
+    if (additionalContext.length > 0) {
+      out.hookSpecificOutput.additionalContext = additionalContext;
+    }
+    return out;
   }
   if (aggregate === "warn" && additionalContext.length > 0) {
     return {
