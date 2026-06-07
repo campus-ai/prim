@@ -30,6 +30,7 @@
  */
 
 import { getClient } from "../client.js";
+import { daemonRequest } from "../daemon/client.js";
 import {
   type ConflictCheckResult,
   type HookEnv,
@@ -45,6 +46,7 @@ import {
 
 const HOOK_TIMEOUT_MS = 4_500;
 const STDIN_TIMEOUT_MS = 1_000;
+const DAEMON_TIMEOUT_MS = 250;
 
 type PreToolUseInput = {
   session_id?: string;
@@ -81,12 +83,21 @@ async function checkOneFile(
   fanOutThreshold: number,
   denyReversibility: "low" | "high",
 ): Promise<ConflictCheckResult> {
+  const params = { file, toolName, fanOutThreshold, denyReversibility };
+  // M4: try the daemon first. It holds an open keep-alive connection +
+  // amortizes token refresh, so a hit returns in ~20-30ms instead of the
+  // ~200ms cold HTTP path. Null fall-through keeps users without a
+  // running daemon on the original code path.
+  const fromDaemon = await daemonRequest<ConflictCheckResult>("conflict_check", params, {
+    timeoutMs: DAEMON_TIMEOUT_MS,
+  });
+  if (fromDaemon) {
+    return fromDaemon;
+  }
   const client = getClient();
-  return (await client.post(
-    "/api/cli/decisions/conflict-check",
-    { file, toolName, fanOutThreshold, denyReversibility },
-    { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
-  )) as ConflictCheckResult;
+  return (await client.post("/api/cli/decisions/conflict-check", params, {
+    signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
+  })) as ConflictCheckResult;
 }
 
 async function main(): Promise<void> {
