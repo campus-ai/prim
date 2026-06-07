@@ -23,6 +23,7 @@ import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerProjectCommands } from "./commands/project.js";
+import { registerReconcileCommands } from "./commands/reconcile.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerSpecCommands } from "./commands/spec.js";
 
@@ -52,6 +53,7 @@ registerSkillCommands(program);
 registerDecisionsCommands(program);
 registerClaudeCommands(program);
 registerDaemonCommands(program);
+registerReconcileCommands(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
