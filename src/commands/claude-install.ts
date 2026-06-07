@@ -34,6 +34,28 @@ import type { Command } from "commander";
 const PRIM_HOOK_COMMAND = "prim-pre-tool-use";
 const PRIM_HOOK_MATCHER = "Edit|Write|MultiEdit";
 
+// M6: additional hook + statusLine surfaces wired by `prim claude install`.
+const PRIM_POST_TOOL_USE_COMMAND = "prim-post-tool-use";
+const PRIM_SESSION_START_COMMAND = "prim-session-start";
+const PRIM_SESSION_END_COMMAND = "prim-session-end";
+const PRIM_STATUSLINE_COMMAND = "prim statusline";
+
+type HookSurface = {
+  eventName: string;
+  command: string;
+  matcher?: string;
+};
+
+const M6_HOOK_SURFACES: HookSurface[] = [
+  {
+    eventName: "PostToolUse",
+    command: PRIM_POST_TOOL_USE_COMMAND,
+    matcher: "Edit|Write|MultiEdit",
+  },
+  { eventName: "SessionStart", command: PRIM_SESSION_START_COMMAND },
+  { eventName: "SessionEnd", command: PRIM_SESSION_END_COMMAND },
+];
+
 const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
 const PROJECT_SCOPE_PATH = join(process.cwd(), ".claude", "settings.json");
 
@@ -42,7 +64,15 @@ export type Scope = "user" | "project";
 export type ClaudeSettings = {
   hooks?: {
     PreToolUse?: HookMatcher[];
+    PostToolUse?: HookMatcher[];
+    SessionStart?: HookMatcher[];
+    SessionEnd?: HookMatcher[];
     [key: string]: HookMatcher[] | undefined;
+  };
+  statusLine?: {
+    type?: string;
+    command?: string;
+    padding?: number;
   };
   [key: string]: unknown;
 };
@@ -146,6 +176,106 @@ export function isInstalled(settings: ClaudeSettings): boolean {
   return (settings.hooks?.PreToolUse ?? []).some(hasPrimHook);
 }
 
+// ── M6 install helpers ─────────────────────────────────────────────────────
+
+function hasCommand(matcher: HookMatcher, command: string): boolean {
+  return matcher.hooks?.some((h) => h.command === command) ?? false;
+}
+
+export function applyInstallHookSurface(
+  settings: ClaudeSettings,
+  surface: HookSurface,
+  options: { force?: boolean } = {},
+): ClaudeSettings {
+  const out: ClaudeSettings = {
+    ...settings,
+    hooks: { ...(settings.hooks ?? {}) },
+  };
+  const existing = out.hooks?.[surface.eventName] ?? [];
+  const filtered = existing.filter((m) => !hasCommand(m, surface.command));
+  const newEntry: HookMatcher = {
+    hooks: [{ type: "command", command: surface.command }],
+  };
+  if (surface.matcher !== undefined) {
+    newEntry.matcher = surface.matcher;
+  }
+  const hasExistingCanonical = existing.some(
+    (m) =>
+      m.matcher === surface.matcher &&
+      m.hooks?.length === 1 &&
+      m.hooks[0].command === surface.command,
+  );
+  if (hasExistingCanonical && !options.force) {
+    return out;
+  }
+  if (out.hooks) {
+    out.hooks[surface.eventName] = [...filtered, newEntry];
+  }
+  return out;
+}
+
+export function applyUninstallHookSurface(
+  settings: ClaudeSettings,
+  surface: HookSurface,
+): ClaudeSettings {
+  const out: ClaudeSettings = {
+    ...settings,
+    hooks: { ...(settings.hooks ?? {}) },
+  };
+  const existing = out.hooks?.[surface.eventName] ?? [];
+  const filtered = existing.filter((m) => !hasCommand(m, surface.command));
+  if (out.hooks) {
+    out.hooks[surface.eventName] = filtered.length === 0 ? undefined : filtered;
+  }
+  return out;
+}
+
+export function applyInstallStatusLine(
+  settings: ClaudeSettings,
+  options: { force?: boolean } = {},
+): ClaudeSettings {
+  const out: ClaudeSettings = { ...settings };
+  const existing = settings.statusLine;
+  const isCanonical = existing?.type === "command" && existing?.command === PRIM_STATUSLINE_COMMAND;
+  if (isCanonical && !options.force) {
+    return out;
+  }
+  if (existing && existing.command !== PRIM_STATUSLINE_COMMAND && !options.force) {
+    // Don't clobber a user-defined statusLine — only canonicalize our own.
+    return out;
+  }
+  out.statusLine = {
+    type: "command",
+    command: PRIM_STATUSLINE_COMMAND,
+    padding: 1,
+  };
+  return out;
+}
+
+export function applyUninstallStatusLine(settings: ClaudeSettings): ClaudeSettings {
+  const out: ClaudeSettings = { ...settings };
+  if (out.statusLine?.command === PRIM_STATUSLINE_COMMAND) {
+    out.statusLine = undefined;
+  }
+  return out;
+}
+
+function isHookSurfaceInstalled(settings: ClaudeSettings, surface: HookSurface): boolean {
+  return (settings.hooks?.[surface.eventName] ?? []).some((m) => hasCommand(m, surface.command));
+}
+
+function isStatusLineInstalled(settings: ClaudeSettings): boolean {
+  return settings.statusLine?.command === PRIM_STATUSLINE_COMMAND;
+}
+
+export function isFullyInstalled(settings: ClaudeSettings): boolean {
+  return (
+    isInstalled(settings) &&
+    M6_HOOK_SURFACES.every((s) => isHookSurfaceInstalled(settings, s)) &&
+    isStatusLineInstalled(settings)
+  );
+}
+
 type InstallResult = {
   scope: Scope;
   path: string;
@@ -156,8 +286,12 @@ type InstallResult = {
 export function performInstall(scope: Scope, force: boolean): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const wasInstalled = isInstalled(before);
-  const after = applyInstall(before, { force });
+  const wasFullyInstalled = isFullyInstalled(before);
+  let after = applyInstall(before, { force });
+  for (const surface of M6_HOOK_SURFACES) {
+    after = applyInstallHookSurface(after, surface, { force });
+  }
+  after = applyInstallStatusLine(after, { force });
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     writeSettings(path, after);
@@ -165,15 +299,19 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   return {
     scope,
     path,
-    installed: isInstalled(after),
-    changed: !wasInstalled || changed,
+    installed: isFullyInstalled(after),
+    changed: !wasFullyInstalled || changed,
   };
 }
 
 export function performUninstall(scope: Scope): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const after = applyUninstall(before);
+  let after = applyUninstall(before);
+  for (const surface of M6_HOOK_SURFACES) {
+    after = applyUninstallHookSurface(after, surface);
+  }
+  after = applyUninstallStatusLine(after);
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     writeSettings(path, after);
@@ -181,24 +319,48 @@ export function performUninstall(scope: Scope): InstallResult {
   return {
     scope,
     path,
-    installed: isInstalled(after),
+    installed: isFullyInstalled(after),
     changed,
   };
 }
 
+export type ScopeStatus = {
+  path: string;
+  installed: boolean;
+  surfaces: {
+    preToolUse: boolean;
+    postToolUse: boolean;
+    sessionStart: boolean;
+    sessionEnd: boolean;
+    statusLine: boolean;
+  };
+};
+
+function statusForScope(path: string): ScopeStatus {
+  const settings = readSettings(path);
+  const [postToolUse, sessionStart, sessionEnd] = M6_HOOK_SURFACES.map((s) =>
+    isHookSurfaceInstalled(settings, s),
+  );
+  return {
+    path,
+    installed: isFullyInstalled(settings),
+    surfaces: {
+      preToolUse: isInstalled(settings),
+      postToolUse,
+      sessionStart,
+      sessionEnd,
+      statusLine: isStatusLineInstalled(settings),
+    },
+  };
+}
+
 export function performStatus(): {
-  user: { path: string; installed: boolean };
-  project: { path: string; installed: boolean };
+  user: ScopeStatus;
+  project: ScopeStatus;
 } {
   return {
-    user: {
-      path: USER_SCOPE_PATH,
-      installed: isInstalled(readSettings(USER_SCOPE_PATH)),
-    },
-    project: {
-      path: PROJECT_SCOPE_PATH,
-      installed: isInstalled(readSettings(PROJECT_SCOPE_PATH)),
-    },
+    user: statusForScope(USER_SCOPE_PATH),
+    project: statusForScope(PROJECT_SCOPE_PATH),
   };
 }
 
@@ -213,26 +375,28 @@ export function registerClaudeCommands(program: Command): void {
 
   claude
     .command("install")
-    .description("Register the prim PreToolUse hook in Claude Code's settings.json")
+    .description(
+      "Register the full prim Claude Code integration (PreToolUse + PostToolUse + SessionStart + SessionEnd hooks + statusLine)",
+    )
     .option(
       "--scope <scope>",
       "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
     )
-    .option("--force", "Replace any existing prim hook entry")
+    .option("--force", "Replace any existing prim hook entries")
     .action((opts: { scope?: string; force?: boolean }) => {
       const scope = resolveScope(opts.scope);
       const result = performInstall(scope, opts.force ?? false);
       if (result.changed) {
-        console.error(`[prim] PreToolUse hook installed (${scope} scope) at ${result.path}`);
+        console.error(`[prim] integration installed (${scope} scope) at ${result.path}`);
       } else {
-        console.error(`[prim] PreToolUse hook already present at ${result.path} (no changes)`);
+        console.error(`[prim] integration already present at ${result.path} (no changes)`);
       }
       console.log(JSON.stringify(result, null, 2));
     });
 
   claude
     .command("uninstall")
-    .description("Remove the prim PreToolUse hook from settings.json")
+    .description("Remove the prim hooks + statusLine from settings.json")
     .option(
       "--scope <scope>",
       "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
@@ -241,23 +405,27 @@ export function registerClaudeCommands(program: Command): void {
       const scope = resolveScope(opts.scope);
       const result = performUninstall(scope);
       if (result.changed) {
-        console.error(`[prim] PreToolUse hook removed from ${result.path}`);
+        console.error(`[prim] integration removed from ${result.path}`);
       } else {
-        console.error(`[prim] no prim hook to remove at ${result.path} (nothing changed)`);
+        console.error(`[prim] no prim integration to remove at ${result.path} (nothing changed)`);
       }
       console.log(JSON.stringify(result, null, 2));
     });
 
   claude
     .command("status")
-    .description("Report whether the prim PreToolUse hook is installed at user / project scope")
+    .description("Report whether the prim integration is installed at user / project scope")
     .action(() => {
       const result = performStatus();
-      const userBadge = result.user.installed ? "✓" : "✗";
-      const projectBadge = result.project.installed ? "✓" : "✗";
+      const renderScope = (label: string, status: ScopeStatus) => {
+        const badge = status.installed ? "✓" : "✗";
+        const surfaces = Object.entries(status.surfaces)
+          .map(([k, v]) => `${v ? "✓" : "✗"} ${k}`)
+          .join("  ");
+        return `[prim] ${badge} ${label} (${status.path})\n[prim]     ${surfaces}`;
+      };
       console.error(
-        `[prim] ${userBadge} user (${result.user.path})\n` +
-          `[prim] ${projectBadge} project (${result.project.path})`,
+        `${renderScope("user", result.user)}\n${renderScope("project", result.project)}`,
       );
       console.log(JSON.stringify(result, null, 2));
     });
