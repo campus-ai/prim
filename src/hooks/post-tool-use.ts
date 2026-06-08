@@ -15,6 +15,7 @@
  */
 
 import { getClient } from "../client.js";
+import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const INGEST_TIMEOUT_MS = 4_000;
@@ -69,13 +70,18 @@ function buildMoveId(): string {
   return `pthook-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function ingestMove(move: MoveEnvelope): Promise<void> {
+interface IngestResponse {
+  accepted: number;
+  verdictFooter?: unknown;
+}
+
+async function ingestMove(move: MoveEnvelope): Promise<IngestResponse> {
   const client = getClient();
-  await client.post(
+  return (await client.post(
     "/api/cli/moves/ingest",
     { batch: [move] },
     { signal: AbortSignal.timeout(INGEST_TIMEOUT_MS) },
-  );
+  )) as IngestResponse;
 }
 
 async function main(): Promise<void> {
@@ -118,8 +124,14 @@ async function main(): Promise<void> {
     },
   };
   try {
-    await ingestMove(move);
+    const result = await ingestMove(move);
     debug(`ingested ${move.moveId} (${toolName})`);
+    // M9: render the image-#3 verdict footer when the ingest response
+    // carries the bypass-correlation context (the user just completed
+    // a reconcile within the 60s server-side window).
+    if (isVerdictFooterContext(result.verdictFooter)) {
+      process.stderr.write(`${renderVerdictFooter(result.verdictFooter)}\n`);
+    }
   } catch (err) {
     debug(`ingest failed: ${err instanceof Error ? err.message : String(err)}`);
   }
