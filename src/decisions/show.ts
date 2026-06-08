@@ -9,7 +9,18 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { color, colorForArea } from "../lib/ansi.js";
 import { renderIdentifier } from "./recent.js";
+
+function colorStatus(status: "active" | "superseded" | "under_review"): string {
+  if (status === "under_review") {
+    return color(status, "orange");
+  }
+  if (status === "active") {
+    return color(status, "green");
+  }
+  return color(status, "gray");
+}
 
 export interface DecisionDoc {
   _id: string;
@@ -122,14 +133,14 @@ function describeFlag(flag: FlagDoc): string {
 
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
-  const id = renderIdentifier({ shortId: d.shortId, id: d._id });
+  const id = color(renderIdentifier({ shortId: d.shortId, id: d._id }), "orange");
   const status = d.status ?? "active";
   const lines = [
     `[prim] ${id} — ${d.intent}`,
-    `  status: ${status}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${d.confidence}  ·  reversibility: ${d.reversibility ?? "(unset)"}`,
+    `  status: ${colorStatus(status)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${d.confidence}  ·  reversibility: ${d.reversibility ?? "(unset)"}`,
   ];
   if (d.area) {
-    lines.push(`  area: ${d.area}`);
+    lines.push(`  area: ${color(d.area, colorForArea(d.area))}`);
   }
   if (d.rationale) {
     lines.push(`  rationale: ${d.rationale}`);

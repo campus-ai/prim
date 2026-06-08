@@ -13,12 +13,54 @@
  * everything below is testable without an HTTP fetcher.
  */
 
+import { color, colorForArea, stripAnsi } from "../lib/ansi.js";
 import type { CascadeNode, CascadeResult, CascadeTrigger } from "./cascade.js";
 
 const DEPENDENTS_INLINE_LIMIT = 5;
 const KNOWLEDGE_INLINE_LIMIT = 4;
 const ISO_DATE_LENGTH = 10;
 const INTENT_TRUNC = 60;
+const DEFAULT_WIDTH = 80;
+const SOFT_WRAP_INDENT = "         "; // 9 spaces — matches "trigger: " prefix
+
+function terminalWidth(): number {
+  return process.stdout.columns ?? DEFAULT_WIDTH;
+}
+
+/**
+ * Word-wrap a single line at the given visible width. Visible width
+ * ignores ANSI escapes (measured via `stripAnsi`) so colored output
+ * wraps at the same column as plain output. Tokens longer than the
+ * width — e.g. very long file paths — fall through unwrapped rather
+ * than hard-breaking mid-word (acceptable per the M7 scoping note).
+ */
+export function softWrap(line: string, opts?: { width?: number; indent?: string }): string[] {
+  const width = opts?.width ?? terminalWidth();
+  const indent = opts?.indent ?? "";
+  if (stripAnsi(line).length <= width) {
+    return [line];
+  }
+  const words = line.split(" ");
+  const out: string[] = [];
+  let current = "";
+  for (const w of words) {
+    if (current === "") {
+      current = w;
+      continue;
+    }
+    const tentative = `${current} ${w}`;
+    if (stripAnsi(tentative).length > width) {
+      out.push(current);
+      current = `${indent}${w}`;
+      continue;
+    }
+    current = tentative;
+  }
+  if (current.length > 0) {
+    out.push(current);
+  }
+  return out;
+}
 
 function formatDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, ISO_DATE_LENGTH);
@@ -35,6 +77,15 @@ function bracketed(label: string): string {
   return `[${label}]`;
 }
 
+function withStarHighlight(label: string, isTrigger: boolean): string {
+  if (!isTrigger) {
+    return bracketed(label);
+  }
+  // Color the entire token including brackets so the trigger reads
+  // at-a-glance. The ` *` marker stays inside the bracket per image #1.
+  return color(bracketed(`${label} *`), "orange");
+}
+
 function knowledgeRow(
   files: string[],
   contexts: { id: string; name: string }[],
@@ -43,12 +94,10 @@ function knowledgeRow(
 ): string[] {
   const tokens: string[] = [];
   for (const ctx of contexts.slice(0, KNOWLEDGE_INLINE_LIMIT)) {
-    const star = ctx.name === triggerContextName ? " *" : "";
-    tokens.push(bracketed(`${ctx.name}${star}`));
+    tokens.push(withStarHighlight(ctx.name, ctx.name === triggerContextName));
   }
   for (const f of files.slice(0, KNOWLEDGE_INLINE_LIMIT - contexts.length)) {
-    const star = f === triggerFile ? " *" : "";
-    tokens.push(bracketed(`${f}${star}`));
+    tokens.push(withStarHighlight(f, f === triggerFile));
   }
   const overflow =
     files.length + contexts.length - tokens.length > 0
@@ -61,7 +110,10 @@ function knowledgeRow(
 }
 
 function areaChip(area: string | undefined): string {
-  return area ? `[${area}]` : "[--]";
+  if (!area) {
+    return color("[--]", "gray");
+  }
+  return color(`[${area}]`, colorForArea(area));
 }
 
 function countCrossAreaDependents(
@@ -167,6 +219,7 @@ function triggerLine(result: CascadeResult): string[] {
 export function renderCascade(result: CascadeResult): string {
   const d = result.decision;
   const id = d.shortId ? `dec_${d.shortId}` : d.id;
+  const idColored = color(id, "orange");
   const header = `what this would break · ${String(result.fanOut)} decision(s) · enforcing`;
   const lines: string[] = [header, "", "knowledge"];
   lines.push(
@@ -182,7 +235,7 @@ export function renderCascade(result: CascadeResult): string {
     lines.push("        | refs (just edited)");
     lines.push("        ▼");
   }
-  const decisionLine = `• ${id}  ${truncate(d.intent, INTENT_TRUNC)}`;
+  const decisionLine = `• ${idColored}  ${truncate(d.intent, INTENT_TRUNC)}`;
   const fanOutFragment =
     result.fanOut > 0 ? `  ·  ${String(result.fanOut)} decision(s) depend on this` : "";
   const meta = `  ${d.authorName} · ${formatDate(d.classifiedAt)}${fanOutFragment}  ·  ${result.reversibility ?? "(unset)"} reversibility`;
@@ -192,7 +245,12 @@ export function renderCascade(result: CascadeResult): string {
   lines.push(...dependentsBox(result.downstream));
   const triggered = triggerLine(result);
   if (triggered.length > 0) {
-    lines.push("", ...triggered);
+    lines.push("");
+    // Soft-wrap each trigger line with a 9-space continuation indent
+    // so a long rationale-shift narrative wraps cleanly under "trigger: ".
+    for (const t of triggered) {
+      lines.push(...softWrap(t, { indent: SOFT_WRAP_INDENT }));
+    }
   }
   const crossArea = countCrossAreaDependents(d.area, result.downstream);
   const crossAreaFragment = crossArea > 0 ? ` · ${String(crossArea)} cross-area dependency` : "";

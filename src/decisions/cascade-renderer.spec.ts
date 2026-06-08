@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { renderCascade } from "./cascade-renderer.js";
+import { renderCascade, softWrap } from "./cascade-renderer.js";
 import type { CascadeNode, CascadeResult } from "./cascade.js";
 
 function nodeFixture(overrides: Partial<CascadeNode> = {}): CascadeNode {
@@ -202,8 +202,18 @@ describe("renderCascade", () => {
         },
       }),
     );
-    expect(out).toContain(
-      'trigger: Maya edited mobile-session.spec — rationale "iOS offline reauth" shifted; the implicit assumption behind 7-day refresh changes',
+    // The long trigger line may soft-wrap across multiple lines on a
+    // narrow terminal — strip the wrap indents and validate the
+    // concatenated content. This keeps the assertion stable across
+    // terminal-width changes.
+    const triggerSection = out
+      .split("\n")
+      .slice(out.split("\n").findIndex((l) => l.startsWith("trigger:")))
+      .join(" ")
+      .replace(/\s+/g, " ");
+    expect(triggerSection).toContain("trigger: Maya edited mobile-session.spec");
+    expect(triggerSection).toContain(
+      'rationale "iOS offline reauth" shifted; the implicit assumption behind 7-day refresh changes',
     );
   });
 
@@ -253,5 +263,31 @@ describe("renderCascade", () => {
     expect(out).toContain(
       "trigger: Jamal edited mobile-session.spec; cascade fired at 2026-06-08.",
     );
+  });
+});
+
+describe("softWrap", () => {
+  it("returns the line unchanged when it fits inside the width", () => {
+    expect(softWrap("short line", { width: 80 })).toEqual(["short line"]);
+  });
+
+  it("wraps a long line on whitespace boundaries with the continuation indent applied", () => {
+    const longLine =
+      "trigger: Maya edited mobile-session.spec — rationale shifted; the implicit assumption changes.";
+    const out = softWrap(longLine, { width: 50, indent: "         " });
+    expect(out.length).toBeGreaterThan(1);
+    // First line keeps its raw prefix; continuation lines pick up the indent.
+    expect(out[0].startsWith("trigger:")).toBe(true);
+    expect(out[1].startsWith("         ")).toBe(true);
+    // Every line stays within the requested width.
+    for (const line of out) {
+      expect(line.length).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("falls through with a long single word that exceeds the width (no hard-break)", () => {
+    const longPath = "convex/some/very/deep/nested/test-file-verify-1.ts";
+    const out = softWrap(longPath, { width: 20 });
+    expect(out).toEqual([longPath]);
   });
 });
