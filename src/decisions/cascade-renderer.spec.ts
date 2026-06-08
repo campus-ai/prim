@@ -187,4 +187,71 @@ describe("renderCascade", () => {
     const out = renderCascade(baseResult({ downstream: dependents, fanOut: 4 }));
     expect(out).toContain("impact: 4 decision(s) need review · 1 cross-area dependency.");
   });
+
+  it("renders the rich trigger narrative with author + rationale shift when present", () => {
+    const out = renderCascade(
+      baseResult({
+        trigger: {
+          type: "file_edit",
+          file: "mobile-session.spec",
+          contextName: undefined,
+          flaggedAt: Date.UTC(2026, 5, 8, 14, 32, 0),
+          authorName: "Maya",
+          narrative:
+            'rationale "iOS offline reauth" shifted; the implicit assumption behind 7-day refresh changes',
+        },
+      }),
+    );
+    expect(out).toContain(
+      'trigger: Maya edited mobile-session.spec — rationale "iOS offline reauth" shifted; the implicit assumption behind 7-day refresh changes',
+    );
+  });
+
+  it("leads with the author name in the file_edit clause when known", () => {
+    const out = renderCascade(
+      baseResult({
+        trigger: {
+          type: "file_edit",
+          file: "convex/auth/config.ts",
+          contextName: undefined,
+          flaggedAt: Date.UTC(2026, 5, 8, 14, 30, 0),
+          authorName: "Taylor",
+        },
+      }),
+    );
+    expect(out).toContain(
+      "trigger: Taylor edited convex/auth/config.ts; cascade fired at 2026-06-08.",
+    );
+  });
+
+  it("falls back to the impersonal file form when no author is known", () => {
+    const out = renderCascade(
+      baseResult({
+        trigger: {
+          type: "file_edit",
+          file: "convex/auth/config.ts",
+          contextName: undefined,
+          flaggedAt: Date.UTC(2026, 5, 8, 14, 30, 0),
+        },
+      }),
+    );
+    expect(out).toContain("trigger: file 'convex/auth/config.ts' was edited;");
+  });
+
+  it("leads with the author name in the context_edit clause when known", () => {
+    const out = renderCascade(
+      baseResult({
+        trigger: {
+          type: "context_edit",
+          file: undefined,
+          contextName: "mobile-session.spec",
+          flaggedAt: Date.UTC(2026, 5, 8, 14, 30, 0),
+          authorName: "Jamal",
+        },
+      }),
+    );
+    expect(out).toContain(
+      "trigger: Jamal edited mobile-session.spec; cascade fired at 2026-06-08.",
+    );
+  });
 });

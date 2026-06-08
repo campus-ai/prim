@@ -44,6 +44,11 @@ export interface CascadeTrigger {
   file: string | undefined;
   contextName: string | undefined;
   flaggedAt: number;
+  // Rich-narrative fields populated by the server when the triggering
+  // move can be resolved to an editor + when the gate/triage cron
+  // synthesized a rationale-shift explanation.
+  authorName?: string;
+  narrative?: string;
 }
 
 export interface CascadeResult {

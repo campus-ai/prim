@@ -13,7 +13,7 @@
  * everything below is testable without an HTTP fetcher.
  */
 
-import type { CascadeNode, CascadeResult } from "./cascade.js";
+import type { CascadeNode, CascadeResult, CascadeTrigger } from "./cascade.js";
 
 const DEPENDENTS_INLINE_LIMIT = 5;
 const KNOWLEDGE_INLINE_LIMIT = 4;
@@ -115,28 +115,53 @@ function dependentsBox(dependents: CascadeNode[]): string[] {
   return lines;
 }
 
+// Build the "what was edited" clause for the rich trigger narrative.
+// When `authorName` is known we lead with it ("Maya edited <ref>");
+// otherwise we fall back to the impersonal "file '<x>' was edited".
+function editedClause(
+  type: CascadeTrigger["type"],
+  authorName: string | undefined,
+  file: string | undefined,
+  contextName: string | undefined,
+): string | null {
+  if (type === "file_edit" && file) {
+    return authorName ? `${authorName} edited ${file}` : `file '${file}' was edited`;
+  }
+  if (type === "context_edit" && contextName) {
+    return authorName
+      ? `${authorName} edited ${contextName}`
+      : `context '${contextName}' was edited`;
+  }
+  if (type === "supersession") {
+    return "an upstream decision was superseded";
+  }
+  if (type === "confirmation_request") {
+    return null; // separate code path
+  }
+  return null;
+}
+
 function triggerLine(result: CascadeResult): string[] {
   const t = result.trigger;
   if (!t) {
     return [];
   }
-  if (t.type === "file_edit" && t.file) {
-    return [`trigger: file '${t.file}' was edited; cascade fired at ${formatDate(t.flaggedAt)}.`];
-  }
-  if (t.type === "context_edit" && t.contextName) {
-    return [
-      `trigger: context '${t.contextName}' was edited; cascade fired at ${formatDate(t.flaggedAt)}.`,
-    ];
-  }
-  if (t.type === "supersession") {
-    return [
-      `trigger: an upstream decision was superseded; cascade fired at ${formatDate(t.flaggedAt)}.`,
-    ];
-  }
   if (t.type === "confirmation_request") {
     return [`trigger: asking-policy confirmation request opened at ${formatDate(t.flaggedAt)}.`];
   }
-  return [`trigger: ${t.type} at ${formatDate(t.flaggedAt)}.`];
+  const clause = editedClause(t.type, t.authorName, t.file, t.contextName);
+  if (!clause) {
+    return [`trigger: ${t.type} at ${formatDate(t.flaggedAt)}.`];
+  }
+  // Image-#1 rich form: "<author/file> edited <ref> — <narrative>"
+  // narrative is a server-synthesized rationale-shift explanation
+  // (e.g. "rationale 'iOS offline reauth' shifted; the implicit
+  // assumption behind 7-day refresh changes"). When absent, fall
+  // back to the structural "cascade fired at <date>" suffix.
+  if (t.narrative) {
+    return [`trigger: ${clause} — ${t.narrative}`];
+  }
+  return [`trigger: ${clause}; cascade fired at ${formatDate(t.flaggedAt)}.`];
 }
 
 export function renderCascade(result: CascadeResult): string {
