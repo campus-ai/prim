@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bold, color, colorForArea, dim, stripAnsi, supportsColor } from "./ansi.js";
 
-const originalIsTTY = process.stdout.isTTY;
+const originalIsTTY = process.stderr.isTTY;
 const originalNoColor = process.env.NO_COLOR;
 
 beforeEach(() => {
   // Tests start with a known-TTY state so color helpers emit codes.
-  Object.defineProperty(process.stdout, "isTTY", {
+  Object.defineProperty(process.stderr, "isTTY", {
     value: true,
     configurable: true,
   });
@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  Object.defineProperty(process.stdout, "isTTY", {
+  Object.defineProperty(process.stderr, "isTTY", {
     value: originalIsTTY,
     configurable: true,
   });
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("supportsColor", () => {
-  it("returns true when stdout is a TTY and NO_COLOR is unset", () => {
+  it("returns true when stderr is a TTY and NO_COLOR is unset", () => {
     expect(supportsColor()).toBe(true);
   });
 
@@ -43,12 +43,26 @@ describe("supportsColor", () => {
     expect(supportsColor()).toBe(true);
   });
 
-  it("returns false when stdout is not a TTY", () => {
+  it("returns true even when stderr is not a TTY (color is unconditional)", () => {
+    Object.defineProperty(process.stderr, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+    expect(supportsColor()).toBe(true);
+  });
+
+  it("returns true when both stdout and stderr are piped", () => {
+    // Color is unconditional (sans NO_COLOR): piping or redirecting either
+    // stream keeps the human-readable output colored.
     Object.defineProperty(process.stdout, "isTTY", {
       value: false,
       configurable: true,
     });
-    expect(supportsColor()).toBe(false);
+    Object.defineProperty(process.stderr, "isTTY", {
+      value: false,
+      configurable: true,
+    });
+    expect(supportsColor()).toBe(true);
   });
 });
 

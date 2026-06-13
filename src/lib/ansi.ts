@@ -2,13 +2,15 @@
  * Hand-rolled ANSI color helpers for the cli.
  *
  * Surgical-minimalist choice over `picocolors` / `chalk`: the renderer
- * needs ~6 colors + a `dim` modifier + tty detection, all of which fit
- * in ~60 LOC. A dep would add a transitive footprint disproportionate
- * to the small surface area we use.
+ * needs ~6 colors + a `dim` modifier, all of which fit in ~60 LOC. A
+ * dep would add a transitive footprint disproportionate to the small
+ * surface area we use.
  *
- * Honors the `NO_COLOR` env convention and `process.stdout.isTTY` —
- * piping output to `cat`, redirecting to a file, or running under CI
- * all degrade gracefully to plain text.
+ * Color is emitted unconditionally for the human-readable STDERR output
+ * — regardless of TTY, pipe, or file — so it survives being run under an
+ * agent or captured for a recording. `NO_COLOR` (https://no-color.org)
+ * is the universal opt-out. STDOUT stays raw JSON; color is never
+ * applied there.
  */
 
 export type AnsiColor =
@@ -38,16 +40,24 @@ const ANSI_DIM = "\u001b[2m";
 const ANSI_BOLD = "\u001b[1m";
 
 /**
- * Returns true when ANSI color escapes are safe to emit to stdout.
- * Honors `NO_COLOR` (https://no-color.org) and a non-TTY stdout
- * (piping, CI, captured output). Re-evaluated on every call so tests
- * can monkey-patch `process.stdout.isTTY` for one-off assertions.
+ * Returns true when ANSI color escapes should be emitted.
+ *
+ * prim writes its colored human-readable output exclusively to STDERR
+ * (per the AX preference of STDOUT raw machine-readable, STDERR human-
+ * readable). Color is always enabled regardless of whether STDERR is a
+ * TTY, a pipe, or a file — the human output stays colored when run under
+ * an agent (piped), redirected, or captured for a recording. The
+ * machine-readable STDOUT is unaffected: color() is only ever applied on
+ * the STDERR render paths, never to the JSON stream.
+ *
+ * Honors `NO_COLOR` (https://no-color.org) as the universal opt-out and
+ * is re-evaluated on every call so tests can monkey-patch the env.
  */
 export function supportsColor(): boolean {
   if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") {
     return false;
   }
-  return process.stdout.isTTY === true;
+  return true;
 }
 
 export function color(text: string, c: AnsiColor): string {
