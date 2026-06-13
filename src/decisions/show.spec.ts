@@ -93,6 +93,34 @@ describe("formatShowHuman", () => {
     const out = formatShowHuman(noShortId);
     expect(out).toContain("qx7fpmycwabtzke040y7vecnnh8870pg");
   });
+
+  it("renders dependents by intent + area, not raw ids", () => {
+    const withDeps: DecisionShowResult = {
+      ...DETAIL,
+      dependents: [
+        {
+          id: "qx7childaaaaaaaaaaaaaaaaaaaaaaaa",
+          shortId: "abcd1234",
+          intent: "Session storage reads from Redis",
+          area: "auth",
+        },
+      ],
+      depsOn: [
+        {
+          id: "qx7parentbbbbbbbbbbbbbbbbbbbbbbbb",
+          shortId: "ef567890",
+          intent: "Use Redis for the verification cache",
+          area: "infra",
+        },
+      ],
+    };
+    const out = formatShowHuman(withDeps);
+    expect(out).toContain("Session storage reads from Redis");
+    expect(out).toContain("[auth]");
+    expect(out).toContain("dec_abcd1234");
+    expect(out).toContain("Use Redis for the verification cache");
+    expect(out).not.toContain("qx7childaaaaaaaaaaaaaaaaaaaaaaaa");
+  });
 });
 
 describe("formatShowJson", () => {

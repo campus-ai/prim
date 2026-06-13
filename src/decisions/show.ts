@@ -67,10 +67,11 @@ export interface ContextRefDoc {
   accessKind: "read" | "edit";
 }
 
-export interface DependencyEdgeDoc {
-  _id: string;
-  parentId: string;
-  childId: string;
+export interface DecisionRelative {
+  id: string;
+  shortId?: string;
+  intent: string;
+  area?: string;
 }
 
 export interface DecisionShowResult {
@@ -78,8 +79,8 @@ export interface DecisionShowResult {
   flags: FlagDoc[];
   fileRefs: FileRefDoc[];
   contextRefs: ContextRefDoc[];
-  depsOn: DependencyEdgeDoc[];
-  dependents: DependencyEdgeDoc[];
+  depsOn: DecisionRelative[];
+  dependents: DecisionRelative[];
 }
 
 export const SHOW_TIMEOUT_MS = 10_000;
@@ -131,6 +132,18 @@ function describeFlag(flag: FlagDoc): string {
   return `pending ${flag.triggeredByType ?? "flag"}`;
 }
 
+const RELATIVE_INTENT_TRUNC = 56;
+
+function formatRelative(r: DecisionRelative): string {
+  const chip = r.area ? `${color(`[${r.area}]`, colorForArea(r.area))} ` : "";
+  const intent =
+    r.intent.length > RELATIVE_INTENT_TRUNC
+      ? `${r.intent.slice(0, RELATIVE_INTENT_TRUNC - 1)}…`
+      : r.intent;
+  const idLabel = color(renderIdentifier({ shortId: r.shortId, id: r.id }), "gray");
+  return `${chip}${intent}  ${idLabel}`;
+}
+
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d._id }), "orange");
@@ -162,14 +175,14 @@ export function formatShowHuman(result: DecisionShowResult): string {
   }
   if (result.dependents.length > 0) {
     lines.push(`  dependents (${String(result.dependents.length)}):`);
-    for (const e of result.dependents) {
-      lines.push(`    → ${e.childId}`);
+    for (const r of result.dependents) {
+      lines.push(`    → ${formatRelative(r)}`);
     }
   }
   if (result.depsOn.length > 0) {
     lines.push(`  depends on (${String(result.depsOn.length)}):`);
-    for (const e of result.depsOn) {
-      lines.push(`    ← ${e.parentId}`);
+    for (const r of result.depsOn) {
+      lines.push(`    ← ${formatRelative(r)}`);
     }
   }
   if (result.flags.length > 0) {
