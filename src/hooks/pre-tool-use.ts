@@ -29,6 +29,7 @@
  * Plan: ~/.claude/plans/great-i-d-like-for-joyful-hollerith.md (M3).
  */
 
+import { isAbsolute, relative } from "node:path";
 import { getClient } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import {
@@ -53,6 +54,9 @@ type PreToolUseInput = {
   hook_event_name?: string;
   tool_name?: string;
   tool_input?: unknown;
+  // Claude Code stamps the session working directory on every hook
+  // envelope; we relativize file paths against it before the check.
+  cwd?: string;
 };
 
 async function readStdin(): Promise<string> {
@@ -75,6 +79,17 @@ async function readStdin(): Promise<string> {
 
 function emit(output: ReturnType<typeof failOpenOutput>): void {
   process.stdout.write(`${JSON.stringify(output)}\n`);
+}
+
+// The server's conflict-check matches a repository-relative join key and
+// rejects absolute paths (a capture-machine absolute path can never match
+// another checkout's stored key). Claude Code passes tool_input.file_path
+// as an absolute path, so relativize it against the session cwd — the same
+// key the server recorded at link time — before sending. A path outside
+// the cwd (relative escape) is sent unchanged; the server treats an
+// unmatched key as no-conflict, so out-of-repo edits pass through.
+function toRepoRelative(filePath: string, cwd: string): string {
+  return isAbsolute(filePath) ? relative(cwd, filePath) : filePath;
 }
 
 async function checkOneFile(
@@ -126,7 +141,9 @@ async function main(): Promise<void> {
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
-  const files = extractFilePaths(toolName, envelope.tool_input);
+  const cwd =
+    typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
+  const files = extractFilePaths(toolName, envelope.tool_input).map((f) => toRepoRelative(f, cwd));
   if (files.length === 0) {
     emit(failOpenOutput());
     return;
