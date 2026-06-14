@@ -39,6 +39,12 @@ const PRIM_POST_TOOL_USE_COMMAND = "prim-post-tool-use";
 const PRIM_SESSION_START_COMMAND = "prim-session-start";
 const PRIM_SESSION_END_COMMAND = "prim-session-end";
 const PRIM_STATUSLINE_COMMAND = "prim statusline";
+// Re-run the statusline on a 5s idle timer (Claude Code's `refreshInterval`).
+// Claude Code only re-renders the statusline on conversation events by
+// default, so a "team: N online" count goes stale between prompts; this adds
+// the idle poll so presence updates without the user submitting anything. 5s
+// ≈ the daemon's 30s heartbeat cadence — live-feeling, but light on spawns.
+const PRIM_STATUSLINE_REFRESH_SECONDS = 5;
 
 type HookSurface = {
   eventName: string;
@@ -73,6 +79,7 @@ export type ClaudeSettings = {
     type?: string;
     command?: string;
     padding?: number;
+    refreshInterval?: number;
   };
   [key: string]: unknown;
 };
@@ -236,7 +243,15 @@ export function applyInstallStatusLine(
 ): ClaudeSettings {
   const out: ClaudeSettings = { ...settings };
   const existing = settings.statusLine;
-  const isCanonical = existing?.type === "command" && existing?.command === PRIM_STATUSLINE_COMMAND;
+  // "Canonical" now also requires refreshInterval to be present, so re-running
+  // install upgrades an older prim statusLine that predates it — it adds the
+  // idle-refresh timer instead of early-returning and leaving presence stale.
+  // A prim statusLine that already carries any refreshInterval is left as-is
+  // (a user's custom interval is preserved; only --force resets it).
+  const isCanonical =
+    existing?.type === "command" &&
+    existing?.command === PRIM_STATUSLINE_COMMAND &&
+    existing?.refreshInterval !== undefined;
   if (isCanonical && !options.force) {
     return out;
   }
@@ -248,6 +263,7 @@ export function applyInstallStatusLine(
     type: "command",
     command: PRIM_STATUSLINE_COMMAND,
     padding: 1,
+    refreshInterval: PRIM_STATUSLINE_REFRESH_SECONDS,
   };
   return out;
 }

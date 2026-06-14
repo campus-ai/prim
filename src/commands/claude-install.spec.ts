@@ -232,6 +232,31 @@ describe("applyInstallStatusLine + applyUninstallStatusLine", () => {
     expect(out.statusLine?.command).toBe("prim statusline");
     expect(out.statusLine?.type).toBe("command");
     expect(out.statusLine?.padding).toBe(1);
+    expect(out.statusLine?.refreshInterval).toBe(5);
+  });
+
+  it("upgrades an older prim statusLine that predates refreshInterval on re-run", () => {
+    // Pre-refreshInterval install: our command, no idle timer. Re-running
+    // install must add the timer, not treat it as already canonical.
+    const old: ClaudeSettings = {
+      statusLine: { type: "command", command: "prim statusline", padding: 1 },
+    };
+    const out = applyInstallStatusLine(old);
+    expect(out.statusLine?.command).toBe("prim statusline");
+    expect(out.statusLine?.refreshInterval).toBe(5);
+  });
+
+  it("preserves a custom refreshInterval on an already-canonical prim statusLine", () => {
+    const custom: ClaudeSettings = {
+      statusLine: {
+        type: "command",
+        command: "prim statusline",
+        padding: 1,
+        refreshInterval: 10,
+      },
+    };
+    const out = applyInstallStatusLine(custom);
+    expect(out.statusLine?.refreshInterval).toBe(10);
   });
 
   it("does not overwrite a user-defined non-prim statusLine without --force", () => {
