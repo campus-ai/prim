@@ -2,16 +2,17 @@
 /**
  * Decision Event Pipeline — Claude Code hook collector.
  *
- * Reads a single hook event from stdin, wraps it in a Move envelope,
- * resolves its owning org, appends to that org's local NDJSON journal,
- * exits 0. Never blocks the Claude Code session: any error is swallowed
- * (set PRIM_HOOK_DEBUG to surface it on stderr) and the process always
- * exits 0.
+ * Reads a single hook event from stdin, scrubs PII/secrets, wraps it in a
+ * Move envelope, resolves its owning org, appends to that org's local
+ * NDJSON journal, exits 0. Never blocks the Claude Code session: any error
+ * is swallowed (set PRIM_HOOK_DEBUG to surface it on stderr) and the
+ * process always exits 0.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
  * auth/HTTP subsystem into this per-tool-call cold path. The binding
- * resolver is pure file IO + JWT base64 decode, so it stays cold-path-safe.
+ * resolver and the redaction filter are pure file IO, so they stay
+ * cold-path-safe.
  *
  * Installed via: prim claude-install --apply
  */
@@ -22,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
+import { scrubFromCwd } from "./redact.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -47,7 +49,13 @@ function spawnBackgroundFlush(): void {
 try {
   const raw = readFileSync(0, "utf-8");
   const parsed = JSON.parse(raw) as Record<string, unknown>;
-  const move = toMove(parsed, resolveCliVersion());
+  const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
+  // Derive the envelope's identity/control fields (sessionId, eventType,
+  // env.cwd) from the ORIGINAL event so org binding is provably independent
+  // of redaction, then scrub ONLY the payload body that persists to the
+  // journal, transits to the server, and lands in the moves table.
+  const base = toMove(parsed, resolveCliVersion());
+  const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
   appendMove(move, orgId);
   if (shouldFlushAfter(move.eventType)) {
