@@ -22,6 +22,7 @@ import { registerContextCommands } from "./commands/context.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
 import { registerProjectCommands } from "./commands/project.js";
+import { registerSessionCommands } from "./commands/session.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerSpecCommands } from "./commands/spec.js";
 import { flushIfNeeded } from "./flusher.js";
@@ -50,6 +51,7 @@ registerProjectCommands(program);
 registerHooksCommands(program);
 registerSkillCommands(program);
 registerMovesCommands(program);
+registerSessionCommands(program);
 registerClaudeInstallCommands(program);
 
 // Surface API / network errors as clean one-liners

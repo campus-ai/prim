@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import type { Move } from "../protocol/move.js";
+import { ENVELOPE_VERSION, type Move } from "../protocol/move.js";
 
 export function toMove(parsed: Record<string, unknown>, cliVersion: string): Move {
   return {
@@ -23,6 +23,7 @@ export function toMove(parsed: Record<string, unknown>, cliVersion: string): Mov
       cliVersion,
       osPlatform: platform(),
     },
+    envelopeVersion: ENVELOPE_VERSION,
   };
 }
 

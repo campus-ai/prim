@@ -13,6 +13,7 @@ describe("toMove", () => {
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(typeof move.moveId).toBe("string");
     expect(typeof move.capturedAt).toBe("number");
+    expect(move.envelopeVersion).toBe(1);
   });
 
   it("stores the raw hook event verbatim as payload", () => {

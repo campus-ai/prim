@@ -3,13 +3,15 @@
  * Decision Event Pipeline — Claude Code hook collector.
  *
  * Reads a single hook event from stdin, wraps it in a Move envelope,
- * appends to the local NDJSON journal, exits 0. Never blocks the Claude
- * Code session: any error is swallowed (set PRIM_HOOK_DEBUG to surface it
- * on stderr) and the process always exits 0.
+ * resolves its owning org, appends to that org's local NDJSON journal,
+ * exits 0. Never blocks the Claude Code session: any error is swallowed
+ * (set PRIM_HOOK_DEBUG to surface it on stderr) and the process always
+ * exits 0.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
- * auth/HTTP subsystem into this per-tool-call cold path.
+ * auth/HTTP subsystem into this per-tool-call cold path. The binding
+ * resolver is pure file IO + JWT base64 decode, so it stays cold-path-safe.
  *
  * Installed via: prim claude-install --apply
  */
@@ -17,6 +19,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
 
@@ -45,7 +48,8 @@ try {
   const raw = readFileSync(0, "utf-8");
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   const move = toMove(parsed, resolveCliVersion());
-  appendMove(move);
+  const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
+  appendMove(move, orgId);
   if (shouldFlushAfter(move.eventType)) {
     spawnBackgroundFlush();
   }

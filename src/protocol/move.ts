@@ -6,10 +6,14 @@
  * validator until codegen-from-type or a shared package replaces the
  * dual definition.
  *
- * The minimum-required field set: identity, capturedAt, sessionId,
- * eventType, payload, env. Producer-identity and schema-version fields
- * are added when envelope versioning lands.
+ * Fields: identity, capturedAt, sessionId, eventType, payload, env, and a
+ * monotonic envelopeVersion the server uses to tolerate older producers
+ * during a rollout.
  */
+
+/** Monotonic version of the producer-side envelope schema. */
+export const ENVELOPE_VERSION = 1;
+
 export type Move = {
   moveId: string;
   capturedAt: number;
@@ -21,4 +25,5 @@ export type Move = {
     cliVersion: string;
     osPlatform: NodeJS.Platform;
   };
+  envelopeVersion: number;
 };

@@ -1,36 +1,39 @@
 /**
  * Decision Event Pipeline — flusher.
  *
- * Drains the local journal to /api/cli/moves/ingest using rotate-then-
- * process so moves appended during the flush window are never lost:
+ * Drains each per-bucket journal to /api/cli/moves/ingest using rotate-
+ * then-process so moves appended during the flush window are never lost:
  *
- *   1. Atomically rename journal.ndjson → journal.flushing.<ts>.<pid>.
+ *   1. Atomically rename <bucket>/journal.ndjson → .flushing.<ts>.<pid>.
  *      Concurrent hook appends start a fresh journal.ndjson; a concurrent
  *      drain that loses the rename race is a no-op (ENOENT).
  *   2. POST batches of up to 500 moves to /api/cli/moves/ingest.
  *   3. On success, unlink the .flushing file.
  *
- * On failure the .flushing file is left behind for inspection; recovering
- * stranded .flushing files on a later drain is future work. Uses
- * getClient() for bearer auth + auto-refresh.
+ * flush() enumerates bucket paths WITHOUT reading their contents, so the
+ * atomic rename in drainPath is the only race-sensitive op — a concurrent
+ * drain can never crash the explicit `prim moves flush`. On failure the
+ * .flushing file is left behind for inspection; recovering stranded
+ * .flushing files on a later drain is future work. Uses getClient() for
+ * bearer auth + auto-refresh.
  */
 
 import { renameSync, unlinkSync } from "node:fs";
 import { getClient } from "./client.js";
-import { JOURNAL_PATH, journalStats, readMovesFromPath } from "./journal.js";
+import { bucketStats, listBuckets, readMovesFromPath } from "./journal.js";
 
 const BATCH_SIZE = 500;
 const HTTP_TIMEOUT_MS = 10_000;
 const OPPORTUNISTIC_FLUSH_AFTER_MS = 60_000;
 
-export async function flush(): Promise<{ flushed: number }> {
-  const tmpPath = `${JOURNAL_PATH}.flushing.${String(Date.now())}.${String(process.pid)}`;
+async function drainPath(path: string): Promise<number> {
+  const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
   try {
-    renameSync(JOURNAL_PATH, tmpPath);
+    renameSync(path, tmpPath);
   } catch (err) {
-    // No journal to drain, or a concurrent drain already rotated it.
+    // No journal at this path, or a concurrent drain already rotated it.
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { flushed: 0 };
+      return 0;
     }
     throw err;
   }
@@ -38,7 +41,7 @@ export async function flush(): Promise<{ flushed: number }> {
   const moves = readMovesFromPath(tmpPath);
   if (moves.length === 0) {
     unlinkSync(tmpPath);
-    return { flushed: 0 };
+    return 0;
   }
 
   const client = getClient();
@@ -51,16 +54,27 @@ export async function flush(): Promise<{ flushed: number }> {
     );
   }
   unlinkSync(tmpPath);
-  return { flushed: moves.length };
+  return moves.length;
+}
+
+export async function flush(): Promise<{ flushed: number }> {
+  let total = 0;
+  // Path-only enumeration (listBuckets does not stat/read), so the only
+  // race-sensitive op is drainPath's ENOENT-tolerant rename.
+  for (const { path } of listBuckets()) {
+    total += await drainPath(path);
+  }
+  return { flushed: total };
 }
 
 export async function flushIfNeeded(): Promise<void> {
   try {
-    const stats = journalStats();
-    if (!stats) {
+    const stats = bucketStats();
+    if (stats.length === 0) {
       return;
     }
-    if (Date.now() - stats.mtimeMs > OPPORTUNISTIC_FLUSH_AFTER_MS) {
+    const oldest = stats.reduce((min, s) => (s.mtimeMs < min ? s.mtimeMs : min), stats[0].mtimeMs);
+    if (Date.now() - oldest > OPPORTUNISTIC_FLUSH_AFTER_MS) {
       await flush();
     }
   } catch {
