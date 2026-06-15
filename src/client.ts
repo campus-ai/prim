@@ -113,10 +113,26 @@ export function getAuthToken(): string | undefined {
   return undefined;
 }
 
-const API_URL = "https://api.getprimitive.ai";
+const DEFAULT_API_URL = "https://api.getprimitive.ai";
 
+/**
+ * Resolve the API base URL.
+ *
+ * Priority mirrors the auth-token resolver: PRIM_API_URL env → .env.local
+ * PRIM_API_URL → the default production URL. The env override is the
+ * load-bearing knob for local-dev verification — point the cli at a
+ * `*.convex.site` URL from `npx convex dev` and the same code paths
+ * that talk to production talk to your dev deployment.
+ */
 export function getSiteUrl(): string {
-  return API_URL;
+  if (process.env.PRIM_API_URL) {
+    return process.env.PRIM_API_URL;
+  }
+  const envVars = loadEnvFile();
+  if (envVars.PRIM_API_URL) {
+    return envVars.PRIM_API_URL;
+  }
+  return DEFAULT_API_URL;
 }
 
 /**
