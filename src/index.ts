@@ -19,6 +19,7 @@ import updateNotifier from "update-notifier";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerClaudeInstallCommands } from "./commands/claude-install.js";
 import { registerContextCommands } from "./commands/context.js";
+import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
 import { registerProjectCommands } from "./commands/project.js";
@@ -52,6 +53,7 @@ registerHooksCommands(program);
 registerSkillCommands(program);
 registerMovesCommands(program);
 registerSessionCommands(program);
+registerDecisionsCommands(program);
 registerClaudeInstallCommands(program);
 
 // Surface API / network errors as clean one-liners
