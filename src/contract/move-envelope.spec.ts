@@ -1,17 +1,16 @@
 /**
- * Q-D envelope contract test (producer side).
+ * Move envelope contract test (producer side).
  *
- * The Move envelope shape is duplicated across the producer (this
- * repo, src/protocol/move.ts) and the consumer (client repo's
- * convex/moves/ingest.ts moveValidator). Until codegen-from-type or
- * a shared package eliminates the duplication, this test pins the
- * producer side so any drift surfaces in PR CI rather than at
- * runtime.
+ * The Move envelope shape is duplicated across the producer (this repo's
+ * src/protocol/move.ts) and the consumer (the Convex ingest validator).
+ * Until codegen-from-type or a shared package eliminates the duplication,
+ * this test pins the producer side so any drift surfaces in CI rather than
+ * at runtime.
  *
- * Producer is intentionally stricter than consumer: `env` is required
- * here and optional server-side. That asymmetry is by design — the
- * CLI knows what it captured; the server tolerates older or partial
- * envelopes from forward-compatible producers.
+ * Producer is intentionally stricter than the consumer: `env` is required
+ * here and optional server-side — the CLI knows exactly what it captured,
+ * while the server tolerates older or partial envelopes from
+ * forward-compatible producers.
  */
 
 import { describe, expect, it } from "vitest";
@@ -29,6 +28,7 @@ function sample(): Move {
       cliVersion: "0.1.0-alpha.15",
       osPlatform: "darwin",
     },
+    envelopeVersion: 1,
   };
 }
 
@@ -41,6 +41,7 @@ describe("Move envelope contract", () => {
     expect(typeof m.eventType).toBe("string");
     expect(m.payload).toBeDefined();
     expect(m.env).toBeDefined();
+    expect(typeof m.envelopeVersion).toBe("number");
   });
 
   it("round-trips through JSON intact (NDJSON journal format)", () => {
@@ -53,11 +54,10 @@ describe("Move envelope contract", () => {
     expect(restored.env.cwd).toBe(m.env.cwd);
     expect(restored.env.cliVersion).toBe(m.env.cliVersion);
     expect(restored.env.osPlatform).toBe(m.env.osPlatform);
+    expect(restored.envelopeVersion).toBe(m.envelopeVersion);
   });
 
-  it("rejects null/undefined identity fields at the type boundary", () => {
-    // Type-level check; runtime guard belongs in prim-hook's stdin
-    // parser. Surfaces if the type is loosened in an unsafe direction.
+  it("keeps the required fields non-optional at the type boundary", () => {
     const m = sample();
     const required: Array<keyof Move> = [
       "moveId",
@@ -66,6 +66,7 @@ describe("Move envelope contract", () => {
       "eventType",
       "payload",
       "env",
+      "envelopeVersion",
     ];
     for (const key of required) {
       expect(m[key]).toBeDefined();
