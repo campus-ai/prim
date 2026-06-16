@@ -19,6 +19,7 @@ import updateNotifier from "update-notifier";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerClaudeCommands } from "./commands/claude-install.js";
 import { registerContextCommands } from "./commands/context.js";
+import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
@@ -55,6 +56,7 @@ registerMovesCommands(program);
 registerSessionCommands(program);
 registerDecisionsCommands(program);
 registerClaudeCommands(program);
+registerDaemonCommands(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
