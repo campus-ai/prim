@@ -24,6 +24,7 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { color, colorForArea } from "../lib/ansi.js";
 
 export interface DecisionFeedRow {
   id: string;
@@ -152,8 +153,14 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
   for (const row of result.decisions) {
     const clock = formatClock(row.classifiedAt);
     const author = padRight(authorLabel(row), AUTHOR_WIDTH);
-    const area = row.area ? `• ${row.area}` : "•";
-    const areaCol = padRight(area, 12);
+    // Pad the plain (uncolored) form to maintain alignment, then color
+    // the bullet alone — the visible width stays the same regardless
+    // of color, so columns line up under both TTY and piped output.
+    const areaText = row.area ? `• ${row.area}` : "•";
+    const areaPlain = padRight(areaText, 12);
+    const areaCol = row.area
+      ? areaPlain.replace("•", color("•", colorForArea(row.area)))
+      : areaPlain;
     lines.push(`  ${clock}  ${author}${areaCol}${row.intent}`);
   }
   return lines.join("\n");

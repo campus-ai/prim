@@ -19,9 +19,20 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { color, colorForArea } from "../lib/ansi.js";
 import { renderIdentifier } from "./recent.js";
 
 const NOT_FOUND_RE = /not found/i;
+
+function colorStatus(status: "active" | "superseded" | "under_review"): string {
+  if (status === "under_review") {
+    return color(status, "orange");
+  }
+  if (status === "active") {
+    return color(status, "green");
+  }
+  return color(status, "gray");
+}
 
 /** Lean projection of a related decision (dependency edge endpoint). */
 export interface DecisionNode {
@@ -161,17 +172,17 @@ function pushEdges(lines: string[], label: string, arrow: string, nodes: Decisio
 
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
-  const id = renderIdentifier({ shortId: d.shortId, id: d.id });
+  const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
   const confidence = d.confidence ?? "(unset)";
   const lines = [
     `[prim] ${id} — ${d.intent}`,
-    `  status: ${d.status}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${confidence}  ·  reversibility: ${d.reversibility ?? "(unset)"}`,
+    `  status: ${colorStatus(d.status)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${confidence}  ·  reversibility: ${d.reversibility ?? "(unset)"}`,
   ];
   if (d.supersededBy) {
     lines.push(`  superseded by: ${d.supersededBy}`);
   }
   if (d.area) {
-    lines.push(`  area: ${d.area}`);
+    lines.push(`  area: ${color(d.area, colorForArea(d.area))}`);
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);
