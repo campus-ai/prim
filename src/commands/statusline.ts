@@ -32,6 +32,9 @@ type StatusSnapshot = {
   // heartbeat ack. The server owns display names (derived from the token), so
   // the daemon asserts none — the statusline shows only the count.
   onlineCount?: number;
+  // True when the daemon is alive but its heartbeats have stopped landing, so
+  // the cached count is frozen and not to be trusted.
+  presenceStale?: boolean;
 };
 
 const STATUSLINE_TIMEOUT_MS = 200;
@@ -74,6 +77,12 @@ export async function renderStatusline(): Promise<string> {
   if (!snapshot) {
     debug("daemon snapshot missing");
     return `primitive ${version} (daemon: down)`;
+  }
+  // A stale snapshot means the daemon is alive but its heartbeats are failing —
+  // the cached count is frozen, so render the degraded state honestly instead
+  // of a confident, wrong "team: N".
+  if (snapshot.presenceStale) {
+    return `primitive ${version} (daemon: live · presence: stale)`;
   }
   // Render the real count when the daemon has a fresh accepted ack; otherwise
   // show an honest "—" rather than claiming a team of 1 — the count is unknown
