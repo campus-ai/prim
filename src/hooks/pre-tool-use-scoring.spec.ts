@@ -1,0 +1,274 @@
+/**
+ * Pure helper coverage for the prim PreToolUse hook.
+ *
+ * Tests path relativization, verdict aggregation, the fail-closed
+ * unavailable/truncated handling, the Claude-Code output mapping, file-path
+ * extraction, and the env-var readers. The end-to-end stdin → stdout flow is
+ * an entrypoint module and is exercised by a live smoke during release.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  type ConflictCheckResult,
+  aggregateCheckResults,
+  anyUnverified,
+  buildHookOutput,
+  demoteForMode,
+  extractFilePaths,
+  failOpenOutput,
+  readHookMode,
+  toRepoRelative,
+  unverifiedNote,
+} from "./pre-tool-use-scoring.js";
+
+function resultFixture(overrides: Partial<ConflictCheckResult> = {}): ConflictCheckResult {
+  return {
+    verdict: "allow",
+    conflicts: [],
+    reason: "",
+    additionalContext: "",
+    truncated: false,
+    ...overrides,
+  };
+}
+
+describe("toRepoRelative", () => {
+  it("relativizes an absolute path against the session cwd", () => {
+    expect(toRepoRelative("/repo/src/auth/config.ts", "/repo")).toBe("src/auth/config.ts");
+  });
+
+  it("passes a relative path through unchanged", () => {
+    expect(toRepoRelative("src/auth/config.ts", "/repo")).toBe("src/auth/config.ts");
+  });
+
+  it("relativizes an out-of-repo absolute path to a non-matching ../ key", () => {
+    expect(toRepoRelative("/elsewhere/x.ts", "/repo")).toBe("../elsewhere/x.ts");
+  });
+});
+
+describe("aggregateCheckResults", () => {
+  it("allows the empty list", () => {
+    expect(aggregateCheckResults([])).toBe("allow");
+  });
+
+  it("picks deny over ask over warn", () => {
+    expect(
+      aggregateCheckResults([
+        resultFixture({ verdict: "warn" }),
+        resultFixture({ verdict: "deny" }),
+        resultFixture({ verdict: "ask" }),
+      ]),
+    ).toBe("deny");
+  });
+
+  it("returns ask when nothing escalates to deny", () => {
+    expect(
+      aggregateCheckResults([
+        resultFixture({ verdict: "warn" }),
+        resultFixture({ verdict: "ask" }),
+      ]),
+    ).toBe("ask");
+  });
+
+  it("returns allow when every entry is allow", () => {
+    expect(aggregateCheckResults([resultFixture(), resultFixture()])).toBe("allow");
+  });
+
+  it("does not let an unavailable result escalate severity", () => {
+    expect(aggregateCheckResults([resultFixture({ verdict: "unavailable" })])).toBe("allow");
+  });
+
+  it("still denies when a deny accompanies an unavailable result", () => {
+    expect(
+      aggregateCheckResults([
+        resultFixture({ verdict: "unavailable" }),
+        resultFixture({ verdict: "deny" }),
+      ]),
+    ).toBe("deny");
+  });
+});
+
+describe("anyUnverified", () => {
+  it("is true for an unavailable result", () => {
+    expect(anyUnverified([resultFixture({ verdict: "unavailable" })])).toBe(true);
+  });
+
+  it("is true for a truncated result", () => {
+    expect(anyUnverified([resultFixture({ truncated: true })])).toBe(true);
+  });
+
+  it("is false when every result is verified", () => {
+    expect(anyUnverified([resultFixture(), resultFixture({ verdict: "warn" })])).toBe(false);
+  });
+});
+
+describe("unverifiedNote", () => {
+  it("names the org-unbound cause for an unavailable result", () => {
+    const note = unverifiedNote([
+      resultFixture({ verdict: "unavailable", unavailable: "no organization bound to this token" }),
+    ]);
+    expect(note).toContain("decision check skipped");
+    expect(note).toContain("no organization bound to this token");
+  });
+
+  it("names truncation for a partial conflict set", () => {
+    expect(unverifiedNote([resultFixture({ truncated: true })])).toContain("truncated");
+  });
+});
+
+describe("buildHookOutput", () => {
+  it("emits deny + reason when the aggregate is deny", () => {
+    const out = buildHookOutput("deny", [
+      resultFixture({ verdict: "deny", reason: "[primitive] conflict — pausing for review" }),
+    ]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain(
+      "[primitive] conflict — pausing for review",
+    );
+  });
+
+  it("emits ask + reason when the aggregate is ask", () => {
+    const out = buildHookOutput("ask", [
+      resultFixture({ verdict: "ask", reason: "please confirm" }),
+    ]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("ask");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("please confirm");
+  });
+
+  it("emits allow + additionalContext when the aggregate is warn with context", () => {
+    const out = buildHookOutput("warn", [
+      resultFixture({ verdict: "warn", additionalContext: "[primitive] file touched a decision" }),
+    ]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.additionalContext).toContain(
+      "[primitive] file touched a decision",
+    );
+  });
+
+  it("surfaces a not-verified note instead of a bare allow when a result is unavailable", () => {
+    const out = buildHookOutput("allow", [
+      resultFixture({ verdict: "unavailable", unavailable: "no organization bound to this token" }),
+    ]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.additionalContext).toContain("decision check skipped");
+    expect(out.hookSpecificOutput.additionalContext).toContain("no organization bound");
+  });
+
+  it("surfaces a partial note instead of a bare allow when a result is truncated", () => {
+    const out = buildHookOutput("allow", [resultFixture({ truncated: true })]);
+    expect(out.hookSpecificOutput.additionalContext).toContain("truncated");
+  });
+
+  it("emits a clean bare allow only when fully verified", () => {
+    const out = buildHookOutput("allow", [resultFixture()]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBeUndefined();
+    expect(out.hookSpecificOutput.additionalContext).toBeUndefined();
+  });
+
+  it("treats a reconcile-bypass-consumed clean result as an authorized allow", () => {
+    const out = buildHookOutput("allow", [
+      resultFixture({
+        bypassed: [{ decisionId: "d1", shortId: "abcd1234" }],
+        reason: "[primitive] reconcile bypass consumed",
+      }),
+    ]);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.additionalContext).toBeUndefined();
+  });
+
+  it("falls back to a generic reason when deny has no string payload", () => {
+    const out = buildHookOutput("deny", [resultFixture({ verdict: "deny", reason: "" })]);
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("conflict detected");
+  });
+});
+
+describe("extractFilePaths", () => {
+  it("returns the file_path from an Edit input", () => {
+    expect(
+      extractFilePaths("Edit", {
+        file_path: "src/auth/config.ts",
+        old_string: "a",
+        new_string: "b",
+      }),
+    ).toEqual(["src/auth/config.ts"]);
+  });
+
+  it("returns the file_path from a Write input", () => {
+    expect(extractFilePaths("Write", { file_path: "src/new.ts", content: "x" })).toEqual([
+      "src/new.ts",
+    ]);
+  });
+
+  it("returns the file_path from a MultiEdit input", () => {
+    expect(
+      extractFilePaths("MultiEdit", {
+        file_path: "src/multi.ts",
+        edits: [{ old_string: "a", new_string: "b" }],
+      }),
+    ).toEqual(["src/multi.ts"]);
+  });
+
+  it("returns empty for an unsupported tool", () => {
+    expect(extractFilePaths("Bash", { command: "ls" })).toEqual([]);
+  });
+
+  it("returns empty for malformed input", () => {
+    expect(extractFilePaths("Edit", null)).toEqual([]);
+    expect(extractFilePaths("Edit", "not-an-object")).toEqual([]);
+  });
+
+  it("returns empty when file_path is missing", () => {
+    expect(extractFilePaths("Edit", { old_string: "a" })).toEqual([]);
+  });
+});
+
+describe("readHookMode", () => {
+  it("returns off when PRIM_BYPASS=1", () => {
+    expect(readHookMode({ PRIM_BYPASS: "1" })).toBe("off");
+    expect(readHookMode({ PRIM_BYPASS: "true" })).toBe("off");
+  });
+
+  it("returns off when PRIM_HOOK_MODE=off", () => {
+    expect(readHookMode({ PRIM_HOOK_MODE: "off" })).toBe("off");
+  });
+
+  it("returns warn when PRIM_HOOK_MODE=warn", () => {
+    expect(readHookMode({ PRIM_HOOK_MODE: "warn" })).toBe("warn");
+  });
+
+  it("defaults to block", () => {
+    expect(readHookMode({})).toBe("block");
+    expect(readHookMode({ PRIM_HOOK_MODE: "unknown" })).toBe("block");
+  });
+});
+
+describe("demoteForMode", () => {
+  it("returns allow when mode is off regardless of verdict", () => {
+    expect(demoteForMode("deny", "off")).toBe("allow");
+    expect(demoteForMode("ask", "off")).toBe("allow");
+  });
+
+  it("returns warn when mode is warn and verdict is ask/deny", () => {
+    expect(demoteForMode("deny", "warn")).toBe("warn");
+    expect(demoteForMode("ask", "warn")).toBe("warn");
+  });
+
+  it("preserves the verdict when mode is block", () => {
+    expect(demoteForMode("deny", "block")).toBe("deny");
+    expect(demoteForMode("ask", "block")).toBe("ask");
+  });
+
+  it("preserves allow + warn in any mode", () => {
+    expect(demoteForMode("allow", "warn")).toBe("allow");
+    expect(demoteForMode("warn", "block")).toBe("warn");
+  });
+});
+
+describe("failOpenOutput", () => {
+  it("emits a bare allow", () => {
+    const out = failOpenOutput();
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+  });
+});

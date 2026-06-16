@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Decision Event Pipeline — Claude Code hook collector.
+ * prim-hook — passive Claude Code event collector.
  *
  * Reads a single hook event from stdin, scrubs PII/secrets, wraps it in a
  * Move envelope, resolves its owning org, appends to that org's local
@@ -14,7 +14,7 @@
  * resolver and the redaction filter are pure file IO, so they stay
  * cold-path-safe.
  *
- * Installed via: prim claude-install --apply
+ * Installed via: prim claude install
  */
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
