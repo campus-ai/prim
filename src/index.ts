@@ -28,6 +28,7 @@ import { registerReconcileCommands } from "./commands/reconcile.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerSpecCommands } from "./commands/spec.js";
+import { registerStatuslineCommands } from "./commands/statusline.js";
 import { flushIfNeeded } from "./flusher.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ registerDecisionsCommands(program);
 registerClaudeCommands(program);
 registerDaemonCommands(program);
 registerReconcileCommands(program);
+registerStatuslineCommands(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
