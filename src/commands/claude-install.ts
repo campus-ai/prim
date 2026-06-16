@@ -44,6 +44,11 @@ const POST_TOOL_USE_COMMAND = "prim-post-tool-use";
 const SESSION_START_COMMAND = "prim-session-start";
 const SESSION_END_COMMAND = "prim-session-end";
 const STATUSLINE_COMMAND = "prim statusline";
+// Claude Code re-renders the statusLine only on conversation events by
+// default, so a "team: N online" count goes stale between prompts. The idle
+// refresh poll keeps presence live without the user submitting anything; 5s ≈
+// the daemon's 30s heartbeat cadence — live-feeling, but light on spawns.
+const STATUSLINE_REFRESH_SECONDS = 5;
 const PRIM_COMMANDS = new Set<string>([
   CAPTURE_COMMAND,
   GATE_COMMAND,
@@ -100,6 +105,7 @@ export type HookEntry = {
 export type StatusLineConfig = {
   type?: string;
   command?: string;
+  refreshInterval?: number;
 };
 
 export type ClaudeSettings = {
@@ -176,13 +182,21 @@ function isPrimStatusLine(settings: ClaudeSettings): boolean {
 
 /**
  * Install the prim statusline ONLY when the slot is empty or already ours — a
- * user's own statusLine is never clobbered.
+ * user's own statusLine is never clobbered. Always writes the refreshInterval,
+ * so re-running install upgrades an older prim statusLine that predates it.
  */
 function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
   if (settings.statusLine && !isPrimStatusLine(settings)) {
     return settings;
   }
-  return { ...settings, statusLine: { type: "command", command: STATUSLINE_COMMAND } };
+  return {
+    ...settings,
+    statusLine: {
+      type: "command",
+      command: STATUSLINE_COMMAND,
+      refreshInterval: STATUSLINE_REFRESH_SECONDS,
+    },
+  };
 }
 
 export function applyInstall(
