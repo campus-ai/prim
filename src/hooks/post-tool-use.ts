@@ -17,7 +17,8 @@
  *
  * Fail-soft: every failure path exits 0 with empty JSON on stdout.
  *
- * AX contract: STDOUT is `{}\n`. STDERR is silent unless PRIM_HOOK_VERBOSE=1.
+ * AX contract: STDOUT is `{}\n`. STDERR is silent unless PRIM_HOOK_VERBOSE=1,
+ * except for the verdict footer (a deliberate human signal on STDERR).
  */
 
 import { readFileSync } from "node:fs";
@@ -27,6 +28,7 @@ import { getClient } from "../client.js";
 import type { Move } from "../protocol/move.js";
 import { toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
+import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const INGEST_TIMEOUT_MS = 4_000;
@@ -50,6 +52,11 @@ interface PostToolUseEnvelope {
   hook_event_name?: string;
   tool_name?: string;
   cwd?: string;
+}
+
+interface IngestResponse {
+  accepted: number;
+  verdictFooter?: unknown;
 }
 
 function readStdin(): Promise<string> {
@@ -80,13 +87,13 @@ function debug(msg: string): void {
   }
 }
 
-async function ingestMove(move: Move): Promise<void> {
+async function ingestMove(move: Move): Promise<IngestResponse> {
   const client = getClient();
-  await client.post(
+  return (await client.post(
     "/api/cli/moves/ingest",
     { batch: [move] },
     { signal: AbortSignal.timeout(INGEST_TIMEOUT_MS) },
-  );
+  )) as IngestResponse;
 }
 
 async function main(): Promise<void> {
@@ -124,8 +131,14 @@ async function main(): Promise<void> {
   const base = toMove(parsed, resolveCliVersion());
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   try {
-    await ingestMove(move);
+    const result = await ingestMove(move);
     debug(`ingested ${move.moveId} (${toolName})`);
+    // Render the verdict footer when the ingest response carries the
+    // bypass-correlation context (the user just completed a reconcile within
+    // the server-side footer window). It rides STDERR as a human signal.
+    if (isVerdictFooterContext(result.verdictFooter)) {
+      process.stderr.write(`${renderVerdictFooter(result.verdictFooter)}\n`);
+    }
   } catch (err) {
     debug(`ingest failed: ${err instanceof Error ? err.message : String(err)}`);
   }

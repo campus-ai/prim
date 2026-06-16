@@ -191,9 +191,21 @@ describe("post-tool-use, session hooks, statusline install", () => {
     expect(commandsFor(out, "SessionEnd")).toContain("prim-session-end");
   });
 
-  it("installs the prim statusLine when the slot is empty", () => {
+  it("installs the prim statusLine with a refresh interval when the slot is empty", () => {
     const out = applyInstall(EMPTY);
-    expect(out.statusLine).toEqual({ type: "command", command: "prim statusline" });
+    expect(out.statusLine).toEqual({
+      type: "command",
+      command: "prim statusline",
+      refreshInterval: 5,
+    });
+  });
+
+  it("upgrades an older prim statusLine that predates the refresh interval", () => {
+    const old: ClaudeSettings = {
+      statusLine: { type: "command", command: "prim statusline" },
+    };
+    const out = applyInstall(old);
+    expect(out.statusLine?.refreshInterval).toBe(5);
   });
 
   it("never clobbers a user-defined statusLine", () => {
