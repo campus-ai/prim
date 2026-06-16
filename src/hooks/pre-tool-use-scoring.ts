@@ -239,10 +239,13 @@ const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 // Codex routes file edits through `apply_patch`, naming each touched file on
 // its own envelope line (`*** Update File: path`).
 const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
+// Split on either line ending: a CRLF patch would otherwise leave a trailing
+// \r that the `$`-anchored regex can't match, dropping every file silently.
+const LINE_SPLIT_RE = /\r?\n/;
 
 export function parseApplyPatchPaths(command: string): string[] {
   const paths = new Set<string>();
-  for (const line of command.split("\n")) {
+  for (const line of command.split(LINE_SPLIT_RE)) {
     const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
     if (path) {
       paths.add(path);
