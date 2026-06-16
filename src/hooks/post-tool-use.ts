@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * prim PostToolUse hook for Claude Code.
+ * prim PostToolUse hook for Claude Code and Codex.
  *
- * Captures Edit / Write / MultiEdit completions as `moves` rows by POSTing
- * them to the server's ingest endpoint, where the extractor / classifier /
+ * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit or Codex
+ * apply_patch (selected by `--agent`) — as `moves` rows by POSTing them to the
+ * server's ingest endpoint, where the extractor / classifier /
  * linker pipeline turns them into decisions. Unlike the passive capture hook
  * (which journals locally and drains later), this hook ingests synchronously
  * so the server can return an immediate verdict footer for a reconciled edit.
@@ -26,6 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
 import type { Move } from "../protocol/move.js";
+import { parseAgent } from "./agent.js";
 import { toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
@@ -33,6 +35,8 @@ import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js
 const STDIN_TIMEOUT_MS = 1_000;
 const INGEST_TIMEOUT_MS = 4_000;
 const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+// Codex routes file edits through apply_patch (its single edit tool).
+const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -117,7 +121,9 @@ async function main(): Promise<void> {
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
-  if (!EDITING_TOOLS.has(toolName)) {
+  const agent = parseAgent(process.argv);
+  const editingTools = agent === "codex" ? CODEX_EDITING_TOOLS : EDITING_TOOLS;
+  if (!editingTools.has(toolName)) {
     emit();
     return;
   }

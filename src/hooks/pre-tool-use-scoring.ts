@@ -16,6 +16,7 @@
  */
 
 import { isAbsolute, relative, sep } from "node:path";
+import type { Agent } from "./agent.js";
 
 export type ConflictVerdict = "allow" | "warn" | "ask" | "deny";
 
@@ -127,6 +128,7 @@ export type HookOutput = {
 export function buildHookOutput(
   aggregate: ConflictVerdict,
   results: ConflictCheckResult[],
+  agent: Agent = "claude_code",
 ): HookOutput {
   if (aggregate === "deny") {
     const reason =
@@ -142,6 +144,29 @@ export function buildHookOutput(
         permissionDecisionReason: reason,
       },
     };
+  }
+  // Codex parses but does not honor PreToolUse `ask`; demote it to a
+  // non-blocking allow that still surfaces the conflict (reason + the reconcile
+  // directive) as additionalContext — the warn shape Codex does honor. `deny`
+  // above is left intact (Codex honors deny).
+  if (agent === "codex" && aggregate === "ask") {
+    const reason = results
+      .filter((r) => r.verdict === "ask" || r.verdict === "deny")
+      .map((r) => r.reason)
+      .filter((s) => s.length > 0)
+      .join("\n\n");
+    const context = results
+      .map((r) => r.additionalContext)
+      .filter((s) => s.length > 0)
+      .join("\n");
+    const merged = [reason, context].filter((s) => s.length > 0).join("\n\n");
+    const out: HookOutput = {
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+    };
+    if (merged.length > 0) {
+      out.hookSpecificOutput.additionalContext = merged;
+    }
+    return out;
   }
   if (aggregate === "ask") {
     const reason =
@@ -209,20 +234,51 @@ export function failOpenOutput(): HookOutput {
   };
 }
 
-/**
- * Extracts file paths from Claude Code's tool_input payloads. The three
- * tools the hook intercepts have different shapes:
- *   - Edit:      { file_path, old_string, new_string }
- *   - Write:     { file_path, content }
- *   - MultiEdit: { file_path, edits: [{old_string, new_string}, ...] }
- *
- * Returns the unique file paths the hook should check. Empty when the input
- * shape doesn't expose a file path (e.g., a future tool type the hook hasn't
- * been taught about).
- */
 const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
-export function extractFilePaths(toolName: string, toolInput: unknown): string[] {
+// Codex routes file edits through `apply_patch`, naming each touched file on
+// its own envelope line (`*** Update File: path`).
+const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
+
+export function parseApplyPatchPaths(command: string): string[] {
+  const paths = new Set<string>();
+  for (const line of command.split("\n")) {
+    const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
+    if (path) {
+      paths.add(path);
+    }
+  }
+  return Array.from(paths);
+}
+
+function extractCodexFilePaths(toolName: string, toolInput: unknown): string[] {
+  // Only `apply_patch` exposes files the conflict-check can key on; Bash and
+  // other tools pass through unchecked (fail-open).
+  if (toolName !== "apply_patch") {
+    return [];
+  }
+  if (!toolInput || typeof toolInput !== "object") {
+    return [];
+  }
+  const command = (toolInput as Record<string, unknown>).command;
+  return typeof command === "string" ? parseApplyPatchPaths(command) : [];
+}
+
+/**
+ * Extracts the file paths a tool call would touch, dispatched by `agent`.
+ * Claude Code exposes a single `file_path` on Edit/Write/MultiEdit; Codex
+ * routes edits through `apply_patch` with the paths embedded in the patch text.
+ * Returns the unique paths to check, empty when the input shape exposes none
+ * (fail-open).
+ */
+export function extractFilePaths(
+  toolName: string,
+  toolInput: unknown,
+  agent: Agent = "claude_code",
+): string[] {
+  if (agent === "codex") {
+    return extractCodexFilePaths(toolName, toolInput);
+  }
   if (!SUPPORTED_TOOLS.has(toolName)) {
     return [];
   }

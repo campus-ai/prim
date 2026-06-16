@@ -76,7 +76,7 @@ const CAPTURE_EVENTS = [
   "SubagentStop",
 ] as const;
 
-type Registration = {
+export type Registration = {
   event: string;
   matcher: string;
   command: string;
@@ -118,7 +118,7 @@ function settingsPathFor(scope: Scope): string {
   return scope === "user" ? USER_SCOPE_PATH : PROJECT_SCOPE_PATH;
 }
 
-function readSettings(path: string): ClaudeSettings {
+export function readSettings(path: string): ClaudeSettings {
   if (!existsSync(path)) {
     return {};
   }
@@ -133,7 +133,7 @@ function readSettings(path: string): ClaudeSettings {
   }
 }
 
-function entryHasCommand(entry: HookEntry, command: string): boolean {
+export function entryHasCommand(entry: HookEntry, command: string): boolean {
   return entry.hooks?.some((h) => h.command === command) ?? false;
 }
 
@@ -148,7 +148,7 @@ function canonicalEntry(reg: Registration): HookEntry {
  * keeps a hand-merged `{ hooks: [otherCmd, prim-hook] }` entry's non-prim
  * command alive across install/uninstall.
  */
-function stripCommand(list: HookEntry[], command: string): HookEntry[] {
+export function stripCommand(list: HookEntry[], command: string): HookEntry[] {
   const out: HookEntry[] = [];
   for (const e of list) {
     const hooks = (e.hooks ?? []).filter((h) => h.command !== command);
@@ -165,7 +165,11 @@ function stripCommand(list: HookEntry[], command: string): HookEntry[] {
  * THIS command is stripped before the canonical entry is appended, so a
  * sibling prim binary's entry (and any co-located non-prim hook) survives.
  */
-function ensureRegistration(list: HookEntry[], reg: Registration, force: boolean): HookEntry[] {
+export function ensureRegistration(
+  list: HookEntry[],
+  reg: Registration,
+  force: boolean,
+): HookEntry[] {
   const hasCanonical = list.some(
     (e) => e.matcher === reg.matcher && e.hooks?.length === 1 && e.hooks[0].command === reg.command,
   );
@@ -251,7 +255,7 @@ export function isGateInstalled(settings: ClaudeSettings): boolean {
   return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_COMMAND));
 }
 
-function atomicWrite(path: string, content: ClaudeSettings): void {
+export function atomicWrite(path: string, content: ClaudeSettings): void {
   const dir = dirname(path);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });

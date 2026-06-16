@@ -32,6 +32,7 @@
 
 import { getClient } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { parseAgent } from "./agent.js";
 import {
   type ConflictCheckResult,
   type HookEnv,
@@ -130,7 +131,10 @@ async function main(): Promise<void> {
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
-  const files = extractFilePaths(toolName, envelope.tool_input).map((f) => toRepoRelative(f, cwd));
+  const agent = parseAgent(process.argv);
+  const files = extractFilePaths(toolName, envelope.tool_input, agent).map((f) =>
+    toRepoRelative(f, cwd),
+  );
   if (files.length === 0) {
     emit(failOpenOutput());
     return;
@@ -144,7 +148,7 @@ async function main(): Promise<void> {
   }
   const rawAggregate = aggregateCheckResults(results);
   const aggregate = demoteForMode(rawAggregate, mode);
-  emit(buildHookOutput(aggregate, results));
+  emit(buildHookOutput(aggregate, results, agent));
 }
 
 main().catch(() => {

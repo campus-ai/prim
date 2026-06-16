@@ -16,6 +16,7 @@ import {
   demoteForMode,
   extractFilePaths,
   failOpenOutput,
+  parseApplyPatchPaths,
   readHookMode,
   toRepoRelative,
   unverifiedNote,
@@ -181,6 +182,34 @@ describe("buildHookOutput", () => {
     const out = buildHookOutput("deny", [resultFixture({ verdict: "deny", reason: "" })]);
     expect(out.hookSpecificOutput.permissionDecisionReason).toContain("conflict detected");
   });
+
+  it("demotes a Codex ask to allow + merged additionalContext (Codex can't ask)", () => {
+    const out = buildHookOutput(
+      "ask",
+      [
+        resultFixture({
+          verdict: "ask",
+          reason: "please confirm",
+          additionalContext: "To reconcile, run: prim reconcile dec_ab12cd34",
+        }),
+      ],
+      "codex",
+    );
+    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toBeUndefined();
+    expect(out.hookSpecificOutput.additionalContext).toContain("please confirm");
+    expect(out.hookSpecificOutput.additionalContext).toContain("prim reconcile dec_ab12cd34");
+  });
+
+  it("still denies for Codex (Codex honors deny)", () => {
+    const out = buildHookOutput(
+      "deny",
+      [resultFixture({ verdict: "deny", reason: "blocked" })],
+      "codex",
+    );
+    expect(out.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("blocked");
+  });
 });
 
 describe("extractFilePaths", () => {
@@ -220,6 +249,46 @@ describe("extractFilePaths", () => {
 
   it("returns empty when file_path is missing", () => {
     expect(extractFilePaths("Edit", { old_string: "a" })).toEqual([]);
+  });
+
+  it("parses apply_patch paths for Codex (Update / Add / Delete)", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/auth/config.ts",
+      "@@",
+      "-old",
+      "+new",
+      "*** Add File: src/auth/new.ts",
+      "+content",
+      "*** Delete File: src/auth/old.ts",
+      "*** End Patch",
+    ].join("\n");
+    expect(extractFilePaths("apply_patch", { command: patch }, "codex")).toEqual([
+      "src/auth/config.ts",
+      "src/auth/new.ts",
+      "src/auth/old.ts",
+    ]);
+  });
+
+  it("returns empty for a non-apply_patch Codex tool (fail-open)", () => {
+    expect(extractFilePaths("Bash", { command: "ls" }, "codex")).toEqual([]);
+  });
+
+  it("returns empty for a malformed Codex apply_patch input", () => {
+    expect(extractFilePaths("apply_patch", null, "codex")).toEqual([]);
+    expect(extractFilePaths("apply_patch", { command: 42 }, "codex")).toEqual([]);
+  });
+});
+
+describe("parseApplyPatchPaths", () => {
+  it("dedupes repeated paths and trims surrounding whitespace", () => {
+    const patch = "*** Update File: a.ts\n*** Update File: a.ts\n*** Add File:  b.ts ";
+    expect(parseApplyPatchPaths(patch)).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("returns empty for patch text with no file headers", () => {
+    expect(parseApplyPatchPaths("just some\nrandom text")).toEqual([]);
+    expect(parseApplyPatchPaths("")).toEqual([]);
   });
 });
 

@@ -123,6 +123,8 @@ function authorLabel(row: DecisionFeedRow): string {
   switch (row.producerKind) {
     case "claude_code":
       return "Your Claude Code";
+    case "codex":
+      return "Your Codex";
     case "chat":
       return "Your chat";
     case "spec_edit":
