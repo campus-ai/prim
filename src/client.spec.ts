@@ -86,4 +86,37 @@ describe("client", () => {
       expect(getTokenExpiresAt()).toBeUndefined();
     });
   });
+
+  describe("refreshToken", () => {
+    it("surfaces the broker rejection reason instead of failing silently", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
+      const fetchMock = vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          text: () => Promise.resolve("invalid_grant"),
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+      const { refreshToken } = await import("./client.js");
+      const result = await refreshToken();
+
+      expect(result).toBeUndefined();
+      const msg = stderr.mock.calls.map((c) => String(c[0])).join("");
+      expect(msg).toContain("401");
+      expect(msg).toContain("invalid_grant");
+      // The diagnostic must never leak the refresh token itself.
+      expect(msg).not.toContain("rt-value");
+
+      stderr.mockRestore();
+      vi.unstubAllGlobals();
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue("");
+    });
+  });
 });

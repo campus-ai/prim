@@ -46,4 +46,17 @@ describe("renderStatusline", () => {
     expect(line).toContain("daemon: down");
     expect(line).not.toContain("team:");
   });
+
+  it("renders 'presence: stale' (never a frozen count) when the daemon flags staleness", async () => {
+    // Daemon alive but heartbeats failing: it drops the count and sets
+    // presenceStale, so the statusline must not render a confident "team: N".
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(undefined),
+      presenceStale: true,
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: live");
+    expect(line).toContain("presence: stale");
+    expect(line).not.toContain("team:");
+  });
 });

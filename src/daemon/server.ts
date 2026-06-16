@@ -28,6 +28,10 @@ const PID_PATH = join(CONFIG_DIR, "daemon.pid");
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TOKEN_CHECK_INTERVAL_MS = 60_000;
 const TOKEN_REFRESH_THRESHOLD_MS = 90_000;
+// How long a cached online count stays trustworthy after the last accepted
+// heartbeat (≈ 3 heartbeat cadences). Past this, the daemon is alive but its
+// heartbeats are failing, so the frozen count is reported as stale.
+const PRESENCE_FRESH_WINDOW_MS = 90_000;
 const SOCKET_DIR_MODE = 0o700;
 const PID_FILE_MODE = 0o600;
 const EXIT_OK = 0;
@@ -55,6 +59,10 @@ let lastHeartbeatAt: number | undefined;
 // token), so the daemon never asserts a name — it only caches this count for
 // a statusline to render.
 let lastOnlineCount: number | undefined;
+// Daemon-local timestamp of the last ACCEPTED heartbeat ack. Used to decide
+// whether the cached count is still fresh; a daemon whose heartbeats are
+// failing keeps running but stops advancing this.
+let lastOkAtLocal: number | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let tokenCheckTimer: NodeJS.Timeout | undefined;
 
@@ -108,6 +116,7 @@ async function sendHeartbeat(): Promise<void> {
       unavailable?: string;
     };
     if (result.accepted) {
+      lastOkAtLocal = Date.now();
       if (typeof result.lastHeartbeatAt === "number") {
         lastHeartbeatAt = result.lastHeartbeatAt;
       }
@@ -147,12 +156,20 @@ async function handleConflictCheck(params: Record<string, unknown>): Promise<unk
 }
 
 function handleStatusSnapshot(): unknown {
+  const presenceFresh =
+    lastOkAtLocal !== undefined && Date.now() - lastOkAtLocal < PRESENCE_FRESH_WINDOW_MS;
+  // Stale only once we HAD an accepted ack that has since aged out — a daemon
+  // that simply hasn't acked yet is not stale, just countless ("team: —").
+  const presenceStale = lastOkAtLocal !== undefined && !presenceFresh;
   return {
     pid: process.pid,
     uptimeMs: Date.now() - startedAt,
     sessionId: activeSessionId,
     lastHeartbeatAt,
-    onlineCount: lastOnlineCount,
+    // Withhold a frozen count once it's no longer fresh; the statusline shows
+    // "presence: stale" rather than a confident, wrong "team: N".
+    onlineCount: presenceFresh ? lastOnlineCount : undefined,
+    presenceStale,
   };
 }
 
