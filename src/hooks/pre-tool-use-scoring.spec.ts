@@ -290,6 +290,13 @@ describe("parseApplyPatchPaths", () => {
     expect(parseApplyPatchPaths("just some\nrandom text")).toEqual([]);
     expect(parseApplyPatchPaths("")).toEqual([]);
   });
+
+  it("handles CRLF line endings without dropping files", () => {
+    expect(parseApplyPatchPaths("*** Update File: a.ts\r\n*** Add File: b.ts\r\n")).toEqual([
+      "a.ts",
+      "b.ts",
+    ]);
+  });
 });
 
 describe("readHookMode", () => {
