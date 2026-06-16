@@ -184,6 +184,22 @@ export async function refreshToken(): Promise<string | undefined> {
 }
 
 /**
+ * An HTTP error from the API carrying the response status, so callers can
+ * distinguish a domain rejection (4xx — actionable) from a transport or
+ * server failure (5xx / network) when choosing an exit code. Extends Error,
+ * so existing `instanceof Error` / `.message` consumers are unaffected.
+ */
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+/**
  * Thin REST client wrapping fetch with bearer auth and auto-refresh.
  */
 export interface CliClient {
@@ -245,12 +261,12 @@ async function request(
 
   if (!res.ok) {
     if (res.status === 401) {
-      throw new Error("Authentication expired. Run `prim auth login` to re-authenticate.");
+      throw new HttpError(401, "Authentication expired. Run `prim auth login` to re-authenticate.");
     }
     const errorBody = (await res.json().catch(() => null)) as {
       error?: string;
     } | null;
-    throw new Error(errorBody?.error ?? `HTTP ${res.status}`);
+    throw new HttpError(res.status, errorBody?.error ?? `HTTP ${res.status}`);
   }
 
   return res.json();
