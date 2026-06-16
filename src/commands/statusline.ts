@@ -75,8 +75,14 @@ export async function renderStatusline(): Promise<string> {
     debug("daemon snapshot missing");
     return `primitive ${version} (daemon: down)`;
   }
-  const team = snapshot.onlineCount ?? 1;
-  return `primitive ${version} (daemon: live · team: ${team} online)`;
+  // Render the real count when the daemon has a fresh accepted ack; otherwise
+  // show an honest "—" rather than claiming a team of 1 — the count is unknown
+  // (no ack yet, or the last ack was org-unbound), not necessarily one.
+  const team =
+    typeof snapshot.onlineCount === "number"
+      ? `team: ${String(snapshot.onlineCount)} online`
+      : "team: —";
+  return `primitive ${version} (daemon: live · ${team})`;
 }
 
 export function registerStatuslineCommands(program: Command): void {
