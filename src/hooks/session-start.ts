@@ -1,16 +1,23 @@
 #!/usr/bin/env node
 /**
- * prim SessionStart hook for Claude Code.
+ * prim SessionStart hook for Claude Code and Codex.
  *
- * Reads the SessionStart JSON envelope from stdin, notifies the prim
- * daemon over its Unix socket so presence reflects the new session,
- * and emits an empty JSON object on stdout (no context injection).
+ * Reads the SessionStart JSON envelope from stdin, notifies the prim daemon
+ * over its Unix socket so presence reflects the new session, and emits stdout.
  *
- * Fail-soft: daemon down / socket missing / malformed envelope all
- * silently emit `{}` and exit 0. Hooks must never block.
+ * Under `--agent codex` it also injects the team presence count as SessionStart
+ * developer context (`hookSpecificOutput.additionalContext`) — the
+ * best-available analog to Claude Code's statusLine, which Codex has no hook
+ * for. Claude Code keeps the empty `{}` (it renders presence via the statusLine
+ * block). The count is injected only when the daemon returns a live value; it
+ * is never fabricated.
+ *
+ * Fail-soft: daemon down / socket missing / malformed envelope all silently
+ * emit `{}` and exit 0. Hooks must never block.
  */
 
 import { daemonRequest } from "../daemon/client.js";
+import { parseAgent } from "./agent.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
@@ -38,8 +45,18 @@ function readStdin(): Promise<string> {
   });
 }
 
-function emit(): void {
-  process.stdout.write("{}\n");
+function emit(additionalContext?: string): void {
+  if (!additionalContext) {
+    process.stdout.write("{}\n");
+    return;
+  }
+  const out = {
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      additionalContext,
+    },
+  };
+  process.stdout.write(`${JSON.stringify(out)}\n`);
 }
 
 async function main(): Promise<void> {
@@ -70,6 +87,21 @@ async function main(): Promise<void> {
     { sessionId: envelope.session_id },
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
+  // Codex has no statusLine hook, so surface the team count as SessionStart
+  // developer context instead — only when the daemon returns a live count.
+  if (parseAgent(process.argv) === "codex") {
+    const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
+      "status_snapshot",
+      {},
+      { timeoutMs: DAEMON_TIMEOUT_MS },
+    );
+    // Mirror the statusline's honest-presence rule: inject the count only when
+    // the daemon has a fresh accepted ack — never a stale (frozen) count.
+    if (snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number") {
+      emit(`[prim] team: ${snapshot.onlineCount} online`);
+      return;
+    }
+  }
   emit();
 }
 
