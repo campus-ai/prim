@@ -10,8 +10,9 @@
  * top-level `truncated` blast-radius warning, and missing upstream refs.
  */
 
-import { describe, expect, it } from "vitest";
-import { renderCascade } from "./cascade-renderer.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stripAnsi } from "../lib/ansi.js";
+import { renderCascade, softWrap } from "./cascade-renderer.js";
 import type { CascadeNode, CascadeResult, CascadeTrigger } from "./cascade.js";
 
 function nodeFixture(overrides: Partial<CascadeNode> = {}): CascadeNode {
@@ -241,5 +242,110 @@ describe("renderCascade", () => {
       }),
     );
     expect(out).toContain("impact: 4 decision(s) need review · 1 cross-area dependency.");
+  });
+});
+
+describe("softWrap", () => {
+  it("returns the line unchanged when it fits inside the width", () => {
+    expect(softWrap("short line", { width: 80 })).toEqual(["short line"]);
+  });
+
+  it("wraps a long line on whitespace boundaries with the continuation indent applied", () => {
+    const longLine =
+      "reason: Maya edited mobile-session.spec — the implicit assumption behind 7-day refresh changes.";
+    const out = softWrap(longLine, { width: 50, indent: "         " });
+    expect(out.length).toBeGreaterThan(1);
+    // First line keeps its raw prefix; continuation lines pick up the indent.
+    expect(out[0].startsWith("reason:")).toBe(true);
+    expect(out[1].startsWith("         ")).toBe(true);
+    // Every visible line stays within the requested width.
+    for (const line of out) {
+      expect(stripAnsi(line).length).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("falls through with a long single word that exceeds the width (no hard-break)", () => {
+    const longPath = "convex/some/very/deep/nested/test-file-verify-1.ts";
+    const out = softWrap(longPath, { width: 20 });
+    expect(out).toEqual([longPath]);
+  });
+});
+
+describe("renderCascade color + soft-wrap", () => {
+  const originalIsTTY = process.stderr.isTTY;
+  const originalNoColor = process.env.NO_COLOR;
+
+  beforeEach(() => {
+    // Force a known-TTY, color-enabled state so the renderer emits ANSI
+    // escapes deterministically regardless of how the test runner is wired.
+    Object.defineProperty(process.stderr, "isTTY", {
+      value: true,
+      configurable: true,
+    });
+    // biome-ignore lint/performance/noDelete: env teardown requires actual removal
+    delete process.env.NO_COLOR;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stderr, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+    if (originalNoColor === undefined) {
+      // biome-ignore lint/performance/noDelete: env teardown requires actual removal
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = originalNoColor;
+    }
+  });
+
+  it("emits ANSI escapes that strip back to the plain structural output", () => {
+    const out = renderCascade(
+      baseResult({
+        downstream: [nodeFixture({ id: "d1", intent: "Logout flow", area: "auth" })],
+        fanOut: 1,
+      }),
+    );
+    // Color codes are present on a TTY.
+    expect(out).not.toBe(stripAnsi(out));
+    // …and the stripped output still carries the structural tokens.
+    const plain = stripAnsi(out);
+    expect(plain).toContain("dec_14c2038c");
+    expect(plain).toContain("[auth]");
+  });
+
+  it("soft-wraps a long trigger reason under a narrow terminal", () => {
+    const originalColumns = process.stdout.columns;
+    Object.defineProperty(process.stdout, "columns", {
+      value: 50,
+      configurable: true,
+    });
+    try {
+      const longReason =
+        "the edit invalidates the Redis latency assumption that the verification cache leaned on under sustained load";
+      const out = renderCascade(
+        baseResult({
+          trigger: triggerFixture({
+            type: "file_edit",
+            file: "src/auth/config.ts",
+            authorName: "Riley",
+            reason: longReason,
+          }),
+        }),
+      );
+      const plainLines = stripAnsi(out).split("\n");
+      const reasonIdx = plainLines.findIndex((l) => l.trimStart().startsWith("reason:"));
+      expect(reasonIdx).toBeGreaterThanOrEqual(0);
+      // The reason wrapped onto at least one continuation line carrying the indent.
+      expect(plainLines[reasonIdx + 1].startsWith("         ")).toBe(true);
+      // Re-joining the wrapped lines recovers the full reason text.
+      const stitched = plainLines.slice(reasonIdx).join(" ").replace(/\s+/g, " ");
+      expect(stitched).toContain(longReason);
+    } finally {
+      Object.defineProperty(process.stdout, "columns", {
+        value: originalColumns,
+        configurable: true,
+      });
+    }
   });
 });
