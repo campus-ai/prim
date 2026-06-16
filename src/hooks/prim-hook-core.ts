@@ -10,8 +10,13 @@
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
 import { ENVELOPE_VERSION, type Move } from "../protocol/move.js";
+import type { Agent } from "./agent.js";
 
-export function toMove(parsed: Record<string, unknown>, cliVersion: string): Move {
+export function toMove(
+  parsed: Record<string, unknown>,
+  cliVersion: string,
+  agent: Agent = "claude_code",
+): Move {
   return {
     moveId: randomUUID(),
     capturedAt: Date.now(),
@@ -24,6 +29,10 @@ export function toMove(parsed: Record<string, unknown>, cliVersion: string): Mov
       osPlatform: platform(),
     },
     envelopeVersion: ENVELOPE_VERSION,
+    // Stamp the producer only for Codex; Claude Code moves omit it (the
+    // backend defaults an absent value to "claude_code"), keeping the
+    // Claude wire shape byte-identical.
+    ...(agent === "codex" ? { producer: "codex" as const } : {}),
   };
 }
 

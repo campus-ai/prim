@@ -1,7 +1,7 @@
 /**
  * Decision Event Pipeline — Move envelope.
  *
- * Wire and storage shape for a single observed Claude Code hook event.
+ * Wire and storage shape for a single observed coding-agent hook event.
  * One source of truth across the CLI (this file) and the Convex ingest
  * validator until codegen-from-type or a shared package replaces the
  * dual definition.
@@ -26,4 +26,10 @@ export type Move = {
     osPlatform: NodeJS.Platform;
   };
   envelopeVersion: number;
+  /**
+   * Which coding agent produced this move. Stamped from the hook's
+   * `--agent` flag; omitted for Claude Code (the backend treats an absent
+   * value as "claude_code"), set to "codex" for Codex sessions.
+   */
+  producer?: "claude_code" | "codex";
 };

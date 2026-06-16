@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * prim-hook — passive Claude Code event collector.
+ * prim-hook — passive coding-agent event collector (Claude Code and Codex).
  *
  * Reads a single hook event from stdin, scrubs PII/secrets, wraps it in a
  * Move envelope, resolves its owning org, appends to that org's local
@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
+import { parseAgent } from "./agent.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 
@@ -54,7 +55,7 @@ try {
   // env.cwd) from the ORIGINAL event so org binding is provably independent
   // of redaction, then scrub ONLY the payload body that persists to the
   // journal, transits to the server, and lands in the moves table.
-  const base = toMove(parsed, resolveCliVersion());
+  const base = toMove(parsed, resolveCliVersion(), parseAgent(process.argv));
   const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
   appendMove(move, orgId);

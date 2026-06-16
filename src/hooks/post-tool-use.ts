@@ -134,7 +134,7 @@ async function main(): Promise<void> {
   // Derive identity + env.cwd from the ORIGINAL envelope, then scrub only the
   // payload that persists — exactly as the capture hook does.
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
-  const base = toMove(parsed, resolveCliVersion());
+  const base = toMove(parsed, resolveCliVersion(), agent);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   try {
     const result = await ingestMove(move);

@@ -32,6 +32,17 @@ describe("toMove", () => {
     expect(move.eventType).toBe("unknown");
     expect(move.env.cwd).toBe(process.cwd());
   });
+
+  it("omits producer for Claude Code (byte-identical wire)", () => {
+    const move = toMove({ session_id: "s" }, "x");
+    expect(move.producer).toBeUndefined();
+    expect("producer" in move).toBe(false);
+  });
+
+  it("stamps producer codex under --agent codex", () => {
+    const move = toMove({ session_id: "s" }, "x", "codex");
+    expect(move.producer).toBe("codex");
+  });
 });
 
 describe("shouldFlushAfter", () => {

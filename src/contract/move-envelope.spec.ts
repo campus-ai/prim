@@ -72,4 +72,15 @@ describe("Move envelope contract", () => {
       expect(m[key]).toBeDefined();
     }
   });
+
+  it("carries an optional top-level producer the server validator accepts", () => {
+    // Codex moves stamp `producer` at the envelope top level (a sibling of
+    // envelopeVersion), matching the backend's optional top-level validator;
+    // Claude moves omit it entirely, so the field stays optional on both sides
+    // and a Claude envelope serializes with no `producer` key.
+    const codex: Move = { ...sample(), producer: "codex" };
+    const restored = JSON.parse(JSON.stringify(codex)) as Move;
+    expect(restored.producer).toBe("codex");
+    expect("producer" in (JSON.parse(JSON.stringify(sample())) as object)).toBe(false);
+  });
 });
