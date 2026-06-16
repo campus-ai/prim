@@ -171,4 +171,75 @@ describe("renderCascade", () => {
     const out = renderCascade(baseResult());
     expect(out).toContain("impact: 0 decision(s) need review (no edges yet).");
   });
+
+  it("inlines the fan-out fragment on the decision row when fanOut > 0", () => {
+    const out = renderCascade(baseResult({ fanOut: 6 }));
+    expect(out).toContain(
+      "Taylor · 2026-06-07  ·  6 decision(s) depend on this  ·  low reversibility",
+    );
+  });
+
+  it("omits the fan-out fragment on the decision row when fanOut is 0", () => {
+    const out = renderCascade(baseResult({ fanOut: 0 }));
+    expect(out).toContain("Taylor · 2026-06-07  ·  low reversibility");
+    expect(out).not.toContain("depend on this");
+  });
+
+  it("renders an area chip on each dependent line", () => {
+    const dependents = [
+      nodeFixture({ id: "d1", intent: "Logout flow", area: "auth" }),
+      nodeFixture({ id: "d2", intent: "Audit logging", area: "data" }),
+      nodeFixture({ id: "d3", intent: "Cookies", area: undefined }),
+    ];
+    const out = renderCascade(baseResult({ downstream: dependents, fanOut: 3 }));
+    expect(out).toContain("[auth]");
+    expect(out).toContain("[data]");
+    expect(out).toContain("[--]");
+  });
+
+  it("appends the cross-area tally when the parent area differs from its dependents", () => {
+    const dependents = [
+      nodeFixture({ id: "d1", area: "auth" }),
+      nodeFixture({ id: "d2", area: "auth" }),
+      nodeFixture({ id: "d3", area: "mobile" }),
+      nodeFixture({ id: "d4", area: "data" }),
+    ];
+    const out = renderCascade(
+      baseResult({
+        decision: nodeFixture({ area: "infra", authorName: "Taylor" }),
+        downstream: dependents,
+        fanOut: 4,
+      }),
+    );
+    expect(out).toContain("impact: 4 decision(s) need review · 4 cross-area dependency.");
+  });
+
+  it("omits the cross-area tally when all dependents share the parent's area", () => {
+    const dependents = [
+      nodeFixture({ id: "d1", area: "auth" }),
+      nodeFixture({ id: "d2", area: "auth" }),
+    ];
+    const out = renderCascade(baseResult({ downstream: dependents, fanOut: 2 }));
+    expect(out).toContain("impact: 2 decision(s) need review.");
+    expect(out).not.toContain("cross-area dependency");
+  });
+
+  it("falls back to non-dominant areas for the cross-area tally when the parent area is unknown", () => {
+    const dependents = [
+      nodeFixture({ id: "d1", area: "auth" }),
+      nodeFixture({ id: "d2", area: "auth" }),
+      nodeFixture({ id: "d3", area: "auth" }),
+      nodeFixture({ id: "d4", area: "mobile" }),
+    ];
+    // Parent area undefined → the dominant area (auth, 3) is treated as "home"
+    // and the 1 non-dominant dependent (mobile) is the cross-area signal.
+    const out = renderCascade(
+      baseResult({
+        decision: nodeFixture({ area: undefined, authorName: "Taylor" }),
+        downstream: dependents,
+        fanOut: 4,
+      }),
+    );
+    expect(out).toContain("impact: 4 decision(s) need review · 1 cross-area dependency.");
+  });
 });

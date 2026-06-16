@@ -175,3 +175,50 @@ describe("isGateInstalled", () => {
     expect(isGateInstalled(EMPTY)).toBe(false);
   });
 });
+
+describe("post-tool-use, session hooks, statusline install", () => {
+  it("registers the post-tool-use ingest hook on PostToolUse at the edit matcher", () => {
+    const out = applyInstall(EMPTY);
+    const entry = out.hooks?.PostToolUse?.find((e) =>
+      e.hooks?.some((h) => h.command === "prim-post-tool-use"),
+    );
+    expect(entry?.matcher).toBe("Edit|Write|MultiEdit");
+  });
+
+  it("registers the session hooks on SessionStart / SessionEnd", () => {
+    const out = applyInstall(EMPTY);
+    expect(commandsFor(out, "SessionStart")).toContain("prim-session-start");
+    expect(commandsFor(out, "SessionEnd")).toContain("prim-session-end");
+  });
+
+  it("installs the prim statusLine when the slot is empty", () => {
+    const out = applyInstall(EMPTY);
+    expect(out.statusLine).toEqual({ type: "command", command: "prim statusline" });
+  });
+
+  it("never clobbers a user-defined statusLine", () => {
+    const userStatusLine: ClaudeSettings = {
+      statusLine: { type: "command", command: "my-custom-statusline" },
+    };
+    const out = applyInstall(userStatusLine);
+    expect(out.statusLine).toEqual({ type: "command", command: "my-custom-statusline" });
+  });
+
+  it("uninstall strips every prim hook binary and the prim statusLine", () => {
+    const out = applyUninstall(applyInstall(EMPTY));
+    for (const event of CAPTURE_EVENTS) {
+      expect(commandsFor(out, event)).not.toContain("prim-post-tool-use");
+      expect(commandsFor(out, event)).not.toContain("prim-session-start");
+      expect(commandsFor(out, event)).not.toContain("prim-session-end");
+    }
+    expect(out.statusLine).toBeUndefined();
+  });
+
+  it("uninstall leaves a user-defined statusLine intact", () => {
+    const installed = applyInstall({
+      statusLine: { type: "command", command: "my-custom-statusline" },
+    });
+    const out = applyUninstall(installed);
+    expect(out.statusLine).toEqual({ type: "command", command: "my-custom-statusline" });
+  });
+});

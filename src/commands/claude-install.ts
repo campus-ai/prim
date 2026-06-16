@@ -2,24 +2,27 @@
  * `prim claude install|uninstall|status` — manage the prim Claude Code
  * integration in settings.json.
  *
- * One command surface registers BOTH prim binaries Claude Code drives:
+ * One command surface registers every prim binary Claude Code drives:
  *   - prim-hook (passive capture) at matcher "*" on every hook event, so the
  *     decision journal sees the full session.
- *   - prim-pre-tool-use (the conflict gate) at matcher "Edit|Write|MultiEdit"
- *     on PreToolUse, so edits are checked against the decision graph before
- *     they apply.
+ *   - prim-pre-tool-use (the conflict gate) on PreToolUse, and
+ *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse,
+ *     both at matcher "Edit|Write|MultiEdit".
+ *   - prim-session-start / prim-session-end on the session boundaries, so the
+ *     daemon's presence reflects live sessions.
+ *   - the `prim statusline` statusLine, so the editor shows "team: N online".
  *
  *   prim claude install                 # ~/.claude/settings.json
  *   prim claude install --scope=project # ./.claude/settings.json
  *   prim claude install --force         # replace drifted prim entries
  *   prim claude uninstall               # strip every prim entry
- *   prim claude status                  # report both binaries per scope
+ *   prim claude status                  # report each surface per scope
  *
- * Merges; never overwrites. Unrelated matchers and non-prim commands are
- * preserved — install only adds/replaces the prim entries, uninstall only
- * removes them. Idempotent. Writes atomically (tmp + fsync + rename) so a
- * crash can never leave a torn settings.json. AX contract: STDOUT is the
- * resulting JSON; STDERR is the human verdict.
+ * Merges; never overwrites. Unrelated matchers, non-prim commands, and a
+ * user-defined statusLine are preserved — install only adds/replaces the prim
+ * surfaces, uninstall only removes them. Idempotent. Writes atomically
+ * (tmp + fsync + rename) so a crash can never leave a torn settings.json. AX
+ * contract: STDOUT is the resulting JSON; STDERR is the human verdict.
  */
 import {
   closeSync,
@@ -37,16 +40,27 @@ import type { Command } from "commander";
 
 const CAPTURE_COMMAND = "prim-hook";
 const GATE_COMMAND = "prim-pre-tool-use";
-const PRIM_COMMANDS = new Set<string>([CAPTURE_COMMAND, GATE_COMMAND]);
+const POST_TOOL_USE_COMMAND = "prim-post-tool-use";
+const SESSION_START_COMMAND = "prim-session-start";
+const SESSION_END_COMMAND = "prim-session-end";
+const STATUSLINE_COMMAND = "prim statusline";
+const PRIM_COMMANDS = new Set<string>([
+  CAPTURE_COMMAND,
+  GATE_COMMAND,
+  POST_TOOL_USE_COMMAND,
+  SESSION_START_COMMAND,
+  SESSION_END_COMMAND,
+]);
 
 const JSON_INDENT = 2;
 
 const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
 const PROJECT_SCOPE_PATH = join(process.cwd(), ".claude", "settings.json");
 
-// Capture rides every hook event at the wildcard matcher; the gate rides only
-// PreToolUse, scoped to the edit tools it understands. PreToolUse therefore
-// carries two prim entries (one per binary), which is intended.
+// Capture rides every hook event at the wildcard matcher; the gate and the
+// PostToolUse ingest hook ride their edit tools; the session hooks notify the
+// daemon on session boundaries. PreToolUse and PostToolUse each carry two prim
+// entries (capture + their dedicated hook), which is intended.
 const CAPTURE_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
@@ -66,6 +80,9 @@ type Registration = {
 const REGISTRATIONS: Registration[] = [
   ...CAPTURE_EVENTS.map((event) => ({ event, matcher: "*", command: CAPTURE_COMMAND })),
   { event: "PreToolUse", matcher: "Edit|Write|MultiEdit", command: GATE_COMMAND },
+  { event: "PostToolUse", matcher: "Edit|Write|MultiEdit", command: POST_TOOL_USE_COMMAND },
+  { event: "SessionStart", matcher: "*", command: SESSION_START_COMMAND },
+  { event: "SessionEnd", matcher: "*", command: SESSION_END_COMMAND },
 ];
 
 export type Scope = "user" | "project";
@@ -80,8 +97,14 @@ export type HookEntry = {
   hooks?: HookCommand[];
 };
 
+export type StatusLineConfig = {
+  type?: string;
+  command?: string;
+};
+
 export type ClaudeSettings = {
   hooks?: Record<string, HookEntry[] | undefined>;
+  statusLine?: StatusLineConfig;
   [key: string]: unknown;
 };
 
@@ -146,6 +169,22 @@ function ensureRegistration(list: HookEntry[], reg: Registration, force: boolean
   return [...stripCommand(list, reg.command), canonicalEntry(reg)];
 }
 
+function isPrimStatusLine(settings: ClaudeSettings): boolean {
+  const s = settings.statusLine;
+  return s?.type === "command" && s?.command === STATUSLINE_COMMAND;
+}
+
+/**
+ * Install the prim statusline ONLY when the slot is empty or already ours — a
+ * user's own statusLine is never clobbered.
+ */
+function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
+  if (settings.statusLine && !isPrimStatusLine(settings)) {
+    return settings;
+  }
+  return { ...settings, statusLine: { type: "command", command: STATUSLINE_COMMAND } };
+}
+
 export function applyInstall(
   settings: ClaudeSettings,
   options: { force?: boolean } = {},
@@ -154,7 +193,7 @@ export function applyInstall(
   for (const reg of REGISTRATIONS) {
     hooks[reg.event] = ensureRegistration(hooks[reg.event] ?? [], reg, options.force ?? false);
   }
-  return { ...settings, hooks };
+  return applyStatusLine({ ...settings, hooks });
 }
 
 export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
@@ -170,13 +209,22 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
       hooks[event] = list;
     }
   }
-  return { ...settings, hooks };
+  const next: ClaudeSettings = { ...settings, hooks };
+  // Remove our statusline; leave a user-defined one untouched.
+  if (isPrimStatusLine(next)) {
+    next.statusLine = undefined;
+  }
+  return next;
 }
 
 function captureInstalled(settings: ClaudeSettings): boolean {
   return CAPTURE_EVENTS.some((event) =>
     (settings.hooks?.[event] ?? []).some((e) => entryHasCommand(e, CAPTURE_COMMAND)),
   );
+}
+
+function statuslineInstalled(settings: ClaudeSettings): boolean {
+  return isPrimStatusLine(settings);
 }
 
 /**
@@ -211,6 +259,7 @@ export type ScopeStatus = {
   path: string;
   gate: boolean;
   capture: boolean;
+  statusline: boolean;
 };
 
 export type InstallResult = {
@@ -218,6 +267,7 @@ export type InstallResult = {
   path: string;
   gate: boolean;
   capture: boolean;
+  statusline: boolean;
   changed: boolean;
 };
 
@@ -234,6 +284,7 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     path,
     gate: isGateInstalled(after),
     capture: captureInstalled(after),
+    statusline: statuslineInstalled(after),
     changed,
   };
 }
@@ -251,6 +302,7 @@ export function performUninstall(scope: Scope): InstallResult {
     path,
     gate: isGateInstalled(after),
     capture: captureInstalled(after),
+    statusline: statuslineInstalled(after),
     changed,
   };
 }
@@ -258,7 +310,12 @@ export function performUninstall(scope: Scope): InstallResult {
 export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   const statusFor = (path: string): ScopeStatus => {
     const settings = readSettings(path);
-    return { path, gate: isGateInstalled(settings), capture: captureInstalled(settings) };
+    return {
+      path,
+      gate: isGateInstalled(settings),
+      capture: captureInstalled(settings),
+      statusline: statuslineInstalled(settings),
+    };
   };
   return { user: statusFor(USER_SCOPE_PATH), project: statusFor(PROJECT_SCOPE_PATH) };
 }
@@ -278,11 +335,11 @@ function resolveScope(input: string | undefined): Scope {
 export function registerClaudeCommands(program: Command): void {
   const claude = program
     .command("claude")
-    .description("Manage the prim Claude Code integration (capture + conflict gate)");
+    .description("Manage the prim Claude Code integration (capture, gate, ingest, presence)");
 
   claude
     .command("install")
-    .description("Register the prim capture + PreToolUse gate hooks in Claude Code's settings.json")
+    .description("Register the prim hooks + statusline in Claude Code's settings.json")
     .option(
       "--scope <scope>",
       "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
@@ -305,7 +362,7 @@ export function registerClaudeCommands(program: Command): void {
 
   claude
     .command("uninstall")
-    .description("Remove all prim hooks (capture + gate) from settings.json")
+    .description("Remove all prim hooks + the prim statusline from settings.json")
     .option(
       "--scope <scope>",
       "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
@@ -323,11 +380,14 @@ export function registerClaudeCommands(program: Command): void {
 
   claude
     .command("status")
-    .description("Report whether the prim capture + gate hooks are installed per scope")
+    .description(
+      "Report whether each prim surface (gate, capture, statusline) is installed per scope",
+    )
     .action(() => {
       const result = performStatus();
+      const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
-        `[prim] ${label}: gate ${s.gate ? "✓" : "✗"} · capture ${s.capture ? "✓" : "✗"} (${s.path})`;
+        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · statusline ${mark(s.statusline)} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });

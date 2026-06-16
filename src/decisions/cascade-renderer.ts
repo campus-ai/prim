@@ -60,6 +60,45 @@ function knowledgeRow(
   return [`  ${tokens.join("  ")}${overflow}`];
 }
 
+function areaChip(area: string | undefined): string {
+  return area ? `[${area}]` : "[--]";
+}
+
+function countCrossAreaDependents(
+  parentArea: string | undefined,
+  dependents: CascadeNode[],
+): number {
+  // When the parent has no area, the cross-area question is
+  // undefined — fall back to "count distinct areas among dependents
+  // that aren't the dominant one" so the tally still surfaces a
+  // useful signal instead of silently rendering zero.
+  if (!parentArea) {
+    const areaCounts = new Map<string, number>();
+    for (const d of dependents) {
+      if (d.area) {
+        areaCounts.set(d.area, (areaCounts.get(d.area) ?? 0) + 1);
+      }
+    }
+    if (areaCounts.size <= 1) {
+      return 0;
+    }
+    let dominantCount = 0;
+    for (const c of areaCounts.values()) {
+      if (c > dominantCount) {
+        dominantCount = c;
+      }
+    }
+    return dependents.filter((d) => d.area).length - dominantCount;
+  }
+  let count = 0;
+  for (const d of dependents) {
+    if (d.area && d.area !== parentArea) {
+      count++;
+    }
+  }
+  return count;
+}
+
 function dependentsBox(dependents: CascadeNode[]): string[] {
   if (dependents.length === 0) {
     return ["  (no downstream dependents)"];
@@ -68,7 +107,7 @@ function dependentsBox(dependents: CascadeNode[]): string[] {
   const header = `${String(dependents.length)} affected:`;
   const lines = [`  ${header}`];
   for (const d of dependents.slice(0, inlineCount)) {
-    lines.push(`    • ${truncate(d.intent, INTENT_TRUNC)}`);
+    lines.push(`    • ${areaChip(d.area)}  ${truncate(d.intent, INTENT_TRUNC)}`);
   }
   if (dependents.length > inlineCount) {
     lines.push(`    + ${String(dependents.length - inlineCount)} more`);
@@ -103,9 +142,8 @@ function triggerLine(result: CascadeResult): string[] {
   }
   const lines = [triggerHeadline(t)];
   // The rich detail line: who fired it (server `authorName`) and the
-  // free-text triage reason (server `reason` — formerly mis-read as the
-  // never-emitted `narrative`, F10). Either may be absent; render only
-  // the parts the server actually projected.
+  // free-text triage reason (server `reason`). Either may be absent;
+  // render only the parts the server actually projected.
   if (t.authorName) {
     lines.push(`  by ${t.authorName}`);
   }
@@ -134,7 +172,9 @@ export function renderCascade(result: CascadeResult): string {
     lines.push("        ▼");
   }
   const decisionLine = `• ${id}  ${truncate(d.intent, INTENT_TRUNC)}`;
-  const meta = `  ${d.authorName} · ${formatDate(d.classifiedAt)}  ·  ${result.reversibility ?? "(unset)"} reversibility`;
+  const fanOutFragment =
+    result.fanOut > 0 ? `  ·  ${String(result.fanOut)} decision(s) depend on this` : "";
+  const meta = `  ${d.authorName} · ${formatDate(d.classifiedAt)}${fanOutFragment}  ·  ${result.reversibility ?? "(unset)"} reversibility`;
   lines.push("", decisionLine, meta);
   lines.push("");
   lines.push("dependents");
@@ -143,11 +183,14 @@ export function renderCascade(result: CascadeResult): string {
   if (triggered.length > 0) {
     lines.push("", ...triggered);
   }
+  const crossArea = countCrossAreaDependents(d.area, result.downstream);
+  const crossAreaFragment = crossArea > 0 ? ` · ${String(crossArea)} cross-area dependency` : "";
+  const noEdgesFragment = result.downstream.length === 0 ? " (no edges yet)" : "";
   lines.push(
-    `impact: ${String(result.fanOut)} decision(s) need review${result.downstream.length === 0 ? " (no edges yet)" : ""}.`,
+    `impact: ${String(result.fanOut)} decision(s) need review${noEdgesFragment}${crossAreaFragment}.`,
   );
   // A clipped blast radius must never read as complete — the server hit a
-  // scan cap on at least one projected list, so this subgraph is partial (F11).
+  // scan cap on at least one projected list, so this subgraph is partial.
   if (result.truncated) {
     lines.push(
       "  ⚠ blast radius truncated — more refs/dependents than the server returns per request; not all shown.",
