@@ -31,6 +31,7 @@
  */
 
 import { getClient } from "../client.js";
+import { daemonRequest } from "../daemon/client.js";
 import {
   type ConflictCheckResult,
   type HookEnv,
@@ -45,6 +46,7 @@ import {
 
 const HOOK_TIMEOUT_MS = 4_500;
 const STDIN_TIMEOUT_MS = 1_000;
+const DAEMON_TIMEOUT_MS = 250;
 
 type PreToolUseInput = {
   session_id?: string;
@@ -79,6 +81,19 @@ function emit(output: ReturnType<typeof failOpenOutput>): void {
 }
 
 async function checkOneFile(file: string): Promise<ConflictCheckResult> {
+  // Try the daemon first: it holds an open keep-alive connection and
+  // amortizes token refresh, so a hit returns in ~20-30ms instead of the
+  // ~200ms cold HTTP path. A null result falls through to direct HTTP, so a
+  // user without a running daemon is unaffected. The wire body is `{ file }`
+  // on both paths — scoring policy is server-owned.
+  const fromDaemon = await daemonRequest<ConflictCheckResult>(
+    "conflict_check",
+    { file },
+    { timeoutMs: DAEMON_TIMEOUT_MS },
+  );
+  if (fromDaemon) {
+    return fromDaemon;
+  }
   const client = getClient();
   return (await client.post(
     "/api/cli/decisions/conflict-check",
