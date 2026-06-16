@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.0-alpha.16](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.15...v0.1.0-alpha.16) (2026-06-16)
+
+
+### Features
+
+* **daemon:** render an honest unknown team count and test the statusline ([1424306](https://github.com/campus-ai/prim/commit/1424306ac5639018ae4465f4665048b4fb6c8b5f))
+* **decisions:** color and soft-wrap the decision read renderers ([bd3e2f9](https://github.com/campus-ai/prim/commit/bd3e2f9df9242774c2f2032346aa3e9f5dbd2a15))
+* **decisions:** gate Claude Code edits through the prim PreToolUse hook ([f83f564](https://github.com/campus-ai/prim/commit/f83f564780e1501f6cdaacd6614efd796fda71a3))
+* **decisions:** post-tool-use ingest, statusline, and the full claude install surface ([09ba82f](https://github.com/campus-ai/prim/commit/09ba82f13cd9bbb0fece539a6e826ef6bff7f413))
+* **decisions:** prim daemon to accelerate hooks and heartbeat presence ([ad29ff7](https://github.com/campus-ai/prim/commit/ad29ff7eb38d22c99232214c2f0a01ace727ae5b))
+* **decisions:** prim decisions check against the live decision graph ([e262ca9](https://github.com/campus-ai/prim/commit/e262ca96051d66988fb1095b87414a799d7da9ad))
+* **decisions:** prim reconcile to mint a single-use decision bypass ([9e0def0](https://github.com/campus-ai/prim/commit/9e0def0eeaf5f47cfcfa5826a1f621946293b9c7))
+* **decisions:** recent / show / cascade / confirm against the live graph ([bf1e535](https://github.com/campus-ai/prim/commit/bf1e535addc828028f6c3220aec3bec730658c9e))
+* **decisions:** render the verdict footer and refresh the presence statusline ([74dbd0c](https://github.com/campus-ai/prim/commit/74dbd0c1d2a89c222d9bc90ded7c65159fea3e94))
+* **events:** bind captured moves to an org and journal them per-bucket ([a8ede9e](https://github.com/campus-ai/prim/commit/a8ede9ee0991dd27d0c7228bb31c614475cdea3e))
+* **events:** passive capture of Claude Code hooks into a draining journal ([ce23a37](https://github.com/campus-ai/prim/commit/ce23a3716fba619526d4015386091cd7b20e6a21))
+* **events:** scrub PII and secrets from captured events before they journal ([4e70586](https://github.com/campus-ai/prim/commit/4e705864cb0ebcec177ef16505e2a89b46568122))
+
+
+### Bug Fixes
+
+* **daemon:** report stale presence honestly and surface broker refresh errors ([d706662](https://github.com/campus-ai/prim/commit/d706662a5dce39488e276f9a4787b2ad48a9e36a))
+
 ## [0.1.0-alpha.15](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.14...v0.1.0-alpha.15) (2026-05-14)
 
 
