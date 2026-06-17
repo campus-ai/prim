@@ -24,6 +24,7 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
 
 export interface DecisionFeedRow {
@@ -83,9 +84,12 @@ export async function fetchRecent(
   }
   const client = deps.getClient();
   try {
-    const res = (await client.get(`/api/cli/decisions/recent?${params.toString()}`, {
-      signal: AbortSignal.timeout(RECENT_TIMEOUT_MS),
-    })) as RecentResponse;
+    const res = await daemonOrDirectGet<RecentResponse>(
+      "decisions_recent",
+      `/api/cli/decisions/recent?${params.toString()}`,
+      client,
+      RECENT_TIMEOUT_MS,
+    );
     // Read the server's `unavailable` through (org-unbound token → 200 with
     // an empty feed plus a reason). A healthy feed never carries it.
     const result: DecisionsRecentResult = { decisions: res.decisions };

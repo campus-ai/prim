@@ -1,5 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliClient } from "../client.js";
+
+const { mockDaemonRequest } = vi.hoisted(() => ({
+  mockDaemonRequest: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../daemon/client.js", () => ({
+  daemonRequest: mockDaemonRequest,
+}));
+
 import { checkAffectedDecisions, formatDecisionsWarning } from "./decisions-check.js";
 
 function clientWith(get: ReturnType<typeof vi.fn>): CliClient {
@@ -7,6 +16,11 @@ function clientWith(get: ReturnType<typeof vi.fn>): CliClient {
 }
 
 describe("checkAffectedDecisions", () => {
+  beforeEach(() => {
+    mockDaemonRequest.mockReset();
+    mockDaemonRequest.mockResolvedValue(null);
+  });
+
   it("returns a verified-clear result without calling the server when no files are supplied", async () => {
     const get = vi.fn();
     const result = await checkAffectedDecisions([], { getClient: () => clientWith(get) });
@@ -21,6 +35,19 @@ describe("checkAffectedDecisions", () => {
     expect(url).toContain("files=src%2Fa.ts");
     expect(url).toContain("files=src%2Fb.ts");
     expect(url).not.toContain("%2C");
+  });
+
+  it("uses the daemon affecting proxy when available", async () => {
+    mockDaemonRequest.mockResolvedValueOnce({ decisions: [], truncated: false });
+    const get = vi.fn();
+    await checkAffectedDecisions(["src/a.ts"], { getClient: () => clientWith(get) });
+
+    expect(mockDaemonRequest).toHaveBeenCalledWith(
+      "decisions_affecting",
+      { path: "/api/cli/decisions/affecting?files=src%2Fa.ts" },
+      { timeoutMs: 250 },
+    );
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("chunks at the 25-path cap and merges decisions across chunks (dedupe by id, union files)", async () => {

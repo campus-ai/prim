@@ -19,6 +19,7 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
 import { renderIdentifier } from "./recent.js";
 
@@ -105,9 +106,12 @@ export async function fetchShow(
   const params = new URLSearchParams({ id: idOrShortId });
   const client = deps.getClient();
   try {
-    return (await client.get(`/api/cli/decisions/show?${params.toString()}`, {
-      signal: AbortSignal.timeout(SHOW_TIMEOUT_MS),
-    })) as DecisionShowResult;
+    return await daemonOrDirectGet<DecisionShowResult>(
+      "decisions_show",
+      `/api/cli/decisions/show?${params.toString()}`,
+      client,
+      SHOW_TIMEOUT_MS,
+    );
   } catch (err) {
     if (err instanceof Error && NOT_FOUND_RE.test(err.message)) {
       throw new DecisionNotFoundError(idOrShortId);

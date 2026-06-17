@@ -22,6 +22,7 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
+import { daemonOrDirectGet } from "../daemon/proxy.js";
 
 const NOT_FOUND_RE = /not found/i;
 
@@ -90,9 +91,12 @@ export async function fetchCascade(
   const params = new URLSearchParams({ id: idOrShortId });
   const client = deps.getClient();
   try {
-    return (await client.get(`/api/cli/decisions/cascade?${params.toString()}`, {
-      signal: AbortSignal.timeout(CASCADE_TIMEOUT_MS),
-    })) as CascadeResult;
+    return await daemonOrDirectGet<CascadeResult>(
+      "decisions_cascade",
+      `/api/cli/decisions/cascade?${params.toString()}`,
+      client,
+      CASCADE_TIMEOUT_MS,
+    );
   } catch (err) {
     if (err instanceof Error && NOT_FOUND_RE.test(err.message)) {
       throw new CascadeNotFoundError(idOrShortId);

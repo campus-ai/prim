@@ -17,6 +17,7 @@
  *     syncAffectedSpecs.
  */
 import { type CliClient, getClient } from "../client.js";
+import { daemonOrDirectGet } from "../daemon/proxy.js";
 
 export interface ActiveDecisionSummary {
   id: string;
@@ -66,9 +67,12 @@ async function fetchAffecting(client: CliClient, batch: string[]): Promise<Affec
     params.append("files", file);
   }
   try {
-    return (await client.get(`/api/cli/decisions/affecting?${params.toString()}`, {
-      signal: AbortSignal.timeout(DECISIONS_CHECK_TIMEOUT_MS),
-    })) as AffectingResponse;
+    return await daemonOrDirectGet<AffectingResponse>(
+      "decisions_affecting",
+      `/api/cli/decisions/affecting?${params.toString()}`,
+      client,
+      DECISIONS_CHECK_TIMEOUT_MS,
+    );
   } catch (err) {
     // A loud failure (network, auth, or the server's 400 on a bad path) must
     // report UNKNOWN, never a silent all-clear. Warn-only: the caller still

@@ -10,8 +10,24 @@
  * a pending confirmation_request flag, and the truncated partial flag.
  */
 
-import { describe, expect, it } from "vitest";
-import { type DecisionShowResult, formatShowHuman, formatShowJson } from "./show.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CliClient } from "../client.js";
+
+const { mockDaemonRequest } = vi.hoisted(() => ({
+  mockDaemonRequest: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../daemon/client.js", () => ({
+  daemonRequest: mockDaemonRequest,
+}));
+
+import {
+  DecisionNotFoundError,
+  type DecisionShowResult,
+  fetchShow,
+  formatShowHuman,
+  formatShowJson,
+} from "./show.js";
 
 const DETAIL: DecisionShowResult = {
   decision: {
@@ -60,6 +76,61 @@ const DETAIL: DecisionShowResult = {
   ],
   truncated: false,
 };
+
+function clientWith(get: CliClient["get"]): CliClient {
+  const unexpected = () => {
+    throw new Error("unexpected non-GET call");
+  };
+  return {
+    get,
+    post: unexpected,
+    patch: unexpected,
+    delete: unexpected,
+  };
+}
+
+describe("fetchShow", () => {
+  beforeEach(() => {
+    mockDaemonRequest.mockReset();
+    mockDaemonRequest.mockResolvedValue(null);
+  });
+
+  it("uses the daemon show proxy when available", async () => {
+    mockDaemonRequest.mockResolvedValueOnce(DETAIL);
+    const get = vi.fn().mockResolvedValue(undefined);
+
+    const result = await fetchShow("dec_230a72aa", { getClient: () => clientWith(get) });
+
+    expect(result).toBe(DETAIL);
+    expect(mockDaemonRequest).toHaveBeenCalledWith(
+      "decisions_show",
+      { path: "/api/cli/decisions/show?id=dec_230a72aa" },
+      { timeoutMs: 250 },
+    );
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a direct show fetch when the daemon is down", async () => {
+    mockDaemonRequest.mockResolvedValueOnce(null);
+    const get = vi.fn().mockResolvedValueOnce(DETAIL);
+
+    const result = await fetchShow("dec_230a72aa", { getClient: () => clientWith(get) });
+
+    expect(result).toEqual(DETAIL);
+    expect(get).toHaveBeenCalledWith("/api/cli/decisions/show?id=dec_230a72aa", {
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("maps a not-found error to DecisionNotFoundError on the direct path", async () => {
+    mockDaemonRequest.mockResolvedValueOnce(null);
+    const get = vi.fn().mockRejectedValueOnce(new Error("Decision not found: dec_230a72aa"));
+
+    await expect(
+      fetchShow("dec_230a72aa", { getClient: () => clientWith(get) }),
+    ).rejects.toBeInstanceOf(DecisionNotFoundError);
+  });
+});
 
 describe("formatShowHuman", () => {
   it("verdicts the decision with id, intent, status, and area", () => {
