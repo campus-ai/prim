@@ -28,6 +28,7 @@ const PID_PATH = join(CONFIG_DIR, "daemon.pid");
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TOKEN_CHECK_INTERVAL_MS = 60_000;
 const TOKEN_REFRESH_THRESHOLD_MS = 90_000;
+const HTTP_PROXY_TIMEOUT_MS = 10_000;
 // How long a cached online count stays trustworthy after the last accepted
 // heartbeat (≈ 3 heartbeat cadences). Past this, the daemon is alive but its
 // heartbeats are failing, so the frozen count is reported as stale.
@@ -155,6 +156,25 @@ async function handleConflictCheck(params: Record<string, unknown>): Promise<unk
   return await client.post("/api/cli/decisions/conflict-check", { file: params.file });
 }
 
+function pathParam(params: Record<string, unknown>): string {
+  if (typeof params.path !== "string" || !params.path.startsWith("/api/cli/")) {
+    throw new Error("proxy request requires `path: string` under /api/cli/");
+  }
+  return params.path;
+}
+
+function assertEndpointPath(path: string, endpoint: string): void {
+  if (path !== endpoint && !path.startsWith(`${endpoint}?`)) {
+    throw new Error(`proxy path must be ${endpoint} or ${endpoint}?...`);
+  }
+}
+
+async function proxyGet(params: Record<string, unknown>, allowedPrefix: string): Promise<unknown> {
+  const path = pathParam(params);
+  assertEndpointPath(path, allowedPrefix);
+  return await client.get(path, { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
+}
+
 function handleStatusSnapshot(): unknown {
   const presenceFresh =
     lastOkAtLocal !== undefined && Date.now() - lastOkAtLocal < PRESENCE_FRESH_WINDOW_MS;
@@ -179,6 +199,22 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
     switch (req.method) {
       case "conflict_check": {
         const result = await handleConflictCheck(req.params ?? {});
+        return { id, ok: true, result };
+      }
+      case "decisions_recent": {
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/recent");
+        return { id, ok: true, result };
+      }
+      case "decisions_show": {
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/show");
+        return { id, ok: true, result };
+      }
+      case "decisions_cascade": {
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/cascade");
+        return { id, ok: true, result };
+      }
+      case "decisions_affecting": {
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/affecting");
         return { id, ok: true, result };
       }
       case "session_start": {

@@ -9,8 +9,17 @@
  *      clean empty feed. (Previously these paths were unexercised — F5.)
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliClient } from "../client.js";
+
+const { mockDaemonRequest } = vi.hoisted(() => ({
+  mockDaemonRequest: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("../daemon/client.js", () => ({
+  daemonRequest: mockDaemonRequest,
+}));
+
 import {
   type DecisionFeedRow,
   type RecentDeps,
@@ -72,6 +81,29 @@ function depsThrowing(err: unknown): RecentDeps {
 }
 
 describe("fetchRecent", () => {
+  beforeEach(() => {
+    mockDaemonRequest.mockReset();
+    mockDaemonRequest.mockResolvedValue(null);
+  });
+
+  it("uses the daemon recent proxy when available", async () => {
+    mockDaemonRequest.mockResolvedValueOnce({ decisions: [SELF_ROW] });
+    const get = vi.fn().mockResolvedValue({ decisions: [] });
+
+    const result = await fetchRecent(
+      { limit: 5, since: "30m" },
+      { getClient: () => clientWith(get) },
+    );
+
+    expect(result.decisions).toEqual([SELF_ROW]);
+    expect(mockDaemonRequest).toHaveBeenCalledWith(
+      "decisions_recent",
+      { path: "/api/cli/decisions/recent?limit=5&since=30m" },
+      { timeoutMs: 250 },
+    );
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("maps a healthy feed straight through with no unavailable reason", async () => {
     const result = await fetchRecent({}, depsReturning({ decisions: [SELF_ROW] }));
     expect(result.decisions).toHaveLength(1);
