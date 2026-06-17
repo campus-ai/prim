@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.17](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.16...v0.1.0-alpha.17) (2026-06-17)
+
+
+### Features
+
+* **codex:** attribute captured moves to their producing agent ([262fbaa](https://github.com/campus-ai/prim/commit/262fbaa4ac3c422863bf54d7cc6704332090a48a))
+* **codex:** hook installer, conflict gate, and presence analog ([5a7ca74](https://github.com/campus-ai/prim/commit/5a7ca74392aa35941abc16e82c6e195ec8f00cdd))
+* **daemon:** route decision reads through the daemon proxy ([89e7dac](https://github.com/campus-ai/prim/commit/89e7dac11eca24804075ad05b8c2f51fdfa2cd03))
+
+
+### Bug Fixes
+
+* **codex:** split apply_patch patches on either line ending ([192c9a2](https://github.com/campus-ai/prim/commit/192c9a2aa12825c951b5bec0b3dc945b5741ce19))
+
 ## [0.1.0-alpha.16](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.15...v0.1.0-alpha.16) (2026-06-16)
 
 
