@@ -1,6 +1,6 @@
 ---
 name: prim
-description: Use the prim CLI for managing Primitive specs, contexts, projects, and pre-commit hooks. TRIGGER when the user mentions Primitive, prim, "specs" (in the Primitive sense), or "contexts" (in the Primitive sense); when the repo's package.json depends on @primitive.ai/prim; when the user asks to sync, map, update, or auto-map a spec; when configuring Primitive pre-commit hooks. SKIP when "spec" means test specs (vitest, jest, rspec), when "context" means React context or LLM context window, or for unrelated CLIs.
+description: Use the prim CLI for Primitive specs, contexts, projects, pre-commit hooks, and the decision graph (passive decision capture, the conflict gate, reconcile, and team presence). TRIGGER when the user mentions Primitive, prim, "specs" or "contexts" (in the Primitive sense), or decisions / the decision graph / a conflict gate / reconcile; when the repo's package.json depends on @primitive.ai/prim; when the user asks to sync, map, update, or auto-map a spec; when an edit is denied or warned by a prior decision; when configuring Primitive hooks. SKIP when "spec" means test specs (vitest, jest, rspec), when "context" means React context or an LLM context window, or for unrelated CLIs.
 ---
 
 # Working with the prim CLI
@@ -34,6 +34,36 @@ The CLI auto-refreshes expired tokens. On unrecoverable expiry it throws `Authen
 1. Don't guess IDs. Discover them with `npx --yes @primitive.ai/prim spec list`, `npx --yes @primitive.ai/prim spec list --project-id <pid>`, or `npx --yes @primitive.ai/prim context list`.
 2. Every command accepts `--help`. When unsure of flags, run `npx --yes @primitive.ai/prim <cmd> --help` rather than guessing.
 3. The CLI prints API errors as one-liners to stderr and exits non-zero. Treat any non-zero exit as actionable. If a command fails with an unrecognized error, re-run with `--help` to check your flags. If auth-related, re-check `auth status`.
+
+## Working with the decision graph
+
+Separate from specs, prim passively captures the decisions you make during a coding session -- which library, which pattern, which config value -- into a queryable decision graph, and actively **gates** edits that would conflict with a load-bearing prior decision. Capture and the gate run automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code) or `npx --yes @primitive.ai/prim codex install` (Codex). You never invoke capture; you *respond* to the gate and *read* the graph.
+
+### Heed the conflict gate
+Before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch) a PreToolUse hook scores the target file against the graph:
+
+- **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
+- **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. On Codex a would-be `ask` is delivered as allow-plus-context (Codex can't pause mid-tool), so that context is your only signal -- read it before continuing.
+- **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
+
+The gate fail-opens on its *own* infrastructure errors (no daemon, network blip, org-unbound token) -- a setup problem never blocks your edit. That is exactly why an "unavailable" note matters: it is the honest signal that the check, not your edit, is what failed.
+
+### Read the graph before large or load-bearing edits
+- `npx --yes @primitive.ai/prim decisions check --files "src/a.ts,src/b.ts"` -- which active decisions reference the files you're about to touch (comma-separated paths, one `--files` value). Run it before a big change.
+- `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex`); `--limit <n>` and `--since <dur>` narrow it.
+- `npx --yes @primitive.ai/prim decisions show <idOrShortId>` and `npx --yes @primitive.ai/prim decisions cascade <idOrShortId>` -- full detail, and the downstream blast radius a change would disturb.
+
+### Reconcile and the verdict footer
+`npx --yes @primitive.ai/prim reconcile <idOrShortId>` mints a single-use bypass for the named decision -- it prints `[prim] reconcile bypass issued for dec_<short> (expires in ...)` to STDERR, with the bypass JSON on STDOUT. Your *next* edit to the governed file then goes through, and on that edit prim prints a verdict footer to STDERR -- confirmation the override was recorded, not silently dropped:
+
+```
+✓ Conflict caught before merge · N decisions saved · <author>'s intent preserved
+```
+
+`N` is the reconciled decision's downstream live-dependent count, shown as `N+` when the server caps it.
+
+### Presence
+With the daemon running (`npx --yes @primitive.ai/prim daemon start`), `npx --yes @primitive.ai/prim daemon status` includes the live online count in its STDOUT JSON (when presence is fresh); Claude Code surfaces it in the statusline as `team: N online`. Your captured decisions are attributed to your agent automatically -- no flag required.
 
 ## Common workflows
 
