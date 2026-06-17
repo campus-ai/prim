@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
+import { shouldFlushAfter, toCommitMove, toMove } from "./prim-hook-core.js";
 
 describe("toMove", () => {
   it("maps the Claude Code hook field names onto the envelope", () => {
@@ -61,5 +61,43 @@ describe("shouldFlushAfter", () => {
     ]) {
       expect(shouldFlushAfter(event)).toBe(false);
     }
+  });
+});
+
+describe("toCommitMove", () => {
+  const commit = {
+    sha: "abc123",
+    parentSha: "parent0",
+    branch: "main",
+    files: ["src/a.ts", "src/b.ts"],
+  };
+
+  it("derives a deterministic moveId from the sha", () => {
+    expect(toCommitMove(commit, "1.0.0", "/repo").moveId).toBe("commit:abc123");
+  });
+
+  it("uses the git.commit eventType and an empty sessionId", () => {
+    const move = toCommitMove(commit, "1.0.0", "/repo");
+    expect(move.eventType).toBe("git.commit");
+    expect(move.sessionId).toBe("");
+  });
+
+  it("carries the commit facts in the payload", () => {
+    const move = toCommitMove(commit, "1.0.0", "/repo");
+    expect(move.payload).toMatchObject({
+      kind: "git.commit",
+      sha: "abc123",
+      parentSha: "parent0",
+      branch: "main",
+      files: ["src/a.ts", "src/b.ts"],
+    });
+  });
+
+  it("stamps env + envelopeVersion and never a producer", () => {
+    const move = toCommitMove(commit, "1.2.3", "/repo");
+    expect(move.env.cwd).toBe("/repo");
+    expect(move.env.cliVersion).toBe("1.2.3");
+    expect(move.envelopeVersion).toBe(1);
+    expect("producer" in move).toBe(false);
   });
 });

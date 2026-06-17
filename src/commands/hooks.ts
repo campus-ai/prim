@@ -1,8 +1,8 @@
 /**
  * Hook management commands for the prim CLI.
  *
- * prim hooks install   — Install git pre-commit hook
- * prim hooks uninstall — Remove git pre-commit hook
+ * prim hooks install   — Install the prim git hooks (pre-commit + post-commit)
+ * prim hooks uninstall — Remove the prim git hooks
  */
 
 import { execSync } from "node:child_process";
@@ -10,32 +10,50 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { resolve } from "node:path";
 import { type Command, Option } from "commander";
 
-const HOOK_SCRIPT = `#!/bin/sh
-# prim pre-commit hook — auto-syncs affected specs on commit
-# Installed by: prim hooks install
+type HookSpec = { hookName: string; binName: string };
 
-# Find the nearest node_modules/.bin with prim, or use npx
-if command -v prim-pre-commit >/dev/null 2>&1; then
-  prim-pre-commit
-elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
-  ./node_modules/.bin/prim-pre-commit
+const PRE_COMMIT: HookSpec = { hookName: "pre-commit", binName: "prim-pre-commit" };
+const POST_COMMIT: HookSpec = { hookName: "post-commit", binName: "prim-post-commit" };
+// Pre-commit first: install order is asserted by hooks.spec.ts (calls[0]).
+const HOOKS: HookSpec[] = [PRE_COMMIT, POST_COMMIT];
+
+function blockMarkers(spec: HookSpec): { start: string; end: string } {
+  return {
+    start: `# >>> prim ${spec.hookName} hook >>>`,
+    end: `# <<< prim ${spec.hookName} hook <<<`,
+  };
+}
+
+// Back-compat exports: the pre-commit markers, asserted against in tests.
+export const PRIM_BLOCK_START = blockMarkers(PRE_COMMIT).start;
+export const PRIM_BLOCK_END = blockMarkers(PRE_COMMIT).end;
+
+// The shell that resolves and runs a prim hook bin — PATH, local
+// node_modules, then npx — never failing the commit (`|| true`).
+function hookShim(binName: string): string {
+  return `if command -v ${binName} >/dev/null 2>&1; then
+  ${binName}
+elif [ -f "./node_modules/.bin/${binName}" ]; then
+  ./node_modules/.bin/${binName}
 else
-  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
-fi
+  npx --yes -p @primitive.ai/prim ${binName} 2>/dev/null || true
+fi`;
+}
+
+function dotGitScript(spec: HookSpec): string {
+  return `#!/bin/sh
+# prim ${spec.hookName} hook — installed by: prim hooks install
+
+${hookShim(spec.binName)}
 `;
+}
 
-export const PRIM_BLOCK_START = "# >>> prim pre-commit hook >>>";
-export const PRIM_BLOCK_END = "# <<< prim pre-commit hook <<<";
-
-const PRIM_HUSKY_BLOCK = `${PRIM_BLOCK_START}
-if command -v prim-pre-commit >/dev/null 2>&1; then
-  prim-pre-commit
-elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
-  ./node_modules/.bin/prim-pre-commit
-else
-  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
-fi
-${PRIM_BLOCK_END}`;
+function huskyBlock(spec: HookSpec): string {
+  const { start, end } = blockMarkers(spec);
+  return `${start}
+${hookShim(spec.binName)}
+${end}`;
+}
 
 function getGitRoot(): string {
   return execSync("git rev-parse --show-toplevel", {
@@ -66,8 +84,8 @@ export function detectHusky(gitRoot: string): boolean {
   return false;
 }
 
-export function containsPrimHook(content: string): boolean {
-  return content.includes("prim-pre-commit");
+export function containsPrimHook(content: string, binName: string = PRE_COMMIT.binName): boolean {
+  return content.includes(binName);
 }
 
 export async function askConfirmation(question: string): Promise<boolean> {
@@ -84,31 +102,31 @@ export async function askConfirmation(question: string): Promise<boolean> {
   }
 }
 
-export function installToHusky(gitRoot: string): void {
-  const hookPath = resolve(gitRoot, ".husky", "pre-commit");
+export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
+  const hookPath = resolve(gitRoot, ".husky", spec.hookName);
 
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, "utf-8");
-    if (containsPrimHook(existing)) {
-      console.log("Prim pre-commit hook is already installed in .husky/pre-commit.");
+    if (containsPrimHook(existing, spec.binName)) {
+      console.log(`Prim ${spec.hookName} hook is already installed in .husky/${spec.hookName}.`);
       return;
     }
     const separator = existing.endsWith("\n") ? "\n" : "\n\n";
-    writeFileSync(hookPath, `${existing}${separator}${PRIM_HUSKY_BLOCK}\n`, {
+    writeFileSync(hookPath, `${existing}${separator}${huskyBlock(spec)}\n`, {
       mode: 0o755,
     });
-    console.log("Appended prim hook block to .husky/pre-commit.");
+    console.log(`Appended prim hook block to .husky/${spec.hookName}.`);
   } else {
-    writeFileSync(hookPath, `#!/bin/sh\n\n${PRIM_HUSKY_BLOCK}\n`, {
+    writeFileSync(hookPath, `#!/bin/sh\n\n${huskyBlock(spec)}\n`, {
       mode: 0o755,
     });
-    console.log("Created .husky/pre-commit with prim hook block.");
+    console.log(`Created .husky/${spec.hookName} with prim hook block.`);
   }
 }
 
-export function installToDotGit(gitRoot: string): void {
+export function installToDotGit(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
   const hooksDir = resolve(gitRoot, ".git", "hooks");
-  const hookPath = resolve(hooksDir, "pre-commit");
+  const hookPath = resolve(hooksDir, spec.hookName);
 
   if (!existsSync(hooksDir)) {
     mkdirSync(hooksDir, { recursive: true });
@@ -116,17 +134,29 @@ export function installToDotGit(gitRoot: string): void {
 
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, "utf-8");
-    if (containsPrimHook(existing)) {
-      console.log("Prim pre-commit hook is already installed at .git/hooks/pre-commit.");
+    if (containsPrimHook(existing, spec.binName)) {
+      console.log(`Prim ${spec.hookName} hook is already installed at ${hookPath}.`);
       return;
     }
-    console.log(`A pre-commit hook already exists at ${hookPath}.`);
+    console.log(`A ${spec.hookName} hook already exists at ${hookPath}.`);
     console.log("To replace it, run: prim hooks uninstall && prim hooks install");
     return;
   }
 
-  writeFileSync(hookPath, HOOK_SCRIPT, { mode: 0o755 });
-  console.log(`Installed pre-commit hook at ${hookPath}`);
+  writeFileSync(hookPath, dotGitScript(spec), { mode: 0o755 });
+  console.log(`Installed ${spec.hookName} hook at ${hookPath}`);
+}
+
+// Install every prim git hook (pre-commit + post-commit) to the chosen
+// destination, pre-commit first so its write is calls[0] in tests.
+function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
+  for (const spec of HOOKS) {
+    if (target === "husky") {
+      installToHusky(gitRoot, spec);
+    } else {
+      installToDotGit(gitRoot, spec);
+    }
+  }
 }
 
 export function registerHooksCommands(program: Command) {
@@ -134,7 +164,9 @@ export function registerHooksCommands(program: Command) {
 
   hooks
     .command("install")
-    .description("Install the prim pre-commit hook (auto-detects Husky; use --target to override)")
+    .description(
+      "Install the prim git hooks — pre-commit + post-commit (auto-detects Husky; use --target to override)",
+    )
     .addOption(
       new Option("--target <where>", "install destination; bypasses Husky detection").choices([
         "husky",
@@ -148,11 +180,11 @@ export function registerHooksCommands(program: Command) {
       );
       const gitRoot = getGitRoot();
 
-      if (opts.target === "husky") return installToHusky(gitRoot);
-      if (opts.target === "git-hooks") return installToDotGit(gitRoot);
+      if (opts.target === "husky") return installHooks(gitRoot, "husky");
+      if (opts.target === "git-hooks") return installHooks(gitRoot, "git-hooks");
 
       if (detectHusky(gitRoot)) {
-        if (globals.yes) return installToHusky(gitRoot);
+        if (globals.yes) return installHooks(gitRoot, "husky");
         if (nonInteractive) {
           throw new Error(
             "--non-interactive set, refusing to prompt for Husky-hook installation. Pass --yes to confirm or --target=git-hooks to choose.",
@@ -164,31 +196,35 @@ export function registerHooksCommands(program: Command) {
           );
         } else if (
           await askConfirmation(
-            "Husky detected. Install prim hook into .husky/pre-commit instead of .git/hooks/pre-commit?",
+            "Husky detected. Install prim hooks into .husky/ instead of .git/hooks/?",
           )
         ) {
-          return installToHusky(gitRoot);
+          return installHooks(gitRoot, "husky");
         } else {
-          console.log("Falling back to .git/hooks/pre-commit install.");
+          console.log("Falling back to .git/hooks install.");
         }
       }
 
-      installToDotGit(gitRoot);
+      installHooks(gitRoot, "git-hooks");
     });
 
   hooks
     .command("uninstall")
-    .description("Remove the prim pre-commit hook")
+    .description("Remove the prim git hooks (.git/hooks)")
     .action(() => {
       const gitRoot = getGitRoot();
-      const hookPath = resolve(gitRoot, ".git", "hooks", "pre-commit");
-
-      if (!existsSync(hookPath)) {
-        console.log("No pre-commit hook found.");
-        return;
+      for (const spec of HOOKS) {
+        const hookPath = resolve(gitRoot, ".git", "hooks", spec.hookName);
+        if (!existsSync(hookPath)) {
+          console.log(`No ${spec.hookName} hook found.`);
+          continue;
+        }
+        if (containsPrimHook(readFileSync(hookPath, "utf-8"), spec.binName)) {
+          unlinkSync(hookPath);
+          console.log(`Removed ${spec.hookName} hook at ${hookPath}`);
+        } else {
+          console.log(`Left ${spec.hookName} hook at ${hookPath} untouched (not a prim hook).`);
+        }
       }
-
-      unlinkSync(hookPath);
-      console.log(`Removed pre-commit hook at ${hookPath}`);
     });
 }
