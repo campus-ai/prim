@@ -354,4 +354,13 @@ describe("hooks install action", () => {
     );
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
+
+  it("installs both pre-commit and post-commit hooks to .git/hooks", async () => {
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
+      from: "user",
+    });
+    const paths = mockedWriteFileSync.mock.calls.map((c) => c[0]);
+    expect(paths).toContain("/fake/root/.git/hooks/pre-commit");
+    expect(paths).toContain("/fake/root/.git/hooks/post-commit");
+  });
 });
