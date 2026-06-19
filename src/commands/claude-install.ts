@@ -37,25 +37,33 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
+import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
 
-const CAPTURE_COMMAND = "prim-hook";
-const GATE_COMMAND = "prim-pre-tool-use";
-const POST_TOOL_USE_COMMAND = "prim-post-tool-use";
-const SESSION_START_COMMAND = "prim-session-start";
-const SESSION_END_COMMAND = "prim-session-end";
-const STATUSLINE_COMMAND = "prim statusline";
+// Stable bin identities (npm `bin` names). The command actually written into
+// settings.json is the resolution shim from hookShimCommand() (PATH → local →
+// npx@latest); these names are what we match on to recognize and upgrade older
+// bare-name installs.
+const CAPTURE_BIN = "prim-hook";
+const GATE_BIN = "prim-pre-tool-use";
+const POST_TOOL_USE_BIN = "prim-post-tool-use";
+const SESSION_START_BIN = "prim-session-start";
+const SESSION_END_BIN = "prim-session-end";
+// The statusline rides the `prim` bin, invoked as `… statusline`.
+const STATUSLINE_BIN = "prim";
+const STATUSLINE_ARGS = "statusline";
+const STATUSLINE_COMMAND = hookShimCommand(STATUSLINE_BIN, STATUSLINE_ARGS);
 // Claude Code re-renders the statusLine only on conversation events by
 // default, so a "team: N online" count goes stale between prompts. The idle
 // refresh poll keeps presence live without the user submitting anything; 5s ≈
 // the daemon's 30s heartbeat cadence — live-feeling, but light on spawns.
 const STATUSLINE_REFRESH_SECONDS = 5;
-const PRIM_COMMANDS = new Set<string>([
-  CAPTURE_COMMAND,
-  GATE_COMMAND,
-  POST_TOOL_USE_COMMAND,
-  SESSION_START_COMMAND,
-  SESSION_END_COMMAND,
-]);
+const PRIM_BINS: readonly string[] = [
+  CAPTURE_BIN,
+  GATE_BIN,
+  POST_TOOL_USE_BIN,
+  SESSION_START_BIN,
+  SESSION_END_BIN,
+];
 
 const JSON_INDENT = 2;
 
@@ -79,15 +87,27 @@ const CAPTURE_EVENTS = [
 export type Registration = {
   event: string;
   matcher: string;
+  /** npm bin name — the stable identity matched on for install/uninstall. */
+  bin: string;
+  /** The absolute, PATH-independent command written into settings.json. */
   command: string;
 };
 
+export function makeRegistration(
+  event: string,
+  matcher: string,
+  bin: string,
+  args = "",
+): Registration {
+  return { event, matcher, bin, command: hookShimCommand(bin, args) };
+}
+
 const REGISTRATIONS: Registration[] = [
-  ...CAPTURE_EVENTS.map((event) => ({ event, matcher: "*", command: CAPTURE_COMMAND })),
-  { event: "PreToolUse", matcher: "Edit|Write|MultiEdit", command: GATE_COMMAND },
-  { event: "PostToolUse", matcher: "Edit|Write|MultiEdit", command: POST_TOOL_USE_COMMAND },
-  { event: "SessionStart", matcher: "*", command: SESSION_START_COMMAND },
-  { event: "SessionEnd", matcher: "*", command: SESSION_END_COMMAND },
+  ...CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN)),
+  makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
+  makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
+  makeRegistration("SessionStart", "*", SESSION_START_BIN),
+  makeRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
 
 export type Scope = "user" | "project";
@@ -133,8 +153,8 @@ export function readSettings(path: string): ClaudeSettings {
   }
 }
 
-export function entryHasCommand(entry: HookEntry, command: string): boolean {
-  return entry.hooks?.some((h) => h.command === command) ?? false;
+export function entryHasCommand(entry: HookEntry, bin: string): boolean {
+  return entry.hooks?.some((h) => commandMatchesBin(h.command, bin)) ?? false;
 }
 
 function canonicalEntry(reg: Registration): HookEntry {
@@ -142,16 +162,18 @@ function canonicalEntry(reg: Registration): HookEntry {
 }
 
 /**
- * Remove `command` from an event's entry list at HOOK granularity: a hook
- * co-located in a multi-hook entry is stripped without dropping its siblings,
- * and an entry is removed only once its hooks array is empty. This is what
- * keeps a hand-merged `{ hooks: [otherCmd, prim-hook] }` entry's non-prim
- * command alive across install/uninstall.
+ * Remove every command matching `bin` from an event's entry list at HOOK
+ * granularity: a hook co-located in a multi-hook entry is stripped without
+ * dropping its siblings, and an entry is removed only once its hooks array is
+ * empty. This is what keeps a hand-merged `{ hooks: [otherCmd, prim-hook] }`
+ * entry's non-prim command alive across install/uninstall. Matching by bin
+ * identity (not exact string) strips both the legacy bare name and the current
+ * absolute form, so an older install is cleanly superseded.
  */
-export function stripCommand(list: HookEntry[], command: string): HookEntry[] {
+export function stripCommand(list: HookEntry[], bin: string): HookEntry[] {
   const out: HookEntry[] = [];
   for (const e of list) {
-    const hooks = (e.hooks ?? []).filter((h) => h.command !== command);
+    const hooks = (e.hooks ?? []).filter((h) => !commandMatchesBin(h.command, bin));
     if (hooks.length > 0) {
       out.push({ ...e, hooks });
     }
@@ -161,9 +183,12 @@ export function stripCommand(list: HookEntry[], command: string): HookEntry[] {
 
 /**
  * Ensure one registration's entry is present on its event list. Idempotent: a
- * canonical single-hook entry already in place is a no-op unless `force`. Only
- * THIS command is stripped before the canonical entry is appended, so a
- * sibling prim binary's entry (and any co-located non-prim hook) survives.
+ * canonical single-hook entry already carrying THIS exact command is a no-op
+ * unless `force`. Otherwise only this bin's entries are stripped (legacy bare
+ * or stale absolute) before the canonical entry is appended — so a plain
+ * re-install upgrades an older bare-name install to the absolute form in place,
+ * while a sibling prim binary's entry (and any co-located non-prim hook)
+ * survives.
  */
 export function ensureRegistration(
   list: HookEntry[],
@@ -176,12 +201,22 @@ export function ensureRegistration(
   if (hasCanonical && !force) {
     return list;
   }
-  return [...stripCommand(list, reg.command), canonicalEntry(reg)];
+  return [...stripCommand(list, reg.bin), canonicalEntry(reg)];
 }
 
+const LEGACY_STATUSLINE_COMMAND = "prim statusline";
 function isPrimStatusLine(settings: ClaudeSettings): boolean {
   const s = settings.statusLine;
-  return s?.type === "command" && s?.command === STATUSLINE_COMMAND;
+  if (s?.type !== "command") {
+    return false;
+  }
+  const c = (s.command ?? "").trim();
+  // Legacy bare form, or our shim (which references the package and `statusline`
+  // in its branches). A user's own statusLine references neither.
+  return (
+    c === LEGACY_STATUSLINE_COMMAND ||
+    (c.includes("@primitive.ai/prim") && c.includes("statusline"))
+  );
 }
 
 /**
@@ -219,8 +254,8 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
   const hooks: Record<string, HookEntry[] | undefined> = {};
   for (const event of Object.keys(source)) {
     let list = source[event] ?? [];
-    for (const command of PRIM_COMMANDS) {
-      list = stripCommand(list, command);
+    for (const bin of PRIM_BINS) {
+      list = stripCommand(list, bin);
     }
     // Events that become empty are dropped entirely (not left as []).
     if (list.length > 0) {
@@ -237,7 +272,7 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
 
 function captureInstalled(settings: ClaudeSettings): boolean {
   return CAPTURE_EVENTS.some((event) =>
-    (settings.hooks?.[event] ?? []).some((e) => entryHasCommand(e, CAPTURE_COMMAND)),
+    (settings.hooks?.[event] ?? []).some((e) => entryHasCommand(e, CAPTURE_BIN)),
   );
 }
 
@@ -252,7 +287,7 @@ function statuslineInstalled(settings: ClaudeSettings): boolean {
  * load-bearing "is the integration wired up?" answer.
  */
 export function isGateInstalled(settings: ClaudeSettings): boolean {
-  return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_COMMAND));
+  return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_BIN));
 }
 
 export function atomicWrite(path: string, content: ClaudeSettings): void {

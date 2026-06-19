@@ -17,12 +17,13 @@
  * AX contract: STDERR verdict-first; STDOUT machine-readable JSON.
  */
 
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
+import { binFile } from "../lib/bin-path.js";
 
 const DAEMON_BIN = "prim-daemon-server";
 const PID_PATH = join(homedir(), ".config", "prim", "daemon.pid");
@@ -31,8 +32,19 @@ const SOCK_PATH = join(homedir(), ".config", "prim", "sock");
 const STOP_TIMEOUT_MS = 5_000;
 const STOP_POLL_MS = 100;
 const STATUS_PROBE_TIMEOUT_MS = 500;
-const POST_START_WAIT_MS = 400;
+// `start` polls the socket — the real readiness signal — until the daemon
+// answers a ping, instead of peeking the pidfile once. The server writes its
+// pidfile BEFORE it binds the socket (server.ts), and a cold Node start can
+// outlast a single short wait, so the old 400ms pidfile peek raced boot and
+// reported a healthy, still-starting daemon as "down". Poll up to the deadline.
+const READY_TIMEOUT_MS = 5_000;
+const READY_POLL_MS = 100;
+const READY_PROBE_TIMEOUT_MS = 250;
+const EXIT_OK = 0;
 const EXIT_NOT_RUNNING = 2;
+// Pidfile alive but the socket isn't answering yet — booting (or wedged),
+// distinct from hard-down so an agent can retry rather than treat it as failed.
+const EXIT_BOOTING = 3;
 
 interface RunningPid {
   pid: number;
@@ -88,6 +100,28 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/**
+ * Spawn the daemon server by absolute path (`<node> <abs>/server.js`) so it
+ * resolves regardless of PATH; fall back to the bare bin name for dev checkouts
+ * that link it onto PATH (`pnpm link --global`).
+ */
+function spawnDaemon(options: SpawnOptions) {
+  const file = binFile(DAEMON_BIN);
+  return file ? spawn(process.execPath, [file], options) : spawn(DAEMON_BIN, [], options);
+}
+
+/** Poll the socket until the daemon answers a ping or the deadline elapses. */
+async function waitForReady(): Promise<boolean> {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await daemonIsLive(READY_PROBE_TIMEOUT_MS)) {
+      return true;
+    }
+    await sleep(READY_POLL_MS);
+  }
+  return daemonIsLive(READY_PROBE_TIMEOUT_MS);
+}
+
 async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
   const existing = readPidfile();
   if (existing?.alive) {
@@ -101,32 +135,34 @@ async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
 
   if (opts.foreground) {
     // Inherit all stdio so the user sees the daemon's lifecycle log.
-    // exec into the bin so the daemon takes over this process.
-    const child = spawn(DAEMON_BIN, [], { stdio: "inherit" });
+    const child = spawnDaemon({ stdio: "inherit" });
     child.on("exit", (code) => {
       process.exit(code ?? 0);
     });
     return;
   }
 
-  const child = spawn(DAEMON_BIN, [], {
-    detached: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
+  const child = spawnDaemon({ detached: true, stdio: ["ignore", "ignore", "ignore"] });
   child.unref();
 
-  // Give the daemon a beat to take the pidfile + open the socket.
-  await sleep(POST_START_WAIT_MS);
-  const after = readPidfile();
-  if (after?.alive) {
-    process.stderr.write(`[prim] daemon started (pid=${after.pid}, socket=${SOCK_PATH})\n`);
-    console.log(JSON.stringify({ started: true, pid: after.pid }, null, 2));
+  // Block until the daemon actually answers on its socket — the only signal
+  // that it's ready to serve — so a chained `status` can't race the boot.
+  const live = await waitForReady();
+  if (live) {
+    const after = readPidfile();
+    process.stderr.write(
+      `[prim] ✓ daemon started (pid=${after?.pid ?? "?"}, socket=${SOCK_PATH})\n`,
+    );
+    console.log(JSON.stringify({ started: true, pid: after?.pid }, null, 2));
     return;
   }
   process.stderr.write(
-    "[prim] daemon start: bin spawned but no pidfile observed (check that `prim-daemon-server` is on PATH)\n",
+    `[prim] ✗ daemon start: spawned but the socket did not respond within ${READY_TIMEOUT_MS}ms (check that \`${DAEMON_BIN}\` resolves, and see its log)\n`,
   );
   console.log(JSON.stringify({ started: false }, null, 2));
+  if (!process.exitCode) {
+    process.exitCode = EXIT_NOT_RUNNING;
+  }
 }
 
 async function daemonStop(): Promise<void> {
@@ -168,41 +204,71 @@ async function daemonStop(): Promise<void> {
   console.log(JSON.stringify({ stopped: false, pid: existing.pid }, null, 2));
 }
 
+export type DaemonStatusVerdict = {
+  json: Record<string, unknown>;
+  exitCode: number;
+};
+
+/**
+ * Map daemon liveness onto the reported JSON + process exit code. Pure, so the
+ * exit-code contract is unit-tested independently of sockets:
+ *   - hard down (no live pid)         -> EXIT_NOT_RUNNING (2)
+ *   - pid alive, socket not answering -> EXIT_BOOTING (3), state "starting"
+ *   - live                            -> EXIT_OK (0)
+ * Splitting "booting" from "down" stops a daemon that's still coming up from
+ * reading as a hard failure — the exact misread that made a healthy restart
+ * look broken when a status check was chained immediately after it.
+ */
+export function classifyStatus(
+  pidAlive: boolean,
+  responding: boolean,
+  snapshot: StatusSnapshot | null,
+  pid?: number,
+): DaemonStatusVerdict {
+  if (!pidAlive) {
+    return { json: { running: false }, exitCode: EXIT_NOT_RUNNING };
+  }
+  if (!responding) {
+    return {
+      json: { running: true, responding: false, state: "starting", pid },
+      exitCode: EXIT_BOOTING,
+    };
+  }
+  if (!snapshot) {
+    return { json: { running: true, responding: true }, exitCode: EXIT_OK };
+  }
+  return { json: { running: true, responding: true, ...snapshot }, exitCode: EXIT_OK };
+}
+
 async function daemonStatus(): Promise<void> {
   const pid = readPidfile();
-  if (!pid?.alive) {
+  const pidAlive = pid?.alive ?? false;
+  const responding = pidAlive ? await daemonIsLive(STATUS_PROBE_TIMEOUT_MS) : false;
+  const snapshot = responding
+    ? await daemonRequest<StatusSnapshot>(
+        "status_snapshot",
+        {},
+        { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+      )
+    : null;
+
+  const { json, exitCode } = classifyStatus(pidAlive, responding, snapshot, pid?.pid);
+
+  if (!pidAlive) {
     process.stderr.write("[prim] ✗ daemon down\n");
-    console.log(JSON.stringify({ running: false }, null, 2));
-    if (!process.exitCode) {
-      process.exitCode = EXIT_NOT_RUNNING;
-    }
-    return;
-  }
-
-  const live = await daemonIsLive(STATUS_PROBE_TIMEOUT_MS);
-  if (!live) {
-    process.stderr.write(`[prim] ✗ daemon pid=${pid.pid} alive but socket not responding\n`);
-    console.log(JSON.stringify({ running: true, responding: false, pid: pid.pid }, null, 2));
-    if (!process.exitCode) {
-      process.exitCode = EXIT_NOT_RUNNING;
-    }
-    return;
-  }
-
-  const snapshot = await daemonRequest<StatusSnapshot>(
-    "status_snapshot",
-    {},
-    { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
-  );
-  if (!snapshot) {
+  } else if (!responding) {
+    process.stderr.write(`[prim] ◌ daemon pid=${pid?.pid} starting (socket not responding yet)\n`);
+  } else if (!snapshot) {
     process.stderr.write("[prim] ✓ daemon live (no snapshot)\n");
-    console.log(JSON.stringify({ running: true, responding: true }, null, 2));
-    return;
+  } else {
+    process.stderr.write(
+      `[prim] ✓ daemon live · pid=${snapshot.pid} · uptime=${Math.round(snapshot.uptimeMs / 1000)}s · session=${snapshot.sessionId}\n`,
+    );
   }
-  process.stderr.write(
-    `[prim] ✓ daemon live · pid=${snapshot.pid} · uptime=${Math.round(snapshot.uptimeMs / 1000)}s · session=${snapshot.sessionId}\n`,
-  );
-  console.log(JSON.stringify({ running: true, responding: true, ...snapshot }, null, 2));
+  console.log(JSON.stringify(json, null, 2));
+  if (exitCode !== EXIT_OK && !process.exitCode) {
+    process.exitCode = exitCode;
+  }
 }
 
 async function daemonRestart(opts: { foreground?: boolean }): Promise<void> {

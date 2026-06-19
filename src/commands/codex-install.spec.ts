@@ -4,16 +4,16 @@
  * The fs-touching `performInstall` / `performUninstall` / `performStatus`
  * resolve `~/.codex/hooks.json` at module load, so they're exercised by the
  * live-disk smoke. Here we verify the Codex registration table composes
- * correctly through the shared merge engine reused from claude-install.
+ * correctly through the shared merge engine reused from claude-install, now
+ * emitting absolute, PATH-independent commands that still carry `--agent codex`.
  */
 
 import { describe, expect, it } from "vitest";
+import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
 import type { ClaudeSettings } from "./claude-install.js";
 import { applyInstall, applyUninstall, isGateInstalled } from "./codex-install.js";
 
 const EMPTY: ClaudeSettings = {};
-const CAPTURE = "prim-hook --agent codex";
-const GATE = "prim-pre-tool-use --agent codex";
 
 function commandsOn(settings: ClaudeSettings, event: string): string[] {
   return (settings.hooks?.[event] ?? []).flatMap((e) =>
@@ -21,8 +21,12 @@ function commandsOn(settings: ClaudeSettings, event: string): string[] {
   );
 }
 
+function hasBin(settings: ClaudeSettings, event: string, bin: string): boolean {
+  return commandsOn(settings, event).some((c) => commandMatchesBin(c, bin));
+}
+
 describe("codex applyInstall", () => {
-  it("wires capture (prim-hook --agent codex) on every Codex hook event", () => {
+  it("wires capture (prim-hook) on every Codex hook event", () => {
     const out = applyInstall(EMPTY);
     for (const event of [
       "SessionStart",
@@ -32,29 +36,38 @@ describe("codex applyInstall", () => {
       "Stop",
       "SubagentStop",
     ]) {
-      expect(commandsOn(out, event)).toContain(CAPTURE);
+      expect(hasBin(out, event, "prim-hook")).toBe(true);
     }
   });
 
-  it("matches apply_patch (not Edit|Write|MultiEdit) on the gate + ingest hooks", () => {
+  it("matches apply_patch and writes shim commands that keep --agent codex", () => {
     const out = applyInstall(EMPTY);
     const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch");
     const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch");
-    expect(preGate?.hooks?.[0].command).toBe(GATE);
-    expect(postIngest?.hooks?.[0].command).toBe("prim-post-tool-use --agent codex");
+    expect(preGate?.hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use", "--agent codex"));
+    expect(postIngest?.hooks?.[0].command).toBe(
+      hookShimCommand("prim-post-tool-use", "--agent codex"),
+    );
+    // The shim, not the old bare form.
+    expect(preGate?.hooks?.[0].command).not.toBe("prim-pre-tool-use --agent codex");
   });
 
   it("carries two entries on PreToolUse (capture * + gate apply_patch)", () => {
     const out = applyInstall(EMPTY);
     expect(out.hooks?.PreToolUse).toHaveLength(2);
     expect(out.hooks?.PreToolUse?.[0].matcher).toBe("*");
-    expect(out.hooks?.PreToolUse?.[0].hooks?.[0].command).toBe(CAPTURE);
+    expect(commandMatchesBin(out.hooks?.PreToolUse?.[0].hooks?.[0].command, "prim-hook")).toBe(
+      true,
+    );
     expect(out.hooks?.PreToolUse?.[1].matcher).toBe("apply_patch");
   });
 
   it("registers prim-session-start on SessionStart alongside capture", () => {
     const out = applyInstall(EMPTY);
-    expect(commandsOn(out, "SessionStart")).toEqual([CAPTURE, "prim-session-start --agent codex"]);
+    const cmds = commandsOn(out, "SessionStart");
+    expect(cmds).toHaveLength(2);
+    expect(commandMatchesBin(cmds[0], "prim-hook")).toBe(true);
+    expect(commandMatchesBin(cmds[1], "prim-session-start")).toBe(true);
   });
 
   it("does NOT register SessionEnd (Codex has no such event) or a statusLine", () => {
@@ -80,6 +93,25 @@ describe("codex applyInstall", () => {
     const once = applyInstall(EMPTY);
     const twice = applyInstall(once);
     expect(JSON.stringify(once)).toBe(JSON.stringify(twice));
+  });
+
+  it("upgrades a legacy bare-name Codex install in place", () => {
+    const legacy: ClaudeSettings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "apply_patch",
+            hooks: [{ type: "command", command: "prim-pre-tool-use --agent codex" }],
+          },
+        ],
+      },
+    };
+    const out = applyInstall(legacy);
+    const gateEntries = (out.hooks?.PreToolUse ?? []).filter((e) => e.matcher === "apply_patch");
+    expect(gateEntries).toHaveLength(1);
+    expect(gateEntries[0].hooks?.[0].command).toBe(
+      hookShimCommand("prim-pre-tool-use", "--agent codex"),
+    );
   });
 });
 
