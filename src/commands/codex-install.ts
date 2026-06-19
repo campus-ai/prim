@@ -37,14 +37,19 @@ import {
   atomicWrite,
   ensureRegistration,
   entryHasCommand,
+  makeRegistration,
   readSettings,
   stripCommand,
 } from "./claude-install.js";
 
-const CAPTURE_COMMAND = "prim-hook --agent codex";
-const GATE_COMMAND = "prim-pre-tool-use --agent codex";
-const POST_TOOL_USE_COMMAND = "prim-post-tool-use --agent codex";
-const SESSION_START_COMMAND = "prim-session-start --agent codex";
+// Stable bin identities, driven under `--agent codex`. The command written
+// into hooks.json is the resolution shim (built by makeRegistration); these
+// names are what install/uninstall match on.
+const CAPTURE_BIN = "prim-hook";
+const GATE_BIN = "prim-pre-tool-use";
+const POST_TOOL_USE_BIN = "prim-post-tool-use";
+const SESSION_START_BIN = "prim-session-start";
+const CODEX_ARGS = "--agent codex";
 const JSON_INDENT = 2;
 
 // The Codex hook events capture rides. Mirrors the Claude capture set minus
@@ -58,12 +63,7 @@ const CODEX_CAPTURE_EVENTS = [
   "SubagentStop",
 ] as const;
 
-const PRIM_COMMANDS = new Set<string>([
-  CAPTURE_COMMAND,
-  GATE_COMMAND,
-  POST_TOOL_USE_COMMAND,
-  SESSION_START_COMMAND,
-]);
+const PRIM_BINS: readonly string[] = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, SESSION_START_BIN];
 
 // Mirror of claude-install's REGISTRATIONS, retargeted to Codex: capture on
 // every event at the wildcard matcher; the gate and the PostToolUse ingest hook
@@ -71,10 +71,10 @@ const PRIM_COMMANDS = new Set<string>([
 // PostToolUse each carry two prim entries (capture + their dedicated hook),
 // which is intended.
 const CODEX_REGISTRATIONS: Registration[] = [
-  ...CODEX_CAPTURE_EVENTS.map((event) => ({ event, matcher: "*", command: CAPTURE_COMMAND })),
-  { event: "PreToolUse", matcher: "apply_patch", command: GATE_COMMAND },
-  { event: "PostToolUse", matcher: "apply_patch", command: POST_TOOL_USE_COMMAND },
-  { event: "SessionStart", matcher: "*", command: SESSION_START_COMMAND },
+  ...CODEX_CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN, CODEX_ARGS)),
+  makeRegistration("PreToolUse", "apply_patch", GATE_BIN, CODEX_ARGS),
+  makeRegistration("PostToolUse", "apply_patch", POST_TOOL_USE_BIN, CODEX_ARGS),
+  makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS),
 ];
 
 const USER_SCOPE_PATH = join(homedir(), ".codex", "hooks.json");
@@ -100,8 +100,8 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
   const hooks: Record<string, HookEntry[] | undefined> = {};
   for (const event of Object.keys(source)) {
     let list = source[event] ?? [];
-    for (const command of PRIM_COMMANDS) {
-      list = stripCommand(list, command);
+    for (const bin of PRIM_BINS) {
+      list = stripCommand(list, bin);
     }
     // Events that become empty are dropped entirely (not left as []).
     if (list.length > 0) {
@@ -113,7 +113,7 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
 
 function captureInstalled(settings: ClaudeSettings): boolean {
   return CODEX_CAPTURE_EVENTS.some((event) =>
-    (settings.hooks?.[event] ?? []).some((e) => entryHasCommand(e, CAPTURE_COMMAND)),
+    (settings.hooks?.[event] ?? []).some((e) => entryHasCommand(e, CAPTURE_BIN)),
   );
 }
 
@@ -122,7 +122,7 @@ function captureInstalled(settings: ClaudeSettings): boolean {
  * alone (passive telemetry) does not count. Mirrors `prim claude status`.
  */
 export function isGateInstalled(settings: ClaudeSettings): boolean {
-  return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_COMMAND));
+  return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_BIN));
 }
 
 export type ScopeStatus = { path: string; gate: boolean; capture: boolean };
