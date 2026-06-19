@@ -128,7 +128,10 @@ export function registerAuthCommands(program: Command) {
         exchangeCode(siteUrl, code, verifier, `http://${LOCALHOST}:${port}/callback`)
           .then((token) => {
             saveToken(token);
-            console.log(`Authenticated! Token saved to ${TOKEN_FILE_PATH}`);
+            // Human verdict on STDERR; machine-readable result on STDOUT so an
+            // agent driving the login can confirm success without scraping prose.
+            console.error(`Authenticated! Token saved to ${TOKEN_FILE_PATH}`);
+            console.log(JSON.stringify({ authenticated: true, tokenFile: TOKEN_FILE_PATH }));
             server.close();
             process.exit(0);
           })
@@ -159,10 +162,12 @@ export function registerAuthCommands(program: Command) {
       authUrl.searchParams.set("code_challenge", challenge);
       authUrl.searchParams.set("code_challenge_method", "S256");
 
-      console.log("Opening browser for authentication...");
+      // Guidance is for the human at the browser, so it rides STDERR — STDOUT
+      // stays reserved for the machine-readable result line emitted on success.
+      console.error("Opening browser for authentication...");
       openBrowser(authUrl.toString());
-      console.log(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
-      console.log("Waiting for callback...");
+      console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
+      console.error("Waiting for callback...");
 
       // Timeout
       setTimeout(() => {
