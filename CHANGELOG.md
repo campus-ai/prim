@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.19](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-06-19)
+
+
+### Features
+
+* agent-driven setup — resilient hook resolution, daemon readiness, drivable auth ([#71](https://github.com/campus-ai/prim/issues/71)) ([fc465c9](https://github.com/campus-ai/prim/commit/fc465c9c7bd052994af20ab52ac55dc6ded9671b))
+
 ## [0.1.0-alpha.18](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.17...v0.1.0-alpha.18) (2026-06-18)
 
 
