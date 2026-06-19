@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.18](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.17...v0.1.0-alpha.18) (2026-06-18)
+
+
+### Features
+
+* **cli:** prim-post-commit hook emits git.commit moves ([#70](https://github.com/campus-ai/prim/issues/70)) ([b86b714](https://github.com/campus-ai/prim/commit/b86b71471e7230e25be4dc2ee4954b9441fa4bb6))
+
 ## [0.1.0-alpha.17](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.16...v0.1.0-alpha.17) (2026-06-17)
 
 
