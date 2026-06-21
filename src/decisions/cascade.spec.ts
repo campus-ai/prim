@@ -40,8 +40,6 @@ function clientWith(get: CliClient["get"]): CliClient {
   return {
     get,
     post: unexpected,
-    patch: unexpected,
-    delete: unexpected,
   };
 }
 

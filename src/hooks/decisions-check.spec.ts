@@ -12,7 +12,7 @@ vi.mock("../daemon/client.js", () => ({
 import { checkAffectedDecisions, formatDecisionsWarning } from "./decisions-check.js";
 
 function clientWith(get: ReturnType<typeof vi.fn>): CliClient {
-  return { get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as unknown as CliClient;
+  return { get, post: vi.fn() } as unknown as CliClient;
 }
 
 describe("checkAffectedDecisions", () => {

@@ -44,18 +44,14 @@ describe("client", () => {
   });
 
   describe("getClient", () => {
-    it("returns a client with get/post/patch/delete methods", async () => {
+    it("returns a client with get/post methods", async () => {
       const { getClient } = await import("./client.js");
       const client = getClient();
 
       expect(client).toHaveProperty("get");
       expect(client).toHaveProperty("post");
-      expect(client).toHaveProperty("patch");
-      expect(client).toHaveProperty("delete");
       expect(typeof client.get).toBe("function");
       expect(typeof client.post).toBe("function");
-      expect(typeof client.patch).toBe("function");
-      expect(typeof client.delete).toBe("function");
     });
   });
 

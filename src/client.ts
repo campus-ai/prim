@@ -215,8 +215,6 @@ export class HttpError extends Error {
 export interface CliClient {
   get(path: string, options?: { signal?: AbortSignal }): Promise<unknown>;
   post(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
-  patch(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
-  delete(path: string, options?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
 let _cachedToken: string | undefined;
@@ -286,7 +284,5 @@ export function getClient(): CliClient {
   return {
     get: (path, options) => request("GET", path, undefined, options),
     post: (path, body, options) => request("POST", path, body, options),
-    patch: (path, body, options) => request("PATCH", path, body, options),
-    delete: (path, options) => request("DELETE", path, undefined, options),
   };
 }

@@ -8,7 +8,7 @@ vi.mock("../client.js", async (importActual) => {
   const actual = await importActual<typeof import("../client.js")>();
   return {
     ...actual,
-    getClient: () => ({ post: mockPost, get: vi.fn(), patch: vi.fn(), delete: vi.fn() }),
+    getClient: () => ({ post: mockPost, get: vi.fn() }),
   };
 });
 

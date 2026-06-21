@@ -16,8 +16,6 @@ function clientWith(overrides: Partial<CliClient>): CliClient {
   return {
     get: overrides.get ?? unexpected,
     post: overrides.post ?? unexpected,
-    patch: overrides.patch ?? unexpected,
-    delete: overrides.delete ?? unexpected,
   };
 }
 
