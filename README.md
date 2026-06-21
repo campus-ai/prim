@@ -113,6 +113,20 @@ and offers to install into `.husky/`.
 prim statusline        # Render the team-presence statusline (reads the daemon)
 ```
 
+### Session & journal
+
+Lower-level plumbing for the capture pipeline — org binding and the local move
+journal. Capture works automatically once the session hooks are installed; these
+are for inspecting and steering it (e.g. multi-org machines).
+
+```bash
+prim session start <id>   # Pin a Claude Code session to an org   (list / drop <id>)
+prim moves bind           # Pin the current directory to an org via .prim/workspace.json (drop)
+prim moves status         # Per-bucket pending stats for the local journal
+prim moves tail           # Pretty-print recent journal entries
+prim moves flush          # Drain the local journals to the server (also runs from hooks)
+```
+
 ### Skill
 
 ```bash

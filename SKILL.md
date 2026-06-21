@@ -91,7 +91,7 @@ These git hooks are separate from the **session hooks** (`claude install` / `cod
 
 ## Output formats
 
-The CLI keeps STDOUT machine-readable and STDERR human-readable. The `decisions` and `reconcile` commands **always** emit a single JSON document on STDOUT — no flag needed; pipe straight to `jq`. `--json` is an explicit opt-in only on `auth status` and `skill status`, whose default STDOUT is human-readable.
+The CLI keeps STDOUT machine-readable and STDERR human-readable. The `decisions` and `reconcile` commands **always** emit a single JSON document on STDOUT — no flag needed; pipe straight to `jq`. The `decisions` commands have **no** `--json` flag and reject one; `reconcile` accepts a reserved no-op `--json`. `auth status` and `skill status` default to human-readable STDOUT and take `--json` to switch to JSON.
 
 - **STDOUT is machine-readable** — JSON (one document per invocation). `decisions` reads project lean shapes, not raw rows.
 - **STDERR is human-readable** — a verdict-first line, plus the gate/verdict-footer/presence notes.
