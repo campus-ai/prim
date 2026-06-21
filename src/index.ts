@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * prim — CLI for managing Primitive specs and contexts.
+ * prim — CLI for Primitive's decision graph.
+ *
+ * Passively captures the decisions a team makes while coding, gates edits that
+ * conflict with prior team decisions, and reports team presence.
  *
  * Usage:
- *   prim auth login|set-token|clear
- *   prim context list|get|create|update|delete|link|unlink
- *   prim spec list|get|update|sync
+ *   prim auth login|set-token|clear|status
+ *   prim claude install|uninstall|status   (or: prim codex ...)
  *   prim hooks install|uninstall
+ *   prim daemon start|stop|status
+ *   prim decisions recent|show|cascade|check|confirm
+ *   prim reconcile <id>
  *
  * Configuration:
  *   Connects to https://api.getprimitive.ai by default.
@@ -19,16 +24,13 @@ import updateNotifier from "update-notifier";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerClaudeCommands } from "./commands/claude-install.js";
 import { registerCodexCommands } from "./commands/codex-install.js";
-import { registerContextCommands } from "./commands/context.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
-import { registerProjectCommands } from "./commands/project.js";
 import { registerReconcileCommands } from "./commands/reconcile.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSkillCommands } from "./commands/skill.js";
-import { registerSpecCommands } from "./commands/spec.js";
 import { registerStatuslineCommands } from "./commands/statusline.js";
 import { flushIfNeeded } from "./flusher.js";
 
@@ -41,7 +43,7 @@ const program = new Command();
 
 program
   .name("prim")
-  .description("CLI for managing Primitive specs and contexts")
+  .description("CLI for Primitive's decision graph")
   .version(pkg.version)
   .option("-y, --yes", "auto-confirm prompts")
   .option(
@@ -50,9 +52,6 @@ program
   );
 
 registerAuthCommands(program);
-registerContextCommands(program);
-registerSpecCommands(program);
-registerProjectCommands(program);
 registerHooksCommands(program);
 registerSkillCommands(program);
 registerMovesCommands(program);
