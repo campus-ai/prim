@@ -42,15 +42,21 @@ the daemon could not come up. The daemon accelerates the in-session decision
 checks and powers the "team: N online" presence count. Recommended but optional:
 if it fails, continue — the hooks fall back to direct calls and never block on it.
 
-## 4. Install the pre-commit hook (spec sync)
+## 4. Install the git hooks (decision check + commit capture)
 Run: `npx --yes @primitive.ai/prim@latest hooks install`
+
+This installs two git hooks: a **pre-commit** hook that checks your staged files
+against the live decision graph and warns about conflicting prior decisions
+(warn-only — it never blocks the commit), and a **post-commit** hook that records
+each commit as a capture boundary so the server can classify the surrounding
+work into decisions. It is separate from the session hooks in step 2.
 
 ## 5. Install the skill into the project's rules file
 Run: `npx --yes @primitive.ai/prim@latest skill install`
 
-This writes a managed block — teaching you both the spec workflow and the
-decision graph — to the rules file your agent reads: CLAUDE.md for Claude Code,
-AGENTS.md for Codex, plus .cursor/rules, .windsurfrules, and
+This writes a managed block — teaching you how to work with the decision graph —
+to the rules file your agent reads: CLAUDE.md for Claude Code, AGENTS.md for
+Codex, plus .cursor/rules, .windsurfrules, and
 .github/instructions/primitive.md. The CLI handles target detection. If
 ambiguous, it prints discovered candidates and exits non-zero — pass
 `--target <path>` to disambiguate.

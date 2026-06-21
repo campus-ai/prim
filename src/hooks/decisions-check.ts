@@ -13,8 +13,7 @@
  *
  * Two consumers:
  *   - `prim decisions check --files=...` (src/commands/decisions.ts)
- *   - the pre-commit hook (src/hooks/pre-commit.ts), run in parallel with
- *     syncAffectedSpecs.
+ *   - the pre-commit hook (src/hooks/pre-commit.ts)
  */
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
