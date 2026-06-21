@@ -1,6 +1,9 @@
 # @primitive.ai/prim
 
-The official CLI for [Primitive](https://getprimitive.ai). Manage specs, contexts, projects, and git hooks from the command line.
+The official CLI for [Primitive](https://getprimitive.ai)'s **decision graph**. It
+passively captures the decisions your team makes while coding, gates edits that
+conflict with prior team decisions, and reports team presence — from the command
+line and via session + git hooks.
 
 > [!WARNING]
 > This project is in **alpha**. Commands and APIs may change between releases.
@@ -22,15 +25,20 @@ npx @primitive.ai/prim
 ## Quick Start
 
 ```bash
-# Authenticate via browser (WorkOS OAuth)
+# 1. Authenticate via browser (WorkOS OAuth)
 prim auth login
 
-# List your specs
-prim spec list
+# 2. Wire the session hooks (decision capture + conflict gate + presence)
+prim claude install        # or: prim codex install
 
-# Install the pre-commit hook
+# 3. Start the companion daemon (latency + team presence)
+prim daemon start
+
+# 4. Install the git hooks (pre-commit decision check + post-commit capture)
 prim hooks install
 ```
+
+An AI coding agent can drive the entire setup itself — see [`setup.md`](./setup.md).
 
 ## Commands
 
@@ -43,57 +51,78 @@ prim auth clear              # Remove saved tokens
 prim auth status             # Check authentication status
 ```
 
-### Specs
+### Session integration
 
-Specs are documents that drive implementation. They can be synced to a project DAG and mapped to file patterns for automatic pre-commit hook integration.
+Wires the agent's session hooks so the decisions you make are captured into the
+graph, conflicting edits are gated, and presence is reported. Each hook
+self-resolves the CLI at run time (PATH, then a local install, then
+`npx --yes @latest`), so it keeps working with no global install.
 
 ```bash
-prim spec list                        # List all specs
-prim spec list --project-id <id>      # Find spec for a root project
-prim spec get <id>                    # Show spec details
-prim spec get <id> --text-only        # Print raw spec text
-prim spec update <id> --file spec.md  # Update spec from file
-prim spec update <id> --name "New"    # Rename a spec
-prim spec sync <id>                   # Trigger spec-to-project sync
-prim spec map <id> -p "src/auth/**"   # Map file patterns to a spec
-prim spec unmap <id>                  # Clear all file patterns
-prim spec unmap <id> -p "src/auth/**" # Remove specific pattern
-prim spec auto-map <id>              # Auto-detect file patterns
+prim claude install    # Install Claude Code hooks   (uninstall / status)
+prim codex install     # Install OpenAI Codex hooks   (uninstall / status)
 ```
 
-### Contexts
+### Daemon
+
+A long-lived companion process that accelerates the in-session decision checks
+and powers the "team: N online" presence count. Optional — hooks fall back to
+direct calls if it is down.
 
 ```bash
-prim context list                        # List all contexts
-prim context list --scope project        # Filter by scope
-prim context list --project-id <id>      # List contexts for a project
-prim context get <id>                    # Get context details
-prim context create -s project -n "Name" # Create a context
-prim context create -s project -n "Name" --file path/to/file
-prim context update <id> --name "New"    # Update a context
-prim context delete <id>                 # Delete a context
-prim context link <id> --project <pid>   # Link context to project
-prim context unlink <id> --project <pid> # Unlink context from project
+prim daemon start      # start (stop / restart / status)
 ```
 
-### Projects
+### Decisions
+
+Read and respond to the decision graph.
 
 ```bash
-prim project create -n "Project name"                    # Create a project
-prim project create -n "Project name" -d "Description"   # Create with description
-prim project create -n "Project name" --spec <contextId> # Create and link a spec
+prim decisions recent              # Recent decisions feed
+prim decisions show <id>           # Drill into one decision
+prim decisions cascade <id>        # Blast radius of a decision
+prim decisions check --files <…>   # Active decisions referencing files (warn-only)
+prim decisions confirm <id>        # Answer a rationale-confirmation prompt
+```
+
+`<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
+JSON; human-readable status goes to STDERR.
+
+### Reconcile
+
+```bash
+prim reconcile <id>    # Mint a single-use bypass for a decision a gate flagged
 ```
 
 ### Hooks
 
 ```bash
-prim hooks install    # Install pre-commit hook
-prim hooks uninstall  # Remove pre-commit hook
+prim hooks install     # Install git hooks (pre-commit decision check + post-commit capture)
+prim hooks uninstall   # Remove the prim git hooks
 ```
 
-The pre-commit hook automatically syncs specs when you commit changes to files matching a spec's file patterns (configured via `prim spec map`).
+The pre-commit hook checks staged files against the live decision graph
+(warn-only — it never blocks the commit). The post-commit hook records each
+commit as a capture boundary for classification. Supports
+[Husky](https://typicode.github.io/husky/) — `prim hooks install` detects Husky
+and offers to install into `.husky/`.
 
-Supports [Husky](https://typicode.github.io/husky/) — `prim hooks install` detects Husky and offers to install into `.husky/pre-commit`.
+### Presence statusline
+
+```bash
+prim statusline        # Render the team-presence statusline (reads the daemon)
+```
+
+### Skill
+
+```bash
+prim skill install     # Install the decision-graph agent guide into your rules file
+prim skill uninstall   # Remove the managed block
+prim skill status      # Report whether the block is installed
+```
+
+Writes a managed block teaching your agent how to work with the decision graph
+into the rules file it reads (CLAUDE.md, AGENTS.md, .cursor/rules, …).
 
 ## Development
 
