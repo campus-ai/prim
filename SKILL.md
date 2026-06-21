@@ -91,7 +91,7 @@ These git hooks are separate from the **session hooks** (`claude install` / `cod
 
 ## Output formats
 
-Data-returning commands accept `--json`: stdout becomes a single JSON document, so pipe to `jq` instead of parsing text. The convention is consistent across the CLI:
+The CLI keeps STDOUT machine-readable and STDERR human-readable. The `decisions` and `reconcile` commands **always** emit a single JSON document on STDOUT — no flag needed; pipe straight to `jq`. `--json` is an explicit opt-in only on `auth status` and `skill status`, whose default STDOUT is human-readable.
 
 - **STDOUT is machine-readable** — JSON (one document per invocation). `decisions` reads project lean shapes, not raw rows.
 - **STDERR is human-readable** — a verdict-first line, plus the gate/verdict-footer/presence notes.
@@ -100,8 +100,8 @@ Data-returning commands accept `--json`: stdout becomes a single JSON document, 
 Examples:
 
 - `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; the exit code remains the authoritative signal
-- `npx --yes @primitive.ai/prim decisions recent --json | jq -r '.[].shortId'` — list recent decision short ids
-- `npx --yes @primitive.ai/prim decisions show <id> --json | jq .` — full decision detail
+- `npx --yes @primitive.ai/prim decisions recent | jq -r '.decisions[].shortId'` — list recent decision short ids (STDOUT is already JSON)
+- `npx --yes @primitive.ai/prim decisions show <id> | jq .` — full decision detail
 
 ## Pitfalls
 
