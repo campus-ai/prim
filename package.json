@@ -1,6 +1,6 @@
 {
   "name": "@primitive.ai/prim",
-  "version": "0.1.0-alpha.19",
+  "version": "0.1.0-alpha.20",
   "description": "CLI for Primitive's decision graph — passive decision capture, conflict gate, and team presence",
   "type": "module",
   "license": "MIT",
