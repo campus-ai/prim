@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { JOURNAL_DIR, appendMoveToPath, journalPath, readMovesFromPath } from "./journal.js";
+import {
+  JOURNAL_DIR,
+  appendMoveToPath,
+  journalPath,
+  listFlushingInDir,
+  readMovesFromPath,
+} from "./journal.js";
 import type { Move } from "./protocol/move.js";
 
 function sampleMove(eventType: string): Move {
@@ -48,6 +54,51 @@ describe("journal", () => {
     appendMoveToPath(path, sampleMove("Stop"));
     const moves = readMovesFromPath(path);
     expect(moves.map((m) => m.eventType)).toEqual(["PreToolUse", "Stop"]);
+  });
+});
+
+describe("listFlushingInDir", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "prim-flushing-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeFlushing(name: string, ...moves: Move[]): void {
+    writeFileSync(join(dir, name), moves.map((m) => `${JSON.stringify(m)}\n`).join(""));
+  }
+
+  it("enumerates a .flushing file and parses its owning pid", () => {
+    writeFlushing(
+      "journal.ndjson.flushing.1700000000000.4242",
+      sampleMove("PreToolUse"),
+      sampleMove("PostToolUse"),
+    );
+    const files = listFlushingInDir(dir, "orgA");
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ bucket: "orgA", pid: 4242, lineCount: 2 });
+  });
+
+  it("treats the legacy pid-less variant as pid undefined", () => {
+    writeFlushing("journal.ndjson.flushing.1700000000000", sampleMove("Stop"));
+    const files = listFlushingInDir(dir, "_legacy");
+    expect(files).toHaveLength(1);
+    expect(files[0].pid).toBeUndefined();
+    expect(files[0].lineCount).toBe(1);
+  });
+
+  it("ignores the live journal and unrelated files", () => {
+    appendMoveToPath(join(dir, "journal.ndjson"), sampleMove("PreToolUse"));
+    writeFileSync(join(dir, "notes.txt"), "hello\n");
+    expect(listFlushingInDir(dir, "orgA")).toEqual([]);
+  });
+
+  it("returns [] for a missing directory", () => {
+    expect(listFlushingInDir(join(dir, "absent"), "orgA")).toEqual([]);
   });
 });
 
