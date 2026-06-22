@@ -10,6 +10,7 @@
  *   prim claude install|uninstall|status   (or: prim codex ...)
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
+ *   prim doctor
  *   prim decisions recent|show|cascade|check|confirm|create
  *   prim reconcile <id>
  *   prim welcome
@@ -27,6 +28,7 @@ import { registerClaudeCommands } from "./commands/claude-install.js";
 import { registerCodexCommands } from "./commands/codex-install.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerDecisionsCommands } from "./commands/decisions.js";
+import { registerDoctorCommands } from "./commands/doctor.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
 import { registerReconcileCommands } from "./commands/reconcile.js";
@@ -63,6 +65,7 @@ registerDecisionsCommands(program);
 registerClaudeCommands(program);
 registerCodexCommands(program);
 registerDaemonCommands(program);
+registerDoctorCommands(program);
 registerReconcileCommands(program);
 registerStatuslineCommands(program);
 registerWelcomeCommand(program);
