@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0-alpha.20](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.19...v0.1.0-alpha.20) (2026-06-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** scope prim to the decision graph (drop spec/projects surface)
+
+### Features
+
+* **cli:** scope prim to the decision graph (drop spec/projects surface) ([7e215e8](https://github.com/campus-ai/prim/commit/7e215e80e27b3f79f966ebad973b513132396f19))
+
+
+### Bug Fixes
+
+* **cli:** always drive the auth flow during onboarding ([#80](https://github.com/campus-ai/prim/issues/80)) ([336404b](https://github.com/campus-ai/prim/commit/336404b8f1b890734ee968b7aa67266e6b99b127))
+
 ## [0.1.0-alpha.19](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-06-19)
 
 
