@@ -12,15 +12,27 @@ First, identify which agent you are — **Claude Code** or **OpenAI Codex**. Ste
 2 and 6 branch on it; every other step is identical.
 
 ## 1. Authenticate
-Run `npx --yes @primitive.ai/prim@latest auth login` yourself and wait for it to
-complete. It opens a browser and prints the authorize URL on STDERR; the user's
-only job is to approve in that browser. On success it prints
-`{"authenticated":true,...}` on STDOUT and exits 0.
+You drive this end to end. The only thing the user does is click "Authorize" in
+the browser — never hand them a command to run, and never substitute asking them
+to authenticate for doing it yourself.
 
-- Check first with `npx --yes @primitive.ai/prim@latest auth status --json`
-  (exits 0 when already authenticated) so you can skip a redundant login.
-- If you are a headless or CI agent (no browser), set `PRIM_TOKEN` in the
-  environment instead and skip the browser flow.
+1. Check first: `npx --yes @primitive.ai/prim@latest auth status --json` exits 0
+   when already authenticated — if so, skip to step 2.
+2. Headless / CI (no browser, or `PRIM_TOKEN` already set): export `PRIM_TOKEN`,
+   or run `npx --yes @primitive.ai/prim@latest auth set-token <token>`, re-check
+   status, and skip the browser flow.
+3. Otherwise run `npx --yes @primitive.ai/prim@latest auth login`. It opens a
+   browser, prints the authorize URL on STDERR, then BLOCKS for up to 2 minutes
+   waiting for the user to approve. That wait is expected — not a hang, not a
+   failure. Run it in the background so your turn stays responsive, surface the
+   authorize URL to the user ("Approve in the browser to continue — if it didn't
+   open, click: <url>"), then poll
+   `npx --yes @primitive.ai/prim@latest auth status --json` every few seconds
+   until it exits 0. On success `auth login` also prints
+   `{"authenticated":true,...}` on STDOUT and exits 0.
+4. If the 2-minute window lapses before the user clicks, login exits non-zero —
+   start it again and re-surface the URL. Keep driving until status is
+   authenticated; do not give up and ask the user to run it.
 
 ## 2. Install the session integration (decision capture + conflict gate + presence)
 - **Claude Code** — run: `npx --yes @primitive.ai/prim@latest claude install`

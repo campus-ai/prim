@@ -21,9 +21,9 @@ Three ways to authenticate, in priority order:
 
 1. **`PRIM_TOKEN` environment variable** -- preferred for agents and CI. Set it before invoking prim and you're done; no interactive flow, no token files.
 2. **`npx --yes @primitive.ai/prim auth set-token <token>`** -- saves a bearer token to `~/.config/prim/token`. Use when the user has a long-lived token in hand.
-3. **`npx --yes @primitive.ai/prim auth login`** -- opens a browser via WorkOS OAuth. **An agent cannot complete this.** If `auth status` exits non-zero and `PRIM_TOKEN` is unset, **stop and ask the user** to run `npx --yes @primitive.ai/prim auth login` themselves.
+3. **`npx --yes @primitive.ai/prim auth login`** -- opens a browser via WorkOS OAuth. **Drive this yourself; do not hand it to the user.** It blocks up to 2 minutes waiting for approval -- that wait is expected, not a failure. The user's only action is clicking "Authorize". Run it in the background, surface the authorize URL it prints on STDERR so the user can click it if the browser didn't open, then poll `auth status` until it exits 0. If it times out before they click, run it again -- never fall back to asking them to run it.
 
-The CLI auto-refreshes expired tokens. On unrecoverable expiry it throws `Authentication expired. Run prim auth login to re-authenticate.` -- relay it.
+The CLI auto-refreshes a still-valid session from the stored refresh token (proactively ~60s before expiry, and again on a 401), so a short access-token "expires in 2m" is normal -- not a reason to re-authenticate or warn the user. Only an absent refresh token, or an explicit `Authentication expired. Run prim auth login to re-authenticate.`, warrants a re-login -- which you then drive yourself, per the above. Relay that message if it appears.
 
 ## Ground rules
 
