@@ -1,8 +1,26 @@
 import { Command } from "commander";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mutable across tests (via vi.hoisted) so the execSync mock can model an
+// unset (undefined) vs. set core.hooksPath without re-mocking the module.
+const gitMock = vi.hoisted(() => ({ hooksPath: undefined as string | undefined }));
+
 vi.mock("node:child_process", () => ({
-  execSync: vi.fn(() => "/fake/root"),
+  execSync: vi.fn((cmd: string, opts?: { cwd?: string }) => {
+    const root = opts?.cwd ?? "/fake/root";
+    // `git rev-parse --git-path hooks` — honors core.hooksPath; relative to cwd.
+    if (cmd.includes("--git-path hooks")) {
+      return gitMock.hooksPath ?? `${root}/.git/hooks`;
+    }
+    // `git config --get core.hooksPath` — non-zero exit when unset.
+    if (cmd.includes("config --get core.hooksPath")) {
+      if (gitMock.hooksPath === undefined) {
+        throw new Error("core.hooksPath unset");
+      }
+      return gitMock.hooksPath;
+    }
+    return "/fake/root"; // git rev-parse --show-toplevel
+  }),
 }));
 
 vi.mock("node:fs", () => ({
@@ -30,9 +48,10 @@ import {
   askConfirmation,
   containsPrimHook,
   detectHusky,
-  installToDotGit,
+  installToGitHooks,
   installToHusky,
   registerHooksCommands,
+  resolveGitHooksDir,
 } from "./hooks.js";
 
 const mockedExistsSync = vi.mocked(existsSync);
@@ -43,6 +62,7 @@ const mockedMkdirSync = vi.mocked(mkdirSync);
 beforeEach(() => {
   vi.resetAllMocks();
   mockedExistsSync.mockReturnValue(false);
+  gitMock.hooksPath = undefined; // default: core.hooksPath unset → .git/hooks
 });
 
 // ---------------------------------------------------------------------------
@@ -244,12 +264,12 @@ describe("installToHusky", () => {
 });
 
 // ---------------------------------------------------------------------------
-// installToDotGit
+// installToGitHooks
 // ---------------------------------------------------------------------------
 
-describe("installToDotGit", () => {
+describe("installToGitHooks", () => {
   it("creates .git/hooks/ directory if missing", () => {
-    installToDotGit("/repo");
+    installToGitHooks("/repo");
 
     expect(mockedMkdirSync).toHaveBeenCalledWith("/repo/.git/hooks", {
       recursive: true,
@@ -257,7 +277,7 @@ describe("installToDotGit", () => {
   });
 
   it("writes hook when no pre-commit exists", () => {
-    installToDotGit("/repo");
+    installToGitHooks("/repo");
 
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
     const [path, content, opts] = mockedWriteFileSync.mock.calls[0];
@@ -272,7 +292,7 @@ describe("installToDotGit", () => {
     );
     mockedReadFileSync.mockReturnValue("#!/bin/sh\nprim-pre-commit\n");
 
-    installToDotGit("/repo");
+    installToGitHooks("/repo");
 
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
@@ -284,7 +304,7 @@ describe("installToDotGit", () => {
     mockedReadFileSync.mockReturnValue("#!/bin/sh\nlint-staged\n");
 
     const logSpy = vi.spyOn(console, "log");
-    installToDotGit("/repo");
+    installToGitHooks("/repo");
 
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already exists"));
@@ -362,5 +382,92 @@ describe("hooks install action", () => {
     const paths = mockedWriteFileSync.mock.calls.map((c) => c[0]);
     expect(paths).toContain("/fake/root/.git/hooks/pre-commit");
     expect(paths).toContain("/fake/root/.git/hooks/post-commit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveGitHooksDir
+// ---------------------------------------------------------------------------
+
+describe("resolveGitHooksDir", () => {
+  it("defaults to <repo>/.git/hooks when core.hooksPath is unset", () => {
+    gitMock.hooksPath = undefined;
+    expect(resolveGitHooksDir("/fake/root")).toEqual({
+      dir: "/fake/root/.git/hooks",
+      hooksPath: undefined,
+      external: false,
+    });
+  });
+
+  it("flags an out-of-repo core.hooksPath as external (shared/global dir)", () => {
+    gitMock.hooksPath = "/global/hooks";
+    expect(resolveGitHooksDir("/fake/root")).toEqual({
+      dir: "/global/hooks",
+      hooksPath: "/global/hooks",
+      external: true,
+    });
+  });
+
+  it("does not flag an in-repo core.hooksPath (e.g. .husky) as external", () => {
+    gitMock.hooksPath = "/fake/root/.husky";
+    expect(resolveGitHooksDir("/fake/root").external).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hooks install — external core.hooksPath gate (policy A: confirm-to-install)
+// ---------------------------------------------------------------------------
+
+describe("hooks install with external core.hooksPath", () => {
+  const originalIsTTY = process.stdin.isTTY;
+
+  beforeEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    gitMock.hooksPath = "/global/hooks"; // resolves outside /fake/root → external
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+    vi.unstubAllEnvs();
+  });
+
+  function buildProgram(): Command {
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive").exitOverride();
+    registerHooksCommands(program);
+    return program;
+  }
+
+  it("--yes installs into the shared hooks dir with a STDERR warning", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["hooks", "install", "--yes", "--target=git-hooks"], {
+      from: "user",
+    });
+    const paths = mockedWriteFileSync.mock.calls.map((c) => c[0]);
+    expect(paths).toContain("/global/hooks/pre-commit");
+    expect(paths).toContain("/global/hooks/post-commit");
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("core.hooksPath"));
+    errSpy.mockRestore();
+  });
+
+  it("--non-interactive refuses and writes nothing", async () => {
+    await expect(
+      buildProgram().parseAsync(["hooks", "install", "--non-interactive", "--target=git-hooks"], {
+        from: "user",
+      }),
+    ).rejects.toThrow(/core\.hooksPath/);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("interactive decline writes nothing", async () => {
+    mockQuestion.mockResolvedValue("n");
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it("interactive accept installs into the shared dir", async () => {
+    mockQuestion.mockResolvedValue("y");
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(mockedWriteFileSync.mock.calls.map((c) => c[0])).toContain("/global/hooks/pre-commit");
   });
 });

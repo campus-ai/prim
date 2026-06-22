@@ -61,6 +61,54 @@ function getGitRoot(): string {
   }).trim();
 }
 
+function gitOut(args: string, cwd: string): string | undefined {
+  try {
+    const out = execSync(`git ${args}`, {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out.length > 0 ? out : undefined;
+  } catch {
+    // Non-zero exit (e.g. `config --get` on an unset key) — treat as absent.
+    return undefined;
+  }
+}
+
+export type GitHooksDir = {
+  // Absolute directory git will actually run hooks from.
+  dir: string;
+  // The raw core.hooksPath value, if configured at any scope; undefined when unset.
+  hooksPath?: string;
+  // core.hooksPath is set AND resolves outside this repo (a shared/global hooks
+  // dir whose hooks fire for every repo that uses it) — installing there is a
+  // cross-repo action, so the caller gates it behind confirmation.
+  external: boolean;
+};
+
+/**
+ * Resolve the hooks directory git will actually use. `git rev-parse --git-path
+ * hooks` is git's own answer and honors core.hooksPath at every scope
+ * (local/global/system), returning an absolute, ~-expanded path; we run it with
+ * cwd=gitRoot so a *relative* core.hooksPath resolves against the repo. Falls
+ * back to .git/hooks only if git is too old to support --git-path.
+ *
+ * The previous installer hardcoded <repo>/.git/hooks, which git silently
+ * ignores whenever core.hooksPath is set — so the hook was written but never
+ * ran. Resolving the real dir is the fix.
+ */
+export function resolveGitHooksDir(gitRoot: string): GitHooksDir {
+  const raw = gitOut("rev-parse --git-path hooks", gitRoot);
+  const dir = raw ? resolve(gitRoot, raw) : resolve(gitRoot, ".git", "hooks");
+  const hooksPath = gitOut("config --get core.hooksPath", gitRoot);
+  const root = resolve(gitRoot);
+  const external =
+    hooksPath !== undefined &&
+    dir !== resolve(root, ".git", "hooks") &&
+    !dir.startsWith(`${root}/`);
+  return { dir, hooksPath, external };
+}
+
 export function detectHusky(gitRoot: string): boolean {
   const huskyDir = resolve(gitRoot, ".husky");
   if (!existsSync(huskyDir)) return false;
@@ -124,8 +172,8 @@ export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): vo
   }
 }
 
-export function installToDotGit(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
-  const hooksDir = resolve(gitRoot, ".git", "hooks");
+export function installToGitHooks(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
+  const { dir: hooksDir } = resolveGitHooksDir(gitRoot);
   const hookPath = resolve(hooksDir, spec.hookName);
 
   if (!existsSync(hooksDir)) {
@@ -154,9 +202,47 @@ function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
     if (target === "husky") {
       installToHusky(gitRoot, spec);
     } else {
-      installToDotGit(gitRoot, spec);
+      installToGitHooks(gitRoot, spec);
     }
   }
+}
+
+/**
+ * Install to the resolved git-hooks dir, gating on confirmation when
+ * core.hooksPath points at a shared/global dir (installing there fires for
+ * every repo that uses it). Mirrors the Husky-detection UX: --yes proceeds,
+ * a non-interactive/CI run refuses, an interactive run prompts.
+ */
+async function installToGitHooksGated(
+  gitRoot: string,
+  opts: { yes?: boolean },
+  nonInteractive: boolean,
+): Promise<void> {
+  const resolved = resolveGitHooksDir(gitRoot);
+  if (resolved.external) {
+    const where = `core.hooksPath=${resolved.hooksPath ?? "?"} (${resolved.dir})`;
+    if (opts.yes) {
+      process.stderr.write(
+        `[prim] core.hooksPath is set — installing into the shared hooks dir ${where}; this fires for every repo that uses it.\n`,
+      );
+    } else if (nonInteractive) {
+      throw new Error(
+        `core.hooksPath points hooks at a shared dir (${where}); .git/hooks is ignored here. Re-run with --yes to install there, or unset core.hooksPath for this repo.`,
+      );
+    } else if (!process.stdin.isTTY) {
+      throw new Error(
+        `core.hooksPath points hooks at a shared dir (${where}); stdin is not a TTY. Re-run with --yes to confirm.`,
+      );
+    } else if (
+      !(await askConfirmation(
+        `core.hooksPath points hooks at ${resolved.dir} (shared — fires for every repo that uses it). Install prim hooks there?`,
+      ))
+    ) {
+      console.log("Aborted — core.hooksPath unchanged. Unset it for this repo to use .git/hooks.");
+      return;
+    }
+  }
+  installHooks(gitRoot, "git-hooks");
 }
 
 export function registerHooksCommands(program: Command) {
@@ -181,7 +267,9 @@ export function registerHooksCommands(program: Command) {
       const gitRoot = getGitRoot();
 
       if (opts.target === "husky") return installHooks(gitRoot, "husky");
-      if (opts.target === "git-hooks") return installHooks(gitRoot, "git-hooks");
+      if (opts.target === "git-hooks") {
+        return await installToGitHooksGated(gitRoot, globals, nonInteractive);
+      }
 
       if (detectHusky(gitRoot)) {
         if (globals.yes) return installHooks(gitRoot, "husky");
@@ -205,16 +293,19 @@ export function registerHooksCommands(program: Command) {
         }
       }
 
-      installHooks(gitRoot, "git-hooks");
+      await installToGitHooksGated(gitRoot, globals, nonInteractive);
     });
 
   hooks
     .command("uninstall")
-    .description("Remove the prim git hooks (.git/hooks)")
+    .description("Remove the prim git hooks from the resolved hooks dir (honors core.hooksPath)")
     .action(() => {
       const gitRoot = getGitRoot();
+      // Resolve the same dir install targets, so a hook placed under
+      // core.hooksPath is actually found and removed (not just .git/hooks).
+      const { dir: hooksDir } = resolveGitHooksDir(gitRoot);
       for (const spec of HOOKS) {
-        const hookPath = resolve(gitRoot, ".git", "hooks", spec.hookName);
+        const hookPath = resolve(hooksDir, spec.hookName);
         if (!existsSync(hookPath)) {
           console.log(`No ${spec.hookName} hook found.`);
           continue;
