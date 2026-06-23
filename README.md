@@ -113,6 +113,12 @@ and offers to install into `.husky/`.
 prim statusline        # Render the team-presence statusline (reads the daemon)
 ```
 
+### Welcome
+
+```bash
+prim welcome           # Brief orientation to the decision graph (shown after setup)
+```
+
 ### Session & journal
 
 Lower-level plumbing for the capture pipeline — org binding and the local move

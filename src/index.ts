@@ -12,6 +12,7 @@
  *   prim daemon start|stop|status
  *   prim decisions recent|show|cascade|check|confirm|create
  *   prim reconcile <id>
+ *   prim welcome
  *
  * Configuration:
  *   Connects to https://api.getprimitive.ai by default.
@@ -32,6 +33,7 @@ import { registerReconcileCommands } from "./commands/reconcile.js";
 import { registerSessionCommands } from "./commands/session.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerStatuslineCommands } from "./commands/statusline.js";
+import { registerWelcomeCommand } from "./commands/welcome.js";
 import { flushIfNeeded } from "./flusher.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,6 +64,7 @@ registerCodexCommands(program);
 registerDaemonCommands(program);
 registerReconcileCommands(program);
 registerStatuslineCommands(program);
+registerWelcomeCommand(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
