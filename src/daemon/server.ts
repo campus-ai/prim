@@ -4,8 +4,9 @@
  *
  * Opens a Unix socket at ~/.config/prim/sock that the PreToolUse /
  * SessionStart / SessionEnd hooks proxy through; amortizes the token-refresh
- * check; and heartbeats `agentPresence` every 30s, caching the server's
- * self-inclusive online count so a statusline can render "team: N online".
+ * check; and heartbeats `agentPresence` every 30s, caching the online count
+ * and the teammate-name roster the ack returns so a statusline can render
+ * "team: Maya, Alex +2" (and `daemon status` the full list).
  *
  * Lifecycle: `prim daemon start` spawns this bin detached. SIGTERM (or
  * `prim daemon stop`) cleans up the socket + pidfile. Refuses to start if an
@@ -29,9 +30,9 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const TOKEN_CHECK_INTERVAL_MS = 60_000;
 const TOKEN_REFRESH_THRESHOLD_MS = 90_000;
 const HTTP_PROXY_TIMEOUT_MS = 10_000;
-// How long a cached online count stays trustworthy after the last accepted
-// heartbeat (≈ 3 heartbeat cadences). Past this, the daemon is alive but its
-// heartbeats are failing, so the frozen count is reported as stale.
+// How long cached presence (count + names) stays trustworthy after the last
+// accepted heartbeat (≈ 3 heartbeat cadences). Past this, the daemon is alive
+// but its heartbeats are failing, so the frozen data is reported as stale.
 const PRESENCE_FRESH_WINDOW_MS = 90_000;
 const SOCKET_DIR_MODE = 0o700;
 const PID_FILE_MODE = 0o600;
@@ -55,14 +56,16 @@ const startedAt = Date.now();
 const client = getClient();
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 let lastHeartbeatAt: number | undefined;
-// The server's self-inclusive same-org online count from the last accepted
-// heartbeat. The server owns identity + display names (derived from the
-// token), so the daemon never asserts a name — it only caches this count for
-// a statusline to render.
+// From the last accepted heartbeat ack, cached for the statusline /
+// daemon-status to render. The server owns identity + display names (derived
+// from the token); the daemon never asserts them, it only relays what the ack
+// carried — `onlineCount` is the self-inclusive same-org count, `onlineNames`
+// the caller's online teammates (self excluded), already deduped and sorted.
 let lastOnlineCount: number | undefined;
+let lastOnlineNames: string[] | undefined;
 // Daemon-local timestamp of the last ACCEPTED heartbeat ack. Used to decide
-// whether the cached count is still fresh; a daemon whose heartbeats are
-// failing keeps running but stops advancing this.
+// whether the cached presence (count + names) is still fresh; a daemon whose
+// heartbeats are failing keeps running but stops advancing this.
 let lastOkAtLocal: number | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let tokenCheckTimer: NodeJS.Timeout | undefined;
@@ -105,8 +108,9 @@ function cleanup(): void {
 async function sendHeartbeat(): Promise<void> {
   try {
     // The body is `{ sessionId }` ONLY — the server derives identity and the
-    // rendered display name from the authenticated token. The ack carries the
-    // self-inclusive team online count, which we cache for the statusline.
+    // display names from the authenticated token. The ack carries the online
+    // count and the teammate names, which we cache for the statusline and
+    // daemon status.
     const result = (await client.post("/api/cli/presence/heartbeat", {
       sessionId: activeSessionId,
     })) as {
@@ -114,6 +118,7 @@ async function sendHeartbeat(): Promise<void> {
       lastHeartbeatAt?: number;
       created?: boolean;
       onlineCount?: number;
+      onlineNames?: string[];
       unavailable?: string;
     };
     if (result.accepted) {
@@ -121,9 +126,14 @@ async function sendHeartbeat(): Promise<void> {
       if (typeof result.lastHeartbeatAt === "number") {
         lastHeartbeatAt = result.lastHeartbeatAt;
       }
-      if (typeof result.onlineCount === "number") {
-        lastOnlineCount = result.onlineCount;
-      }
+      // Count and names ride the SAME ack — cache them atomically (clearing on
+      // absence), never overwrite-only. Otherwise a names-less ack from an
+      // older or rolled-back server (mixed-version deploy) advances the
+      // freshness clock and updates the count while a prior roster stays
+      // frozen, and the statusline would render that stale list as fresh
+      // instead of falling back to the live count.
+      lastOnlineCount = typeof result.onlineCount === "number" ? result.onlineCount : undefined;
+      lastOnlineNames = Array.isArray(result.onlineNames) ? result.onlineNames : undefined;
     }
   } catch (err) {
     process.stderr.write(
@@ -186,9 +196,10 @@ function handleStatusSnapshot(): unknown {
     uptimeMs: Date.now() - startedAt,
     sessionId: activeSessionId,
     lastHeartbeatAt,
-    // Withhold a frozen count once it's no longer fresh; the statusline shows
-    // "presence: stale" rather than a confident, wrong "team: N".
+    // Withhold a frozen count/names once they're no longer fresh; the
+    // statusline shows "presence: stale" rather than a confident, wrong list.
     onlineCount: presenceFresh ? lastOnlineCount : undefined,
+    onlineNames: presenceFresh ? lastOnlineNames : undefined,
     presenceStale,
   };
 }
