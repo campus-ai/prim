@@ -73,10 +73,14 @@ Codex, plus .cursor/rules, .windsurfrules, and
 ambiguous, it prints discovered candidates and exits non-zero — pass
 `--target <path>` to disambiguate.
 
-## 6. Confirm
-Verify, then print a one-paragraph summary of what was installed, which rules
-file received the skill block, and (Codex only) the `/hooks` trust reminder:
+## 6. Confirm and welcome
+Verify each piece is live:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` if you are Codex
 - `npx --yes @primitive.ai/prim@latest daemon status`
 - `npx --yes @primitive.ai/prim@latest skill status`
+
+Then run `npx --yes @primitive.ai/prim@latest welcome` and surface its output to
+the user — it is the canonical "here's how Primitive works" orientation. Add one
+line of your own for the setup specifics: which rules file received the skill
+block, and (Codex only) the `/hooks` trust reminder.
