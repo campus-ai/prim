@@ -33,12 +33,13 @@ describe("classifyStatus", () => {
     expect(exitCode).toBe(EXIT_OK);
   });
 
-  it("folds the snapshot into a live, exit-0 verdict", () => {
+  it("folds the snapshot — including the full online-teammate list — into a live, exit-0 verdict", () => {
     const snapshot = {
       pid: 4242,
       uptimeMs: 12_000,
       sessionId: "daemon-4242",
       onlineCount: 3,
+      onlineNames: ["Alex", "Maya"],
     };
     const { json, exitCode } = classifyStatus(true, true, snapshot, 4242);
     expect(json).toEqual({ running: true, responding: true, ...snapshot });

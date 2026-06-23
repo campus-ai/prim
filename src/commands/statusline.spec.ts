@@ -8,13 +8,14 @@ vi.mock("../daemon/client.js", () => ({
 
 const mockDaemonRequest = vi.mocked(daemonRequest);
 
-function snapshot(onlineCount?: number) {
+function snapshot(onlineCount?: number, onlineNames?: string[]) {
   return {
     pid: 1,
     uptimeMs: 1_000,
     sessionId: "daemon-1",
     lastHeartbeatAt: 1_700_000_000_000,
     onlineCount,
+    onlineNames,
   };
 }
 
@@ -28,6 +29,32 @@ describe("renderStatusline", () => {
     const line = await renderStatusline();
     expect(line).toContain("daemon: live");
     expect(line).toContain("team: 2 online");
+  });
+
+  it("renders teammate names when the snapshot carries them", async () => {
+    mockDaemonRequest.mockResolvedValue(snapshot(3, ["Alex", "Maya"]));
+    const line = await renderStatusline();
+    expect(line).toContain("team: Alex, Maya");
+  });
+
+  it("truncates a long teammate list with an overflow marker", async () => {
+    mockDaemonRequest.mockResolvedValue(snapshot(5, ["Alex", "Maya", "Sam", "Tom"]));
+    const line = await renderStatusline();
+    expect(line).toContain("team: Alex, Maya, Sam +1");
+  });
+
+  it("renders 'team: just you' when online with no teammates", async () => {
+    mockDaemonRequest.mockResolvedValue(snapshot(1, []));
+    const line = await renderStatusline();
+    expect(line).toContain("team: just you");
+  });
+
+  it("falls back to the bare count when the server sent no names (rollout)", async () => {
+    // onlineNames undefined but a count is present — an older server that
+    // predates names: keep "team: N online" rather than regress to "—".
+    mockDaemonRequest.mockResolvedValue(snapshot(4, undefined));
+    const line = await renderStatusline();
+    expect(line).toContain("team: 4 online");
   });
 
   it("renders an honest team: — when the daemon has no count yet (or org-unbound)", async () => {

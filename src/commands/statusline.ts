@@ -22,22 +22,28 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { daemonRequest } from "../daemon/client.js";
+import { formatTeammates } from "../lib/presence.js";
 
 type StatusSnapshot = {
   pid: number;
   uptimeMs: number;
   sessionId: string;
   lastHeartbeatAt?: number;
-  // Self-inclusive same-org online count from the daemon's last accepted
-  // heartbeat ack. The server owns display names (derived from the token), so
-  // the daemon asserts none — the statusline shows only the count.
+  // From the daemon's last accepted heartbeat ack (server-derived from the
+  // token). `onlineNames` are the caller's online teammates (self excluded),
+  // sorted — the statusline renders these. `onlineCount` is the self-inclusive
+  // count, kept as a fallback for a server that predates `onlineNames`.
   onlineCount?: number;
+  onlineNames?: string[];
   // True when the daemon is alive but its heartbeats have stopped landing, so
-  // the cached count is frozen and not to be trusted.
+  // the cached presence is frozen and not to be trusted.
   presenceStale?: boolean;
 };
 
 const STATUSLINE_TIMEOUT_MS = 200;
+// Names shown before collapsing the rest into "+N" — keeps the one-line
+// statusline from overflowing on a busy team.
+const STATUSLINE_NAME_CAP = 3;
 
 function readPackageVersion(): string {
   try {
@@ -79,18 +85,23 @@ export async function renderStatusline(): Promise<string> {
     return `primitive ${version} (daemon: down)`;
   }
   // A stale snapshot means the daemon is alive but its heartbeats are failing —
-  // the cached count is frozen, so render the degraded state honestly instead
-  // of a confident, wrong "team: N".
+  // the cached presence is frozen, so render the degraded state honestly
+  // instead of a confident, wrong roster.
   if (snapshot.presenceStale) {
     return `primitive ${version} (daemon: live · presence: stale)`;
   }
-  // Render the real count when the daemon has a fresh accepted ack; otherwise
-  // show an honest "—" rather than claiming a team of 1 — the count is unknown
-  // (no ack yet, or the last ack was org-unbound), not necessarily one.
-  const team =
-    typeof snapshot.onlineCount === "number"
-      ? `team: ${String(snapshot.onlineCount)} online`
-      : "team: —";
+  // Prefer teammate names ("Maya, Alex +3" / "just you"). Fall back to the
+  // bare count for an older server that predates `onlineNames` — better than
+  // regressing to "—"; and to "—" when neither is fresh (no ack yet, or the
+  // last ack was org-unbound), which is unknown, not necessarily a team of one.
+  let team: string;
+  if (snapshot.onlineNames !== undefined) {
+    team = `team: ${formatTeammates(snapshot.onlineNames, STATUSLINE_NAME_CAP)}`;
+  } else if (typeof snapshot.onlineCount === "number") {
+    team = `team: ${String(snapshot.onlineCount)} online`;
+  } else {
+    team = "team: —";
+  }
   return `primitive ${version} (daemon: live · ${team})`;
 }
 

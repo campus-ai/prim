@@ -24,6 +24,7 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
 import { binFile } from "../lib/bin-path.js";
+import { formatTeammates } from "../lib/presence.js";
 
 const DAEMON_BIN = "prim-daemon-server";
 const PID_PATH = join(homedir(), ".config", "prim", "daemon.pid");
@@ -57,6 +58,9 @@ interface StatusSnapshot {
   sessionId: string;
   lastHeartbeatAt?: number;
   onlineCount?: number;
+  // Online teammates (self excluded), sorted. Surfaced in full here, where
+  // there's room; the statusline truncates the same list.
+  onlineNames?: string[];
 }
 
 function readPidfile(): RunningPid | null {
@@ -261,8 +265,14 @@ async function daemonStatus(): Promise<void> {
   } else if (!snapshot) {
     process.stderr.write("[prim] ✓ daemon live (no snapshot)\n");
   } else {
+    // Full teammate list (self excluded) when presence is fresh; omit the
+    // segment entirely when names are unknown rather than print "team: —".
+    const team =
+      snapshot.onlineNames !== undefined
+        ? ` · team: ${formatTeammates(snapshot.onlineNames, Number.POSITIVE_INFINITY)}`
+        : "";
     process.stderr.write(
-      `[prim] ✓ daemon live · pid=${snapshot.pid} · uptime=${Math.round(snapshot.uptimeMs / 1000)}s · session=${snapshot.sessionId}\n`,
+      `[prim] ✓ daemon live · pid=${snapshot.pid} · uptime=${Math.round(snapshot.uptimeMs / 1000)}s · session=${snapshot.sessionId}${team}\n`,
     );
   }
   console.log(JSON.stringify(json, null, 2));
