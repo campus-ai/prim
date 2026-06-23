@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.21](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.20...v0.1.0-alpha.21) (2026-06-23)
+
+
+### Features
+
+* **cli:** add `prim decisions create` ([#81](https://github.com/campus-ai/prim/issues/81)) ([c74c0f2](https://github.com/campus-ai/prim/commit/c74c0f22f348d8c20b5dffd1039b8094f6723132))
+* **cli:** add `prim welcome` post-setup orientation ([#83](https://github.com/campus-ai/prim/issues/83)) ([6757a86](https://github.com/campus-ai/prim/commit/6757a8663cc12c45b8b3ce3ce006ba9a6fcd4cd8))
+* **cli:** show online teammate names in presence ([#84](https://github.com/campus-ai/prim/issues/84)) ([d6ccc87](https://github.com/campus-ai/prim/commit/d6ccc874c52c600ccc7d449685fcfa37c529b3b2))
+
 ## [0.1.0-alpha.20](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.19...v0.1.0-alpha.20) (2026-06-22)
 
 
