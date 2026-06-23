@@ -67,6 +67,16 @@ npx --yes @primitive.ai/prim decisions confirm <idOrShortId>
 
 Confirmations are author-targeted and rare by design; answering keeps the graph's rationale trustworthy. Don't manufacture rationale — if you don't know why a decision was made, say so.
 
+## Author a decision deliberately
+
+Capture is automatic for the decisions you *make while coding*. When the user instead asks you to **record a decision explicitly** — one that didn't fall out of an edit (a design call, a convention, a choice settled in discussion) — author it directly:
+
+```
+npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+```
+
+Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — pass these to make the conflict gate fire on later edits to those files, same path form as `decisions check`). STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`. Author on the user's behalf only when they ask for a decision to be recorded; don't narrate your own routine edits into the graph (the hooks already do that).
+
 ## Presence
 
 With the daemon running (`npx --yes @primitive.ai/prim daemon start`), `npx --yes @primitive.ai/prim daemon status` includes the live online count in its STDOUT JSON (when presence is fresh); Claude Code surfaces it in the statusline as `team: N online`. Your captured decisions are attributed to your agent automatically -- no flag required.
@@ -108,7 +118,7 @@ Examples:
 - **An "unavailable" / "not verified" gate or check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval.
 - **A `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
-- **Capture is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status`) and the daemon is running — don't try to inject moves by hand.
+- **Capture of your coding activity is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status`) and the daemon is running — don't try to inject moves by hand. (Deliberately *authoring* a decision the user asks you to record is a separate, supported path — `decisions create`, above.)
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 
 ## After each task
