@@ -10,7 +10,7 @@
  *   prim claude install|uninstall|status   (or: prim codex ...)
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
- *   prim decisions recent|show|cascade|check|confirm
+ *   prim decisions recent|show|cascade|check|confirm|create
  *   prim reconcile <id>
  *
  * Configuration:
