@@ -1,6 +1,11 @@
 /**
  * `prim codex install|uninstall|status` — manage the prim Codex integration
- * in ~/.codex/hooks.json.
+ * in `<repo>/.codex/hooks.json` by default — the repo's project hook layer that
+ * Codex loads once it is trusted via `/hooks`
+ * (https://developers.openai.com/codex/hooks), which is what the trust notice on
+ * install prompts. The project path is anchored at the git repository root (the
+ * layer Codex reads), so it is stable no matter which subdirectory you run from.
+ * `--scope user` writes the machine-global `~/.codex/hooks.json` instead.
  *
  * Codex's hook config shape is identical to Claude Code's nested
  * { hooks: { Event: [{ matcher, hooks: [{ type, command }] }] } }, so this
@@ -16,7 +21,7 @@
  *   - prim-session-start on SessionStart, so the daemon's presence reflects it.
  *
  * Codex divergences from the Claude surface:
- *   - the target is ~/.codex/hooks.json (a dedicated hooks file; no statusLine).
+ *   - the target is a dedicated `.codex/hooks.json` (not a settings.json; no statusLine).
  *   - the edit tool is `apply_patch`, so the gate/ingest hooks match it (not
  *     Edit|Write|MultiEdit).
  *   - no SessionEnd (Codex fires no such event) and no statusLine (Codex has no
@@ -38,6 +43,7 @@ import {
   ensureRegistration,
   entryHasCommand,
   makeRegistration,
+  projectRoot,
   readSettings,
   stripCommand,
 } from "./claude-install.js";
@@ -78,10 +84,13 @@ const CODEX_REGISTRATIONS: Registration[] = [
 ];
 
 const USER_SCOPE_PATH = join(homedir(), ".codex", "hooks.json");
-const PROJECT_SCOPE_PATH = join(process.cwd(), ".codex", "hooks.json");
+// Anchored at the git repo root (the `<repo>/.codex` layer Codex actually reads),
+// not the bare cwd — see projectRoot() in claude-install.ts. Falls back to cwd
+// outside a repo.
+const projectScopePath = (): string => join(projectRoot(), ".codex", "hooks.json");
 
 function settingsPathFor(scope: Scope): string {
-  return scope === "user" ? USER_SCOPE_PATH : PROJECT_SCOPE_PATH;
+  return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
 }
 
 export function applyInstall(
@@ -177,15 +186,18 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
     const settings = readSettings(path);
     return { path, gate: isGateInstalled(settings), capture: captureInstalled(settings) };
   };
-  return { user: statusFor(USER_SCOPE_PATH), project: statusFor(PROJECT_SCOPE_PATH) };
+  return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
 }
 
-function resolveScope(input: string | undefined): Scope {
-  if (input === undefined || input === "user") {
-    return "user";
-  }
-  if (input === "project") {
+// Default is `project` — a bare `codex install` wires the integration into the
+// project you're setting up, not every repo on the machine. `--scope user`
+// opts into the machine-global install. Exported so the default is test-pinned.
+export function resolveScope(input: string | undefined): Scope {
+  if (input === undefined || input === "project") {
     return "project";
+  }
+  if (input === "user") {
+    return "user";
   }
   // Fail loud rather than silently writing the wrong hooks.json on a typo.
   console.error(`[prim] unknown --scope "${input}" (expected: user or project)`);
@@ -203,10 +215,10 @@ export function registerCodexCommands(program: Command): void {
 
   codex
     .command("install")
-    .description("Register the prim hooks in Codex's ~/.codex/hooks.json")
+    .description("Register the prim hooks in Codex's hooks.json (project scope by default)")
     .option(
       "--scope <scope>",
-      "user (default, ~/.codex/hooks.json) or project (./.codex/hooks.json)",
+      "project (default, the repo's .codex/hooks.json) or user (~/.codex/hooks.json)",
     )
     .option("--force", "Replace any drifted prim hook entries")
     .action((opts: { scope?: string; force?: boolean }) => {
@@ -223,10 +235,10 @@ export function registerCodexCommands(program: Command): void {
 
   codex
     .command("uninstall")
-    .description("Remove all prim hooks from ~/.codex/hooks.json")
+    .description("Remove all prim hooks from Codex's hooks.json")
     .option(
       "--scope <scope>",
-      "user (default, ~/.codex/hooks.json) or project (./.codex/hooks.json)",
+      "project (default, the repo's .codex/hooks.json) or user (~/.codex/hooks.json)",
     )
     .action((opts: { scope?: string }) => {
       const scope = resolveScope(opts.scope);

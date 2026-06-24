@@ -42,9 +42,13 @@ to authenticate for doing it yourself.
 
 This wires the session hooks that capture the decisions you make into
 Primitive's decision graph, gate edits that conflict with prior team decisions,
-and report team presence. Each hook self-resolves the CLI at run time (PATH, then
-a local install, then `npx --yes @latest`), so the hooks keep working with no
-global install. It is separate from the pre-commit hook in step 4.
+and report team presence. It installs into the **current project** by default
+(the repo's `.claude/settings.json` / `.codex/hooks.json`, resolved from the git
+root, so any subdirectory works) — run it from inside the user's repo; add
+`--scope user` to install machine-wide instead. Each hook self-resolves the
+CLI at run time (PATH, then a local install, then `npx --yes @latest`), so the
+hooks keep working with no global install. It is separate from the pre-commit
+hook in step 4.
 
 ## 3. Start the companion daemon (latency + team presence)
 Run: `npx --yes @primitive.ai/prim@latest daemon start`
