@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0-alpha.22](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.21...v0.1.0-alpha.22) (2026-06-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** `claude install` / `codex install` and their `uninstall` counterparts now default to project scope (`<repo>/.claude/settings.json`, `<repo>/.codex/hooks.json`) instead of machine-global user scope. Pass `--scope user` to restore the previous behavior.
+
+### Features
+
+* **cli:** default the session integration to project scope ([#85](https://github.com/campus-ai/prim/issues/85)) ([2d04fb2](https://github.com/campus-ai/prim/commit/2d04fb2ad805e22202ab4fe322c532a6e377be38))
+* **welcome:** seed an empty org and surface recent decisions ([#88](https://github.com/campus-ai/prim/issues/88)) ([4210f58](https://github.com/campus-ai/prim/commit/4210f58555662cd7b285dc5772fac48e6db873e3))
+
+
+### Bug Fixes
+
+* **onboarding:** always deliver the welcome message on a successful setup ([#87](https://github.com/campus-ai/prim/issues/87)) ([02c46d2](https://github.com/campus-ai/prim/commit/02c46d25be735806088fe8f9570e48386095ceaa))
+
 ## [0.1.0-alpha.21](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.20...v0.1.0-alpha.21) (2026-06-23)
 
 
