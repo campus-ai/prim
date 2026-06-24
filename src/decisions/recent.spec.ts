@@ -26,6 +26,7 @@ import {
   fetchRecent,
   formatRecentHuman,
   formatRecentJson,
+  formatRecentRow,
   renderIdentifier,
 } from "./recent.js";
 
@@ -182,6 +183,21 @@ describe("formatRecentHuman", () => {
       decisions: [{ ...SELF_ROW, area: undefined }],
     });
     expect(out).toContain("•  ");
+  });
+});
+
+describe("formatRecentRow", () => {
+  it("composes formatRecentHuman so `prim welcome` reuses byte-identical formatting", () => {
+    expect(formatRecentHuman({ decisions: [TEAMMATE_ROW] })).toContain(
+      formatRecentRow(TEAMMATE_ROW),
+    );
+  });
+
+  it("renders the author, area bullet, and intent on a single row", () => {
+    const out = formatRecentRow(TEAMMATE_ROW);
+    expect(out).toContain("Maya");
+    expect(out).toContain("• billing");
+    expect(out).toContain(TEAMMATE_ROW.intent);
   });
 });
 

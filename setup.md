@@ -87,9 +87,23 @@ install steps above succeeded, the user must always see it. Deliver it **first**
 before the confirmations, so an optional component can never suppress it.
 
 Run `npx --yes @primitive.ai/prim@latest welcome` and surface its full output to
-the user — the canonical "here's how Primitive works" orientation. It runs
-locally and always exits 0; never skip it, summarize it away, or gate it behind
-the checks below.
+the user — the canonical "here's how Primitive works" orientation. It adapts to
+the org: it inlines the latest team decisions, or — if the org has none yet —
+prints a reverse-prompt to seed the graph (handled next). It always exits 0 (a
+failed decisions fetch degrades gracefully); never skip it, summarize it away, or
+gate it behind the checks below.
+
+**If welcome's STDOUT shows `"org": "empty"`** — the org has no decisions yet, so
+seed the graph before the confirmations. welcome has already printed the
+reverse-prompt; ask it and let the user answer freely. Break their answer into
+**one decision per goal** they name (infer the best `--kind` for each; map a goal
+to `--intent` / `--decided`, and what they're *not* focusing on to
+`--alternatives`). Show the drafted decisions and **confirm with the user before
+creating**, then record each:
+`npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
+If STDOUT shows `"org": "active"` (recent decisions already displayed) or
+`"org": "unknown"` (feed unverifiable — the static orientation already landed),
+there's nothing to seed here.
 
 Then **run all four confirmations** and surface their results — these are
 informational (a non-zero must NOT abort the run or retract the welcome you just
