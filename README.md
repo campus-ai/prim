@@ -58,9 +58,14 @@ graph, conflicting edits are gated, and presence is reported. Each hook
 self-resolves the CLI at run time (PATH, then a local install, then
 `npx --yes @latest`), so it keeps working with no global install.
 
+Installs into the current project by default — the repo's `.claude/settings.json`
+/ `.codex/hooks.json`, resolved from the git root (so any subdirectory works);
+pass `--scope user` to install machine-wide.
+
 ```bash
-prim claude install    # Install Claude Code hooks   (uninstall / status)
-prim codex install     # Install OpenAI Codex hooks   (uninstall / status)
+prim claude install                # Install Claude Code hooks (project scope; uninstall / status)
+prim claude install --scope user   # Install machine-wide instead
+prim codex install                 # Install OpenAI Codex hooks (project scope)
 ```
 
 ### Daemon

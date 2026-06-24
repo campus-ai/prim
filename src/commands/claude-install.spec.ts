@@ -16,6 +16,7 @@ import {
   applyInstall,
   applyUninstall,
   isGateInstalled,
+  resolveScope,
 } from "./claude-install.js";
 
 const CAPTURE_EVENTS = [
@@ -272,5 +273,19 @@ describe("post-tool-use, session hooks, statusline install", () => {
     });
     const out = applyUninstall(installed);
     expect(out.statusLine).toEqual({ type: "command", command: "my-custom-statusline" });
+  });
+});
+
+describe("resolveScope", () => {
+  it("defaults to project when no --scope is given", () => {
+    expect(resolveScope(undefined)).toBe("project");
+  });
+
+  it("honors an explicit project scope", () => {
+    expect(resolveScope("project")).toBe("project");
+  });
+
+  it("honors an explicit user (machine-global) scope", () => {
+    expect(resolveScope("user")).toBe("user");
   });
 });

@@ -12,8 +12,8 @@
  *     daemon's presence reflects live sessions.
  *   - the `prim statusline` statusLine, so the editor shows "team: N online".
  *
- *   prim claude install                 # ~/.claude/settings.json
- *   prim claude install --scope=project # ./.claude/settings.json
+ *   prim claude install                 # <repo-root>/.claude/settings.json (project, default)
+ *   prim claude install --scope=user    # ~/.claude/settings.json (machine-global)
  *   prim claude install --force         # replace drifted prim entries
  *   prim claude uninstall               # strip every prim entry
  *   prim claude status                  # report each surface per scope
@@ -24,6 +24,7 @@
  * (tmp + fsync + rename) so a crash can never leave a torn settings.json. AX
  * contract: STDOUT is the resulting JSON; STDERR is the human verdict.
  */
+import { execSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -68,7 +69,27 @@ const PRIM_BINS: readonly string[] = [
 const JSON_INDENT = 2;
 
 const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
-const PROJECT_SCOPE_PATH = join(process.cwd(), ".claude", "settings.json");
+
+/**
+ * Project scope is anchored at the git repository root, not the bare cwd: Claude
+ * Code and Codex both resolve project-local config from the repo root, so a hook
+ * file written under a subdirectory would never be read (a silently-inert
+ * install). Falls back to the cwd outside a git work tree, so project scope still
+ * works in a non-repo dir. Shared with codex-install.ts. Resolved lazily (not at
+ * module load) so unrelated prim commands never shell out to git.
+ */
+export function projectRoot(): string {
+  try {
+    return execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+const projectScopePath = (): string => join(projectRoot(), ".claude", "settings.json");
 
 // Capture rides every hook event at the wildcard matcher; the gate and the
 // PostToolUse ingest hook ride their edit tools; the session hooks notify the
@@ -135,7 +156,7 @@ export type ClaudeSettings = {
 };
 
 function settingsPathFor(scope: Scope): string {
-  return scope === "user" ? USER_SCOPE_PATH : PROJECT_SCOPE_PATH;
+  return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
 }
 
 export function readSettings(path: string): ClaudeSettings {
@@ -370,15 +391,18 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
       statusline: statuslineInstalled(settings),
     };
   };
-  return { user: statusFor(USER_SCOPE_PATH), project: statusFor(PROJECT_SCOPE_PATH) };
+  return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
 }
 
-function resolveScope(input: string | undefined): Scope {
-  if (input === undefined || input === "user") {
-    return "user";
-  }
-  if (input === "project") {
+// Default is `project` — a bare `claude install` wires the integration into the
+// project you're setting up, not every repo on the machine. `--scope user`
+// opts into the machine-global install. Exported so the default is test-pinned.
+export function resolveScope(input: string | undefined): Scope {
+  if (input === undefined || input === "project") {
     return "project";
+  }
+  if (input === "user") {
+    return "user";
   }
   // Fail loud rather than silently writing the wrong settings.json on a typo.
   console.error(`[prim] unknown --scope "${input}" (expected: user or project)`);
@@ -395,7 +419,7 @@ export function registerClaudeCommands(program: Command): void {
     .description("Register the prim hooks + statusline in Claude Code's settings.json")
     .option(
       "--scope <scope>",
-      "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
+      "project (default, the repo's .claude/settings.json) or user (~/.claude/settings.json)",
     )
     .option("--force", "Replace any drifted prim hook entries")
     .action((opts: { scope?: string; force?: boolean }) => {
@@ -418,7 +442,7 @@ export function registerClaudeCommands(program: Command): void {
     .description("Remove all prim hooks + the prim statusline from settings.json")
     .option(
       "--scope <scope>",
-      "user (default, ~/.claude/settings.json) or project (./.claude/settings.json)",
+      "project (default, the repo's .claude/settings.json) or user (~/.claude/settings.json)",
     )
     .action((opts: { scope?: string }) => {
       const scope = resolveScope(opts.scope);

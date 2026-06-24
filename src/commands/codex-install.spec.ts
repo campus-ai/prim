@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
 import type { ClaudeSettings } from "./claude-install.js";
-import { applyInstall, applyUninstall, isGateInstalled } from "./codex-install.js";
+import { applyInstall, applyUninstall, isGateInstalled, resolveScope } from "./codex-install.js";
 
 const EMPTY: ClaudeSettings = {};
 
@@ -138,5 +138,19 @@ describe("codex applyUninstall", () => {
     expect(out.hooks?.PreToolUse?.[0].matcher).toBe("Bash");
     expect(out.hooks?.PostToolUse).toBeUndefined();
     expect(out.hooks?.SessionStart).toBeUndefined();
+  });
+});
+
+describe("resolveScope", () => {
+  it("defaults to project when no --scope is given", () => {
+    expect(resolveScope(undefined)).toBe("project");
+  });
+
+  it("honors an explicit project scope", () => {
+    expect(resolveScope("project")).toBe("project");
+  });
+
+  it("honors an explicit user (machine-global) scope", () => {
+    expect(resolveScope("user")).toBe("user");
   });
 });
