@@ -33,6 +33,14 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
+import {
+  LinkNotFoundError,
+  fetchLink,
+  fetchUnlink,
+  formatRelateHuman,
+  formatRelateJson,
+  isRelateRejection,
+} from "../decisions/link.js";
 import { fetchRecent, formatRecentHuman, formatRecentJson } from "../decisions/recent.js";
 import {
   DecisionNotFoundError,
@@ -44,9 +52,10 @@ import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisio
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
-// A 4xx from a write is a domain rejection the caller can act on (bad
-// enum value, org-unbound token) → exit 2, as `reconcile` does;
-// transport/5xx failures fall through to the global handler (exit 1).
+// A caller-actionable 4xx from a write → exit 2: `create`/`reconcile` map any
+// 4xx (bad enum, org-unbound) here, while `link`/`unlink`/`confirm` map only the
+// specific rejections (self-loop, cycle, ambiguous) and let an org-unbound 403
+// fall through to the global handler as an auth failure (exit 1).
 const EXIT_USAGE = 2;
 
 const splitList = (value?: string): string[] =>
@@ -201,6 +210,50 @@ export function registerDecisionsCommands(program: Command): void {
             JSON.stringify({ ok: false, status: err.status, error: err.message }, null, 2),
           );
           process.exitCode = EXIT_USAGE;
+          return;
+        }
+        throw err;
+      }
+    });
+
+  decisions
+    .command("link <child>")
+    .description("Record that <child> depends on <parent> (adds a dependency edge)")
+    .requiredOption("--on <parent>", "The decision <child> depends on")
+    .action(async (child: string, opts: { on: string }) => {
+      try {
+        const result = await fetchLink(child, opts.on);
+        console.error(formatRelateHuman(result));
+        console.log(formatRelateJson(result));
+        if (isRelateRejection(result.outcome)) {
+          process.exitCode = EXIT_USAGE;
+        }
+      } catch (err) {
+        if (err instanceof LinkNotFoundError) {
+          console.error(`[prim] ${err.message}`);
+          process.exitCode = EXIT_NOT_FOUND;
+          return;
+        }
+        throw err;
+      }
+    });
+
+  decisions
+    .command("unlink <child>")
+    .description("Remove <child>'s recorded dependency on <parent>")
+    .requiredOption("--on <parent>", "The decision <child> no longer depends on")
+    .action(async (child: string, opts: { on: string }) => {
+      try {
+        const result = await fetchUnlink(child, opts.on);
+        console.error(formatRelateHuman(result));
+        console.log(formatRelateJson(result));
+        if (isRelateRejection(result.outcome)) {
+          process.exitCode = EXIT_USAGE;
+        }
+      } catch (err) {
+        if (err instanceof LinkNotFoundError) {
+          console.error(`[prim] ${err.message}`);
+          process.exitCode = EXIT_NOT_FOUND;
           return;
         }
         throw err;
