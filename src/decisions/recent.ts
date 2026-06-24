@@ -82,8 +82,10 @@ export async function fetchRecent(
   if (args.since !== undefined) {
     params.set("since", args.since);
   }
-  const client = deps.getClient();
   try {
+    // Inside the try so any future eager I/O in getClient surfaces as UNKNOWN
+    // rather than a throw — `prim welcome` leans on fetchRecent never rejecting.
+    const client = deps.getClient();
     const res = await daemonOrDirectGet<RecentResponse>(
       "decisions_recent",
       `/api/cli/decisions/recent?${params.toString()}`,
@@ -141,9 +143,26 @@ function authorLabel(row: DecisionFeedRow): string {
 }
 
 const AUTHOR_WIDTH = 18;
+const AREA_WIDTH = 12;
 
 function padRight(s: string, width: number): string {
   return s.length >= width ? `${s.slice(0, width - 1)} ` : s.padEnd(width, " ");
+}
+
+/**
+ * Render one feed row: `  HH:MM  author<pad>• area<pad>intent`. Extracted from
+ * the human formatter so `prim welcome` can inline the latest few decisions with
+ * byte-identical formatting. Pad the plain (uncolored) form to maintain
+ * alignment, then color the bullet alone — the visible width stays the same
+ * regardless of color, so columns line up under both TTY and piped output.
+ */
+export function formatRecentRow(row: DecisionFeedRow): string {
+  const clock = formatClock(row.classifiedAt);
+  const author = padRight(authorLabel(row), AUTHOR_WIDTH);
+  const areaText = row.area ? `• ${row.area}` : "•";
+  const areaPlain = padRight(areaText, AREA_WIDTH);
+  const areaCol = row.area ? areaPlain.replace("•", color("•", colorForArea(row.area))) : areaPlain;
+  return `  ${clock}  ${author}${areaCol}${row.intent}`;
 }
 
 export function formatRecentHuman(result: DecisionsRecentResult): string {
@@ -157,17 +176,7 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
   }
   const lines = [`[prim] recent · ${String(result.decisions.length)} decision(s)`];
   for (const row of result.decisions) {
-    const clock = formatClock(row.classifiedAt);
-    const author = padRight(authorLabel(row), AUTHOR_WIDTH);
-    // Pad the plain (uncolored) form to maintain alignment, then color
-    // the bullet alone — the visible width stays the same regardless
-    // of color, so columns line up under both TTY and piped output.
-    const areaText = row.area ? `• ${row.area}` : "•";
-    const areaPlain = padRight(areaText, 12);
-    const areaCol = row.area
-      ? areaPlain.replace("•", color("•", colorForArea(row.area)))
-      : areaPlain;
-    lines.push(`  ${clock}  ${author}${areaCol}${row.intent}`);
+    lines.push(formatRecentRow(row));
   }
   return lines.join("\n");
 }
