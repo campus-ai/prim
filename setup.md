@@ -6,7 +6,11 @@ step yourself via `npx` and surface the output — do not hand a command back to
 the user to run. The one action only the user can take is clicking "Authorize"
 in the browser during step 1; everything else is yours to drive. Each command
 pins `@latest`, so the user never installs or manages a prim version and always
-runs the newest CLI. If a command exits non-zero, stop and report.
+runs the newest CLI. If a command in a **required** step (1, 2, 4, 5) exits
+non-zero, stop and report. The daemon (step 3) is **optional** — if it doesn't
+come up, keep going. Step 6 always finishes by delivering the welcome message
+(the required final deliverable); its status confirmations are informational, and
+a non-zero there must never stop you from showing the welcome.
 
 First, identify which agent you are — **Claude Code** or **OpenAI Codex**. Steps
 2 and 6 branch on it; every other step is identical.
@@ -77,14 +81,25 @@ Codex, plus .cursor/rules, .windsurfrules, and
 ambiguous, it prints discovered candidates and exits non-zero — pass
 `--target <path>` to disambiguate.
 
-## 6. Confirm and welcome
-Verify each piece is live:
+## 6. Welcome (always), then confirm
+The welcome message is the **required final deliverable** of setup: once the
+install steps above succeeded, the user must always see it. Deliver it **first**,
+before the confirmations, so an optional component can never suppress it.
+
+Run `npx --yes @primitive.ai/prim@latest welcome` and surface its full output to
+the user — the canonical "here's how Primitive works" orientation. It runs
+locally and always exits 0; never skip it, summarize it away, or gate it behind
+the checks below.
+
+Then **run all four confirmations** and surface their results — these are
+informational (a non-zero must NOT abort the run or retract the welcome you just
+showed), but still run them so the user sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` if you are Codex
-- `npx --yes @primitive.ai/prim@latest daemon status`
+- `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
 - `npx --yes @primitive.ai/prim@latest skill status`
 
-Then run `npx --yes @primitive.ai/prim@latest welcome` and surface its output to
-the user — it is the canonical "here's how Primitive works" orientation. Add one
-line of your own for the setup specifics: which rules file received the skill
-block, and (Codex only) the `/hooks` trust reminder.
+Close with one line of setup specifics: which rules file received the skill
+block, and (Codex only) the `/hooks` trust reminder. The daemon confirm is
+expected to vary; an unexpected non-zero from auth or skill is worth a note in
+that line — but never retract the welcome.
