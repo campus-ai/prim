@@ -6,19 +6,24 @@
  * the output to the user. A brief, consistent "here's how Primitive works"
  * — owned and versioned here rather than improvised per setup.
  *
- * Now org-state aware via one best-effort `fetchRecent` call:
- *   - active org → inline the latest few team decisions (reused renderer),
- *   - empty org  → a reverse-prompt asking what the user is focusing on (and
- *     not), which the setup agent collects and breaks into decisions,
- *   - unknown    → the static get-started copy (feed unverifiable: offline,
- *     auth-expired, or org-unbound — never mistaken for a healthy empty org).
+ * State-aware via one best-effort `fetchRecent` call. The seed signal is
+ * VIEWER-scoped, not org-scoped: a member who has authored nothing yet is
+ * seeded even in an org that already has decisions.
+ *   - seed    → the requesting viewer has no decisions: a reverse-prompt
+ *               asking what they are focusing on (and not), which the setup
+ *               agent collects and breaks into decisions. If the team has
+ *               decisions, they are inlined above the prompt for context.
+ *   - active  → the viewer has decisions: inline the latest few team
+ *               decisions (reused renderer), no prompt.
+ *   - unknown → the static get-started copy (feed unverifiable: offline,
+ *               auth-expired, or org-unbound — never mistaken for seed).
  *
  * AX contract: the human orientation block goes to STDERR (the `[prim]`
- * human-readable convention); STDOUT carries the org state + payload
- * (`{ welcomed, org, recent | reversePrompt }`) so the agent can branch.
- * The fetch is best-effort and **always exits 0** — a failure degrades to
- * the `unknown` branch, never an error, preserving setup's "welcome always
- * lands" guarantee.
+ * human-readable convention); STDOUT carries the `org` discriminant + payload
+ * so the agent can branch — `seed` carries both `reversePrompt` and `recent`,
+ * `active` carries `recent`, `unknown` carries neither. The fetch is
+ * best-effort and **always exits 0** — a failure degrades to the `unknown`
+ * branch, never an error, preserving setup's "welcome always lands" guarantee.
  */
 
 import type { Command } from "commander";
@@ -52,22 +57,31 @@ export const REVERSE_PROMPT = REVERSE_PROMPT_LINES.join(" ");
 
 export type WelcomeState =
   | { org: "active"; recent: DecisionFeedRow[] }
-  | { org: "empty" }
+  | { org: "seed"; recent: DecisionFeedRow[] }
   | { org: "unknown" };
 
 /**
  * Classify the recent-feed result into a welcome branch. UNKNOWN (unverifiable
- * feed) is kept distinct from a healthy empty org, so a network blip or expired
- * token never false-triggers the reverse-prompt.
+ * feed) is kept distinct, so a network blip or expired token never
+ * false-triggers the reverse-prompt.
+ *
+ * `seed` vs `active` is VIEWER-scoped: we seed whenever the requesting user has
+ * authored no decisions, even in an org that already has some (the team's
+ * decisions still ride along for context). When the server doesn't report
+ * `viewerHasDecisions` (a pre-flag backend), fall back to the org-scoped
+ * signal — a populated feed implies the viewer is not the org's first member,
+ * so don't re-seed them — preserving the prior behavior on version skew.
  */
 export function welcomeStateFromRecent(result: DecisionsRecentResult): WelcomeState {
   if (result.unavailable !== undefined) {
     return { org: "unknown" };
   }
-  if (result.decisions.length === 0) {
-    return { org: "empty" };
+  const recent = result.decisions.slice(0, RECENT_LIMIT);
+  const viewerHasDecisions = result.viewerHasDecisions ?? result.decisions.length > 0;
+  if (!viewerHasDecisions) {
+    return { org: "seed", recent };
   }
-  return { org: "active", recent: result.decisions.slice(0, RECENT_LIMIT) };
+  return { org: "active", recent };
 }
 
 export function formatWelcome(state: WelcomeState): string {
@@ -102,10 +116,17 @@ export function formatWelcome(state: WelcomeState): string {
       cmd("prim decisions check --files <files>", "what governs files you're about to change"),
       cmd("prim --help", "everything else"),
     ];
-  } else if (state.org === "empty") {
+  } else if (state.org === "seed") {
+    // The viewer has no decisions yet. If the team does, inline them above the
+    // prompt for context; either way, ask the viewer for their own goals.
+    const teamContext =
+      state.recent.length > 0
+        ? [bold("Recent team decisions"), ...state.recent.map(formatRecentRow), ""]
+        : [];
     body = [
+      ...teamContext,
       bold("Let's seed your decision graph"),
-      "Your team has no decisions recorded yet. Tell me, in your own words:",
+      "You haven't recorded a decision yet. Tell me, in your own words:",
       "",
       ...REVERSE_PROMPT_LINES.map((line) => `  ${line}`),
       "",
@@ -128,8 +149,16 @@ export function welcomeJson(state: WelcomeState): Record<string, unknown> {
   if (state.org === "active") {
     return { welcomed: true, org: "active", recent: state.recent };
   }
-  if (state.org === "empty") {
-    return { welcomed: true, org: "empty", reversePrompt: REVERSE_PROMPT };
+  if (state.org === "seed") {
+    // Carry both signals: the reverse-prompt to ask, and any team decisions
+    // (empty when the org itself has none) so the agent has the same context
+    // shown on STDERR.
+    return {
+      welcomed: true,
+      org: "seed",
+      reversePrompt: REVERSE_PROMPT,
+      recent: state.recent,
+    };
   }
   return { welcomed: true, org: "unknown" };
 }

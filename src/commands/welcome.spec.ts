@@ -1,10 +1,11 @@
 /**
- * `prim welcome` — orientation + org-state coverage. Asserts the formatted block
+ * `prim welcome` — orientation + state coverage. Asserts the formatted block
  * (ANSI-stripped) carries the load-bearing content for each branch: the shared
- * orientation is always present; an active org inlines recent decisions; an empty
- * org shows the reverse-prompt; and an unverifiable feed degrades to the static
- * starter commands. Color is gated on a stderr TTY, so under vitest the helpers
- * already return plain text — stripAnsi keeps the assertions robust either way.
+ * orientation is always present; a viewer with decisions inlines recent ones; a
+ * viewer with none gets the reverse-prompt (with team decisions above it when the
+ * org has any); and an unverifiable feed degrades to the static starter commands.
+ * Color is gated on a stderr TTY, so under vitest the helpers already return plain
+ * text — stripAnsi keeps the assertions robust either way.
  */
 
 import { describe, expect, it } from "vitest";
@@ -36,25 +37,46 @@ const row = (over: Partial<DecisionFeedRow> = {}): DecisionFeedRow => ({
 const plainOf = (state: WelcomeState): string => stripAnsi(formatWelcome(state));
 
 describe("welcomeStateFromRecent", () => {
-  it("maps an unverifiable feed to unknown — never to empty", () => {
-    expect(welcomeStateFromRecent({ decisions: [], unavailable: "boom" })).toEqual({
-      org: "unknown",
+  it("maps an unverifiable feed to unknown — never to seed", () => {
+    expect(
+      welcomeStateFromRecent({ decisions: [], viewerHasDecisions: false, unavailable: "boom" }),
+    ).toEqual({ org: "unknown" });
+  });
+
+  it("seeds a viewer with no decisions in an empty org (no team context)", () => {
+    expect(welcomeStateFromRecent({ decisions: [], viewerHasDecisions: false })).toEqual({
+      org: "seed",
+      recent: [],
     });
   });
 
-  it("maps a healthy empty feed to empty", () => {
-    expect(welcomeStateFromRecent({ decisions: [] })).toEqual({ org: "empty" });
-  });
-
-  it("maps a populated feed to active, capped at five rows", () => {
+  it("seeds a viewer with no decisions even when the team has some, carrying team context", () => {
     const decisions = Array.from({ length: 7 }, (_, i) =>
       row({ id: `d${i}`, intent: `Decision ${i}` }),
     );
-    const state = welcomeStateFromRecent({ decisions });
+    const state = welcomeStateFromRecent({ decisions, viewerHasDecisions: false });
+    expect(state.org).toBe("seed");
+    if (state.org === "seed") {
+      expect(state.recent).toHaveLength(5);
+    }
+  });
+
+  it("maps a viewer who has decisions to active, capped at five rows", () => {
+    const decisions = Array.from({ length: 7 }, (_, i) =>
+      row({ id: `d${i}`, intent: `Decision ${i}` }),
+    );
+    const state = welcomeStateFromRecent({ decisions, viewerHasDecisions: true });
     expect(state.org).toBe("active");
     if (state.org === "active") {
       expect(state.recent).toHaveLength(5);
     }
+  });
+
+  it("falls back to the org-scoped signal when the server omits viewerHasDecisions", () => {
+    // Pre-flag backend: a populated feed implies the viewer isn't the first
+    // member → active; an empty feed → seed. Preserves prior behavior.
+    expect(welcomeStateFromRecent({ decisions: [row()] }).org).toBe("active");
+    expect(welcomeStateFromRecent({ decisions: [] }).org).toBe("seed");
   });
 });
 
@@ -75,12 +97,27 @@ describe("formatWelcome", () => {
     expect(plain).not.toContain("…");
   });
 
-  it("empty org: reverse-prompt asking what the user is and isn't focusing on", () => {
-    const plain = plainOf({ org: "empty" });
+  it("seed (empty org): reverse-prompt, viewer-scoped copy, no team-context block", () => {
+    const plain = plainOf({ org: "seed", recent: [] });
     expect(plain).toContain("Welcome to Primitive");
     expect(plain).toContain("seed your decision graph");
+    expect(plain).toContain("You haven't recorded a decision yet");
     expect(plain).toContain("most important goals");
     expect(plain).toContain("not focusing on");
+    expect(plain).not.toContain("Recent team decisions");
+    expect(plain).not.toContain("prim decisions recent");
+  });
+
+  it("seed (active org): team decisions inlined above the reverse-prompt", () => {
+    const plain = plainOf({
+      org: "seed",
+      recent: [row({ intent: "Restrict PII storage to EU region" })],
+    });
+    expect(plain).toContain("Recent team decisions");
+    expect(plain).toContain("Restrict PII storage to EU region");
+    expect(plain).toContain("Maya");
+    expect(plain).toContain("You haven't recorded a decision yet");
+    expect(plain).toContain("most important goals");
     expect(plain).not.toContain("prim decisions recent");
   });
 
@@ -103,11 +140,22 @@ describe("welcomeJson", () => {
     });
   });
 
-  it("empty carries org + the flat reverse-prompt", () => {
-    expect(welcomeJson({ org: "empty" })).toEqual({
+  it("seed carries org + the flat reverse-prompt + team context", () => {
+    const recent = [row()];
+    expect(welcomeJson({ org: "seed", recent })).toEqual({
       welcomed: true,
-      org: "empty",
+      org: "seed",
       reversePrompt: REVERSE_PROMPT,
+      recent,
+    });
+  });
+
+  it("seed in an empty org carries an empty recent array", () => {
+    expect(welcomeJson({ org: "seed", recent: [] })).toEqual({
+      welcomed: true,
+      org: "seed",
+      reversePrompt: REVERSE_PROMPT,
+      recent: [],
     });
   });
 

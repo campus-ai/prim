@@ -110,6 +110,24 @@ describe("fetchRecent", () => {
     expect(result.unavailable).toBeUndefined();
   });
 
+  it("reads the server's viewerHasDecisions flag through when present", async () => {
+    const has = await fetchRecent(
+      {},
+      depsReturning({ decisions: [SELF_ROW], viewerHasDecisions: true }),
+    );
+    expect(has.viewerHasDecisions).toBe(true);
+    const hasnt = await fetchRecent(
+      {},
+      depsReturning({ decisions: [], viewerHasDecisions: false }),
+    );
+    expect(hasnt.viewerHasDecisions).toBe(false);
+  });
+
+  it("leaves viewerHasDecisions undefined on a pre-flag backend", async () => {
+    const result = await fetchRecent({}, depsReturning({ decisions: [SELF_ROW] }));
+    expect(result.viewerHasDecisions).toBeUndefined();
+  });
+
   it("forwards limit and since as query params", async () => {
     const get = vi.fn().mockResolvedValue({ decisions: [] });
     const deps: RecentDeps = { getClient: () => clientWith(get) };
