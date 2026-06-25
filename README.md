@@ -83,15 +83,22 @@ prim daemon start      # start (stop / restart / status)
 Read and respond to the decision graph.
 
 ```bash
-prim decisions recent              # Recent decisions feed
-prim decisions show <id>           # Drill into one decision
-prim decisions cascade <id>        # Blast radius of a decision
-prim decisions check --files <…>   # Active decisions referencing files (warn-only)
-prim decisions confirm <id>        # Answer a rationale-confirmation prompt
+prim decisions recent                    # Recent decisions feed
+prim decisions show <id>                 # Drill into one decision
+prim decisions cascade <id>              # Blast radius of a decision
+prim decisions check --files <…>         # Active decisions referencing files (warn-only)
+prim decisions confirm <id>              # Answer a rationale-confirmation prompt
+prim decisions create --intent <…>       # Author a decision directly (flags-only)
+prim decisions link <child> --on <parent>    # Relate: <child> depends on <parent>
+prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
 
 `<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
+
+`link` / `unlink` curate the dependency edges the automatic linker would otherwise
+own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that
+would create a cycle (exit 2); an unresolved id exits 4.
 
 ### Reconcile
 

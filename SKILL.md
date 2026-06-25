@@ -9,7 +9,7 @@ description: Use the prim CLI for Primitive's decision graph — passive decisio
 
 ## Mental model
 
-As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions and reference the files it touched. When a later change conflicts with a load-bearing prior decision, prim **gates** the edit and surfaces the decision for review.
+As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. When a later change conflicts with a load-bearing prior decision, prim **gates** the edit and surfaces the decision for review.
 
 You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code) or `npx --yes @primitive.ai/prim codex install` (Codex). Your job is to **respond** to the gate, **read** the graph before load-bearing edits, and **answer** the occasional rationale confirmation.
 
@@ -76,6 +76,25 @@ npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab
 ```
 
 Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — pass these to make the conflict gate fire on later edits to those files, same path form as `decisions check`). STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`. Author on the user's behalf only when they ask for a decision to be recorded; don't narrate your own routine edits into the graph (the hooks already do that).
+
+## Relate decisions (link / unlink)
+
+prim links decisions automatically when their files overlap, but that heuristic misses real connections and occasionally invents wrong ones. When the user asks you to **relate two existing decisions** — "B depends on A", "these are connected", wiring up two orphans — or to **cut a wrong link**, do it by hand:
+
+```
+npx --yes @primitive.ai/prim decisions link <child> --on <parent>      # record that <child> depends on <parent>
+npx --yes @primitive.ai/prim decisions unlink <child> --on <parent>    # remove that dependency
+```
+
+Direction is **`<child>` depends on `<parent>`** — the parent is the prerequisite. Read the echoed verdict to confirm you got the arrow right: `[prim] <child> now depends on <parent>.` After linking, `decisions show <child>` lists `<parent>` upstream and `decisions cascade <parent>` shows `<child>` in its downstream blast radius; after unlinking they drop. Both ids accept `dec_<short>` or a full id and may be any two decisions in your org, regardless of status.
+
+Safe to run repeatedly:
+
+- **Idempotent** — re-linking an existing edge (or unlinking a missing one) is a no-op that still exits 0 (`already_linked` / `not_linked`).
+- **Acyclic** — a self-loop, or any link that would close a dependency cycle, is refused with exit 2 (with the offending chain when it's short enough to render); the graph stays a DAG.
+- **Exit codes** (treat non-zero as actionable): `0` success or no-op; `2` a refused link (self-loop, cycle, or an ambiguous short id — retry with the full id); `4` an id that doesn't resolve. After a non-zero exit, branch on the exit code and the `[prim]` STDERR verdict, **not** on STDOUT keys: only the exit-0 outcomes carry the full `{ outcome, childId, childShortId, parentId, parentShortId }`; a refused link prints a smaller `{ outcome, … }`, and an unresolved id (exit 4) prints nothing to STDOUT.
+
+Like authoring, relate only what the user asks for — don't invent relationships they didn't state.
 
 ## Presence
 
