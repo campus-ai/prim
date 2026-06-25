@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.23](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.22...v0.1.0-alpha.23) (2026-06-25)
+
+
+### Features
+
+* **decisions:** link/unlink commands to relate decisions ([#89](https://github.com/campus-ai/prim/issues/89)) ([2c9f55d](https://github.com/campus-ai/prim/commit/2c9f55da91ac0f0c5961f45381d70de138797217))
+
+
+### Bug Fixes
+
+* **cli:** make the seeding question the terminal call-to-action ([#93](https://github.com/campus-ai/prim/issues/93)) ([95666fb](https://github.com/campus-ai/prim/commit/95666fb27911b0cd1436437bc6be943604eeeb2c))
+* **cli:** seed the welcome flow by viewer, not org ([#92](https://github.com/campus-ai/prim/issues/92)) ([4353fab](https://github.com/campus-ai/prim/commit/4353fabade2d5d077012b5e80e8fbe287b4955b6))
+
 ## [0.1.0-alpha.22](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.21...v0.1.0-alpha.22) (2026-06-24)
 
 
