@@ -59,9 +59,9 @@ describe("setup.md onboarding flow", () => {
     }
   });
 
-  it("handles the empty-org reverse-prompt branch (seed the graph via decisions create)", () => {
+  it("handles the viewer-seed reverse-prompt branch (seed the graph via decisions create)", () => {
     const step6 = SETUP.slice(SETUP.indexOf("## 6."));
-    expect(step6).toContain('"org": "empty"');
+    expect(step6).toContain('"org": "seed"');
     expect(step6).toContain("decisions create");
   });
 });

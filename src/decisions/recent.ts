@@ -44,6 +44,14 @@ export interface DecisionFeedRow {
 export interface DecisionsRecentResult {
   decisions: DecisionFeedRow[];
   /**
+   * Whether the requesting viewer has authored any decision in this org —
+   * the welcome flow seeds a member who hasn't, regardless of the org's
+   * own history. Absent on the org-unbound branch (the server omits it
+   * when it sets `unavailable`) and on a pre-flag backend, so consumers
+   * must treat absent as "unknown", never as "has decisions".
+   */
+  viewerHasDecisions?: boolean;
+  /**
    * Present when the feed could not be verified (state UNKNOWN): an
    * org-unbound token (server returns this on a 200), or a thrown
    * transport/auth/validation error whose reason is recorded here.
@@ -55,6 +63,7 @@ export interface DecisionsRecentResult {
 /** Wire shape the server returns; `unavailable` arrives on org-unbound. */
 type RecentResponse = {
   decisions: DecisionFeedRow[];
+  viewerHasDecisions?: boolean;
   unavailable?: string;
 };
 
@@ -95,6 +104,9 @@ export async function fetchRecent(
     // Read the server's `unavailable` through (org-unbound token → 200 with
     // an empty feed plus a reason). A healthy feed never carries it.
     const result: DecisionsRecentResult = { decisions: res.decisions };
+    if (res.viewerHasDecisions !== undefined) {
+      result.viewerHasDecisions = res.viewerHasDecisions;
+    }
     if (res.unavailable !== undefined) {
       result.unavailable = res.unavailable;
     }
