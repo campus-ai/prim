@@ -97,18 +97,23 @@ describe("formatWelcome", () => {
     expect(plain).not.toContain("…");
   });
 
-  it("seed (empty org): reverse-prompt, viewer-scoped copy, no team-context block", () => {
+  it("seed (empty org): ruled question callout is the terminal call-to-action, no team block, no footer after", () => {
     const plain = plainOf({ org: "seed", recent: [] });
     expect(plain).toContain("Welcome to Primitive");
     expect(plain).toContain("seed your decision graph");
     expect(plain).toContain("You haven't recorded a decision yet");
+    expect(plain).toContain("Your turn");
     expect(plain).toContain("most important goals");
     expect(plain).toContain("not focusing on");
     expect(plain).not.toContain("Recent team decisions");
     expect(plain).not.toContain("prim decisions recent");
+    // The question is the LAST thing the user sees: the callout's bottom rule
+    // ends the block, and the App footer is suppressed so nothing follows it.
+    expect(plain).not.toContain("App: https://app.getprimitive.ai");
+    expect(plain.trimEnd().endsWith("┘")).toBe(true);
   });
 
-  it("seed (active org): team decisions inlined above the reverse-prompt", () => {
+  it("seed (active org): team decisions inlined above the ruled question callout, question still terminal", () => {
     const plain = plainOf({
       org: "seed",
       recent: [row({ intent: "Restrict PII storage to EU region" })],
@@ -116,9 +121,13 @@ describe("formatWelcome", () => {
     expect(plain).toContain("Recent team decisions");
     expect(plain).toContain("Restrict PII storage to EU region");
     expect(plain).toContain("Maya");
+    expect(plain).toContain("Your turn");
     expect(plain).toContain("You haven't recorded a decision yet");
     expect(plain).toContain("most important goals");
     expect(plain).not.toContain("prim decisions recent");
+    // Team context sits ABOVE the question; the question is still terminal.
+    expect(plain.indexOf("Recent team decisions")).toBeLessThan(plain.indexOf("Your turn"));
+    expect(plain.trimEnd().endsWith("┘")).toBe(true);
   });
 
   it("unknown feed: shared orientation + static starter-command fallback", () => {

@@ -81,40 +81,51 @@ Codex, plus .cursor/rules, .windsurfrules, and
 ambiguous, it prints discovered candidates and exits non-zero — pass
 `--target <path>` to disambiguate.
 
-## 6. Welcome (always), then confirm
-The welcome message is the **required final deliverable** of setup: once the
-install steps above succeeded, the user must always see it. Deliver it **first**,
-before the confirmations, so an optional component can never suppress it.
+## 6. Welcome (always), confirm, then the seeding question — last
+The welcome message is a **required deliverable** of setup: once the install
+steps above succeeded, the user must always see it. Run it first and never skip
+it, summarize it away, or gate it behind the checks below.
 
-Run `npx --yes @primitive.ai/prim@latest welcome` and surface its full output to
-the user — the canonical "here's how Primitive works" orientation. It adapts to
-you: if **you** have recorded decisions it inlines the latest team decisions; if
-you haven't yet, it prints a reverse-prompt to seed the graph (handled next) —
+Run `npx --yes @primitive.ai/prim@latest welcome` and surface its **orientation**
+— the canonical "here's how Primitive works". It adapts to you: if **you** have
+recorded decisions it inlines the team's latest decisions; if you haven't yet, it
+also prints a reverse-prompt — a ruled "Your turn" callout — to seed the graph,
 with the team's recent decisions above it for context when the org has any. It
-always exits 0 (a failed decisions fetch degrades gracefully); never skip it,
-summarize it away, or gate it behind the checks below.
+always exits 0 (a failed decisions fetch degrades gracefully).
 
-**If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
-yet, so seed the graph before the confirmations (this fires even in an org that
-already has decisions). welcome has already printed the reverse-prompt; ask it
-and let the user answer freely. Break their answer into **one decision per goal**
-they name (infer the best `--kind` for each; map a goal to `--intent` /
-`--decided`, and what they're *not* focusing on to `--alternatives`). Show the
-drafted decisions and **confirm with the user before creating**, then record each:
-`npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
-If STDOUT shows `"org": "active"` (recent decisions already displayed) or
-`"org": "unknown"` (feed unverifiable — the static orientation already landed),
-there's nothing to seed here.
+If the output ends with that "Your turn" callout, **hold it back here** — surface
+only the orientation above it for now; you'll reproduce the callout once, at the
+very end, as the closing call-to-action. Showing it now and again later buries the
+first copy in the middle of your message, which is exactly what we're avoiding.
 
-Then **run all four confirmations** and surface their results — these are
-informational (a non-zero must NOT abort the run or retract the welcome you just
-showed), but still run them so the user sees the live post-install state:
+Then **run the four confirmations** and surface their results — informational (a
+non-zero must NOT abort the run or retract the welcome), but run them so the user
+sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` if you are Codex
 - `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
 - `npx --yes @primitive.ai/prim@latest skill status`
 
-Close with one line of setup specifics: which rules file received the skill
-block, and (Codex only) the `/hooks` trust reminder. The daemon confirm is
-expected to vary; an unexpected non-zero from auth or skill is worth a note in
-that line — but never retract the welcome.
+Add one line of setup specifics: which rules file received the skill block, and
+(Codex only) the `/hooks` trust reminder. The daemon confirm is expected to vary;
+an unexpected non-zero from auth or skill is worth a note — but never retract the
+welcome.
+
+**Then close:**
+
+**If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
+yet (this fires even in an org that already has decisions). Make the seeding
+question the LAST thing you say: end your message with it as a single, emphasized
+block addressed to the user — render it the way welcome did, as the "Your turn"
+callout (the question text is on STDOUT as `reversePrompt`) — with **nothing after
+it**: no confirmations, no orientation, no sign-off. Then **stop and wait** for
+their answer; a question buried above other text reads as if no answer is expected,
+and this one must be unmistakably theirs to answer.
+When the user replies (your next turn), break their answer into **one decision per
+goal** they name (infer the best `--kind`; map a goal to `--intent` / `--decided`,
+and what they're *not* focusing on to `--alternatives`), show the drafted
+decisions, **confirm before creating**, then record each:
+`npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
+
+**If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
+question; the setup-specifics line is your close.

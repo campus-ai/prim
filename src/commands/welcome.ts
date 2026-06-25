@@ -10,9 +10,11 @@
  * VIEWER-scoped, not org-scoped: a member who has authored nothing yet is
  * seeded even in an org that already has decisions.
  *   - seed    → the requesting viewer has no decisions: a reverse-prompt
- *               asking what they are focusing on (and not), which the setup
- *               agent collects and breaks into decisions. If the team has
- *               decisions, they are inlined above the prompt for context.
+ *               asking what they are focusing on (and not), rendered as a
+ *               ruled "Your turn" callout that is the terminal call to action
+ *               (no footer follows it), which the setup agent collects and
+ *               breaks into decisions. If the team has decisions, they are
+ *               inlined above the prompt for context.
  *   - active  → the viewer has decisions: inline the latest few team
  *               decisions (reused renderer), no prompt.
  *   - unknown → the static get-started copy (feed unverifiable: offline,
@@ -54,6 +56,30 @@ const REVERSE_PROMPT_LINES = [
   "to focus on those goals?",
 ];
 export const REVERSE_PROMPT = REVERSE_PROMPT_LINES.join(" ");
+
+// The seeding question is the human's one call-to-action — the thing they must
+// answer for setup to finish. Frame it in a ruled "Your turn" callout so it
+// reads as a prompt addressed to them, not buried orientation. The rule width
+// adapts to the longest line (the prompt is pre-wrapped), so it always clears
+// the text. Border is colored for a TTY and strips to plain box-drawing chars
+// when piped — width is computed on the plain string either way.
+const CALLOUT_TITLE = "Your turn";
+const CALLOUT_INDENT = "  ";
+
+function ruledQuestion(lines: string[]): string[] {
+  const prefix = `┌─ ${CALLOUT_TITLE} `;
+  const width = Math.max(
+    `${prefix}┐`.length,
+    ...lines.map((line) => CALLOUT_INDENT.length + line.length + 1),
+  );
+  const top = `${prefix}${"─".repeat(width - prefix.length - 1)}┐`;
+  const bottom = `└${"─".repeat(top.length - 2)}┘`;
+  return [
+    color(top, "green"),
+    ...lines.map((line) => `${CALLOUT_INDENT}${line}`),
+    color(bottom, "green"),
+  ];
+}
 
 export type WelcomeState =
   | { org: "active"; recent: DecisionFeedRow[] }
@@ -117,8 +143,9 @@ export function formatWelcome(state: WelcomeState): string {
       cmd("prim --help", "everything else"),
     ];
   } else if (state.org === "seed") {
-    // The viewer has no decisions yet. If the team does, inline them above the
-    // prompt for context; either way, ask the viewer for their own goals.
+    // The viewer has no decisions yet. If the team does, inline them above for
+    // context; then close on the ruled question callout so it's the terminal
+    // call to action — nothing follows it (the App footer is suppressed below).
     const teamContext =
       state.recent.length > 0
         ? [bold("Recent team decisions"), ...state.recent.map(formatRecentRow), ""]
@@ -126,11 +153,10 @@ export function formatWelcome(state: WelcomeState): string {
     body = [
       ...teamContext,
       bold("Let's seed your decision graph"),
-      "You haven't recorded a decision yet. Tell me, in your own words:",
+      "You haven't recorded a decision yet — answer this and I'll record",
+      "each goal as a decision:",
       "",
-      ...REVERSE_PROMPT_LINES.map((line) => `  ${line}`),
-      "",
-      "Share your answer and I'll record each goal as a decision.",
+      ...ruledQuestion(REVERSE_PROMPT_LINES),
     ];
   } else {
     body = [
@@ -141,7 +167,11 @@ export function formatWelcome(state: WelcomeState): string {
     ];
   }
 
-  return [...head, ...body, "", dim("App: https://app.getprimitive.ai")].join("\n");
+  // The seed branch ends on the question callout — its call to action must be
+  // the last thing the user sees, so the App footer is suppressed there (it
+  // still rides along on the active/unknown branches).
+  const footer = state.org === "seed" ? [] : ["", dim("App: https://app.getprimitive.ai")];
+  return [...head, ...body, ...footer].join("\n");
 }
 
 /** STDOUT payload: the org state plus the branch-specific signal for the agent. */

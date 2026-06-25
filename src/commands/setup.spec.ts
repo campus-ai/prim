@@ -64,4 +64,18 @@ describe("setup.md onboarding flow", () => {
     expect(step6).toContain('"org": "seed"');
     expect(step6).toContain("decisions create");
   });
+
+  it("makes the seeding question the terminal call-to-action (after the confirmations, stop and wait)", () => {
+    const step6 = SETUP.slice(SETUP.indexOf("## 6."));
+    // The seed CTA + decisions create come AFTER the last confirmation, so the
+    // question is the last thing the agent says — never buried above the checks.
+    expect(step6.indexOf('"org": "seed"')).toBeGreaterThan(step6.indexOf("skill status"));
+    expect(step6.indexOf("decisions create")).toBeGreaterThan(step6.indexOf("skill status"));
+    // And the contract spells out the terminal-CTA behavior explicitly. Collapse
+    // whitespace first so hard-wrapped phrases still match.
+    const flat = step6.replace(/\s+/g, " ").toLowerCase();
+    expect(flat).toContain("stop and wait");
+    expect(flat).toContain("nothing after it");
+    expect(flat).toContain("hold it back");
+  });
 });
