@@ -44,7 +44,7 @@ describe("checkAffectedDecisions", () => {
 
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_affecting",
-      { path: "/api/cli/decisions/affecting?files=src%2Fa.ts" },
+      expect.objectContaining({ path: "/api/cli/decisions/affecting?files=src%2Fa.ts" }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();

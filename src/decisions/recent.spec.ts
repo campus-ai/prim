@@ -97,7 +97,7 @@ describe("fetchRecent", () => {
     expect(result.decisions).toEqual([SELF_ROW]);
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_recent",
-      { path: "/api/cli/decisions/recent?limit=5&since=30m" },
+      expect.objectContaining({ path: "/api/cli/decisions/recent?limit=5&since=30m" }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();

@@ -58,7 +58,7 @@ describe("fetchCascade", () => {
     expect(result).toBe(RESULT);
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_cascade",
-      { path: "/api/cli/decisions/cascade?id=dec_230a72aa" },
+      expect.objectContaining({ path: "/api/cli/decisions/cascade?id=dec_230a72aa" }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();

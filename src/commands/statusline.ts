@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
+import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { formatTeammates } from "../lib/presence.js";
 
@@ -38,6 +39,9 @@ type StatusSnapshot = {
   // True when the daemon is alive but its heartbeats have stopped landing, so
   // the cached presence is frozen and not to be trusted.
   presenceStale?: boolean;
+  // True when the daemon is bound to a DIFFERENT deployment than this statusline
+  // targets; presence is withheld (it would be another env's roster).
+  envMismatch?: boolean;
 };
 
 const STATUSLINE_TIMEOUT_MS = 200;
@@ -77,12 +81,19 @@ export async function renderStatusline(): Promise<string> {
   const version = readPackageVersion();
   const snapshot = await daemonRequest<StatusSnapshot>(
     "status_snapshot",
-    {},
+    // callerEnv lets the daemon withhold presence when it is bound to a different
+    // deployment than this statusline targets.
+    { callerEnv: getSiteUrl() },
     { timeoutMs: STATUSLINE_TIMEOUT_MS },
   );
   if (!snapshot) {
     debug("daemon snapshot missing");
     return `primitive ${version} (daemon: down)`;
+  }
+  // The daemon is alive but on another deployment — show that honestly rather
+  // than its env's team or a misleading "down".
+  if (snapshot.envMismatch) {
+    return `primitive ${version} (daemon: live · presence: other env)`;
   }
   // A stale snapshot means the daemon is alive but its heartbeats are failing —
   // the cached presence is frozen, so render the degraded state honestly

@@ -74,6 +74,20 @@ describe("renderStatusline", () => {
     expect(line).not.toContain("team:");
   });
 
+  it("shows 'presence: other env' (never another deployment's team) on an env mismatch", async () => {
+    // Daemon alive but bound to a different deployment than this statusline
+    // targets: it withholds the roster and flags envMismatch, so we render the
+    // honest cross-env state — not its team, and not a misleading "down".
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(undefined),
+      envMismatch: true,
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: live");
+    expect(line).toContain("presence: other env");
+    expect(line).not.toContain("team:");
+  });
+
   it("renders 'presence: stale' (never a frozen count) when the daemon flags staleness", async () => {
     // Daemon alive but heartbeats failing: it drops the count and sets
     // presenceStale, so the statusline must not render a confident "team: N".
