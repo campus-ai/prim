@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.25](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.24...v0.1.0-alpha.25) (2026-06-26)
+
+
+### Bug Fixes
+
+* **cli:** broaden the prim pre-auth rule to cover day-to-day calls ([#97](https://github.com/campus-ai/prim/issues/97)) ([32013c8](https://github.com/campus-ai/prim/commit/32013c8bba0ad0b43ae0c9259be1583e77eae32c))
+
 ## [0.1.0-alpha.24](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.23...v0.1.0-alpha.24) (2026-06-26)
 
 
