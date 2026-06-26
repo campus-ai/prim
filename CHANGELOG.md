@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.24](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.23...v0.1.0-alpha.24) (2026-06-26)
+
+
+### Features
+
+* **cli:** one-shot `prim setup` + pre-authorize prim in claude install ([#95](https://github.com/campus-ai/prim/issues/95)) ([c28dcfa](https://github.com/campus-ai/prim/commit/c28dcfa93e3efcd3f56692230f5637a027f6e961))
+
 ## [0.1.0-alpha.23](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.22...v0.1.0-alpha.23) (2026-06-25)
 
 
