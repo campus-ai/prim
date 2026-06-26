@@ -47,9 +47,10 @@ prim daemon start
 prim hooks install
 ```
 
-`prim claude install` also writes a scoped `Bash(npx --yes @primitive.ai/prim@latest:*)`
-allow-rule into `.claude/settings.json`, so an agent's prim calls don't stall on a
-permission prompt.
+`prim claude install` also writes a scoped `Bash(npx --yes @primitive.ai/prim:*)`
+allow-rule into `.claude/settings.json` (covering both the `@latest` onboarding form
+and the bare day-to-day form), so an agent's prim calls don't stall on a permission
+prompt.
 
 An AI coding agent can drive the setup itself — see [`setup.md`](./setup.md).
 

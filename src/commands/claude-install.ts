@@ -163,11 +163,23 @@ export type ClaudeSettings = {
   [key: string]: unknown;
 };
 
-// Pre-authorize the agent's own prim invocations so a copy/paste onboarding
-// (or any later `decisions`/`welcome` call) doesn't stall on a permission
-// prompt. Scoped to the exact `npx @latest` form the docs use — not a blanket
-// Bash grant. Removed cleanly on uninstall.
-export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim@latest:*)";
+// Pre-authorize the agent's own prim invocations so neither the copy/paste
+// onboarding nor the standing `decisions`/`reconcile`/`welcome` calls stall on
+// a permission prompt. The prefix deliberately stops at the package name, BEFORE
+// `@latest`, so it covers BOTH invocation forms in our docs: setup.md uses
+// `npx --yes @primitive.ai/prim@latest …` while SKILL.md (the installed agent
+// contract) uses `npx --yes @primitive.ai/prim …` — a `@latest`-pinned rule
+// would match the former but not the day-to-day latter. Still scoped to the prim
+// package, not a blanket Bash grant. Removed cleanly on uninstall.
+export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim:*)";
+
+// Earlier releases pinned `@latest`. Recognize the legacy rule so re-installing
+// upgrades it to the broader prefix and uninstall removes it either way.
+const LEGACY_PRIM_PERMISSION_RULES = ["Bash(npx --yes @primitive.ai/prim@latest:*)"];
+const ALL_PRIM_PERMISSION_RULES = new Set<string>([
+  PRIM_PERMISSION_RULE,
+  ...LEGACY_PRIM_PERMISSION_RULES,
+]);
 
 function settingsPathFor(scope: Scope): string {
   return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
@@ -282,13 +294,17 @@ function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
 function applyPermissions(settings: ClaudeSettings): ClaudeSettings {
   const permissions = settings.permissions ?? {};
   const allow = permissions.allow ?? [];
-  if (allow.includes(PRIM_PERMISSION_RULE)) {
+  // Drop any prim rule (canonical or legacy), then re-add the canonical one at
+  // the end — this both migrates an older `@latest` install and stays a no-op
+  // once the canonical rule is already the sole prim entry.
+  const withoutPrim = allow.filter((rule) => !ALL_PRIM_PERMISSION_RULES.has(rule));
+  const nextAllow = [...withoutPrim, PRIM_PERMISSION_RULE];
+  const unchanged =
+    allow.length === nextAllow.length && allow.every((rule, i) => rule === nextAllow[i]);
+  if (unchanged) {
     return settings;
   }
-  return {
-    ...settings,
-    permissions: { ...permissions, allow: [...allow, PRIM_PERMISSION_RULE] },
-  };
+  return { ...settings, permissions: { ...permissions, allow: nextAllow } };
 }
 
 /**
@@ -298,10 +314,10 @@ function applyPermissions(settings: ClaudeSettings): ClaudeSettings {
  */
 function removePrimPermission(settings: ClaudeSettings): ClaudeSettings {
   const permissions = settings.permissions;
-  if (!permissions?.allow?.includes(PRIM_PERMISSION_RULE)) {
+  if (!permissions?.allow?.some((rule) => ALL_PRIM_PERMISSION_RULES.has(rule))) {
     return settings;
   }
-  const allow = permissions.allow.filter((rule) => rule !== PRIM_PERMISSION_RULE);
+  const allow = permissions.allow.filter((rule) => !ALL_PRIM_PERMISSION_RULES.has(rule));
   // Set emptied fields to undefined rather than deleting — atomicWrite's
   // JSON.stringify drops undefined keys, the same idiom applyUninstall uses for
   // statusLine. Drop the whole permissions object once nothing defined remains.
