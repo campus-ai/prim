@@ -24,6 +24,15 @@ npx @primitive.ai/prim
 
 ## Quick Start
 
+One command does the whole install — auth, session hooks, daemon, git hooks,
+skill, and the welcome:
+
+```bash
+prim setup                 # add --agent codex for Codex, --no-daemon to skip the daemon
+```
+
+Or run the steps individually:
+
 ```bash
 # 1. Authenticate via browser (WorkOS OAuth)
 prim auth login
@@ -38,9 +47,25 @@ prim daemon start
 prim hooks install
 ```
 
-An AI coding agent can drive the entire setup itself — see [`setup.md`](./setup.md).
+`prim claude install` also writes a scoped `Bash(npx --yes @primitive.ai/prim@latest:*)`
+allow-rule into `.claude/settings.json`, so an agent's prim calls don't stall on a
+permission prompt.
+
+An AI coding agent can drive the setup itself — see [`setup.md`](./setup.md).
 
 ## Commands
+
+### Setup
+
+```bash
+prim setup                   # Run the whole install in one shot
+prim setup --agent codex     # Same, for OpenAI Codex
+prim setup --no-daemon       # Skip the companion daemon
+```
+
+Orchestrates auth → session hooks → daemon → git hooks → skill → welcome,
+re-running each underlying command so every step behaves exactly as if run by
+hand (including the browser login). Idempotent — safe to re-run.
 
 ### Auth
 

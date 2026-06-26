@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
+  PRIM_PERMISSION_RULE,
   applyInstall,
   applyUninstall,
   isGateInstalled,
@@ -197,6 +198,42 @@ describe("applyUninstall", () => {
   it("strips a prim hook co-located with a non-prim command without dropping the sibling", () => {
     const out = applyUninstall(COLOCATED);
     expect(commandsFor(out, "PreToolUse")).toEqual(["/usr/local/bin/other"]);
+  });
+});
+
+describe("permissions pre-authorization", () => {
+  const EMPTY: ClaudeSettings = {};
+
+  it("install adds the scoped prim allow-rule", () => {
+    const out = applyInstall(EMPTY);
+    expect(out.permissions?.allow).toContain(PRIM_PERMISSION_RULE);
+  });
+
+  it("is idempotent — re-installing does not duplicate the rule", () => {
+    const once = applyInstall(EMPTY);
+    const twice = applyInstall(once);
+    const count = (twice.permissions?.allow ?? []).filter((r) => r === PRIM_PERMISSION_RULE).length;
+    expect(count).toBe(1);
+  });
+
+  it("preserves the user's existing allow entries and other permission keys", () => {
+    const existing: ClaudeSettings = {
+      permissions: { allow: ["Bash(ls:*)"], deny: ["Bash(rm:*)"] },
+    };
+    const out = applyInstall(existing);
+    expect(out.permissions?.allow).toEqual(["Bash(ls:*)", PRIM_PERMISSION_RULE]);
+    expect(out.permissions?.deny).toEqual(["Bash(rm:*)"]);
+  });
+
+  it("uninstall removes the rule and drops an emptied permissions object", () => {
+    const out = applyUninstall(applyInstall(EMPTY));
+    expect(out.permissions).toBeUndefined();
+  });
+
+  it("uninstall keeps the user's other allow entries while removing ours", () => {
+    const installed = applyInstall({ permissions: { allow: ["Bash(ls:*)"] } });
+    const out = applyUninstall(installed);
+    expect(out.permissions?.allow).toEqual(["Bash(ls:*)"]);
   });
 });
 
