@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.26](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.25...v0.1.0-alpha.26) (2026-06-26)
+
+
+### Bug Fixes
+
+* **cli:** tidy pre-auth idempotency and two over-claiming comments ([#99](https://github.com/campus-ai/prim/issues/99)) ([2370d54](https://github.com/campus-ai/prim/commit/2370d54e7b9ec36f07c6409b56e8521877622ea4))
+
 ## [0.1.0-alpha.25](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.24...v0.1.0-alpha.25) (2026-06-26)
 
 
