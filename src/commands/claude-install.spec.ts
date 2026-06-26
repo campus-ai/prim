@@ -241,6 +241,16 @@ describe("permissions pre-authorization", () => {
   // disk — otherwise a stale @latest rule lingers forever.
   const LEGACY_RULE = "Bash(npx --yes @primitive.ai/prim@latest:*)";
 
+  it("is a true no-op when the canonical rule is present but not last (no reorder churn)", () => {
+    // A user appended their own allow entry after a prior prim install, so our
+    // rule is no longer last; re-installing must not reorder/rewrite it.
+    const settings: ClaudeSettings = {
+      permissions: { allow: [PRIM_PERMISSION_RULE, "Bash(ls:*)"] },
+    };
+    const out = applyInstall(settings);
+    expect(out.permissions?.allow).toEqual([PRIM_PERMISSION_RULE, "Bash(ls:*)"]);
+  });
+
   it("install upgrades a legacy @latest rule to the broadened prefix", () => {
     const out = applyInstall({ permissions: { allow: [LEGACY_RULE] } });
     expect(out.permissions?.allow).toContain(PRIM_PERMISSION_RULE);

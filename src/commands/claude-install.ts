@@ -294,17 +294,21 @@ function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
 function applyPermissions(settings: ClaudeSettings): ClaudeSettings {
   const permissions = settings.permissions ?? {};
   const allow = permissions.allow ?? [];
-  // Drop any prim rule (canonical or legacy), then re-add the canonical one at
-  // the end — this both migrates an older `@latest` install and stays a no-op
-  // once the canonical rule is already the sole prim entry.
-  const withoutPrim = allow.filter((rule) => !ALL_PRIM_PERMISSION_RULES.has(rule));
-  const nextAllow = [...withoutPrim, PRIM_PERMISSION_RULE];
-  const unchanged =
-    allow.length === nextAllow.length && allow.every((rule, i) => rule === nextAllow[i]);
-  if (unchanged) {
+  const hasCanonical = allow.includes(PRIM_PERMISSION_RULE);
+  const hasLegacy = allow.some((rule) => LEGACY_PRIM_PERMISSION_RULES.includes(rule));
+  // True no-op when the canonical rule is already present and there's no legacy
+  // rule to migrate — regardless of its position, so a user appending their own
+  // allow entry after a prior install doesn't trigger a spurious reorder/rewrite.
+  if (hasCanonical && !hasLegacy) {
     return settings;
   }
-  return { ...settings, permissions: { ...permissions, allow: nextAllow } };
+  // Otherwise migrate: drop any prim rule (canonical or legacy) and append the
+  // canonical one exactly once, preserving the user's other entries.
+  const withoutPrim = allow.filter((rule) => !ALL_PRIM_PERMISSION_RULES.has(rule));
+  return {
+    ...settings,
+    permissions: { ...permissions, allow: [...withoutPrim, PRIM_PERMISSION_RULE] },
+  };
 }
 
 /**

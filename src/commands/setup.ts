@@ -86,8 +86,8 @@ export function registerSetupCommand(program: Command): void {
     .option("--scope <scope>", "project or user (session integration)", "project")
     .option("--no-daemon", "skip starting the companion daemon")
     .action((opts: { agent: string; scope: string; daemon: boolean }) => {
-      // Fail loud on a typo rather than silently installing the wrong thing —
-      // the same posture resolveScope takes for `claude install --scope`.
+      // Fail loud on a typo rather than silently installing the wrong thing.
+      // Usage error → exit 2, the CLI's convention for rejected input.
       if (opts.agent !== "claude" && opts.agent !== "codex") {
         process.stderr.write(`[prim] unknown --agent "${opts.agent}" (expected claude or codex)\n`);
         process.exit(EXIT_USAGE);
@@ -137,10 +137,11 @@ export function registerSetupCommand(program: Command): void {
         results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
       }
 
-      // Final · welcome — its own output (orientation + any "Your turn" seeding
-      // prompt) streams straight through as the closing message. It's the
-      // required final deliverable, so a non-zero (it normally exits 0) is
-      // surfaced in the trail rather than silently reported as ok.
+      // Final · welcome — its output (orientation + any "Your turn" seeding
+      // prompt) streams through inherited stdio BEFORE we read the exit code, so
+      // the required final deliverable is always shown. A non-zero (it normally
+      // exits 0) is surfaced as `failed` — which, like any required step, flips
+      // the overall exit to incomplete — rather than silently reported as ok.
       note("welcome");
       results.welcome = run(["welcome"]).code === 0 ? "ok" : "failed";
 
