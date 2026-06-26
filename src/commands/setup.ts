@@ -23,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import type { Command } from "commander";
 
 const EXIT_INCOMPLETE = 1;
+const EXIT_USAGE = 2;
 
 export type SetupAgent = "claude" | "codex";
 export type SetupScope = "project" | "user";
@@ -85,8 +86,18 @@ export function registerSetupCommand(program: Command): void {
     .option("--scope <scope>", "project or user (session integration)", "project")
     .option("--no-daemon", "skip starting the companion daemon")
     .action((opts: { agent: string; scope: string; daemon: boolean }) => {
-      const agent: SetupAgent = opts.agent === "codex" ? "codex" : "claude";
-      const scope: SetupScope = opts.scope === "user" ? "user" : "project";
+      // Fail loud on a typo rather than silently installing the wrong thing —
+      // the same posture resolveScope takes for `claude install --scope`.
+      if (opts.agent !== "claude" && opts.agent !== "codex") {
+        process.stderr.write(`[prim] unknown --agent "${opts.agent}" (expected claude or codex)\n`);
+        process.exit(EXIT_USAGE);
+      }
+      if (opts.scope !== "project" && opts.scope !== "user") {
+        process.stderr.write(`[prim] unknown --scope "${opts.scope}" (expected project or user)\n`);
+        process.exit(EXIT_USAGE);
+      }
+      const agent: SetupAgent = opts.agent;
+      const scope: SetupScope = opts.scope;
       const self = process.argv[1];
 
       const run = (args: string[], capture = false): { code: number; stdout: string } => {
@@ -127,10 +138,11 @@ export function registerSetupCommand(program: Command): void {
       }
 
       // Final · welcome — its own output (orientation + any "Your turn" seeding
-      // prompt) streams straight through as the closing message.
+      // prompt) streams straight through as the closing message. It's the
+      // required final deliverable, so a non-zero (it normally exits 0) is
+      // surfaced in the trail rather than silently reported as ok.
       note("welcome");
-      run(["welcome"]);
-      results.welcome = "ok";
+      results.welcome = run(["welcome"]).code === 0 ? "ok" : "failed";
 
       const failed = Object.entries(results)
         .filter(([, v]) => v === "failed")

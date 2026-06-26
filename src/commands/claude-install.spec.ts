@@ -235,6 +235,22 @@ describe("permissions pre-authorization", () => {
     const out = applyUninstall(installed);
     expect(out.permissions?.allow).toEqual(["Bash(ls:*)"]);
   });
+
+  // Earlier releases pinned @latest; re-installing must upgrade it to the
+  // broader prefix, and uninstall must clear it regardless of which form is on
+  // disk — otherwise a stale @latest rule lingers forever.
+  const LEGACY_RULE = "Bash(npx --yes @primitive.ai/prim@latest:*)";
+
+  it("install upgrades a legacy @latest rule to the broadened prefix", () => {
+    const out = applyInstall({ permissions: { allow: [LEGACY_RULE] } });
+    expect(out.permissions?.allow).toContain(PRIM_PERMISSION_RULE);
+    expect(out.permissions?.allow).not.toContain(LEGACY_RULE);
+  });
+
+  it("uninstall removes the legacy @latest rule too", () => {
+    const out = applyUninstall({ permissions: { allow: [LEGACY_RULE] } });
+    expect(out.permissions).toBeUndefined();
+  });
 });
 
 describe("isGateInstalled", () => {
