@@ -149,11 +149,25 @@ export type StatusLineConfig = {
   refreshInterval?: number;
 };
 
+export type PermissionsConfig = {
+  allow?: string[];
+  deny?: string[];
+  ask?: string[];
+  [key: string]: unknown;
+};
+
 export type ClaudeSettings = {
   hooks?: Record<string, HookEntry[] | undefined>;
   statusLine?: StatusLineConfig;
+  permissions?: PermissionsConfig;
   [key: string]: unknown;
 };
+
+// Pre-authorize the agent's own prim invocations so a copy/paste onboarding
+// (or any later `decisions`/`welcome` call) doesn't stall on a permission
+// prompt. Scoped to the exact `npx @latest` form the docs use — not a blanket
+// Bash grant. Removed cleanly on uninstall.
+export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim@latest:*)";
 
 function settingsPathFor(scope: Scope): string {
   return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
@@ -259,6 +273,46 @@ function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
   };
 }
 
+/**
+ * Ensure the prim allow-rule is present in permissions.allow, idempotently and
+ * without disturbing the user's other permission entries. Pre-authorizing prim
+ * here means the grant originates from project/user settings (trusted) rather
+ * than a fetched setup doc — which is the scope an agent cannot self-approve.
+ */
+function applyPermissions(settings: ClaudeSettings): ClaudeSettings {
+  const permissions = settings.permissions ?? {};
+  const allow = permissions.allow ?? [];
+  if (allow.includes(PRIM_PERMISSION_RULE)) {
+    return settings;
+  }
+  return {
+    ...settings,
+    permissions: { ...permissions, allow: [...allow, PRIM_PERMISSION_RULE] },
+  };
+}
+
+/**
+ * Drop the prim allow-rule on uninstall, leaving every other permission intact.
+ * An emptied `allow` array and an emptied `permissions` object are removed so
+ * uninstall returns the settings to their pre-prim shape.
+ */
+function removePrimPermission(settings: ClaudeSettings): ClaudeSettings {
+  const permissions = settings.permissions;
+  if (!permissions?.allow?.includes(PRIM_PERMISSION_RULE)) {
+    return settings;
+  }
+  const allow = permissions.allow.filter((rule) => rule !== PRIM_PERMISSION_RULE);
+  // Set emptied fields to undefined rather than deleting — atomicWrite's
+  // JSON.stringify drops undefined keys, the same idiom applyUninstall uses for
+  // statusLine. Drop the whole permissions object once nothing defined remains.
+  const nextPermissions: PermissionsConfig = {
+    ...permissions,
+    allow: allow.length > 0 ? allow : undefined,
+  };
+  const hasOtherPerms = Object.values(nextPermissions).some((v) => v !== undefined);
+  return { ...settings, permissions: hasOtherPerms ? nextPermissions : undefined };
+}
+
 export function applyInstall(
   settings: ClaudeSettings,
   options: { force?: boolean } = {},
@@ -267,7 +321,7 @@ export function applyInstall(
   for (const reg of REGISTRATIONS) {
     hooks[reg.event] = ensureRegistration(hooks[reg.event] ?? [], reg, options.force ?? false);
   }
-  return applyStatusLine({ ...settings, hooks });
+  return applyPermissions(applyStatusLine({ ...settings, hooks }));
 }
 
 export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
@@ -288,7 +342,7 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
   if (isPrimStatusLine(next)) {
     next.statusLine = undefined;
   }
-  return next;
+  return removePrimPermission(next);
 }
 
 function captureInstalled(settings: ClaudeSettings): boolean {
