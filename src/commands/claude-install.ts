@@ -164,18 +164,31 @@ export type ClaudeSettings = {
 };
 
 // Pre-authorize the agent's own prim invocations so neither the copy/paste
-// onboarding nor the standing `decisions`/`reconcile`/`welcome` calls stall on
-// a permission prompt. The prefix deliberately stops at the package name, BEFORE
-// `@latest`, so it covers BOTH invocation forms in our docs: setup.md uses
-// `npx --yes @primitive.ai/prim@latest …` while SKILL.md (the installed agent
-// contract) uses `npx --yes @primitive.ai/prim …` — a `@latest`-pinned rule
-// would match the former but not the day-to-day latter. Still scoped to the prim
-// package, not a blanket Bash grant. Removed cleanly on uninstall.
-export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim:*)";
+// onboarding nor the standing `decisions`/`reconcile`/`welcome` calls stall on a
+// permission prompt. The rule must cover BOTH invocation forms in our docs:
+// setup.md runs `npx --yes @primitive.ai/prim@latest …` while SKILL.md (the
+// installed agent contract) runs `npx --yes @primitive.ai/prim …`.
+//
+// Claude Code's Bash matcher treats a trailing ` *` / `:*` as a word boundary:
+// the prefix must be followed by a space or end-of-string
+// (code.claude.com/docs/en/permissions). So `Bash(npx --yes @primitive.ai/prim:*)`
+// matches the bare ` …` form but NOT `…/prim@latest …`, where `@` (not a space)
+// follows the prefix — and a `@latest`-pinned rule has the mirror gap. The
+// boundary-free `…/prim*` matches every form (the `@latest` pin, an exact
+// version, and the bare day-to-day call) while staying scoped to the prim package
+// — `@primitive.ai/prim` is the only such name on npm — not a blanket Bash grant.
+// Removed cleanly on uninstall.
+export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim*)";
 
-// Earlier releases pinned `@latest`. Recognize the legacy rule so re-installing
-// upgrades it to the broader prefix and uninstall removes it either way.
-const LEGACY_PRIM_PERMISSION_RULES = ["Bash(npx --yes @primitive.ai/prim@latest:*)"];
+// Earlier releases used boundary-suffixed forms, each of which silently missed
+// one doc invocation form: `@latest:*` matched setup.md but not the day-to-day
+// call; `prim:*` matched the day-to-day call but not setup.md's `@latest`.
+// Recognize both so re-installing upgrades them to the boundary-free rule and
+// uninstall clears whichever is on disk.
+const LEGACY_PRIM_PERMISSION_RULES = [
+  "Bash(npx --yes @primitive.ai/prim@latest:*)",
+  "Bash(npx --yes @primitive.ai/prim:*)",
+];
 const ALL_PRIM_PERMISSION_RULES = new Set<string>([
   PRIM_PERMISSION_RULE,
   ...LEGACY_PRIM_PERMISSION_RULES,
@@ -455,6 +468,36 @@ export function performUninstall(scope: Scope): InstallResult {
   };
 }
 
+export type PermissionInstallResult = {
+  scope: Scope;
+  path: string;
+  allowed: boolean;
+  changed: boolean;
+};
+
+/**
+ * Write ONLY the prim allow-rule (no hooks, no statusline) into the chosen
+ * scope's settings.json. This is what `prim claude preauth` and `prim setup`
+ * use to pre-authorize prim at USER scope: it lets the machine-global grant land
+ * without also installing the session hooks machine-wide (those stay project
+ * scope). Idempotent and atomic, like performInstall.
+ */
+export function performPermissionInstall(scope: Scope): PermissionInstallResult {
+  const path = settingsPathFor(scope);
+  const before = readSettings(path);
+  const after = applyPermissions(before);
+  const changed = JSON.stringify(before) !== JSON.stringify(after);
+  if (changed) {
+    atomicWrite(path, after);
+  }
+  return {
+    scope,
+    path,
+    allowed: (after.permissions?.allow ?? []).includes(PRIM_PERMISSION_RULE),
+    changed,
+  };
+}
+
 export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   const statusFor = (path: string): ScopeStatus => {
     const settings = readSettings(path);
@@ -508,6 +551,26 @@ export function registerClaudeCommands(program: Command): void {
           `[prim] Claude Code integration already present at ${result.path} (no changes)`,
         );
       }
+      console.log(JSON.stringify(result, null, JSON_INDENT));
+    });
+
+  claude
+    .command("preauth")
+    .description("Write only the prim allow-rule (no hooks) so prim's own npx calls never prompt")
+    .option(
+      "--scope <scope>",
+      "user (default for preauth — covers every repo) or project (this repo's .claude/settings.json)",
+    )
+    .action((opts: { scope?: string }) => {
+      // Default to USER scope: a machine-wide prim grant means every future
+      // repo's onboarding runs without a permission prompt, not just this one.
+      const scope = resolveScope(opts.scope ?? "user");
+      const result = performPermissionInstall(scope);
+      console.error(
+        result.changed
+          ? `[prim] prim allow-rule written (${scope} scope) at ${result.path}`
+          : `[prim] prim allow-rule already present at ${result.path} (no changes)`,
+      );
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });
 

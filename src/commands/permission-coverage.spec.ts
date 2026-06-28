@@ -1,15 +1,18 @@
 /**
  * Drift guard: the pre-authorization allow-rule must actually cover the prim
- * invocations our docs tell agents to run.
+ * invocations our docs tell agents to run — under Claude Code's REAL matcher
+ * semantics, not a naive prefix check.
  *
- * #95 pinned the rule to `@latest`, which matched setup.md's onboarding calls
- * but NOT SKILL.md's day-to-day calls (which omit `@latest`) — so the
- * "your prim calls stop prompting" claim was false for normal operation. This
- * extracts every `npx … @primitive.ai/prim …` invocation from both the
- * onboarding doc (setup.md) and the installed agent contract (SKILL.md) and
- * asserts each one is covered by the rule's authorized prefix. If a doc ever
- * drifts to a flag form the rule doesn't match (e.g. `npx -y`, no `--yes`), this
- * fails — the exact bug class this team tracks.
+ * History of the bug class this tracks: #95 pinned the rule to `@latest`, which
+ * matched setup.md's onboarding calls but not SKILL.md's bare day-to-day calls;
+ * #97 then swapped to the bare `…/prim:*` form, which (because Claude Code's
+ * trailing `:*` enforces a word boundary — the prefix must be followed by a space
+ * or end-of-string) matched the bare form but silently STOPPED matching setup.md's
+ * `…/prim@latest …` form. A naive `startsWith` check can't see either gap, because
+ * it ignores the boundary. So this extracts every FULL `npx … @primitive.ai/prim …`
+ * invocation from both the onboarding doc (setup.md) and the installed agent
+ * contract (SKILL.md) and runs it through a faithful model of the matcher. If a
+ * doc ever drifts to a flag form the rule doesn't match (e.g. `npx -y`), it fails.
  */
 
 import { readFileSync } from "node:fs";
@@ -21,28 +24,55 @@ import { PRIM_PERMISSION_RULE } from "./claude-install.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (name: string) => readFileSync(resolve(root, name), "utf-8");
 
-// The command prefix the rule authorizes: strip the `Bash(` wrapper and `:*)`
-// wildcard. Bash(prefix:*) auto-approves any command starting with `prefix`.
-const authorizedPrefix = PRIM_PERMISSION_RULE.replace(/^Bash\(/, "").replace(/:\*\)$/, "");
+/**
+ * Faithful model of Claude Code's Bash allow-rule matcher
+ * (code.claude.com/docs/en/permissions): a trailing ` *` or `:*` enforces a word
+ * boundary (prefix must be followed by a space or end-of-string); a bare trailing
+ * `*` has no boundary. This is what makes the guard real — it sees the boundary a
+ * `startsWith` check is blind to.
+ */
+function bashRuleMatches(rule: string, command: string): boolean {
+  const inner = /^Bash\((.*)\)$/.exec(rule)?.[1];
+  if (inner === undefined) {
+    return false;
+  }
+  if (inner.endsWith(":*") || inner.endsWith(" *")) {
+    const prefix = inner.slice(0, -2);
+    return (
+      command.startsWith(prefix) &&
+      (command.length === prefix.length || command[prefix.length] === " ")
+    );
+  }
+  if (inner.endsWith("*")) {
+    return command.startsWith(inner.slice(0, -1));
+  }
+  return command === inner;
+}
 
-// Every `npx …@primitive.ai/prim` invocation, captured up to the package name
-// (the form the rule must prefix-match), ignoring any trailing `@latest`/args.
+// Every FULL `npx …@primitive.ai/prim …` invocation, captured to end of line or
+// the closing inline-code backtick — including the `@latest`/args the matcher's
+// word boundary actually turns on. Captures any npx form (e.g. `npx -y`) so a
+// doc drifting to a flag the rule doesn't cover fails here.
 function npxPrimInvocations(text: string): string[] {
-  return [...text.matchAll(/npx[^\n`]*?@primitive\.ai\/prim/g)].map((m) => m[0]);
+  return [...text.matchAll(/npx[^\n`]*?@primitive\.ai\/prim[^\n`]*/g)].map((m) => m[0].trim());
 }
 
 describe("pre-authorization rule covers the documented prim invocations", () => {
-  it("authorizes the bare day-to-day form (the SKILL.md / steady-state case)", () => {
-    // Regression pin for #95: this is the form that the @latest rule missed.
-    expect("npx --yes @primitive.ai/prim decisions check".startsWith(authorizedPrefix)).toBe(true);
-    expect("npx --yes @primitive.ai/prim@latest welcome".startsWith(authorizedPrefix)).toBe(true);
+  it("authorizes BOTH the @latest onboarding form and the bare day-to-day form", () => {
+    // Regression pins for #95 (bare form missed) and #97 (@latest form missed).
+    expect(
+      bashRuleMatches(PRIM_PERMISSION_RULE, "npx --yes @primitive.ai/prim decisions check"),
+    ).toBe(true);
+    expect(
+      bashRuleMatches(PRIM_PERMISSION_RULE, "npx --yes @primitive.ai/prim@latest welcome"),
+    ).toBe(true);
   });
 
   for (const doc of ["setup.md", "SKILL.md"]) {
     it(`every npx prim invocation in ${doc} is covered by the rule`, () => {
       const invocations = npxPrimInvocations(read(doc));
       expect(invocations.length).toBeGreaterThan(0);
-      const uncovered = invocations.filter((cmd) => !cmd.startsWith(authorizedPrefix));
+      const uncovered = invocations.filter((cmd) => !bashRuleMatches(PRIM_PERMISSION_RULE, cmd));
       expect(uncovered).toEqual([]);
     });
   }
