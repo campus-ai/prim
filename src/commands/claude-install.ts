@@ -468,6 +468,36 @@ export function performUninstall(scope: Scope): InstallResult {
   };
 }
 
+export type PermissionInstallResult = {
+  scope: Scope;
+  path: string;
+  allowed: boolean;
+  changed: boolean;
+};
+
+/**
+ * Write ONLY the prim allow-rule (no hooks, no statusline) into the chosen
+ * scope's settings.json. This is what `prim claude preauth` and `prim setup`
+ * use to pre-authorize prim at USER scope: it lets the machine-global grant land
+ * without also installing the session hooks machine-wide (those stay project
+ * scope). Idempotent and atomic, like performInstall.
+ */
+export function performPermissionInstall(scope: Scope): PermissionInstallResult {
+  const path = settingsPathFor(scope);
+  const before = readSettings(path);
+  const after = applyPermissions(before);
+  const changed = JSON.stringify(before) !== JSON.stringify(after);
+  if (changed) {
+    atomicWrite(path, after);
+  }
+  return {
+    scope,
+    path,
+    allowed: (after.permissions?.allow ?? []).includes(PRIM_PERMISSION_RULE),
+    changed,
+  };
+}
+
 export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   const statusFor = (path: string): ScopeStatus => {
     const settings = readSettings(path);
@@ -521,6 +551,26 @@ export function registerClaudeCommands(program: Command): void {
           `[prim] Claude Code integration already present at ${result.path} (no changes)`,
         );
       }
+      console.log(JSON.stringify(result, null, JSON_INDENT));
+    });
+
+  claude
+    .command("preauth")
+    .description("Write only the prim allow-rule (no hooks) so prim's own npx calls never prompt")
+    .option(
+      "--scope <scope>",
+      "user (default for preauth — covers every repo) or project (this repo's .claude/settings.json)",
+    )
+    .action((opts: { scope?: string }) => {
+      // Default to USER scope: a machine-wide prim grant means every future
+      // repo's onboarding runs without a permission prompt, not just this one.
+      const scope = resolveScope(opts.scope ?? "user");
+      const result = performPermissionInstall(scope);
+      console.error(
+        result.changed
+          ? `[prim] prim allow-rule written (${scope} scope) at ${result.path}`
+          : `[prim] prim allow-rule already present at ${result.path} (no changes)`,
+      );
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });
 
