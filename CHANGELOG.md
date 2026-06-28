@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.28](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.27...v0.1.0-alpha.28) (2026-06-28)
+
+
+### Features
+
+* pass auto-mode classifier with zero approvals (command-first onboarding + autoMode trust) ([#104](https://github.com/campus-ai/prim/issues/104)) ([8950792](https://github.com/campus-ai/prim/commit/8950792ad9f3a50a9d4446de9846aea96a0ea354))
+
 ## [0.1.0-alpha.27](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.26...v0.1.0-alpha.27) (2026-06-28)
 
 
