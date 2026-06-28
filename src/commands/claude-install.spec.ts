@@ -13,7 +13,9 @@ import { describe, expect, it } from "vitest";
 import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
+  PRIM_AUTOMODE_TRUST,
   PRIM_PERMISSION_RULE,
+  applyAutoModeTrust,
   applyInstall,
   applyUninstall,
   isGateInstalled,
@@ -332,6 +334,66 @@ describe("PRIM_PERMISSION_RULE covers both doc invocation forms", () => {
     const legacyLatest = "Bash(npx --yes @primitive.ai/prim@latest:*)";
     expect(bashRuleMatches(legacyLatest, SETUP_FORM)).toBe(true);
     expect(bashRuleMatches(legacyLatest, SKILL_FORM)).toBe(false);
+  });
+});
+
+describe("auto-mode trust (autoMode.environment)", () => {
+  it("seeds $defaults when creating environment, so the built-ins aren't replaced", () => {
+    // Per the auto-mode docs, setting environment without "$defaults" discards
+    // Claude Code's built-in trusted environment — so we must seed it.
+    const out = applyAutoModeTrust({});
+    expect(out.autoMode?.environment).toEqual(["$defaults", PRIM_AUTOMODE_TRUST]);
+  });
+
+  it("is idempotent — re-applying does not duplicate the trust line", () => {
+    const once = applyAutoModeTrust({});
+    const twice = applyAutoModeTrust(once);
+    expect(twice.autoMode?.environment).toEqual(["$defaults", PRIM_AUTOMODE_TRUST]);
+  });
+
+  it("appends to an existing environment without injecting a second $defaults or reordering", () => {
+    const existing: ClaudeSettings = {
+      autoMode: { environment: ["$defaults", "Trusted: github.com/acme"] },
+    };
+    const out = applyAutoModeTrust(existing);
+    expect(out.autoMode?.environment).toEqual([
+      "$defaults",
+      "Trusted: github.com/acme",
+      PRIM_AUTOMODE_TRUST,
+    ]);
+  });
+
+  it("respects a user's $defaults-free environment (full ownership) — appends, never injects $defaults", () => {
+    const existing: ClaudeSettings = { autoMode: { environment: ["Only my infra"] } };
+    const out = applyAutoModeTrust(existing);
+    expect(out.autoMode?.environment).toEqual(["Only my infra", PRIM_AUTOMODE_TRUST]);
+  });
+
+  it("preserves other autoMode keys when adding the trust line", () => {
+    const existing: ClaudeSettings = { autoMode: { soft_deny: ["$defaults", "no prod deploys"] } };
+    const out = applyAutoModeTrust(existing);
+    expect(out.autoMode?.soft_deny).toEqual(["$defaults", "no prod deploys"]);
+    expect(out.autoMode?.environment).toEqual(["$defaults", PRIM_AUTOMODE_TRUST]);
+  });
+
+  it("uninstall removes the trust line and the $defaults scaffold we seeded", () => {
+    const out = applyUninstall(applyAutoModeTrust({}));
+    expect(out.autoMode).toBeUndefined();
+  });
+
+  it("uninstall keeps the user's own environment entries (and their $defaults) while removing ours", () => {
+    const installed = applyAutoModeTrust({
+      autoMode: { environment: ["$defaults", "Trusted: github.com/acme"] },
+    });
+    const out = applyUninstall(installed);
+    expect(out.autoMode?.environment).toEqual(["$defaults", "Trusted: github.com/acme"]);
+  });
+
+  it("uninstall keeps other autoMode keys while dropping our environment line", () => {
+    const installed = applyAutoModeTrust({ autoMode: { soft_deny: ["no prod deploys"] } });
+    const out = applyUninstall(installed);
+    expect(out.autoMode?.environment).toBeUndefined();
+    expect(out.autoMode?.soft_deny).toEqual(["no prod deploys"]);
   });
 });
 
