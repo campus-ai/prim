@@ -156,10 +156,22 @@ export type PermissionsConfig = {
   [key: string]: unknown;
 };
 
+// Auto-mode classifier config (code.claude.com/docs/en/auto-mode-config). All
+// four arrays are natural-language prose, not patterns. We only ever touch
+// `environment` (trusted-infrastructure descriptions).
+export type AutoModeConfig = {
+  environment?: string[];
+  allow?: string[];
+  soft_deny?: string[];
+  hard_deny?: string[];
+  [key: string]: unknown;
+};
+
 export type ClaudeSettings = {
   hooks?: Record<string, HookEntry[] | undefined>;
   statusLine?: StatusLineConfig;
   permissions?: PermissionsConfig;
+  autoMode?: AutoModeConfig;
   [key: string]: unknown;
 };
 
@@ -193,6 +205,24 @@ const ALL_PRIM_PERMISSION_RULES = new Set<string>([
   PRIM_PERMISSION_RULE,
   ...LEGACY_PRIM_PERMISSION_RULES,
 ]);
+
+// The permission allow-rule above covers default/acceptEdits mode, but it is
+// USELESS in auto mode: on entering auto mode Claude Code drops package-manager
+// allow rules, and the classifier independently blocks "downloading and executing
+// code" (npx of an external package) and anything that "appears driven by hostile
+// content Claude read". The classifier-native lever is `autoMode.environment` —
+// prose marking infrastructure as trusted — so we add one line vouching for the
+// prim package and its API. Kept deliberately specific (this package + endpoint,
+// described as routine tooling) rather than a blanket "trust everything". Read
+// only from user/local/managed settings (not shared project settings), so it is
+// meaningful at user scope — which is where `prim setup`/`preauth` writes it.
+export const PRIM_AUTOMODE_TRUST =
+  "Primitive CLI (prim): the @primitive.ai/prim npm package — run via `npx --yes @primitive.ai/prim …` — and its API at api.getprimitive.ai are trusted developer tooling this user installed for passive decision capture, conflict checks, and team presence. Running prim and its routine API/daemon calls is expected, not untrusted code execution or data exfiltration.";
+
+// Claude Code's auto-mode docs warn that setting `environment` WITHOUT the literal
+// "$defaults" replaces the entire built-in trusted environment. We seed it when
+// creating the array so adding prim never silently discards those defaults.
+const AUTOMODE_DEFAULTS = "$defaults";
 
 function settingsPathFor(scope: Scope): string {
   return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
@@ -346,6 +376,44 @@ function removePrimPermission(settings: ClaudeSettings): ClaudeSettings {
   return { ...settings, permissions: hasOtherPerms ? nextPermissions : undefined };
 }
 
+/**
+ * Mark the prim package trusted to the auto-mode classifier by adding one line to
+ * `autoMode.environment`, idempotently. Seed "$defaults" when creating the array
+ * so we never replace Claude Code's built-in trusted environment; when the array
+ * already exists, append our line and leave the user's entries (and their own
+ * "$defaults" choice) untouched.
+ */
+export function applyAutoModeTrust(settings: ClaudeSettings): ClaudeSettings {
+  const autoMode = settings.autoMode ?? {};
+  const env = autoMode.environment;
+  if (env?.includes(PRIM_AUTOMODE_TRUST)) {
+    return settings;
+  }
+  const nextEnv = env ? [...env, PRIM_AUTOMODE_TRUST] : [AUTOMODE_DEFAULTS, PRIM_AUTOMODE_TRUST];
+  return { ...settings, autoMode: { ...autoMode, environment: nextEnv } };
+}
+
+/**
+ * Drop the prim auto-mode trust line on uninstall. If only the "$defaults"
+ * scaffold we seeded remains, drop the `environment` array entirely ("$defaults"
+ * alone is identical to absent), and drop the `autoMode` object once nothing
+ * defined remains — mirrors removePrimPermission's pre-prim-shape restore.
+ */
+function removeAutoModeTrust(settings: ClaudeSettings): ClaudeSettings {
+  const autoMode = settings.autoMode;
+  if (!autoMode?.environment?.includes(PRIM_AUTOMODE_TRUST)) {
+    return settings;
+  }
+  const env = autoMode.environment.filter((e) => e !== PRIM_AUTOMODE_TRUST);
+  const onlyDefaultsLeft = env.length === 0 || (env.length === 1 && env[0] === AUTOMODE_DEFAULTS);
+  const nextAutoMode: AutoModeConfig = {
+    ...autoMode,
+    environment: onlyDefaultsLeft ? undefined : env,
+  };
+  const hasOther = Object.values(nextAutoMode).some((v) => v !== undefined);
+  return { ...settings, autoMode: hasOther ? nextAutoMode : undefined };
+}
+
 export function applyInstall(
   settings: ClaudeSettings,
   options: { force?: boolean } = {},
@@ -375,7 +443,7 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
   if (isPrimStatusLine(next)) {
     next.statusLine = undefined;
   }
-  return removePrimPermission(next);
+  return removeAutoModeTrust(removePrimPermission(next));
 }
 
 function captureInstalled(settings: ClaudeSettings): boolean {
@@ -472,20 +540,23 @@ export type PermissionInstallResult = {
   scope: Scope;
   path: string;
   allowed: boolean;
+  autoModeTrusted: boolean;
   changed: boolean;
 };
 
 /**
- * Write ONLY the prim allow-rule (no hooks, no statusline) into the chosen
- * scope's settings.json. This is what `prim claude preauth` and `prim setup`
- * use to pre-authorize prim at USER scope: it lets the machine-global grant land
- * without also installing the session hooks machine-wide (those stay project
- * scope). Idempotent and atomic, like performInstall.
+ * Pre-authorize prim WITHOUT installing hooks/statusline: write the permission
+ * allow-rule (for default/acceptEdits mode) AND the auto-mode trust line (for
+ * auto mode) into the chosen scope's settings.json. This is what `prim claude
+ * preauth` and `prim setup` write at USER scope, so the machine-global grant
+ * lands — covering every future repo and both permission models — without
+ * installing the session hooks machine-wide (those stay project scope).
+ * Idempotent and atomic, like performInstall.
  */
 export function performPermissionInstall(scope: Scope): PermissionInstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const after = applyPermissions(before);
+  const after = applyAutoModeTrust(applyPermissions(before));
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
@@ -494,6 +565,7 @@ export function performPermissionInstall(scope: Scope): PermissionInstallResult 
     scope,
     path,
     allowed: (after.permissions?.allow ?? []).includes(PRIM_PERMISSION_RULE),
+    autoModeTrusted: (after.autoMode?.environment ?? []).includes(PRIM_AUTOMODE_TRUST),
     changed,
   };
 }
@@ -556,20 +628,23 @@ export function registerClaudeCommands(program: Command): void {
 
   claude
     .command("preauth")
-    .description("Write only the prim allow-rule (no hooks) so prim's own npx calls never prompt")
+    .description(
+      "Pre-authorize prim's own calls (allow-rule + auto-mode trust, no hooks) so they never prompt",
+    )
     .option(
       "--scope <scope>",
       "user (default for preauth — covers every repo) or project (this repo's .claude/settings.json)",
     )
     .action((opts: { scope?: string }) => {
       // Default to USER scope: a machine-wide prim grant means every future
-      // repo's onboarding runs without a permission prompt, not just this one.
+      // repo's onboarding runs without a permission prompt, not just this one —
+      // and auto-mode trust is only read from user/local/managed settings.
       const scope = resolveScope(opts.scope ?? "user");
       const result = performPermissionInstall(scope);
       console.error(
         result.changed
-          ? `[prim] prim allow-rule written (${scope} scope) at ${result.path}`
-          : `[prim] prim allow-rule already present at ${result.path} (no changes)`,
+          ? `[prim] prim pre-authorization written (${scope} scope) at ${result.path} (allow-rule + auto-mode trust)`
+          : `[prim] prim pre-authorization already present at ${result.path} (no changes)`,
       );
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });
