@@ -47,12 +47,25 @@ prim daemon start
 prim hooks install
 ```
 
-`prim claude install` also writes a scoped `Bash(npx --yes @primitive.ai/prim:*)`
-allow-rule into `.claude/settings.json` (covering both the `@latest` onboarding form
-and the bare day-to-day form), so an agent's prim calls don't stall on a permission
-prompt.
+`prim setup` (and `prim claude preauth`) also pre-authorize prim so an agent's own
+calls never stall on a permission prompt: a scoped `Bash(npx --yes @primitive.ai/prim*)`
+allow-rule for default mode (it covers both the `@latest` onboarding form and the bare
+day-to-day form), plus an `autoMode.environment` trust line so auto mode's safety
+classifier treats prim as trusted tooling rather than untrusted downloaded code.
 
-An AI coding agent can drive the setup itself — see [`setup.md`](./setup.md).
+### Set up with your coding agent
+
+Paste this into Claude Code (or any coding agent). The command is in **your** message,
+so the agent runs it directly — instead of fetching a doc and executing a command from
+it, which an auto-mode safety classifier blocks as untrusted-origin code:
+
+```text
+Install the Primitive CLI: run `npx --yes @primitive.ai/prim@latest setup` and surface its output. It's an agent-first CLI — drive it yourself, don't hand the command back to me. The only thing I'll do is click "Authorize" in the browser if it asks. When it finishes, show me the welcome.
+```
+
+That single command runs the whole install in one process (auth → session hooks →
+daemon → git hooks → skill → welcome). The detailed step-by-step the agent follows —
+and the manual fallback — live in [`setup.md`](./setup.md).
 
 ## Commands
 

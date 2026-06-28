@@ -1,6 +1,18 @@
 <!-- PRIMITIVE_SETUP_V1 -->
 # Primitive CLI setup (v1)
 
+> **Onboarding via a coding agent? Don't paste "read this URL and follow it."**
+> That makes the agent fetch a doc and run a command lifted from it — the exact
+> pattern an auto-mode safety classifier blocks as untrusted-origin code. Paste the
+> command directly instead, so it originates from **you**:
+>
+> ```text
+> Install the Primitive CLI: run `npx --yes @primitive.ai/prim@latest setup` and surface its output. Drive it yourself; I'll only click Authorize in the browser. Then show me the welcome.
+> ```
+>
+> The rest of this file is the detailed guide the agent follows once `setup` is
+> running, plus the manual step-by-step fallback.
+
 You are an AI coding agent setting up the Primitive CLI for the user. Drive the
 whole thing yourself via `npx` and surface the output — never hand a command back
 to the user to run. The only action a human takes is clicking "Authorize" in the

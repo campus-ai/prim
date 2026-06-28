@@ -36,6 +36,16 @@ describe("setup.md onboarding flow", () => {
     expect(SETUP).toContain("<!-- PRIMITIVE_SETUP_V1 -->");
   });
 
+  it("steers onboarding to a user-originated command, not a fetched-doc instruction", () => {
+    // The command must come from the user's prompt, not from fetched markdown —
+    // otherwise the auto-mode classifier blocks it as untrusted-origin code. The
+    // steering note must sit at the very top, before the step-by-step guide.
+    const head = SETUP.slice(0, SETUP.indexOf("## 1."));
+    expect(head).toContain("npx --yes @primitive.ai/prim@latest setup");
+    expect(head.toLowerCase()).toContain("originates from");
+    expect(head.toLowerCase()).toContain("classifier");
+  });
+
   it("leads with the single `prim setup` command, before the fallback appendix", () => {
     const oneShot = SETUP.indexOf("@primitive.ai/prim@latest setup");
     const appendix = SETUP.indexOf("## Appendix");
