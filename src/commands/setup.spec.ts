@@ -3,14 +3,20 @@
  * user pastes into Claude Code / Codex to have the agent drive setup.
  *
  * setup.md isn't executable code, so it has no unit under test — but its FLOW is
- * load-bearing: a careless edit can silently break onboarding for every new user
- * (the exact failure these tests guard against). We assert the invariants that
- * make the flow correct: all six steps present and ordered, every core command
- * wired, the daemon kept optional — and, the regression this pins, the welcome
- * message delivered BEFORE the step-6 status confirmations. Welcome is the
- * required final deliverable; placing it after confirmations that legitimately
- * exit non-zero (a down/booting daemon, an absent skill block) let an optional
- * component abort the run before the user ever saw the welcome.
+ * load-bearing: a careless edit can silently break onboarding for every new user.
+ * The current contract LEADS with the single `prim setup` command (one Bash
+ * approval for the agent, which then drives the whole install as child processes)
+ * and keeps the manual steps as a fallback appendix. We pin the invariants that
+ * keep the flow correct and prompt-light:
+ *   - the one-shot is the primary, top-of-doc instruction (before the appendix);
+ *   - every core command is still wired (incl. the fallback appendix);
+ *   - every prim invocation stays pinned to @latest (mirrors the CI probe);
+ *   - the welcome is delivered BEFORE the status confirmations (it's the required
+ *     final deliverable; a non-zero confirm must not be able to suppress it);
+ *   - the seeding question is the terminal call-to-action;
+ *   - the daemon stays optional;
+ *   - the now-false "next session" permissions premise never returns (Claude Code
+ *     hot-reloads permissions, so the allow-rule takes effect this session).
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -22,17 +28,26 @@ const SETUP = readFileSync(
   "utf-8",
 );
 
+const welcomeSection = (): string =>
+  SETUP.slice(SETUP.indexOf("## 2."), SETUP.indexOf("## Appendix"));
+
 describe("setup.md onboarding flow", () => {
-  it("has all six steps, in order", () => {
-    const positions = [1, 2, 3, 4, 5, 6].map((n) => SETUP.indexOf(`## ${n}.`));
-    for (const pos of positions) {
-      expect(pos).toBeGreaterThan(-1);
-    }
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  it("carries the v1 sentinel", () => {
+    expect(SETUP).toContain("<!-- PRIMITIVE_SETUP_V1 -->");
+  });
+
+  it("leads with the single `prim setup` command, before the fallback appendix", () => {
+    const oneShot = SETUP.indexOf("@primitive.ai/prim@latest setup");
+    const appendix = SETUP.indexOf("## Appendix");
+    expect(oneShot).toBeGreaterThan(-1);
+    expect(appendix).toBeGreaterThan(-1);
+    // The one-shot is introduced up top, not buried in the fallback steps.
+    expect(oneShot).toBeLessThan(appendix);
   });
 
   it("wires every core onboarding command", () => {
     for (const cmd of [
+      "claude preauth",
       "auth login",
       "claude install",
       "codex install",
@@ -45,35 +60,48 @@ describe("setup.md onboarding flow", () => {
     }
   });
 
-  it("keeps the daemon (step 3) optional so a down daemon never blocks setup", () => {
-    const step3 = SETUP.slice(SETUP.indexOf("## 3."), SETUP.indexOf("## 4."));
-    expect(step3.toLowerCase()).toContain("optional");
+  it("pins every prim invocation to @latest (no unversioned npx call)", () => {
+    // Mirror of the CI probe: every `npx --yes @primitive.ai/prim` must be
+    // immediately followed by `@` (i.e. @latest), never a bare space — otherwise
+    // the user could end up on a stale pinned version.
+    expect(SETUP).not.toMatch(/npx --yes @primitive\.ai\/prim[^@]/);
   });
 
-  it("delivers the welcome BEFORE the step-6 confirmations (a non-zero confirm can't suppress it)", () => {
-    const step6 = SETUP.slice(SETUP.indexOf("## 6."));
-    const welcome = step6.indexOf("@latest welcome");
+  it("keeps the daemon optional so a down daemon never blocks setup", () => {
+    expect(SETUP.toLowerCase()).toContain("optional");
+    expect(SETUP).toContain("--no-daemon");
+  });
+
+  it("never reasserts the false 'next session' permissions premise", () => {
+    // Claude Code hot-reloads `permissions`, so the allow-rule takes effect in
+    // the current session. The old docs wrongly said it only helped next session.
+    expect(SETUP.toLowerCase()).not.toContain("next session");
+  });
+
+  it("delivers the welcome BEFORE the status confirmations (a non-zero confirm can't suppress it)", () => {
+    const section = welcomeSection();
+    const welcome = section.indexOf("@latest welcome");
     expect(welcome).toBeGreaterThan(-1);
     for (const confirm of ["auth status", "claude status", "daemon status", "skill status"]) {
-      expect(step6.indexOf(confirm)).toBeGreaterThan(welcome);
+      expect(section.indexOf(confirm)).toBeGreaterThan(welcome);
     }
   });
 
   it("handles the viewer-seed reverse-prompt branch (seed the graph via decisions create)", () => {
-    const step6 = SETUP.slice(SETUP.indexOf("## 6."));
-    expect(step6).toContain('"org": "seed"');
-    expect(step6).toContain("decisions create");
+    const section = welcomeSection();
+    expect(section).toContain('"org": "seed"');
+    expect(section).toContain("decisions create");
   });
 
   it("makes the seeding question the terminal call-to-action (after the confirmations, stop and wait)", () => {
-    const step6 = SETUP.slice(SETUP.indexOf("## 6."));
+    const section = welcomeSection();
     // The seed CTA + decisions create come AFTER the last confirmation, so the
     // question is the last thing the agent says — never buried above the checks.
-    expect(step6.indexOf('"org": "seed"')).toBeGreaterThan(step6.indexOf("skill status"));
-    expect(step6.indexOf("decisions create")).toBeGreaterThan(step6.indexOf("skill status"));
+    expect(section.indexOf('"org": "seed"')).toBeGreaterThan(section.indexOf("skill status"));
+    expect(section.indexOf("decisions create")).toBeGreaterThan(section.indexOf("skill status"));
     // And the contract spells out the terminal-CTA behavior explicitly. Collapse
     // whitespace first so hard-wrapped phrases still match.
-    const flat = step6.replace(/\s+/g, " ").toLowerCase();
+    const flat = section.replace(/\s+/g, " ").toLowerCase();
     expect(flat).toContain("stop and wait");
     expect(flat).toContain("nothing after it");
     expect(flat).toContain("hold it back");

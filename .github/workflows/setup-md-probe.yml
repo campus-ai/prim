@@ -15,19 +15,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify local setup.md sentinel + @latest qualifier
+      - name: Verify local setup.md sentinel + @latest qualifier + one-shot
         run: |
           set -euo pipefail
           grep -q '<!-- PRIMITIVE_SETUP_V1 -->' setup.md
           ! grep -nE 'npx --yes @primitive\.ai/prim[^@]' setup.md
+          # The one-shot (one approval for the agent) must remain the primary path.
+          grep -q 'npx --yes @primitive\.ai/prim@latest setup' setup.md
+          # Guard against the false "next session" permissions premise returning —
+          # Claude Code hot-reloads permissions, so the allow-rule applies now.
+          ! grep -niE 'next session' setup.md
 
   live-url:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Verify pinned URL serves sentinel + @latest qualifier
+      - name: Verify pinned URL serves sentinel + @latest qualifier + one-shot
         run: |
           set -euo pipefail
           body=$(curl -fsSL https://raw.githubusercontent.com/campus-ai/prim/v1/setup.md)
           echo "$body" | grep -q '<!-- PRIMITIVE_SETUP_V1 -->'
           ! echo "$body" | grep -nE 'npx --yes @primitive\.ai/prim[^@]'
+          echo "$body" | grep -q 'npx --yes @primitive\.ai/prim@latest setup'
+          ! echo "$body" | grep -niE 'next session'
