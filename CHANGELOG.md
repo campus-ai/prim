@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.27](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.26...v0.1.0-alpha.27) (2026-06-28)
+
+
+### Features
+
+* frictionless agent-driven prim onboarding (one approval, not eleven) ([#102](https://github.com/campus-ai/prim/issues/102)) ([8b7e257](https://github.com/campus-ai/prim/commit/8b7e257f1e9d789495ce89ffdec2fb42c71c0a8d))
+
 ## [0.1.0-alpha.26](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.25...v0.1.0-alpha.26) (2026-06-26)
 
 
