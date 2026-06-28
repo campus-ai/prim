@@ -164,18 +164,31 @@ export type ClaudeSettings = {
 };
 
 // Pre-authorize the agent's own prim invocations so neither the copy/paste
-// onboarding nor the standing `decisions`/`reconcile`/`welcome` calls stall on
-// a permission prompt. The prefix deliberately stops at the package name, BEFORE
-// `@latest`, so it covers BOTH invocation forms in our docs: setup.md uses
-// `npx --yes @primitive.ai/prim@latest …` while SKILL.md (the installed agent
-// contract) uses `npx --yes @primitive.ai/prim …` — a `@latest`-pinned rule
-// would match the former but not the day-to-day latter. Still scoped to the prim
-// package, not a blanket Bash grant. Removed cleanly on uninstall.
-export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim:*)";
+// onboarding nor the standing `decisions`/`reconcile`/`welcome` calls stall on a
+// permission prompt. The rule must cover BOTH invocation forms in our docs:
+// setup.md runs `npx --yes @primitive.ai/prim@latest …` while SKILL.md (the
+// installed agent contract) runs `npx --yes @primitive.ai/prim …`.
+//
+// Claude Code's Bash matcher treats a trailing ` *` / `:*` as a word boundary:
+// the prefix must be followed by a space or end-of-string
+// (code.claude.com/docs/en/permissions). So `Bash(npx --yes @primitive.ai/prim:*)`
+// matches the bare ` …` form but NOT `…/prim@latest …`, where `@` (not a space)
+// follows the prefix — and a `@latest`-pinned rule has the mirror gap. The
+// boundary-free `…/prim*` matches every form (the `@latest` pin, an exact
+// version, and the bare day-to-day call) while staying scoped to the prim package
+// — `@primitive.ai/prim` is the only such name on npm — not a blanket Bash grant.
+// Removed cleanly on uninstall.
+export const PRIM_PERMISSION_RULE = "Bash(npx --yes @primitive.ai/prim*)";
 
-// Earlier releases pinned `@latest`. Recognize the legacy rule so re-installing
-// upgrades it to the broader prefix and uninstall removes it either way.
-const LEGACY_PRIM_PERMISSION_RULES = ["Bash(npx --yes @primitive.ai/prim@latest:*)"];
+// Earlier releases used boundary-suffixed forms, each of which silently missed
+// one doc invocation form: `@latest:*` matched setup.md but not the day-to-day
+// call; `prim:*` matched the day-to-day call but not setup.md's `@latest`.
+// Recognize both so re-installing upgrades them to the boundary-free rule and
+// uninstall clears whichever is on disk.
+const LEGACY_PRIM_PERMISSION_RULES = [
+  "Bash(npx --yes @primitive.ai/prim@latest:*)",
+  "Bash(npx --yes @primitive.ai/prim:*)",
+];
 const ALL_PRIM_PERMISSION_RULES = new Set<string>([
   PRIM_PERMISSION_RULE,
   ...LEGACY_PRIM_PERMISSION_RULES,

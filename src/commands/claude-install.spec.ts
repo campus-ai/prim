@@ -40,6 +40,37 @@ function hasBin(settings: ClaudeSettings, event: string, bin: string): boolean {
   return commandsFor(settings, event).some((c) => commandMatchesBin(c, bin));
 }
 
+/**
+ * A faithful model of Claude Code's Bash allow-rule matcher, per
+ * code.claude.com/docs/en/permissions: a trailing ` *` or `:*` enforces a word
+ * boundary (the prefix must be followed by a space or end-of-string), while a
+ * bare trailing `*` has no boundary. We encode it here so the pre-auth rule's
+ * coverage of BOTH doc invocation forms is an executable regression guard — not
+ * a claim in a comment — and so a future "tidy" back to a boundary form fails
+ * loudly instead of silently dropping onboarding coverage.
+ */
+function bashRuleMatches(rule: string, command: string): boolean {
+  const inner = /^Bash\((.*)\)$/.exec(rule)?.[1];
+  if (inner === undefined) {
+    return false;
+  }
+  if (inner.endsWith(":*") || inner.endsWith(" *")) {
+    const prefix = inner.slice(0, -2);
+    return (
+      command.startsWith(prefix) &&
+      (command.length === prefix.length || command[prefix.length] === " ")
+    );
+  }
+  if (inner.endsWith("*")) {
+    return command.startsWith(inner.slice(0, -1));
+  }
+  return command === inner;
+}
+
+// The two invocation forms our docs use.
+const SETUP_FORM = "npx --yes @primitive.ai/prim@latest auth status --json";
+const SKILL_FORM = "npx --yes @primitive.ai/prim auth status --json";
+
 const EMPTY: ClaudeSettings = {};
 
 const EXISTING_OTHER: ClaudeSettings = {
@@ -260,6 +291,47 @@ describe("permissions pre-authorization", () => {
   it("uninstall removes the legacy @latest rule too", () => {
     const out = applyUninstall({ permissions: { allow: [LEGACY_RULE] } });
     expect(out.permissions).toBeUndefined();
+  });
+
+  // The prior canonical rule was the boundary-suffixed bare form; it must also be
+  // recognized as legacy and migrated to the boundary-free rule on re-install.
+  const LEGACY_COLON_RULE = "Bash(npx --yes @primitive.ai/prim:*)";
+
+  it("install upgrades the legacy bare `:*` rule to the boundary-free rule", () => {
+    const out = applyInstall({ permissions: { allow: [LEGACY_COLON_RULE] } });
+    expect(out.permissions?.allow).toContain(PRIM_PERMISSION_RULE);
+    expect(out.permissions?.allow).not.toContain(LEGACY_COLON_RULE);
+  });
+
+  it("uninstall removes the legacy bare `:*` rule too", () => {
+    const out = applyUninstall({ permissions: { allow: [LEGACY_COLON_RULE] } });
+    expect(out.permissions).toBeUndefined();
+  });
+});
+
+describe("PRIM_PERMISSION_RULE covers both doc invocation forms", () => {
+  it("matches setup.md's @latest form AND SKILL.md's bare form", () => {
+    expect(bashRuleMatches(PRIM_PERMISSION_RULE, SETUP_FORM)).toBe(true);
+    expect(bashRuleMatches(PRIM_PERMISSION_RULE, SKILL_FORM)).toBe(true);
+  });
+
+  it("stays scoped — does not match an unrelated npx package", () => {
+    expect(bashRuleMatches(PRIM_PERMISSION_RULE, "npx --yes some-other-pkg build")).toBe(false);
+  });
+
+  // The reason we abandoned each boundary-suffixed form: each silently missed one
+  // of the two forms. These assertions document why the regression existed and
+  // fail if anyone reintroduces a boundary form as canonical.
+  it("the legacy bare `:*` form would miss setup.md's @latest invocation", () => {
+    const legacyColon = "Bash(npx --yes @primitive.ai/prim:*)";
+    expect(bashRuleMatches(legacyColon, SKILL_FORM)).toBe(true);
+    expect(bashRuleMatches(legacyColon, SETUP_FORM)).toBe(false);
+  });
+
+  it("the legacy `@latest:*` form would miss the day-to-day bare invocation", () => {
+    const legacyLatest = "Bash(npx --yes @primitive.ai/prim@latest:*)";
+    expect(bashRuleMatches(legacyLatest, SETUP_FORM)).toBe(true);
+    expect(bashRuleMatches(legacyLatest, SKILL_FORM)).toBe(false);
   });
 });
 
