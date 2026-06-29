@@ -1,0 +1,102 @@
+import { describe, expect, it } from "vitest";
+import { parseDocument } from "yaml";
+import {
+  type HooksMap,
+  applyInstall,
+  applyUninstall,
+  isCaptureInstalled,
+  isGateInstalled,
+  readHooks,
+  stripBin,
+} from "./hermes-install.js";
+
+const userHook = { command: "/home/u/.hermes/agent-hooks/format.sh" };
+
+describe("applyInstall", () => {
+  it("registers the gate, ingest, capture, and session hooks under --agent hermes", () => {
+    const hooks = applyInstall({}, false);
+    expect(isGateInstalled(hooks)).toBe(true);
+    expect(isCaptureInstalled(hooks)).toBe(true);
+    const gate = hooks.pre_tool_call.find((e) => e.matcher === "write_file|patch");
+    expect(gate?.command).toContain("prim-pre-tool-use");
+    expect(gate?.command).toContain("--agent hermes");
+    expect(hooks.on_session_start.some((e) => e.command.includes("prim-session-start"))).toBe(true);
+    expect(hooks.on_session_end.some((e) => e.command.includes("prim-session-end"))).toBe(true);
+    // Capture rides pre_tool_call alongside the gate (two entries on that event).
+    expect(hooks.pre_tool_call.some((e) => e.command.includes("prim-shim.sh prim-hook "))).toBe(
+      true,
+    );
+  });
+
+  it("is idempotent", () => {
+    const once = applyInstall({}, false);
+    expect(applyInstall(once, false)).toEqual(once);
+  });
+
+  it("preserves a user's non-prim hook under a shared event", () => {
+    const hooks = applyInstall({ pre_tool_call: [userHook] }, false);
+    expect(hooks.pre_tool_call).toContainEqual(userHook);
+    expect(isGateInstalled(hooks)).toBe(true);
+  });
+
+  it("replaces a drifted prim entry under --force without duplicating it", () => {
+    const drifted: HooksMap = {
+      pre_tool_call: [
+        {
+          matcher: "write_file|patch",
+          command: "/old/agent-hooks/prim-shim.sh prim-pre-tool-use --agent hermes",
+        },
+      ],
+    };
+    const hooks = applyInstall(drifted, true);
+    const gates = hooks.pre_tool_call.filter((e) => e.command.includes("prim-pre-tool-use"));
+    expect(gates).toHaveLength(1);
+  });
+});
+
+describe("applyUninstall", () => {
+  it("strips every prim hook, drops emptied events, and keeps non-prim", () => {
+    const installed = applyInstall({ pre_tool_call: [userHook] }, false);
+    const after = applyUninstall(installed);
+    expect(isGateInstalled(after)).toBe(false);
+    expect(isCaptureInstalled(after)).toBe(false);
+    expect(after.pre_tool_call).toEqual([userHook]);
+    expect(after.on_session_start).toBeUndefined();
+  });
+});
+
+describe("readHooks", () => {
+  it("reads the hooks map, ignoring malformed entries and non-list events", () => {
+    const doc = parseDocument(
+      [
+        "model:",
+        "  default: gpt-4",
+        "hooks:",
+        "  pre_tool_call:",
+        "    - command: /x/agent-hooks/prim-shim.sh prim-pre-tool-use --agent hermes",
+        "      matcher: write_file|patch",
+        "    - notcommand: nope",
+        "  bad: not-a-list",
+      ].join("\n"),
+    );
+    const hooks = readHooks(doc);
+    expect(hooks.pre_tool_call).toHaveLength(1);
+    expect(hooks.bad).toBeUndefined();
+  });
+
+  it("preserves foreign top-level keys when the hooks node is rewritten", () => {
+    const doc = parseDocument("model:\n  default: gpt-4\nhooks: {}\n");
+    doc.set("hooks", applyInstall(readHooks(doc), false));
+    const out = doc.toString();
+    expect(out).toContain("model:");
+    expect(out).toContain("default: gpt-4");
+    expect(out).toContain("write_file|patch");
+  });
+});
+
+describe("stripBin", () => {
+  it("removes only entries that route through the bin", () => {
+    const list = [{ command: "/x/agent-hooks/prim-shim.sh prim-hook --agent hermes" }, userHook];
+    expect(stripBin(list, "prim-hook")).toEqual([userHook]);
+  });
+});
