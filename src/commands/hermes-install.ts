@@ -17,9 +17,10 @@
  *     daemon's presence reflects live Hermes sessions.
  *
  * Two divergences from the Claude/Codex installers shape this module:
- *   1. The target is YAML, not JSON. We parse it as a document and rewrite ONLY
- *      its top-level `hooks` key, so the user's providers, models, and other
- *      config survive a prim install/uninstall untouched.
+ *   1. The target is YAML, not JSON, and a file the user hand-maintains. We
+ *      rewrite ONLY the text of its top-level `hooks:` block (a byte-level
+ *      splice, not a document re-serialize), so the user's providers, models,
+ *      comments, and formatting everywhere else survive byte-for-byte.
  *   2. Hermes executes hook commands with `shell=False` (shlex.split), so the
  *      shell-string resolution shim the Claude/Codex installs write would be
  *      exec'd as a literal program. Instead we install one small executable
@@ -44,7 +45,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
-import { Document, parseDocument } from "yaml";
+import { Document, parseDocument, stringify } from "yaml";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
@@ -218,12 +219,67 @@ export function readHooks(doc: Document): HooksMap {
   return out;
 }
 
-function writeHooks(doc: Document, hooks: HooksMap): void {
-  if (Object.keys(hooks).length === 0) {
-    doc.delete("hooks");
-  } else {
-    doc.set("hooks", hooks);
+// Locate the top-level `hooks:` block in raw YAML text — from the `hooks:` line
+// through its indented children, up to the next top-level key (a column-0
+// non-space line) or EOF. Returns char offsets, or null when absent. This is
+// the seam that lets install/uninstall rewrite ONLY that region.
+function locateHooksBlock(raw: string): { start: number; end: number } | null {
+  const lines = raw.split("\n");
+  let offset = 0;
+  let start = -1;
+  let end = raw.length;
+  for (const line of lines) {
+    const lineStart = offset;
+    offset += line.length + 1; // +1 for the "\n" split removed
+    if (start === -1) {
+      if (/^hooks:(\s|$)/.test(line)) {
+        start = lineStart;
+      }
+    } else if (/^\S/.test(line)) {
+      end = lineStart;
+      break;
+    }
   }
+  return start === -1 ? null : { start, end };
+}
+
+// The prim hooks as a top-level YAML block ("" when empty). lineWidth: 0 keeps
+// the long shim commands on a single line.
+function serializeHooks(hooks: HooksMap): string {
+  if (Object.keys(hooks).length === 0) {
+    return "";
+  }
+  return stringify({ hooks }, { lineWidth: 0 });
+}
+
+// Replace ONLY the `hooks:` block with `hooks`'s serialization (or remove it
+// when empty), preserving every other byte of the file. Appends the block when
+// the file has none.
+export function spliceHooks(raw: string, hooks: HooksMap): string {
+  const block = serializeHooks(hooks);
+  const loc = locateHooksBlock(raw);
+  if (loc) {
+    return raw.slice(0, loc.start) + block + raw.slice(loc.end);
+  }
+  if (block.length === 0) {
+    return raw;
+  }
+  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
+  return `${raw}${sep}${block}`;
+}
+
+function hasAutoAccept(raw: string): boolean {
+  return /^hooks_auto_accept:/m.test(raw);
+}
+
+// Ensure `hooks_auto_accept: true` is present — replacing an existing value or
+// appending the key, touching only that one line.
+function setAutoAccept(raw: string): string {
+  if (hasAutoAccept(raw)) {
+    return raw.replace(/^hooks_auto_accept:.*$/m, "hooks_auto_accept: true");
+  }
+  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
+  return `${raw}${sep}hooks_auto_accept: true\n`;
 }
 
 function atomicWriteFile(path: string, content: string): void {
@@ -256,8 +312,16 @@ function removeShim(): void {
   rmSync(shimPath(), { force: true });
 }
 
-function autoAcceptOf(doc: Document): boolean {
-  return (doc.toJS() as Record<string, unknown> | null)?.hooks_auto_accept === true;
+function autoAcceptOf(raw: string): boolean {
+  if (raw.trim().length === 0) {
+    return false;
+  }
+  return (parseDocument(raw).toJS() as Record<string, unknown> | null)?.hooks_auto_accept === true;
+}
+
+// Read the existing hooks from raw config text (empty when the file is blank).
+function readHooksFromRaw(raw: string): HooksMap {
+  return readHooks(raw.trim().length > 0 ? parseDocument(raw) : new Document());
 }
 
 export type InstallResult = {
@@ -270,26 +334,28 @@ export type InstallResult = {
 
 export function performInstall(opts: { force: boolean; autoAccept: boolean }): InstallResult {
   const path = configPath();
-  const doc = readDoc(path);
-  const before = doc.toString();
-  writeHooks(doc, applyInstall(readHooks(doc), opts.force));
-  if (opts.autoAccept) {
-    doc.set("hooks_auto_accept", true);
+  const raw = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const existing = readHooksFromRaw(raw);
+  const desired = applyInstall(existing, opts.force);
+  let next = raw;
+  if (JSON.stringify(existing) !== JSON.stringify(desired)) {
+    next = spliceHooks(next, desired);
   }
-  const after = doc.toString();
-  const changed = before !== after;
+  if (opts.autoAccept) {
+    next = setAutoAccept(next);
+  }
   // The shim is what the hook commands point at; write it whenever installing,
   // idempotently, so a config-unchanged re-install still heals a missing shim.
   writeShim();
+  const changed = next !== raw;
   if (changed) {
-    atomicWriteFile(path, after);
+    atomicWriteFile(path, next);
   }
-  const hooks = readHooks(doc);
   return {
     path,
-    gate: isGateInstalled(hooks),
-    capture: isCaptureInstalled(hooks),
-    autoAccept: autoAcceptOf(doc),
+    gate: isGateInstalled(desired),
+    capture: isCaptureInstalled(desired),
+    autoAccept: autoAcceptOf(next),
     changed,
   };
 }
@@ -300,22 +366,23 @@ export function performUninstall(): InstallResult {
     removeShim();
     return { path, gate: false, capture: false, autoAccept: false, changed: false };
   }
-  const doc = readDoc(path);
-  const before = doc.toString();
-  writeHooks(doc, applyUninstall(readHooks(doc)));
-  const after = doc.toString();
-  const changed = before !== after;
+  const raw = readFileSync(path, "utf-8");
+  const existing = readHooksFromRaw(raw);
+  const remaining = applyUninstall(existing);
+  const next =
+    JSON.stringify(existing) === JSON.stringify(remaining) ? raw : spliceHooks(raw, remaining);
+  const changed = next !== raw;
   if (changed) {
-    atomicWriteFile(path, after);
+    atomicWriteFile(path, next);
   }
-  // Every prim hook is gone now, so the shim it routed through is unused.
+  // Every prim hook is gone now, so the shim it routed through is unused. The
+  // user's hooks_auto_accept (if any) is left as their trust setting.
   removeShim();
-  const hooks = readHooks(doc);
   return {
     path,
-    gate: isGateInstalled(hooks),
-    capture: isCaptureInstalled(hooks),
-    autoAccept: autoAcceptOf(doc),
+    gate: isGateInstalled(remaining),
+    capture: isCaptureInstalled(remaining),
+    autoAccept: autoAcceptOf(next),
     changed,
   };
 }

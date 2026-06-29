@@ -7,6 +7,7 @@ import {
   isCaptureInstalled,
   isGateInstalled,
   readHooks,
+  spliceHooks,
   stripBin,
 } from "./hermes-install.js";
 
@@ -98,5 +99,45 @@ describe("stripBin", () => {
   it("removes only entries that route through the bin", () => {
     const list = [{ command: "/x/agent-hooks/prim-shim.sh prim-hook --agent hermes" }, userHook];
     expect(stripBin(list, "prim-hook")).toEqual([userHook]);
+  });
+});
+
+describe("spliceHooks (byte-preserving)", () => {
+  // A hand-formatted config with a long single-line value that a document
+  // re-serialize would re-wrap at 80 columns; trailing newline included.
+  const userConfig = [
+    "# my config",
+    "model:",
+    "  default: gpt-4",
+    "  prompt: a deliberately long single-line system prompt that a document re-serialize would rewrap at eighty columns and churn the file",
+    "",
+  ].join("\n");
+
+  it("appends the hooks block, leaving the rest of the file byte-for-byte", () => {
+    const out = spliceHooks(userConfig, applyInstall({}, false));
+    expect(out.startsWith(userConfig)).toBe(true);
+    expect(out).toContain("hooks:");
+    expect(out).toContain("write_file|patch");
+  });
+
+  it("round-trips to byte-identical when the hooks block is removed", () => {
+    const installed = spliceHooks(userConfig, applyInstall({}, false));
+    const removed = spliceHooks(installed, applyUninstall(applyInstall({}, false)));
+    expect(removed).toBe(userConfig);
+  });
+
+  it("rewrites only the hooks region when a hooks block already exists mid-file", () => {
+    const withHooks = [
+      "a: 1",
+      "hooks:",
+      "  pre_tool_call:",
+      "    - command: /old/x",
+      "z: 2",
+      "",
+    ].join("\n");
+    const out = spliceHooks(withHooks, applyInstall(readHooks(parseDocument(withHooks)), true));
+    expect(out.startsWith("a: 1\n")).toBe(true);
+    expect(out).toContain("z: 2");
+    expect(out).toContain("prim-pre-tool-use");
   });
 });
