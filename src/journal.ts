@@ -115,6 +115,81 @@ export function listBuckets(): Array<{ bucket: string; path: string }> {
   return out;
 }
 
+const FLUSHING_PREFIX = `${JOURNAL_BASENAME}.flushing.`;
+
+export type FlushingFile = {
+  bucket: string;
+  path: string;
+  // The drain pid embedded in the filename, or undefined for the legacy
+  // pid-less variant. Recovery uses it to tell a crashed drain's orphan from
+  // a file a live drain still owns.
+  pid: number | undefined;
+  sizeBytes: number;
+  mtimeMs: number;
+  lineCount: number;
+};
+
+function parseFlushingPid(name: string): number | undefined {
+  // The flusher names rotations `journal.ndjson.flushing.<ts>.<pid>`; older
+  // builds emitted `journal.ndjson.flushing.<ts>` with no pid. Treat a
+  // trailing all-digits segment beyond the timestamp as the owning pid.
+  const segments = name.slice(FLUSHING_PREFIX.length).split(".");
+  const last = segments.length >= 2 ? segments[segments.length - 1] : undefined;
+  return last !== undefined && /^[0-9]+$/.test(last) ? Number(last) : undefined;
+}
+
+/**
+ * Orphaned `.flushing` rotation files in one directory. Path-parameterized so
+ * it unit-tests without the real config tree. A `.flushing` file is left
+ * behind whenever a drain dies between the journal→`.flushing` rename and the
+ * unlink-on-success; nothing else enumerates them, so both `prim moves status`
+ * and the recovery sweep read this.
+ */
+export function listFlushingInDir(dir: string, bucket: string): FlushingFile[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const out: FlushingFile[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.startsWith(FLUSHING_PREFIX)) {
+      continue;
+    }
+    const path = join(dir, entry.name);
+    const stat = statSync(path);
+    const lineCount = readFileSync(path, "utf-8")
+      .split("\n")
+      .filter((l) => l.length > 0).length;
+    out.push({
+      bucket,
+      path,
+      pid: parseFlushingPid(entry.name),
+      sizeBytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      lineCount,
+    });
+  }
+  return out;
+}
+
+/**
+ * Every stranded `.flushing` file across the journal tree: legacy variants at
+ * the top level (reported under `_legacy`) plus the in-bucket siblings of each
+ * org's journal.ndjson. listBuckets() deliberately never names these, so this
+ * is the only enumeration that sees a crashed drain's leftovers.
+ */
+export function listFlushing(): FlushingFile[] {
+  if (!existsSync(JOURNAL_DIR)) {
+    return [];
+  }
+  const out: FlushingFile[] = listFlushingInDir(JOURNAL_DIR, "_legacy");
+  for (const entry of readdirSync(JOURNAL_DIR, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      out.push(...listFlushingInDir(join(JOURNAL_DIR, entry.name), entry.name));
+    }
+  }
+  return out;
+}
+
 export type BucketStats = {
   bucket: string;
   path: string;

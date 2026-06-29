@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { flush } from "../flusher.js";
-import { JOURNAL_DIR, bucketStats, readMovesFromPath } from "../journal.js";
+import { JOURNAL_DIR, bucketStats, listFlushing, readMovesFromPath } from "../journal.js";
 
 const MS_PER_SECOND = 1000;
 const DEFAULT_TAIL_LINES = "20";
@@ -45,7 +45,11 @@ export function registerMovesCommands(program: Command): void {
     .description("Show per-bucket pending stats")
     .action(() => {
       const stats = bucketStats();
-      if (stats.length === 0) {
+      const stranded = listFlushing();
+      // Only truly empty when there is neither pending nor stranded state —
+      // a machine whose only journal artifact is an orphaned `.flushing` must
+      // not read as "empty".
+      if (stats.length === 0 && stranded.length === 0) {
         console.log("[prim] journal: empty");
         return;
       }
@@ -55,6 +59,20 @@ export function registerMovesCommands(program: Command): void {
         console.log(
           `  ${s.bucket.padEnd(BUCKET_COL_WIDTH)} ${String(s.lineCount).padStart(5)} pending, ${String(s.sizeBytes).padStart(8)} bytes, last write ${String(ageS)}s ago`,
         );
+      }
+      if (stranded.length > 0) {
+        const moveCount = stranded.reduce((n, f) => n + f.lineCount, 0);
+        const byteCount = stranded.reduce((n, f) => n + f.sizeBytes, 0);
+        console.log(
+          `[prim] ⚠ ${String(stranded.length)} stranded flush file(s): ${String(moveCount)} move(s), ${String(byteCount)} bytes — orphaned mid-drain`,
+        );
+        for (const f of stranded) {
+          const ageS = Math.round((Date.now() - f.mtimeMs) / MS_PER_SECOND);
+          const owner = f.pid === undefined ? "no pid" : `pid ${String(f.pid)}`;
+          console.log(
+            `  ${f.bucket.padEnd(BUCKET_COL_WIDTH)} ${String(f.lineCount).padStart(5)} stranded, ${String(f.sizeBytes).padStart(8)} bytes, ${String(ageS)}s ago (${owner})`,
+          );
+        }
       }
     });
 
