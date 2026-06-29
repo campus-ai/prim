@@ -28,7 +28,7 @@ One command does the whole install — auth, session hooks, daemon, git hooks,
 skill, and the welcome:
 
 ```bash
-prim setup                 # add --agent codex for Codex, --no-daemon to skip the daemon
+prim setup                 # add --agent codex or --agent hermes, --no-daemon to skip the daemon
 ```
 
 Or run the steps individually:
@@ -38,7 +38,7 @@ Or run the steps individually:
 prim auth login
 
 # 2. Wire the session hooks (decision capture + conflict gate + presence)
-prim claude install        # or: prim codex install
+prim claude install        # or: prim codex install / prim hermes install
 
 # 3. Start the companion daemon (latency + team presence)
 prim daemon start
@@ -74,6 +74,7 @@ and the manual fallback — live in [`setup.md`](./setup.md).
 ```bash
 prim setup                   # Run the whole install in one shot
 prim setup --agent codex     # Same, for OpenAI Codex
+prim setup --agent hermes    # Same, for Hermes Agent (global-only config)
 prim setup --no-daemon       # Skip the companion daemon
 ```
 
@@ -99,12 +100,16 @@ self-resolves the CLI at run time (PATH, then a local install, then
 
 Installs into the current project by default — the repo's `.claude/settings.json`
 / `.codex/hooks.json`, resolved from the git root (so any subdirectory works);
-pass `--scope user` to install machine-wide.
+pass `--scope user` to install machine-wide. Hermes is the exception: it reads
+shell hooks only from the global `~/.hermes/config.yaml`, so `prim hermes install`
+is always user-scoped — and prim merges in place, leaving the rest of that file
+(providers, models, your own hooks) untouched.
 
 ```bash
 prim claude install                # Install Claude Code hooks (project scope; uninstall / status)
 prim claude install --scope user   # Install machine-wide instead
 prim codex install                 # Install OpenAI Codex hooks (project scope)
+prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 
 ### Daemon
