@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.30](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.29...v0.1.0-alpha.30) (2026-06-29)
+
+
+### Features
+
+* **doctor:** add `prim doctor` end-to-end capture health check ([#79](https://github.com/campus-ai/prim/issues/79)) ([7f6090e](https://github.com/campus-ai/prim/commit/7f6090e50ab2b345f61de8d92203dfe37b74f91a))
+* **flusher:** recover orphaned .flushing files on drain ([#78](https://github.com/campus-ai/prim/issues/78)) ([b5348af](https://github.com/campus-ai/prim/commit/b5348af082307dae646a5930f650a27040f0e80c))
+* **moves:** surface stranded .flushing files in `moves status` ([#76](https://github.com/campus-ai/prim/issues/76)) ([24c784a](https://github.com/campus-ai/prim/commit/24c784a973b16dc2ef44a77245ebcf35a327b4f2))
+
+
+### Bug Fixes
+
+* **journal:** partition the move journal by environment ([#108](https://github.com/campus-ai/prim/issues/108)) ([9d42683](https://github.com/campus-ai/prim/commit/9d42683fe34bd35aba7d55ed736e2444f5c9068e))
+
 ## [0.1.0-alpha.29](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.28...v0.1.0-alpha.29) (2026-06-29)
 
 
