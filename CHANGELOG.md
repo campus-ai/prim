@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.29](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.28...v0.1.0-alpha.29) (2026-06-29)
+
+
+### Bug Fixes
+
+* **daemon:** persist the daemon log instead of discarding it ([#75](https://github.com/campus-ai/prim/issues/75)) ([0af2eb1](https://github.com/campus-ai/prim/commit/0af2eb1e1287cc5a2c8b5e3561c789dda546642b))
+* **daemon:** refuse cross-environment proxied reads and withhold cross-env presence ([#101](https://github.com/campus-ai/prim/issues/101)) ([372b26a](https://github.com/campus-ai/prim/commit/372b26a4e935edcbbf7f1a1ef29f411315ee4638))
+
 ## [0.1.0-alpha.28](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.27...v0.1.0-alpha.28) (2026-06-28)
 
 
