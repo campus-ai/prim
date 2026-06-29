@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { parseAgent } from "./agent.js";
+import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 
@@ -48,14 +49,19 @@ function spawnBackgroundFlush(): void {
 }
 
 try {
+  const agent = parseAgent(process.argv);
   const raw = readFileSync(0, "utf-8");
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  // Normalize Hermes event names into prim's internal vocabulary at the wire
+  // boundary (a no-op for Claude Code / Codex), so eventType and the
+  // shouldFlushAfter drain trigger key on the names every downstream guard
+  // already expects.
+  const parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Derive the envelope's identity/control fields (sessionId, eventType,
-  // env.cwd) from the ORIGINAL event so org binding is provably independent
-  // of redaction, then scrub ONLY the payload body that persists to the
-  // journal, transits to the server, and lands in the moves table.
-  const base = toMove(parsed, resolveCliVersion(), parseAgent(process.argv));
+  // env.cwd) from the (normalized) event so org binding is provably
+  // independent of redaction, then scrub ONLY the payload body that persists
+  // to the journal, transits to the server, and lands in the moves table.
+  const base = toMove(parsed, resolveCliVersion(), agent);
   const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
   appendMove(move, orgId);

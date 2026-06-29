@@ -11,6 +11,8 @@
  */
 
 import { daemonRequest } from "../daemon/client.js";
+import { parseAgent } from "./agent.js";
+import { normalizeEnvelope } from "./normalize.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
@@ -43,6 +45,7 @@ function emit(): void {
 }
 
 async function main(): Promise<void> {
+  const agent = parseAgent(process.argv);
   let raw: string;
   try {
     raw = await readStdin();
@@ -52,7 +55,10 @@ async function main(): Promise<void> {
   }
   let envelope: SessionEnvelope;
   try {
-    envelope = JSON.parse(raw) as SessionEnvelope;
+    envelope = normalizeEnvelope(
+      JSON.parse(raw) as Record<string, unknown>,
+      agent,
+    ) as SessionEnvelope;
   } catch {
     emit();
     return;

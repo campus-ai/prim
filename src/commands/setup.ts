@@ -29,7 +29,7 @@ import type { Command } from "commander";
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
 
-export type SetupAgent = "claude" | "codex";
+export type SetupAgent = "claude" | "codex" | "hermes";
 export type SetupScope = "project" | "user";
 
 export type SetupStep = {
@@ -49,17 +49,27 @@ export type SetupStep = {
  * agent branch, daemon toggle, and scope passthrough are unit-testable without
  * spawning anything.
  */
+const SESSION_LABELS: Record<SetupAgent, string> = {
+  claude: "Claude Code integration",
+  codex: "Codex integration",
+  hermes: "Hermes integration",
+};
+
 export function planSetupSteps(opts: {
   agent: SetupAgent;
   daemon: boolean;
   scope: SetupScope;
 }): SetupStep[] {
   const scopeArgs = opts.scope === "user" ? ["--scope", "user"] : [];
+  // Hermes config is global-only: it has no project/user layer, so don't
+  // forward a scope flag (hermes install hard-errors on --scope project).
+  const sessionArgs =
+    opts.agent === "hermes" ? [opts.agent, "install"] : [opts.agent, "install", ...scopeArgs];
   const steps: SetupStep[] = [
     {
       key: "session",
-      label: opts.agent === "codex" ? "Codex integration" : "Claude Code integration",
-      args: [opts.agent, "install", ...scopeArgs],
+      label: SESSION_LABELS[opts.agent],
+      args: sessionArgs,
       required: true,
     },
   ];
@@ -74,7 +84,12 @@ export function planSetupSteps(opts: {
     });
   }
   steps.push({ key: "hooks", label: "Git hooks", args: ["hooks", "install"], required: true });
-  steps.push({ key: "skill", label: "Agent skill", args: ["skill", "install"], required: true });
+  // Hermes loads ONE project context file, first match wins
+  // (.hermes.md → AGENTS.md → CLAUDE.md → .cursorrules), so target .hermes.md
+  // explicitly — deterministic, and side-steps the >1-candidate prompt.
+  const skillArgs =
+    opts.agent === "hermes" ? ["skill", "install", "--target", ".hermes.md"] : ["skill", "install"];
+  steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
   return steps;
 }
 
@@ -86,14 +101,16 @@ export function registerSetupCommand(program: Command): void {
     .description(
       "Install everything in one shot (auth, session + git hooks, daemon, skill, welcome)",
     )
-    .option("--agent <agent>", "claude or codex", "claude")
+    .option("--agent <agent>", "claude, codex, or hermes", "claude")
     .option("--scope <scope>", "project or user (session integration)", "project")
     .option("--no-daemon", "skip starting the companion daemon")
     .action((opts: { agent: string; scope: string; daemon: boolean }) => {
       // Fail loud on a typo rather than silently installing the wrong thing.
       // Usage error → exit 2, the CLI's convention for rejected input.
-      if (opts.agent !== "claude" && opts.agent !== "codex") {
-        process.stderr.write(`[prim] unknown --agent "${opts.agent}" (expected claude or codex)\n`);
+      if (opts.agent !== "claude" && opts.agent !== "codex" && opts.agent !== "hermes") {
+        process.stderr.write(
+          `[prim] unknown --agent "${opts.agent}" (expected claude, codex, or hermes)\n`,
+        );
         process.exit(EXIT_USAGE);
       }
       if (opts.scope !== "project" && opts.scope !== "user") {

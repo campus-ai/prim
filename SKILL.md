@@ -11,7 +11,7 @@ description: Use the prim CLI for Primitive's decision graph — passive decisio
 
 As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. When a later change conflicts with a load-bearing prior decision, prim **gates** the edit and surfaces the decision for review.
 
-You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code) or `npx --yes @primitive.ai/prim codex install` (Codex). Your job is to **respond** to the gate, **read** the graph before load-bearing edits, and **answer** the occasional rationale confirmation.
+You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Your job is to **respond** to the gate, **read** the graph before load-bearing edits, and **answer** the occasional rationale confirmation.
 
 ## Auth
 
@@ -33,10 +33,10 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 
 ## Heed the conflict gate
 
-Before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch) a PreToolUse hook scores the target file against the graph:
+Before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
 
 - **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
-- **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. On Codex a would-be `ask` is delivered as allow-plus-context (Codex can't pause mid-tool), so that context is your only signal -- read it before continuing.
+- **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. On Codex a would-be `ask` is delivered as allow-plus-context (Codex can't pause mid-tool), so that context is your only signal -- read it before continuing. Hermes has no soft-confirm tier, so a would-be `ask` arrives as a **deny** carrying the same reconcile directive: reconcile and retry, or set `PRIM_HOOK_MODE=warn` to downgrade it to context-only.
 - **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
 
 The gate fail-opens on its *own* infrastructure errors (no daemon, network blip, org-unbound token) -- a setup problem never blocks your edit. That is exactly why an "unavailable" note matters: it is the honest signal that the check, not your edit, is what failed.
@@ -44,7 +44,7 @@ The gate fail-opens on its *own* infrastructure errors (no daemon, network blip,
 ## Read the graph before large or load-bearing edits
 
 - `npx --yes @primitive.ai/prim decisions check --files "src/a.ts,src/b.ts"` -- which active decisions reference the files you're about to touch (comma-separated paths, one `--files` value). Run it before a big change.
-- `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex`); `--limit <n>` and `--since <dur>` narrow it.
+- `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex` / `Your Hermes`); `--limit <n>` and `--since <dur>` narrow it.
 - `npx --yes @primitive.ai/prim decisions show <idOrShortId>` and `npx --yes @primitive.ai/prim decisions cascade <idOrShortId>` -- full detail, and the downstream blast radius a change would disturb.
 
 ## Reconcile and the verdict footer
@@ -116,7 +116,7 @@ npx --yes @primitive.ai/prim hooks uninstall
 
 Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` only removes the `.git/hooks` copies — if a hook was installed into `.husky/`, remove the prim block from that file manually. To suppress the hooks for one commit, use `git commit --no-verify`.
 
-These git hooks are separate from the **session hooks** (`claude install` / `codex install`) that drive in-session capture and the conflict gate.
+These git hooks are separate from the **session hooks** (`claude install` / `codex install` / `hermes install`) that drive in-session capture and the conflict gate.
 
 ## Output formats
 
@@ -137,7 +137,7 @@ Examples:
 - **An "unavailable" / "not verified" gate or check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval.
 - **A `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
-- **Capture of your coding activity is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status`) and the daemon is running — don't try to inject moves by hand. (Deliberately *authoring* a decision the user asks you to record is a separate, supported path — `decisions create`, above.)
+- **Capture of your coding activity is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running — don't try to inject moves by hand. (Deliberately *authoring* a decision the user asks you to record is a separate, supported path — `decisions create`, above.)
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 
 ## After each task

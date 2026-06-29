@@ -143,6 +143,8 @@ function authorLabel(row: DecisionFeedRow): string {
       return "Your Claude Code";
     case "codex":
       return "Your Codex";
+    case "hermes":
+      return "Your Hermes";
     case "chat":
       return "Your chat";
     case "spec_edit":

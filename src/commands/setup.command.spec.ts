@@ -45,4 +45,16 @@ describe("planSetupSteps", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "project" });
     expect(steps[0].args).toEqual(["claude", "install"]);
   });
+
+  it("hermes: global-only, so no scope flag even under --scope user; skill targets .hermes.md", () => {
+    const steps = planSetupSteps({ agent: "hermes", daemon: false, scope: "user" });
+    expect(steps[0].args).toEqual(["hermes", "install"]);
+    expect(steps[0].label).toMatch(/hermes/i);
+    expect(steps.find((s) => s.key === "skill")?.args).toEqual([
+      "skill",
+      "install",
+      "--target",
+      ".hermes.md",
+    ]);
+  });
 });

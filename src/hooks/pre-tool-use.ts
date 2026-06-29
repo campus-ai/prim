@@ -33,13 +33,18 @@
 import { getClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { parseAgent } from "./agent.js";
+import { normalizeEnvelope } from "./normalize.js";
 import {
   type ConflictCheckResult,
+  type HermesHookOutput,
   type HookEnv,
+  type HookOutput,
   aggregateCheckResults,
+  buildHermesOutput,
   buildHookOutput,
   demoteForMode,
   extractFilePaths,
+  failOpenHermes,
   failOpenOutput,
   readHookMode,
   toRepoRelative,
@@ -77,8 +82,18 @@ async function readStdin(): Promise<string> {
   });
 }
 
-function emit(output: ReturnType<typeof failOpenOutput>): void {
+// The agent is stable for the process (stamped into the install command), so
+// resolve it once — both main() and its catch handler emit through it.
+const agent = parseAgent(process.argv);
+
+function emit(output: HookOutput | HermesHookOutput): void {
   process.stdout.write(`${JSON.stringify(output)}\n`);
+}
+
+// The silent fail-open shaped for the active agent: Claude/Codex speak the
+// `hookSpecificOutput` allow; Hermes speaks an empty object (no block).
+function failOpen(): HookOutput | HermesHookOutput {
+  return agent === "hermes" ? failOpenHermes() : failOpenOutput();
 }
 
 async function checkOneFile(file: string): Promise<ConflictCheckResult> {
@@ -110,49 +125,55 @@ async function main(): Promise<void> {
   try {
     raw = await readStdin();
   } catch {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   let envelope: PreToolUseInput;
   try {
-    envelope = JSON.parse(raw) as PreToolUseInput;
+    envelope = normalizeEnvelope(
+      JSON.parse(raw) as Record<string, unknown>,
+      agent,
+    ) as PreToolUseInput;
   } catch {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   if (envelope.hook_event_name !== "PreToolUse") {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   const env = process.env as HookEnv;
   const mode = readHookMode(env);
   if (mode === "off") {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
-  const agent = parseAgent(process.argv);
   const files = extractFilePaths(toolName, envelope.tool_input, agent).map((f) =>
     toRepoRelative(f, cwd),
   );
   if (files.length === 0) {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   let results: ConflictCheckResult[];
   try {
     results = await Promise.all(files.map((f) => checkOneFile(f)));
   } catch {
-    emit(failOpenOutput());
+    emit(failOpen());
     return;
   }
   const rawAggregate = aggregateCheckResults(results);
   const aggregate = demoteForMode(rawAggregate, mode);
-  emit(buildHookOutput(aggregate, results, agent));
+  emit(
+    agent === "hermes"
+      ? buildHermesOutput(aggregate, results)
+      : buildHookOutput(aggregate, results, agent),
+  );
 }
 
 main().catch(() => {
-  emit(failOpenOutput());
+  emit(failOpen());
 });

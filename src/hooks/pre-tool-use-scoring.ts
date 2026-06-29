@@ -234,11 +234,64 @@ export function failOpenOutput(): HookOutput {
   };
 }
 
+/**
+ * Hermes shell-hook output for a pre_tool_call. Hermes gating is
+ * block-or-allow — there is no soft "ask"/confirm tier and no context channel
+ * at tool time — so a block (`{ action: "block", message }`, Hermes'
+ * canonical shape) is the only signal and an allow is an empty object.
+ */
+export type HermesHookOutput = { action?: "block"; message?: string };
+
+/**
+ * Maps the aggregate verdict into Hermes' block-or-allow contract. Both
+ * `deny` and `ask` become a block: Hermes has no soft-confirm tier, so a
+ * decision Claude would raise as an `ask` dialog is here a block whose
+ * message carries the reason and the `prim reconcile …` directive (the agent
+ * reconciles, then retries). `warn`/`allow` pass through silently — an
+ * advisory note cannot ride a pre_tool_call allow.
+ */
+export function buildHermesOutput(
+  aggregate: ConflictVerdict,
+  results: ConflictCheckResult[],
+): HermesHookOutput {
+  if (aggregate !== "deny" && aggregate !== "ask") {
+    return {};
+  }
+  const reason = results
+    .filter((r) => r.verdict === "deny" || r.verdict === "ask")
+    .map((r) => r.reason)
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+  const directive = results
+    .map((r) => r.additionalContext)
+    .filter((s) => s.length > 0)
+    .join("\n");
+  const message =
+    [reason, directive].filter((s) => s.length > 0).join("\n\n") ||
+    "[primitive] conflict detected (no detail available)";
+  return { action: "block", message };
+}
+
+/**
+ * The silent fail-open for Hermes — an empty object is "no block". Hooks must
+ * never block the user on their own infrastructure failures.
+ */
+export function failOpenHermes(): HermesHookOutput {
+  return {};
+}
+
 const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
 // Codex routes file edits through `apply_patch`, naming each touched file on
 // its own envelope line (`*** Update File: path`).
 const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
+// Hermes V4A renames a file with a STANDALONE `*** Move File: <src> -> <dst>`
+// directive — no accompanying Update line (see Hermes tools/patch_parser.py),
+// so without this both paths would be dropped and a rename of a decision-bearing
+// file would slip the gate. Capture BOTH the source (the existing path that may
+// carry prior decisions) and the destination. (Codex's distinct `*** Move to:`
+// destination still isn't captured — its source rides an Update File line.)
+const MOVE_FILE_RE = /^\*\*\* Move File:\s*(?<src>.+?)\s*->\s*(?<dst>.+?)\s*$/;
 // Split on either line ending: a CRLF patch would otherwise leave a trailing
 // \r that the `$`-anchored regex can't match, dropping every file silently.
 const LINE_SPLIT_RE = /\r?\n/;
@@ -249,6 +302,14 @@ export function parseApplyPatchPaths(command: string): string[] {
     const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
     if (path) {
       paths.add(path);
+      continue;
+    }
+    const move = MOVE_FILE_RE.exec(line)?.groups;
+    if (move?.src) {
+      paths.add(move.src.trim());
+      if (move.dst) {
+        paths.add(move.dst.trim());
+      }
     }
   }
   return Array.from(paths);
@@ -267,6 +328,26 @@ function extractCodexFilePaths(toolName: string, toolInput: unknown): string[] {
   return typeof command === "string" ? parseApplyPatchPaths(command) : [];
 }
 
+// Hermes routes file edits through write_file and patch; terminal and other
+// tools pass through unchecked (fail-open). write_file and a `replace` patch
+// name a top-level `path`; a `patch`-mode patch embeds a V4A body under
+// `patch`, the same grammar Codex's apply_patch uses.
+const HERMES_EDITING_TOOLS = new Set(["write_file", "patch"]);
+
+function extractHermesFilePaths(toolName: string, toolInput: unknown): string[] {
+  if (!HERMES_EDITING_TOOLS.has(toolName)) {
+    return [];
+  }
+  if (!toolInput || typeof toolInput !== "object") {
+    return [];
+  }
+  const input = toolInput as Record<string, unknown>;
+  if (toolName === "patch" && input.mode === "patch") {
+    return typeof input.patch === "string" ? parseApplyPatchPaths(input.patch) : [];
+  }
+  return typeof input.path === "string" && input.path.length > 0 ? [input.path] : [];
+}
+
 /**
  * Extracts the file paths a tool call would touch, dispatched by `agent`.
  * Claude Code exposes a single `file_path` on Edit/Write/MultiEdit; Codex
@@ -281,6 +362,9 @@ export function extractFilePaths(
 ): string[] {
   if (agent === "codex") {
     return extractCodexFilePaths(toolName, toolInput);
+  }
+  if (agent === "hermes") {
+    return extractHermesFilePaths(toolName, toolInput);
   }
   if (!SUPPORTED_TOOLS.has(toolName)) {
     return [];

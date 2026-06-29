@@ -29,10 +29,10 @@ export function toMove(
       osPlatform: platform(),
     },
     envelopeVersion: ENVELOPE_VERSION,
-    // Stamp the producer only for Codex; Claude Code moves omit it (the
-    // backend defaults an absent value to "claude_code"), keeping the
-    // Claude wire shape byte-identical.
-    ...(agent === "codex" ? { producer: "codex" as const } : {}),
+    // Stamp the producer for non-Claude agents (codex, hermes); Claude Code
+    // moves omit it (the backend defaults an absent value to "claude_code"),
+    // keeping the Claude wire shape byte-identical.
+    ...(agent === "claude_code" ? {} : { producer: agent }),
   };
 }
 

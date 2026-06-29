@@ -19,6 +19,7 @@
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { parseAgent } from "./agent.js";
+import { normalizeEnvelope } from "./normalize.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
@@ -61,6 +62,7 @@ function emit(additionalContext?: string): void {
 }
 
 async function main(): Promise<void> {
+  const agent = parseAgent(process.argv);
   let raw: string;
   try {
     raw = await readStdin();
@@ -70,7 +72,10 @@ async function main(): Promise<void> {
   }
   let envelope: SessionEnvelope;
   try {
-    envelope = JSON.parse(raw) as SessionEnvelope;
+    envelope = normalizeEnvelope(
+      JSON.parse(raw) as Record<string, unknown>,
+      agent,
+    ) as SessionEnvelope;
   } catch {
     emit();
     return;
@@ -90,7 +95,9 @@ async function main(): Promise<void> {
   );
   // Codex has no statusLine hook, so surface the team count as SessionStart
   // developer context instead — only when the daemon returns a live count.
-  if (parseAgent(process.argv) === "codex") {
+  // (Hermes session hooks are observer-only — its presence count rides
+  // pre_llm_call in prim-hook instead.)
+  if (agent === "codex") {
     const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
       "status_snapshot",
       // callerEnv: a cross-env daemon withholds onlineCount, so a prod Codex

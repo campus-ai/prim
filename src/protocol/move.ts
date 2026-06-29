@@ -29,7 +29,7 @@ export type Move = {
   /**
    * Which coding agent produced this move. Stamped from the hook's
    * `--agent` flag; omitted for Claude Code (the backend treats an absent
-   * value as "claude_code"), set to "codex" for Codex sessions.
+   * value as "claude_code"), set to "codex" / "hermes" for those sessions.
    */
-  producer?: "claude_code" | "codex";
+  producer?: "claude_code" | "codex" | "hermes";
 };
