@@ -6,6 +6,7 @@ import {
   applyUninstall,
   isCaptureInstalled,
   isGateInstalled,
+  mergeKeepsYamlValid,
   readHooks,
   spliceHooks,
   stripBin,
@@ -24,9 +25,33 @@ describe("applyInstall", () => {
     expect(hooks.on_session_start.some((e) => e.command.includes("prim-session-start"))).toBe(true);
     expect(hooks.on_session_end.some((e) => e.command.includes("prim-session-end"))).toBe(true);
     // Capture rides pre_tool_call alongside the gate (two entries on that event).
-    expect(hooks.pre_tool_call.some((e) => e.command.includes("prim-shim.sh prim-hook "))).toBe(
+    expect(hooks.pre_tool_call.some((e) => e.command.includes('prim-shim.sh" prim-hook '))).toBe(
       true,
     );
+  });
+
+  it("registers the conflict gate with the spec-mandated timeout: 10 (and no timeout on ingest)", () => {
+    const hooks = applyInstall({}, false);
+    expect(hooks.pre_tool_call.find((e) => e.matcher === "write_file|patch")?.timeout).toBe(10);
+    expect(
+      hooks.post_tool_call.find((e) => e.matcher === "write_file|patch")?.timeout,
+    ).toBeUndefined();
+  });
+
+  it("double-quotes the shim path so a spaced HERMES_HOME shlex-splits to one token", () => {
+    const prev = process.env.HERMES_HOME;
+    process.env.HERMES_HOME = "/tmp/a b/.hermes";
+    try {
+      const hooks = applyInstall({}, false);
+      const capture = hooks.pre_tool_call.find((e) => e.command.includes("prim-hook"));
+      expect(capture?.command).toBe(
+        '"/tmp/a b/.hermes/agent-hooks/prim-shim.sh" prim-hook --agent hermes',
+      );
+      // detection still recognizes the quoted form, so uninstall fully strips it
+      expect(applyUninstall(hooks).pre_tool_call).toBeUndefined();
+    } finally {
+      process.env.HERMES_HOME = prev;
+    }
   });
 
   it("is idempotent", () => {
@@ -139,5 +164,51 @@ describe("spliceHooks (byte-preserving)", () => {
     expect(out.startsWith("a: 1\n")).toBe(true);
     expect(out).toContain("z: 2");
     expect(out).toContain("prim-pre-tool-use");
+  });
+
+  it("does not corrupt the file when a column-0 comment sits inside the hooks block", () => {
+    const cfg = [
+      "model:",
+      "  default: gpt-4",
+      "hooks:",
+      "  pre_tool_call:",
+      "    - command: /my/own.sh",
+      "# a stray column-0 comment inside the hooks mapping",
+      "  post_tool_call:",
+      "    - command: /my/post.sh",
+      "telemetry: on",
+      "",
+    ].join("\n");
+    const out = spliceHooks(cfg, applyInstall(readHooks(parseDocument(cfg)), false));
+    // Valid YAML — no duplicate event key, no orphaned post-comment children.
+    expect(parseDocument(out).errors).toHaveLength(0);
+    // Foreign top-level keys on BOTH sides of the hooks block survive.
+    expect(out).toContain("model:");
+    expect(out).toContain("telemetry: on");
+    // The user's own hooks under shared events survive.
+    expect(out).toContain("/my/own.sh");
+    expect(out).toContain("/my/post.sh");
+  });
+});
+
+describe("mergeKeepsYamlValid", () => {
+  it("accepts a clean splice", () => {
+    expect(mergeKeepsYamlValid("model: a\n", "model: a\nhooks:\n  x:\n    - command: y\n")).toBe(
+      true,
+    );
+  });
+
+  it("does not flag a pre-existing duplicate top-level key (PyYAML reads it last-wins)", () => {
+    const dup = "model: a\nmodel: b\n";
+    expect(mergeKeepsYamlValid(dup, `${dup}hooks:\n  x:\n    - command: y\n`)).toBe(true);
+  });
+
+  it("flags a splice that INTRODUCES a new duplicate key", () => {
+    expect(
+      mergeKeepsYamlValid(
+        "hooks:\n  a:\n    - command: y\n",
+        "hooks:\n  a:\n    - command: y\nhooks:\n  a:\n    - command: z\n",
+      ),
+    ).toBe(false);
   });
 });

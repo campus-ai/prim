@@ -94,15 +94,19 @@ fi
 exec npx --yes -p @primitive.ai/prim@latest "$bin" "$@"
 `;
 
+// Hermes execs hook commands with shell=False (shlex.split), so the absolute
+// shim path is double-quoted: an unquoted space in HERMES_HOME would split
+// argv and silently disable every hook (capture, gate, ingest, presence).
 function commandFor(bin: string): string {
-  return `${shimPath()} ${bin} ${HERMES_ARGS}`;
+  return `"${shimPath()}" ${bin} ${HERMES_ARGS}`;
 }
 
 // A hook command is prim's when it routes `bin` through the prim shim. The
 // shim name + bin token is stable regardless of the (machine-specific) home
-// prefix, and the five bin names are mutually non-substring.
+// prefix; the optional `"` tolerates the quoted-path form, and the five bin
+// names are mutually non-substring.
 function commandUsesBin(command: string, bin: string): boolean {
-  return command.includes(`prim-shim.sh ${bin} `);
+  return new RegExp(`prim-shim\\.sh"?\\s+${bin}\\s`).test(command);
 }
 
 // The Hermes lifecycle events the capture hook rides — the Hermes-named
@@ -117,14 +121,19 @@ const CAPTURE_EVENTS = [
   "subagent_stop",
 ] as const;
 
-type HermesReg = { event: string; matcher?: string; bin: string };
+// The conflict gate is synchronous — Hermes waits on its block/allow — so it
+// carries an explicit timeout ceiling; the shim's npx cold-start fallback can
+// otherwise precede the binary's own internal timeouts.
+const GATE_TIMEOUT_SECONDS = 10;
+
+type HermesReg = { event: string; matcher?: string; bin: string; timeout?: number };
 
 // Capture on every observed event; the gate/ingest on the edit tools; the
 // session hooks on the boundaries. pre_tool_call and post_tool_call each carry
 // two prim entries (capture + their dedicated hook), as on Claude/Codex.
 const REGISTRATIONS: HermesReg[] = [
   ...CAPTURE_EVENTS.map((event) => ({ event, bin: CAPTURE_BIN })),
-  { event: "pre_tool_call", matcher: EDIT_MATCHER, bin: GATE_BIN },
+  { event: "pre_tool_call", matcher: EDIT_MATCHER, bin: GATE_BIN, timeout: GATE_TIMEOUT_SECONDS },
   { event: "post_tool_call", matcher: EDIT_MATCHER, bin: POST_TOOL_USE_BIN },
   { event: "on_session_start", bin: SESSION_START_BIN },
   { event: "on_session_end", bin: SESSION_END_BIN },
@@ -135,7 +144,11 @@ export type HooksMap = Record<string, HookEntry[]>;
 
 function entryFor(reg: HermesReg): HookEntry {
   const command = commandFor(reg.bin);
-  return reg.matcher ? { matcher: reg.matcher, command } : { command };
+  const entry: HookEntry = reg.matcher ? { matcher: reg.matcher, command } : { command };
+  if (reg.timeout !== undefined) {
+    entry.timeout = reg.timeout;
+  }
+  return entry;
 }
 
 // Strip every entry whose command routes through `bin`, leaving co-located
@@ -147,7 +160,10 @@ export function stripBin(list: HookEntry[], bin: string): HookEntry[] {
 export function ensureReg(list: HookEntry[], reg: HermesReg, force: boolean): HookEntry[] {
   const entry = entryFor(reg);
   const present = list.some(
-    (e) => e.command === entry.command && (e.matcher ?? "") === (entry.matcher ?? ""),
+    (e) =>
+      e.command === entry.command &&
+      (e.matcher ?? "") === (entry.matcher ?? "") &&
+      (e.timeout ?? null) === (entry.timeout ?? null),
   );
   if (present && !force) {
     return list;
@@ -220,9 +236,9 @@ export function readHooks(doc: Document): HooksMap {
 }
 
 // Locate the top-level `hooks:` block in raw YAML text — from the `hooks:` line
-// through its indented children, up to the next top-level key (a column-0
-// non-space line) or EOF. Returns char offsets, or null when absent. This is
-// the seam that lets install/uninstall rewrite ONLY that region.
+// through its indented children, up to the next top-level KEY (a column-0,
+// non-comment, non-blank line) or EOF. Returns char offsets, or null when
+// absent. This is the seam that lets install/uninstall rewrite ONLY that region.
 function locateHooksBlock(raw: string): { start: number; end: number } | null {
   const lines = raw.split("\n");
   let offset = 0;
@@ -235,7 +251,11 @@ function locateHooksBlock(raw: string): { start: number; end: number } | null {
       if (/^hooks:(\s|$)/.test(line)) {
         start = lineStart;
       }
-    } else if (/^\S/.test(line)) {
+    } else if (/^\S/.test(line) && !line.startsWith("#")) {
+      // A column-0 COMMENT can legally sit inside the indented hooks mapping —
+      // only a real top-level key ends the block. Ending it at a comment would
+      // orphan the post-comment hook children and re-emit a duplicate event key
+      // (invalid YAML), corrupting the user's config.
       end = lineStart;
       break;
     }
@@ -298,6 +318,24 @@ function atomicWriteFile(path: string, content: string): void {
   renameSync(tmp, path);
 }
 
+// True when the merged content is at least as parseable as the original — i.e.
+// the splice introduced no NEW structural error. Comparing error COUNTS (not
+// just "is it clean now") means a pre-existing ambiguity the user's YAML loader
+// already tolerates (e.g. a duplicate top-level key, which PyYAML reads
+// last-wins) is never mistaken for our corruption and never blocks the install.
+export function mergeKeepsYamlValid(before: string, after: string): boolean {
+  return parseDocument(after).errors.length <= parseDocument(before).errors.length;
+}
+
+// Defense in depth: abort (leaving the file byte-untouched) if the splice
+// introduced a new YAML error, rather than persist a config we made worse.
+function assertMergeValid(before: string, after: string): void {
+  if (!mergeKeepsYamlValid(before, after)) {
+    console.error("[prim] aborted: the merge would introduce invalid YAML; config left unchanged");
+    process.exit(1);
+  }
+}
+
 function writeShim(): void {
   const path = shimPath();
   const dir = dirname(path);
@@ -349,6 +387,7 @@ export function performInstall(opts: { force: boolean; autoAccept: boolean }): I
   writeShim();
   const changed = next !== raw;
   if (changed) {
+    assertMergeValid(raw, next);
     atomicWriteFile(path, next);
   }
   return {
@@ -373,6 +412,7 @@ export function performUninstall(): InstallResult {
     JSON.stringify(existing) === JSON.stringify(remaining) ? raw : spliceHooks(raw, remaining);
   const changed = next !== raw;
   if (changed) {
+    assertMergeValid(raw, next);
     atomicWriteFile(path, next);
   }
   // Every prim hook is gone now, so the shim it routed through is unused. The

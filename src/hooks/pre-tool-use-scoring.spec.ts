@@ -306,6 +306,16 @@ describe("extractFilePaths", () => {
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
+  it("captures both paths of a Hermes patch-mode rename (`*** Move File:`)", () => {
+    expect(
+      extractFilePaths(
+        "patch",
+        { mode: "patch", patch: "*** Move File: src/old.ts -> src/new.ts" },
+        "hermes",
+      ),
+    ).toEqual(["src/old.ts", "src/new.ts"]);
+  });
+
   it("returns empty for a non-edit Hermes tool (terminal fail-open)", () => {
     expect(extractFilePaths("terminal", { command: "ls" }, "hermes")).toEqual([]);
   });
@@ -332,6 +342,13 @@ describe("parseApplyPatchPaths", () => {
     expect(parseApplyPatchPaths("*** Update File: a.ts\r\n*** Add File: b.ts\r\n")).toEqual([
       "a.ts",
       "b.ts",
+    ]);
+  });
+
+  it("captures both src and dst of a standalone `*** Move File:` rename", () => {
+    expect(parseApplyPatchPaths("*** Move File: src/old.ts -> src/new.ts")).toEqual([
+      "src/old.ts",
+      "src/new.ts",
     ]);
   });
 });

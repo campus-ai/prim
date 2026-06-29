@@ -285,6 +285,13 @@ const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 // Codex routes file edits through `apply_patch`, naming each touched file on
 // its own envelope line (`*** Update File: path`).
 const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
+// Hermes V4A renames a file with a STANDALONE `*** Move File: <src> -> <dst>`
+// directive — no accompanying Update line (see Hermes tools/patch_parser.py),
+// so without this both paths would be dropped and a rename of a decision-bearing
+// file would slip the gate. Capture BOTH the source (the existing path that may
+// carry prior decisions) and the destination. (Codex's distinct `*** Move to:`
+// destination still isn't captured — its source rides an Update File line.)
+const MOVE_FILE_RE = /^\*\*\* Move File:\s*(?<src>.+?)\s*->\s*(?<dst>.+?)\s*$/;
 // Split on either line ending: a CRLF patch would otherwise leave a trailing
 // \r that the `$`-anchored regex can't match, dropping every file silently.
 const LINE_SPLIT_RE = /\r?\n/;
@@ -295,6 +302,14 @@ export function parseApplyPatchPaths(command: string): string[] {
     const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
     if (path) {
       paths.add(path);
+      continue;
+    }
+    const move = MOVE_FILE_RE.exec(line)?.groups;
+    if (move?.src) {
+      paths.add(move.src.trim());
+      if (move.dst) {
+        paths.add(move.dst.trim());
+      }
     }
   }
   return Array.from(paths);

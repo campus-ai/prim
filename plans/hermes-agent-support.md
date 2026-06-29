@@ -233,7 +233,7 @@ The single biggest new piece — Codex reused the JSON engine; Hermes cannot.
 
 Backend producer validation is fail-closed, so order matters:
 1. **Backend PR first** — admit `hermes` + `write_file`/`patch` awareness. Purely additive; nothing emits `hermes` yet, so it's a safe solo land.
-2. **CLI PRs** — emit `producer:"hermes"`. `ENVELOPE_VERSION` already lets a stale server tolerate new producers, but landing backend first means a **zero** rejection window.
+2. **CLI PRs** — emit `producer:"hermes"`. The producer union is **fail-closed**, so a stale (pre-step-1) backend would 500 a `hermes` move — `ENVELOPE_VERSION` tolerates envelope-*schema* drift, NOT new producer values. Landing the backend first is therefore a hard ordering gate, not a soft fallback. (Optional follow-up: soft-drop unknown producers at the ingest HTTP action so a mis-ordered rollout degrades to no-capture instead of a batch 500.)
 3. Release + update `setup.md`/`v1` onboarding (note the `v1`-tag-serves-`setup.md` drift footgun — move the tag after merge).
 
 **Suggested PRs** (each independently reviewable):
