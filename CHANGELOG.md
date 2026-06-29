@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.31](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.30...v0.1.0-alpha.31) (2026-06-29)
+
+
+### Bug Fixes
+
+* **journal:** reject dot-only env slugs that escape the moves tree ([#109](https://github.com/campus-ai/prim/issues/109)) ([288a5c5](https://github.com/campus-ai/prim/commit/288a5c5c96e7e01e2d6824c739ab19cde9fec3b7))
+
 ## [0.1.0-alpha.30](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.29...v0.1.0-alpha.30) (2026-06-29)
 
 
