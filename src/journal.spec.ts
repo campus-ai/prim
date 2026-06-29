@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   JOURNAL_DIR,
   appendMoveToPath,
+  envSlug,
   journalPath,
   listFlushingInDir,
   readMovesFromPath,
@@ -102,7 +103,40 @@ describe("listFlushingInDir", () => {
   });
 });
 
+describe("envSlug", () => {
+  it("derives a readable, fs-safe slug from the API base URL", () => {
+    expect(envSlug("https://api.getprimitive.ai")).toBe("api.getprimitive.ai");
+    expect(envSlug("https://ceaseless-lemur-432.convex.site")).toBe(
+      "ceaseless-lemur-432.convex.site",
+    );
+  });
+
+  it("gives different deployments different slugs, and is stable for one", () => {
+    expect(envSlug("https://api.getprimitive.ai")).not.toBe(
+      envSlug("https://ceaseless-lemur-432.convex.site"),
+    );
+    expect(envSlug("https://api.getprimitive.ai/")).toBe(envSlug("https://api.getprimitive.ai"));
+  });
+
+  it("sanitizes path-unsafe characters and never yields an empty segment", () => {
+    expect(envSlug("https://host.example/x?y=z")).toBe("host.example_x_y_z");
+    expect(envSlug("https://")).toBe("default");
+  });
+});
+
 describe("journalPath bucket safety", () => {
+  const prior = process.env.PRIM_API_URL;
+  beforeEach(() => {
+    process.env.PRIM_API_URL = "https://example.test";
+  });
+  afterEach(() => {
+    if (prior === undefined) {
+      process.env.PRIM_API_URL = undefined;
+    } else {
+      process.env.PRIM_API_URL = prior;
+    }
+  });
+
   it("routes an unsafe orgId to the unbound bucket, never outside JOURNAL_DIR", () => {
     const unbound = journalPath(undefined);
     expect(journalPath("../../../../tmp/evil")).toBe(unbound);
@@ -112,7 +146,19 @@ describe("journalPath bucket safety", () => {
     expect(journalPath("../../etc").startsWith(JOURNAL_DIR)).toBe(true);
   });
 
-  it("keeps a well-formed org id as its own bucket", () => {
-    expect(journalPath("jd7k2p9x")).toBe(join(JOURNAL_DIR, "jd7k2p9x", "journal.ndjson"));
+  it("keeps a well-formed org id as its own bucket, under the env partition", () => {
+    expect(journalPath("jd7k2p9x")).toBe(
+      join(JOURNAL_DIR, "example.test", "jd7k2p9x", "journal.ndjson"),
+    );
+  });
+
+  it("partitions by deployment — the same org under two envs gets two buckets", () => {
+    process.env.PRIM_API_URL = "https://api.getprimitive.ai";
+    const prod = journalPath("jd7k2p9x");
+    process.env.PRIM_API_URL = "https://ceaseless-lemur-432.convex.site";
+    const staging = journalPath("jd7k2p9x");
+    expect(prod).not.toBe(staging);
+    expect(prod).toContain("api.getprimitive.ai");
+    expect(staging).toContain("ceaseless-lemur-432.convex.site");
   });
 });

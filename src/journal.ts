@@ -1,18 +1,21 @@
 /**
  * Decision Event Pipeline — local NDJSON journal.
  *
- * Moves are journaled under a per-org bucket layout:
+ * Moves are journaled under a per-ENVIRONMENT, per-org bucket layout:
  *
  *   ~/.config/prim/moves/
- *     <orgId>/journal.ndjson    — moves bound to a known org
- *     _unbound/journal.ndjson   — moves captured without a resolved org
- *     journal.ndjson            — legacy single-file (drained by the
- *                                 flusher, then deleted; no new writes)
+ *     <envSlug>/                — one partition per API deployment (envSlug)
+ *       <orgId>/journal.ndjson  — moves bound to a known org
+ *       _unbound/journal.ndjson — moves captured without a resolved org
  *
- * Per-org buckets keep one org's moves isolated from another's at rest and
- * let `prim moves status` report per-bucket pending counts. Server-side org
- * attribution is derived from the authenticated token, not the bucket — the
- * bucket is purely a local-disk concern.
+ * The environment partition is load-bearing, not cosmetic: the server
+ * attributes a flushed move to the AUTHENTICATED TOKEN's org regardless of
+ * which deployment captured it, so a journal keyed by org alone let moves
+ * captured against staging flush into prod (and become prod decisions). Keying
+ * the bucket by deployment — and draining only the current deployment's
+ * buckets (see listBuckets) — isolates each environment's captures end to end.
+ * Per-org sub-buckets still keep one org's moves apart and let `prim moves
+ * status` report per-bucket pending counts.
  *
  * Journals hold raw hook payloads (file contents, prompts, tool I/O), so
  * every file is created 0600 and its directory 0700 — the same posture the
@@ -30,12 +33,36 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { getSiteUrl } from "./client.js";
 import type { Move } from "./protocol/move.js";
 
 export const JOURNAL_DIR = join(homedir(), ".config", "prim", "moves");
-export const LEGACY_JOURNAL_PATH = join(JOURNAL_DIR, "journal.ndjson");
 const UNBOUND_BUCKET = "_unbound";
 const JOURNAL_BASENAME = "journal.ndjson";
+
+/**
+ * A filesystem-safe slug for the resolved API base URL, used as the journal's
+ * environment partition. The server attributes a flushed move to the active
+ * token's org regardless of which deployment captured it, so a journal keyed by
+ * org alone lets moves captured against one deployment flush into another (the
+ * "staging decisions in production" bug). Partitioning the bucket path by
+ * deployment — and draining only the CURRENT deployment's buckets — keeps each
+ * environment's captures isolated end to end. Readable on purpose (e.g.
+ * `api.getprimitive.ai`) so it is obvious on disk which deployment a bucket
+ * belongs to.
+ */
+export function envSlug(apiUrl: string): string {
+  const slug = apiUrl
+    .replace(/^https?:\/\//, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return slug.length > 0 ? slug : "default";
+}
+
+function currentEnvDir(): string {
+  return join(JOURNAL_DIR, envSlug(getSiteUrl()));
+}
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -57,7 +84,10 @@ export function appendMoveToPath(path: string, move: Move): void {
 
 function bucketDir(orgId: string | undefined): string {
   const safe = orgId !== undefined && SAFE_BUCKET.test(orgId) && !RESERVED_BUCKETS.has(orgId);
-  return join(JOURNAL_DIR, safe ? orgId : UNBOUND_BUCKET);
+  // <moves>/<envSlug>/<orgId>: the env partition is what isolates one
+  // deployment's captures from another's, so a flush only ever drains the
+  // deployment it is currently targeting.
+  return join(currentEnvDir(), safe ? orgId : UNBOUND_BUCKET);
 }
 
 export function journalPath(orgId: string | undefined): string {
@@ -90,24 +120,24 @@ export function readMovesFromPath(path: string): Move[] {
 }
 
 /**
- * All bucket journals that currently exist on disk (path-only — no stat or
- * read), including the legacy single-file (if present) reported as
- * `_legacy`. The flusher drives its drain off this so its only race-
- * sensitive op is drainPath's ENOENT-tolerant rename.
+ * The org-bucket journals for the CURRENT deployment only (path-only — no stat
+ * or read). Scoping to the current env's partition is the load-bearing
+ * isolation: the flusher drives its drain off this, so it can only ever send a
+ * deployment its own captures — never another's. Buckets under a different env
+ * slug (and any pre-partition legacy layout) are intentionally not enumerated
+ * here, so they are orphaned rather than mis-flushed across deployments.
  */
 export function listBuckets(): Array<{ bucket: string; path: string }> {
   const out: Array<{ bucket: string; path: string }> = [];
-  if (existsSync(LEGACY_JOURNAL_PATH)) {
-    out.push({ bucket: "_legacy", path: LEGACY_JOURNAL_PATH });
-  }
-  if (!existsSync(JOURNAL_DIR)) {
+  const envDir = currentEnvDir();
+  if (!existsSync(envDir)) {
     return out;
   }
-  for (const entry of readdirSync(JOURNAL_DIR, { withFileTypes: true })) {
+  for (const entry of readdirSync(envDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) {
       continue;
     }
-    const path = join(JOURNAL_DIR, entry.name, JOURNAL_BASENAME);
+    const path = join(envDir, entry.name, JOURNAL_BASENAME);
     if (existsSync(path)) {
       out.push({ bucket: entry.name, path });
     }
@@ -172,19 +202,22 @@ export function listFlushingInDir(dir: string, bucket: string): FlushingFile[] {
 }
 
 /**
- * Every stranded `.flushing` file across the journal tree: legacy variants at
- * the top level (reported under `_legacy`) plus the in-bucket siblings of each
- * org's journal.ndjson. listBuckets() deliberately never names these, so this
- * is the only enumeration that sees a crashed drain's leftovers.
+ * Stranded `.flushing` files (a crashed drain's leftovers) for the CURRENT
+ * deployment only — the in-bucket siblings of each org's journal.ndjson under
+ * this env's partition. Env-scoped like listBuckets so recovery re-drains a
+ * crashed flush back to the SAME deployment it came from, never across
+ * environments; leftovers under another env slug (or a pre-partition legacy
+ * layout) are orphaned, not mis-flushed. listBuckets() never names these.
  */
 export function listFlushing(): FlushingFile[] {
-  if (!existsSync(JOURNAL_DIR)) {
+  const envDir = currentEnvDir();
+  if (!existsSync(envDir)) {
     return [];
   }
-  const out: FlushingFile[] = listFlushingInDir(JOURNAL_DIR, "_legacy");
-  for (const entry of readdirSync(JOURNAL_DIR, { withFileTypes: true })) {
+  const out: FlushingFile[] = [];
+  for (const entry of readdirSync(envDir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      out.push(...listFlushingInDir(join(JOURNAL_DIR, entry.name), entry.name));
+      out.push(...listFlushingInDir(join(envDir, entry.name), entry.name));
     }
   }
   return out;
