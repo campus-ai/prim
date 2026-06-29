@@ -29,6 +29,7 @@ export const SKILL_END = "<!-- END PRIM SKILL v1 -->";
 export const TARGET_CANDIDATES = [
   "CLAUDE.md",
   "AGENTS.md",
+  ".hermes.md",
   ".cursor/rules",
   ".windsurfrules",
   ".github/instructions/primitive.md",
