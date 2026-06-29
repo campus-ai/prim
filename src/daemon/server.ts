@@ -20,7 +20,8 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { type Socket, createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getClient, getTokenExpiresAt, refreshToken } from "../client.js";
+import { getClient, getSiteUrl, getTokenExpiresAt, refreshToken } from "../client.js";
+import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 
 const CONFIG_DIR = join(homedir(), ".config", "prim");
 const SOCK_PATH = join(CONFIG_DIR, "sock");
@@ -157,6 +158,7 @@ async function ensureTokenFresh(): Promise<void> {
 }
 
 async function handleConflictCheck(params: Record<string, unknown>): Promise<unknown> {
+  assertCallerEnvMatches(params.callerEnv, getSiteUrl());
   if (typeof params.file !== "string") {
     throw new Error("conflict_check requires `file: string`");
   }
@@ -180,22 +182,43 @@ function assertEndpointPath(path: string, endpoint: string): void {
 }
 
 async function proxyGet(params: Record<string, unknown>, allowedPrefix: string): Promise<unknown> {
+  // getSiteUrl() fresh (not a boot snapshot) so the guard tracks the very URL
+  // request() will hit — both re-resolve from the daemon's fixed env + cwd.
+  assertCallerEnvMatches(params.callerEnv, getSiteUrl());
   const path = pathParam(params);
   assertEndpointPath(path, allowedPrefix);
   return await client.get(path, { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
 }
 
-function handleStatusSnapshot(): unknown {
+function handleStatusSnapshot(params: Record<string, unknown>): unknown {
+  const base = {
+    pid: process.pid,
+    uptimeMs: Date.now() - startedAt,
+    sessionId: activeSessionId,
+    lastHeartbeatAt,
+  };
+  // Presence is this daemon's own bound-env heartbeat. A cross-env caller (e.g. a
+  // prod statusline reading a staging-bound daemon) must not see that roster:
+  // withhold count/names and flag the mismatch so the statusline shows
+  // "presence: other env" instead of another deployment's team. There is no
+  // direct fallback for presence, so unlike the proxied reads this withholds
+  // rather than throws. `daemon status` sends no callerEnv and still sees it all.
+  if (isCrossEnv(params.callerEnv, getSiteUrl())) {
+    return {
+      ...base,
+      onlineCount: undefined,
+      onlineNames: undefined,
+      presenceStale: false,
+      envMismatch: true,
+    };
+  }
   const presenceFresh =
     lastOkAtLocal !== undefined && Date.now() - lastOkAtLocal < PRESENCE_FRESH_WINDOW_MS;
   // Stale only once we HAD an accepted ack that has since aged out — a daemon
   // that simply hasn't acked yet is not stale, just countless ("team: —").
   const presenceStale = lastOkAtLocal !== undefined && !presenceFresh;
   return {
-    pid: process.pid,
-    uptimeMs: Date.now() - startedAt,
-    sessionId: activeSessionId,
-    lastHeartbeatAt,
+    ...base,
     // Withhold a frozen count/names once they're no longer fresh; the
     // statusline shows "presence: stale" rather than a confident, wrong list.
     onlineCount: presenceFresh ? lastOnlineCount : undefined,
@@ -242,7 +265,7 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
         return { id, ok: true, result: { ack: true } };
       }
       case "status_snapshot":
-        return { id, ok: true, result: handleStatusSnapshot() };
+        return { id, ok: true, result: handleStatusSnapshot(req.params ?? {}) };
       case "ping":
         return { id, ok: true, result: { pong: true } };
       default:

@@ -15,7 +15,7 @@
  * non-mutating; tightening it to a per-request principal is a tracked
  * follow-up.
  */
-import type { CliClient } from "../client.js";
+import { type CliClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "./client.js";
 
 const DAEMON_HTTP_TIMEOUT_MS = 10_000;
@@ -31,9 +31,14 @@ async function daemonOrDirect<T>(
   params: Record<string, unknown>,
   direct: () => Promise<T>,
 ): Promise<T> {
-  const fromDaemon = await daemonRequest<T>(method, params, {
-    timeoutMs: DAEMON_PROBE_TIMEOUT_MS,
-  });
+  // Carry the caller's resolved env so a daemon bound to a different deployment
+  // refuses (returns ok:false → null here) and we fall through to a direct call
+  // against our own env, instead of being served another deployment's data.
+  const fromDaemon = await daemonRequest<T>(
+    method,
+    { ...params, callerEnv: getSiteUrl() },
+    { timeoutMs: DAEMON_PROBE_TIMEOUT_MS },
+  );
   if (fromDaemon !== null) {
     return fromDaemon;
   }

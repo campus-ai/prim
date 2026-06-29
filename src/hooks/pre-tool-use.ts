@@ -30,7 +30,7 @@
  * verdict it gets back.
  */
 
-import { getClient } from "../client.js";
+import { getClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { parseAgent } from "./agent.js";
 import {
@@ -89,7 +89,9 @@ async function checkOneFile(file: string): Promise<ConflictCheckResult> {
   // on both paths — scoring policy is server-owned.
   const fromDaemon = await daemonRequest<ConflictCheckResult>(
     "conflict_check",
-    { file },
+    // callerEnv lets a staging-bound daemon refuse a prod-context gate check
+    // (and vice versa) so we fall through to a direct call against our own env.
+    { file, callerEnv: getSiteUrl() },
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
   if (fromDaemon) {

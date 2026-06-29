@@ -16,6 +16,7 @@
  * emit `{}` and exit 0. Hooks must never block.
  */
 
+import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { parseAgent } from "./agent.js";
 
@@ -92,7 +93,9 @@ async function main(): Promise<void> {
   if (parseAgent(process.argv) === "codex") {
     const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
       "status_snapshot",
-      {},
+      // callerEnv: a cross-env daemon withholds onlineCount, so a prod Codex
+      // session never gets a staging daemon's team count injected.
+      { callerEnv: getSiteUrl() },
       { timeoutMs: DAEMON_TIMEOUT_MS },
     );
     // Mirror the statusline's honest-presence rule: inject the count only when

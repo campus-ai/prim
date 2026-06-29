@@ -102,7 +102,7 @@ describe("fetchShow", () => {
     expect(result).toBe(DETAIL);
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_show",
-      { path: "/api/cli/decisions/show?id=dec_230a72aa" },
+      expect.objectContaining({ path: "/api/cli/decisions/show?id=dec_230a72aa" }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();

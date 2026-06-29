@@ -34,7 +34,8 @@ describe("daemon proxy reads", () => {
     expect(result).toEqual({ decisions: [] });
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_recent",
-      { path: "/api/cli/decisions/recent" },
+      // callerEnv now rides every proxied read so a cross-env daemon can refuse.
+      expect.objectContaining({ path: "/api/cli/decisions/recent", callerEnv: expect.any(String) }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();
@@ -69,7 +70,8 @@ describe("daemon proxy reads", () => {
 
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_recent",
-      { path: "/api/cli/decisions/recent" },
+      // callerEnv now rides every proxied read so a cross-env daemon can refuse.
+      expect.objectContaining({ path: "/api/cli/decisions/recent", callerEnv: expect.any(String) }),
       { timeoutMs: 250 },
     );
   });
