@@ -27,7 +27,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
 import type { Move } from "../protocol/move.js";
-import { parseAgent } from "./agent.js";
+import { type Agent, parseAgent } from "./agent.js";
+import { normalizeEnvelope } from "./normalize.js";
 import { toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
@@ -37,6 +38,18 @@ const INGEST_TIMEOUT_MS = 4_000;
 const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 // Codex routes file edits through apply_patch (its single edit tool).
 const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
+// Hermes routes file edits through write_file and patch.
+const HERMES_EDITING_TOOLS = new Set(["write_file", "patch"]);
+
+function editingToolsFor(agent: Agent): Set<string> {
+  if (agent === "codex") {
+    return CODEX_EDITING_TOOLS;
+  }
+  if (agent === "hermes") {
+    return HERMES_EDITING_TOOLS;
+  }
+  return EDITING_TOOLS;
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -101,6 +114,7 @@ async function ingestMove(move: Move): Promise<IngestResponse> {
 }
 
 async function main(): Promise<void> {
+  const agent = parseAgent(process.argv);
   let raw: string;
   try {
     raw = await readStdin();
@@ -110,7 +124,7 @@ async function main(): Promise<void> {
   }
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   } catch {
     emit();
     return;
@@ -121,8 +135,7 @@ async function main(): Promise<void> {
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
-  const agent = parseAgent(process.argv);
-  const editingTools = agent === "codex" ? CODEX_EDITING_TOOLS : EDITING_TOOLS;
+  const editingTools = editingToolsFor(agent);
   if (!editingTools.has(toolName)) {
     emit();
     return;

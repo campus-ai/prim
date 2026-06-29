@@ -12,9 +12,11 @@ import {
   type ConflictCheckResult,
   aggregateCheckResults,
   anyUnverified,
+  buildHermesOutput,
   buildHookOutput,
   demoteForMode,
   extractFilePaths,
+  failOpenHermes,
   failOpenOutput,
   parseApplyPatchPaths,
   readHookMode,
@@ -278,6 +280,41 @@ describe("extractFilePaths", () => {
     expect(extractFilePaths("apply_patch", null, "codex")).toEqual([]);
     expect(extractFilePaths("apply_patch", { command: 42 }, "codex")).toEqual([]);
   });
+
+  it("reads the write_file path for Hermes", () => {
+    expect(extractFilePaths("write_file", { path: "src/h.ts", content: "x" }, "hermes")).toEqual([
+      "src/h.ts",
+    ]);
+  });
+
+  it("reads the patch path for a Hermes patch in replace mode (default)", () => {
+    expect(
+      extractFilePaths("patch", { path: "src/h.ts", old_string: "a", new_string: "b" }, "hermes"),
+    ).toEqual(["src/h.ts"]);
+    expect(extractFilePaths("patch", { mode: "replace", path: "src/h.ts" }, "hermes")).toEqual([
+      "src/h.ts",
+    ]);
+  });
+
+  it("parses the V4A body for a Hermes patch in patch mode", () => {
+    expect(
+      extractFilePaths(
+        "patch",
+        { mode: "patch", patch: "*** Update File: src/a.ts\n*** Add File: src/b.ts" },
+        "hermes",
+      ),
+    ).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("returns empty for a non-edit Hermes tool (terminal fail-open)", () => {
+    expect(extractFilePaths("terminal", { command: "ls" }, "hermes")).toEqual([]);
+  });
+
+  it("returns empty for malformed Hermes input", () => {
+    expect(extractFilePaths("write_file", null, "hermes")).toEqual([]);
+    expect(extractFilePaths("write_file", { content: "no path" }, "hermes")).toEqual([]);
+    expect(extractFilePaths("patch", { mode: "patch", patch: 42 }, "hermes")).toEqual([]);
+  });
 });
 
 describe("parseApplyPatchPaths", () => {
@@ -346,5 +383,48 @@ describe("failOpenOutput", () => {
     const out = failOpenOutput();
     expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+  });
+});
+
+describe("buildHermesOutput", () => {
+  it("blocks on deny with the reason as the message", () => {
+    const out = buildHermesOutput("deny", [
+      resultFixture({ verdict: "deny", reason: "[primitive] conflict — pausing for review" }),
+    ]);
+    expect(out.action).toBe("block");
+    expect(out.message).toContain("[primitive] conflict — pausing for review");
+  });
+
+  it("blocks on ask too (no soft tier), carrying the reconcile directive", () => {
+    const out = buildHermesOutput("ask", [
+      resultFixture({
+        verdict: "ask",
+        reason: "please confirm",
+        additionalContext: "To reconcile, run: prim reconcile dec_ab12cd34",
+      }),
+    ]);
+    expect(out.action).toBe("block");
+    expect(out.message).toContain("please confirm");
+    expect(out.message).toContain("prim reconcile dec_ab12cd34");
+  });
+
+  it("allows (empty object) on warn/allow — no advisory channel at pre_tool_call", () => {
+    expect(buildHermesOutput("warn", [resultFixture({ verdict: "warn" })])).toEqual({});
+    expect(buildHermesOutput("allow", [resultFixture()])).toEqual({});
+  });
+
+  it("allows even when a result is unverified (cannot ride a pre_tool_call allow)", () => {
+    expect(buildHermesOutput("allow", [resultFixture({ verdict: "unavailable" })])).toEqual({});
+  });
+
+  it("falls back to a generic message when deny has no detail", () => {
+    const out = buildHermesOutput("deny", [resultFixture({ verdict: "deny", reason: "" })]);
+    expect(out.message).toContain("conflict detected");
+  });
+});
+
+describe("failOpenHermes", () => {
+  it("emits an empty object (no block)", () => {
+    expect(failOpenHermes()).toEqual({});
   });
 });
