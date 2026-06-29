@@ -21,10 +21,26 @@
 import { renameSync, unlinkSync } from "node:fs";
 import { getClient } from "./client.js";
 import { bucketStats, listBuckets, readMovesFromPath } from "./journal.js";
+import type { Move } from "./protocol/move.js";
 
 const BATCH_SIZE = 500;
 const HTTP_TIMEOUT_MS = 10_000;
 const OPPORTUNISTIC_FLUSH_AFTER_MS = 60_000;
+
+/**
+ * Slice a move list into fixed-size POST batches, preserving order and
+ * identity. Pure, so the batching the drain — and the recovery re-drain that
+ * replays a stranded `.flushing` file — both rely on can be pinned without a
+ * network round-trip. Re-POSTing the same moveIds is safe because the server
+ * dedups ingest at by_move_id.
+ */
+export function batchMoves(moves: Move[], size: number = BATCH_SIZE): Move[][] {
+  const batches: Move[][] = [];
+  for (let i = 0; i < moves.length; i += size) {
+    batches.push(moves.slice(i, i + size));
+  }
+  return batches;
+}
 
 async function drainPath(path: string): Promise<number> {
   const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
@@ -45,8 +61,7 @@ async function drainPath(path: string): Promise<number> {
   }
 
   const client = getClient();
-  for (let i = 0; i < moves.length; i += BATCH_SIZE) {
-    const batch = moves.slice(i, i + BATCH_SIZE);
+  for (const batch of batchMoves(moves)) {
     await client.post(
       "/api/cli/moves/ingest",
       { batch },
