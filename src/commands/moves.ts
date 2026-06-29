@@ -64,7 +64,7 @@ export function registerMovesCommands(program: Command): void {
         const moveCount = stranded.reduce((n, f) => n + f.lineCount, 0);
         const byteCount = stranded.reduce((n, f) => n + f.sizeBytes, 0);
         console.log(
-          `[prim] ⚠ ${String(stranded.length)} stranded flush file(s): ${String(moveCount)} move(s), ${String(byteCount)} bytes — orphaned mid-drain`,
+          `[prim] ⚠ ${String(stranded.length)} stranded flush file(s): ${String(moveCount)} move(s), ${String(byteCount)} bytes — recover with \`prim moves flush\``,
         );
         for (const f of stranded) {
           const ageS = Math.round((Date.now() - f.mtimeMs) / MS_PER_SECOND);

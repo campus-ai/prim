@@ -12,8 +12,8 @@ import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { batchMoves } from "./flusher.js";
-import { appendMoveToPath, readMovesFromPath } from "./journal.js";
+import { batchMoves, selectRecoverable } from "./flusher.js";
+import { type FlushingFile, appendMoveToPath, readMovesFromPath } from "./journal.js";
 import type { Move } from "./protocol/move.js";
 
 function move(id: string): Move {
@@ -70,5 +70,39 @@ describe("flush replay stability", () => {
     renameSync(journal, flushing);
 
     expect(readMovesFromPath(flushing).map((m) => m.moveId)).toEqual(["x1", "x2", "x3"]);
+  });
+});
+
+describe("selectRecoverable", () => {
+  const now = 1_000_000;
+  const dead = () => false;
+  const alive = () => true;
+
+  function flushing(over: Partial<FlushingFile>): FlushingFile {
+    return {
+      bucket: "orgA",
+      path: "/x",
+      pid: undefined,
+      sizeBytes: 0,
+      mtimeMs: 0,
+      lineCount: 0,
+      ...over,
+    };
+  }
+
+  it("adopts a file whose owning pid is dead (the crash case)", () => {
+    const f = flushing({ pid: 4242, mtimeMs: now });
+    expect(selectRecoverable([f], now, { isAlive: dead })).toEqual([f]);
+  });
+
+  it("never steals a file whose owning pid is still alive (in-flight drain)", () => {
+    const f = flushing({ pid: 4242, mtimeMs: now });
+    expect(selectRecoverable([f], now, { isAlive: alive })).toEqual([]);
+  });
+
+  it("adopts a legacy pid-less file only once it has aged past the quarantine", () => {
+    const stale = flushing({ pid: undefined, mtimeMs: now - 120_000 });
+    const fresh = flushing({ pid: undefined, mtimeMs: now - 1_000 });
+    expect(selectRecoverable([stale, fresh], now, { quarantineMs: 60_000 })).toEqual([stale]);
   });
 });
