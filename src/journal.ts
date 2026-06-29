@@ -57,7 +57,18 @@ export function envSlug(apiUrl: string): string {
     .replace(/[^a-zA-Z0-9._-]/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
-  return slug.length > 0 ? slug : "default";
+  // The slug is a filesystem path segment (join(JOURNAL_DIR, slug)), so a bare
+  // "." or ".." must not survive: ".." escapes the moves tree and writes
+  // secret-bearing journals one level up (beside the credential files), while
+  // "." collapses every deployment back onto the unpartitioned root — the exact
+  // cross-env contamination this partition exists to prevent. The char class
+  // keeps "." so dotted hostnames (api.getprimitive.ai) stay readable, so the
+  // dot-only segments are rejected explicitly here, mirroring the orgId
+  // SAFE_BUCKET guard the per-org sub-bucket already has.
+  if (slug.length === 0 || slug === "." || slug === "..") {
+    return "default";
+  }
+  return slug;
 }
 
 function currentEnvDir(): string {

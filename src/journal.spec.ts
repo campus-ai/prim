@@ -122,6 +122,16 @@ describe("envSlug", () => {
     expect(envSlug("https://host.example/x?y=z")).toBe("host.example_x_y_z");
     expect(envSlug("https://")).toBe("default");
   });
+
+  it("rejects the dot-only segments that would escape or collapse JOURNAL_DIR", () => {
+    // join(JOURNAL_DIR, "..") would escape the moves tree; join(JOURNAL_DIR,
+    // ".") would collapse every deployment onto the unpartitioned root. Both
+    // must fall back to a literal partition, never a traversal segment.
+    expect(envSlug("https://..")).toBe("default");
+    expect(envSlug("https://.")).toBe("default");
+    expect(envSlug("..")).toBe("default");
+    expect(envSlug("http://.")).toBe("default");
+  });
 });
 
 describe("journalPath bucket safety", () => {
