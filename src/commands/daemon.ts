@@ -18,7 +18,7 @@
  */
 
 import { type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
@@ -27,8 +27,13 @@ import { binFile } from "../lib/bin-path.js";
 import { formatTeammates } from "../lib/presence.js";
 
 const DAEMON_BIN = "prim-daemon-server";
-const PID_PATH = join(homedir(), ".config", "prim", "daemon.pid");
-const SOCK_PATH = join(homedir(), ".config", "prim", "sock");
+const CONFIG_DIR = join(homedir(), ".config", "prim");
+const PID_PATH = join(CONFIG_DIR, "daemon.pid");
+const SOCK_PATH = join(CONFIG_DIR, "sock");
+const LOG_PATH = join(CONFIG_DIR, "daemon.log");
+
+const CONFIG_DIR_MODE = 0o700;
+const LOG_FILE_MODE = 0o600;
 
 const STOP_TIMEOUT_MS = 5_000;
 const STOP_POLL_MS = 100;
@@ -114,6 +119,21 @@ function spawnDaemon(options: SpawnOptions) {
   return file ? spawn(process.execPath, [file], options) : spawn(DAEMON_BIN, [], options);
 }
 
+/**
+ * Open the daemon log for appending (creating the config dir if needed) so
+ * the detached daemon can inherit it as stdout+stderr. The daemon already
+ * writes its lifecycle and crash lines to those streams; without a real file
+ * the detached spawn sent them to /dev/null, leaving a crash with no trace on
+ * disk. Returns the fd; the caller closes its own copy after handing it to
+ * the child.
+ */
+export function openDaemonLog(configDir: string = CONFIG_DIR): number {
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true, mode: CONFIG_DIR_MODE });
+  }
+  return openSync(join(configDir, "daemon.log"), "a", LOG_FILE_MODE);
+}
+
 /** Poll the socket until the daemon answers a ping or the deadline elapses. */
 async function waitForReady(): Promise<boolean> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
@@ -146,8 +166,24 @@ async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
     return;
   }
 
-  const child = spawnDaemon({ detached: true, stdio: ["ignore", "ignore", "ignore"] });
+  // Hand the detached child an append fd to ~/.config/prim/daemon.log for
+  // stdout+stderr so its heartbeat/crash lines survive instead of going to
+  // /dev/null. Fail-soft: if the log can't be opened, discard rather than
+  // block startup.
+  let logFd: number | undefined;
+  try {
+    logFd = openDaemonLog();
+  } catch {
+    logFd = undefined;
+  }
+  const child = spawnDaemon({
+    detached: true,
+    stdio: logFd === undefined ? ["ignore", "ignore", "ignore"] : ["ignore", logFd, logFd],
+  });
   child.unref();
+  if (logFd !== undefined) {
+    closeSync(logFd);
+  }
 
   // Block until the daemon actually answers on its socket — the only signal
   // that it's ready to serve — so a chained `status` can't race the boot.
@@ -161,7 +197,7 @@ async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
     return;
   }
   process.stderr.write(
-    `[prim] ✗ daemon start: spawned but the socket did not respond within ${READY_TIMEOUT_MS}ms (check that \`${DAEMON_BIN}\` resolves, and see its log)\n`,
+    `[prim] ✗ daemon start: spawned but the socket did not respond within ${READY_TIMEOUT_MS}ms (check that \`${DAEMON_BIN}\` resolves, and see ${LOG_PATH})\n`,
   );
   console.log(JSON.stringify({ started: false }, null, 2));
   if (!process.exitCode) {

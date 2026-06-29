@@ -7,8 +7,11 @@
  * (EXIT_NOT_RUNNING, 2), so a status chained right after start can't misread a
  * healthy boot as a failure.
  */
-import { describe, expect, it } from "vitest";
-import { classifyStatus } from "./daemon.js";
+import { closeSync, mkdtempSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { classifyStatus, openDaemonLog } from "./daemon.js";
 
 const EXIT_OK = 0;
 const EXIT_NOT_RUNNING = 2;
@@ -44,5 +47,43 @@ describe("classifyStatus", () => {
     const { json, exitCode } = classifyStatus(true, true, snapshot, 4242);
     expect(json).toEqual({ running: true, responding: true, ...snapshot });
     expect(exitCode).toBe(EXIT_OK);
+  });
+});
+
+describe("openDaemonLog", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "prim-daemon-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates the config dir and an appendable 0600 daemon.log", () => {
+    const configDir = join(dir, "prim");
+    const logPath = join(configDir, "daemon.log");
+
+    const fd1 = openDaemonLog(configDir);
+    try {
+      writeSync(fd1, "line-one\n");
+    } finally {
+      closeSync(fd1);
+    }
+
+    // Raw hook payloads never touch this file, but it lives under the same
+    // 0700/0600 config tree, so keep the credential-grade posture.
+    expect(statSync(logPath).mode & 0o777).toBe(0o600);
+
+    // A second open must append, not truncate — the daemon's log has to
+    // survive across restarts to be worth anything.
+    const fd2 = openDaemonLog(configDir);
+    try {
+      writeSync(fd2, "line-two\n");
+    } finally {
+      closeSync(fd2);
+    }
+    expect(readFileSync(logPath, "utf-8")).toBe("line-one\nline-two\n");
   });
 });
