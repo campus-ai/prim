@@ -1,12 +1,16 @@
 /**
- * `prim setup` — the pure step plan. The orchestration (spawning each
- * subcommand, the auth-skip, the result trail) is exercised E2E; here we pin the
- * ordering, agent branch, daemon toggle, and scope passthrough that the runner
- * depends on.
+ * `prim setup` — the pure, testable seams the command action depends on: the
+ * step plan (ordering, agent branch, daemon toggle, scope passthrough), agent
+ * detection and resolution, and the option wiring. The action callback itself
+ * spawns real subcommands and drives the browser login, so it is not unit-tested
+ * here — by repo convention the agent and step choices it makes are extracted
+ * into pure functions (detectAgent / resolveAgent / planSetupSteps) and pinned
+ * below; only thin glue (the typo-check, the inferred-agent note) rides along.
  */
 
+import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { planSetupSteps } from "./setup.js";
+import { detectAgent, planSetupSteps, registerSetupCommand, resolveAgent } from "./setup.js";
 
 const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts).map((s) => s.key);
 
@@ -56,5 +60,63 @@ describe("planSetupSteps", () => {
       "--target",
       ".hermes.md",
     ]);
+  });
+});
+
+describe("detectAgent", () => {
+  it("detects hermes from HERMES_INTERACTIVE — its interactive entrypoint sets it unconditionally", () => {
+    expect(detectAgent({ HERMES_INTERACTIVE: "1" })).toBe("hermes");
+  });
+
+  it("falls back to claude when no agent signal is present (manual run — the unchanged default)", () => {
+    expect(detectAgent({})).toBe("claude");
+  });
+
+  it("never mis-flags a Claude Code / Codex shell — neither carries a HERMES_ runtime marker", () => {
+    expect(detectAgent({ CLAUDECODE: "1", TERM_PROGRAM: "vscode" })).toBe("claude");
+  });
+
+  it("ignores an empty HERMES_INTERACTIVE (treats blank as unset)", () => {
+    expect(detectAgent({ HERMES_INTERACTIVE: "" })).toBe("claude");
+  });
+});
+
+describe("resolveAgent", () => {
+  it("infers the agent from the env when --agent is omitted", () => {
+    expect(resolveAgent(undefined, { HERMES_INTERACTIVE: "1" })).toEqual({
+      agent: "hermes",
+      detected: true,
+    });
+  });
+
+  it("lets an explicit --agent win and suppress detection (even inside a Hermes shell)", () => {
+    expect(resolveAgent("claude", { HERMES_INTERACTIVE: "1" })).toEqual({
+      agent: "claude",
+      detected: false,
+    });
+  });
+
+  it("falls back to claude with no env signal — detected, but the note stays silent for claude", () => {
+    expect(resolveAgent(undefined, {})).toEqual({ agent: "claude", detected: true });
+  });
+
+  it("passes an explicit value through verbatim for the caller to typo-check", () => {
+    expect(resolveAgent("codex", {})).toEqual({ agent: "codex", detected: false });
+  });
+});
+
+describe("registerSetupCommand", () => {
+  it("registers --agent WITHOUT a default, so an omitted flag falls through to detection", () => {
+    // Load-bearing: re-adding a default (e.g. `, "claude"`) would make opts.agent
+    // never undefined, so resolveAgent never detects and a bare `prim setup`
+    // silently routes every agent to claude — the exact regression this feature
+    // exists to prevent. tsc can't catch it (the action's opts type is
+    // hand-written), so pin the absence of a default here.
+    const program = new Command();
+    registerSetupCommand(program);
+    const setup = program.commands.find((c) => c.name() === "setup");
+    const agentOpt = setup?.options.find((o) => o.long === "--agent");
+    expect(agentOpt).toBeDefined();
+    expect(agentOpt?.defaultValue).toBeUndefined();
   });
 });

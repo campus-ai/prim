@@ -93,6 +93,44 @@ export function planSetupSteps(opts: {
   return steps;
 }
 
+/**
+ * Infer the calling agent from the environment when `--agent` is omitted, so a
+ * bare `prim setup` — what an onboarding agent copy/pastes — wires the
+ * integration that matches the agent actually running it, without the model
+ * having to self-identify. Only a positive, per-session runtime signal flips the
+ * default: Hermes's interactive entrypoint sets HERMES_INTERACTIVE
+ * unconditionally — a runtime flag, not a config var a user exports — and it is
+ * absent from a Claude Code or Codex shell, so it never mis-flags them.
+ * Everything else falls back to claude (today's default), leaving manual runs
+ * and unrecognized agents unchanged. Codex keeps its explicit `--agent codex`
+ * path: its shell carries no equally stable marker to key on.
+ */
+export function detectAgent(env: NodeJS.ProcessEnv): SetupAgent {
+  if (env.HERMES_INTERACTIVE) {
+    return "hermes";
+  }
+  return "claude";
+}
+
+/**
+ * Resolve the effective agent and whether it was inferred. An explicit --agent
+ * is taken verbatim (the caller still typo-checks it) and suppresses detection;
+ * an omitted flag falls through to environment detection. Pure, so the
+ * override/inference seam the auto-detect feature hinges on is unit-tested rather
+ * than buried in the command action. `agent` stays a raw string here because an
+ * explicit value may be a typo the caller rejects; only `detected` values are
+ * known-valid.
+ */
+export function resolveAgent(
+  agentFlag: string | undefined,
+  env: NodeJS.ProcessEnv,
+): { agent: string; detected: boolean } {
+  if (agentFlag !== undefined) {
+    return { agent: agentFlag, detected: false };
+  }
+  return { agent: detectAgent(env), detected: true };
+}
+
 type StepResult = "ok" | "failed" | "skipped";
 
 export function registerSetupCommand(program: Command): void {
@@ -101,15 +139,17 @@ export function registerSetupCommand(program: Command): void {
     .description(
       "Install everything in one shot (auth, session + git hooks, daemon, skill, welcome)",
     )
-    .option("--agent <agent>", "claude, codex, or hermes", "claude")
+    .option("--agent <agent>", "claude, codex, or hermes (auto-detected when omitted)")
     .option("--scope <scope>", "project or user (session integration)", "project")
     .option("--no-daemon", "skip starting the companion daemon")
-    .action((opts: { agent: string; scope: string; daemon: boolean }) => {
-      // Fail loud on a typo rather than silently installing the wrong thing.
-      // Usage error → exit 2, the CLI's convention for rejected input.
-      if (opts.agent !== "claude" && opts.agent !== "codex" && opts.agent !== "hermes") {
+    .action((opts: { agent?: string; scope: string; daemon: boolean }) => {
+      // Explicit --agent wins and is typo-checked (usage error → exit 2, the
+      // CLI's convention for rejected input); when omitted, infer from the env so
+      // a bare `prim setup` wires the integration matching the calling agent.
+      const { agent: agentInput, detected } = resolveAgent(opts.agent, process.env);
+      if (agentInput !== "claude" && agentInput !== "codex" && agentInput !== "hermes") {
         process.stderr.write(
-          `[prim] unknown --agent "${opts.agent}" (expected claude, codex, or hermes)\n`,
+          `[prim] unknown --agent "${agentInput}" (expected claude, codex, or hermes)\n`,
         );
         process.exit(EXIT_USAGE);
       }
@@ -117,7 +157,7 @@ export function registerSetupCommand(program: Command): void {
         process.stderr.write(`[prim] unknown --scope "${opts.scope}" (expected project or user)\n`);
         process.exit(EXIT_USAGE);
       }
-      const agent: SetupAgent = opts.agent;
+      const agent: SetupAgent = agentInput;
       const scope: SetupScope = opts.scope;
       const self = process.argv[1];
 
@@ -140,6 +180,13 @@ export function registerSetupCommand(program: Command): void {
           return false;
         }
       };
+
+      // Surface an inferred agent — the install it wires depends on it, and the
+      // user can correct a wrong guess with --agent. The claude fallback is the
+      // historical default, so it stays silent.
+      if (detected && agent !== "claude") {
+        note(`agent · detected ${agent} session (override with --agent <agent>)`);
+      }
 
       // 0 · Pre-authorize prim at USER scope FIRST — before any other prim call.
       // Claude Code hot-reloads permissions, so writing the allow-rule now also

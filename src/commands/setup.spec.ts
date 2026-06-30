@@ -70,6 +70,15 @@ describe("setup.md onboarding flow", () => {
     }
   });
 
+  it("makes Hermes a first-class agent (the --agent flag, auto-detection, and the hook-consent reminder)", () => {
+    // Parity with Claude/Codex: a Hermes user must be able to copy/paste the same
+    // setup prompt. We pin the flag, the auto-detect note, and the consent gate
+    // whose omission leaves the hooks inert — so a careless edit can't drop them.
+    expect(SETUP).toContain("--agent hermes");
+    expect(SETUP.toLowerCase()).toContain("auto-detect");
+    expect(SETUP).toContain("HERMES_ACCEPT_HOOKS");
+  });
+
   it("pins every prim invocation to @latest (no unversioned npx call)", () => {
     // Mirror of the CI probe: every `npx --yes @primitive.ai/prim` must be
     // immediately followed by `@` (i.e. @latest), never a bare space — otherwise
