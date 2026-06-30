@@ -19,9 +19,10 @@ to the user to run. The only action a human takes is clicking "Authorize" in the
 browser during auth; everything else is yours. Every command pins `@latest`, so
 the user never installs or manages a prim version and always runs the newest CLI.
 
-First, identify which agent you are — **Claude Code** or **OpenAI Codex**. It
-changes one flag in the install command and how you present the welcome at the
-end; nothing else.
+First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
+**Hermes**. It changes one flag in the install command (Hermes is auto-detected,
+so you can skip even that) and how you present the welcome at the end; nothing
+else.
 
 ## 1. Install — one command
 
@@ -32,6 +33,7 @@ npx --yes @primitive.ai/prim@latest setup
 ```
 
 - If you are **OpenAI Codex**, add `--agent codex`.
+- If you are **Hermes**, `setup` auto-detects it; add `--agent hermes` to be explicit.
 - Add `--no-daemon` to skip the optional companion daemon.
 
 This runs every step in order inside one process — pre-authorization, auth, the
@@ -72,6 +74,16 @@ fire non-managed hooks until they're trusted. After setup, tell the user: "Run
 `/hooks` in Codex and trust the prim hooks — until you do, decision capture and
 the conflict gate stay inert."
 
+### Hermes only
+
+`setup` (auto-detected, or `--agent hermes`) registers the prim hooks in Hermes's
+global `~/.hermes/config.yaml` and writes the skill to `.hermes.md`. Hermes only
+fires shell hooks you've consented to: it prompts once per (event, command) on a
+TTY and records approval in `~/.hermes/shell-hooks-allowlist.json`. After setup,
+tell the user: "Approve the prim hooks when Hermes prompts — until you do,
+decision capture and the conflict gate stay inert. To skip the prompts, start
+Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
+
 ## 2. Welcome (always), then the seeding question — last
 
 The welcome message is a **required deliverable** of setup: once install
@@ -99,12 +111,13 @@ Then **run the confirmations** and surface their results — informational (a
 non-zero must NOT abort the run or retract the welcome), but run them so the user
 sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
-- `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` if you are Codex
+- `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` / `hermes status` to match your agent
 - `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
 - `npx --yes @primitive.ai/prim@latest skill status`
 
 Add one line of setup specifics: which rules file received the skill block, and
-(Codex only) the `/hooks` trust reminder. The daemon confirm is expected to vary;
+(Codex only) the `/hooks` trust reminder or (Hermes only) the hook-consent
+reminder. The daemon confirm is expected to vary;
 an unexpected non-zero from auth or skill is worth a note — but never retract the
 welcome.
 
