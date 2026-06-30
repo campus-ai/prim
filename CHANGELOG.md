@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.32](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.31...v0.1.0-alpha.32) (2026-06-30)
+
+
+### Features
+
+* add Hermes Agent support ([#111](https://github.com/campus-ai/prim/issues/111)) ([6080445](https://github.com/campus-ai/prim/commit/60804451f3a2e5cdc5b592b76a53962133fee152))
+* **setup:** auto-detect the calling agent so a bare `prim setup` wires the right integration ([#113](https://github.com/campus-ai/prim/issues/113)) ([727c242](https://github.com/campus-ai/prim/commit/727c24296a9815b2627fe477b594d651df44509d))
+
 ## [0.1.0-alpha.31](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.30...v0.1.0-alpha.31) (2026-06-29)
 
 
