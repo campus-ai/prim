@@ -381,6 +381,17 @@ describe("hooks install action", () => {
     expect(paths).toContain("/fake/root/.git/hooks/pre-commit");
     expect(paths).toContain("/fake/root/.git/hooks/post-commit");
   });
+
+  it("marks the repo prim-active after a project install (a per-repo install opts it in)", async () => {
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
+      from: "user",
+    });
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", "prim.active", "true"],
+      expect.objectContaining({ cwd: "/fake/root" }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -421,6 +432,8 @@ describe("installGlobalHooks (user scope)", () => {
     );
     const pre = byPath.get(join(PRIM_GIT_HOOKS_DIR, "pre-commit")) ?? "";
     const post = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-commit")) ?? "";
+    // Opt-in gate: prim runs only where prim.active is true.
+    expect(pre).toContain("git config --get prim.active");
     // --git-common-dir is NOT core.hooksPath-aware, so the chain never points at
     // this script; --git-path would be self-referential and must not appear.
     expect(pre).toContain("git rev-parse --git-common-dir");

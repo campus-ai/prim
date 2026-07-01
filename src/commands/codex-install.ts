@@ -34,6 +34,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { activateRepoBestEffort } from "../lib/activation.js";
 import {
   type ClaudeSettings,
   type HookEntry,
@@ -166,6 +167,12 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
+  }
+  // A project-scope install targets this repo, so it doubles as `prim enable` —
+  // mark the repo prim-active so the (repo-gated) capture/gate/ingest hooks run
+  // here. User scope is machine-global; activation stays opt-in.
+  if (scope === "project") {
+    activateRepoBestEffort(projectRoot());
   }
   return resultFor(scope, path, after, changed);
 }

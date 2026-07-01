@@ -102,6 +102,13 @@ export function planSetupSteps(opts: {
   // on CLAUDE.md (its no-candidate default).
   const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
+  if (opts.scope === "user") {
+    // The global git hooks are opt-in per repo (they act only where prim.active
+    // is true). Activate THIS repo so its commits are captured out of the box;
+    // other repos opt in later with `prim enable`. Tolerated skip: setup may run
+    // outside a git repo.
+    steps.push({ key: "enable", label: "Activate this repo", args: ["enable"], required: false });
+  }
   return steps;
 }
 

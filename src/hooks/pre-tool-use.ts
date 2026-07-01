@@ -32,6 +32,7 @@
 
 import { getClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { isRepoActive } from "../lib/activation.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
@@ -155,6 +156,13 @@ async function main(): Promise<void> {
     toRepoRelative(f, cwd),
   );
   if (files.length === 0) {
+    emit(failOpen());
+    return;
+  }
+  // Opt-in gate: only run the conflict check in repos where prim is activated
+  // (prim.active). Checked after the file filter so inactive repos and non-edit
+  // calls pay nothing; fail open (allow) when inactive.
+  if (!isRepoActive(cwd)) {
     emit(failOpen());
     return;
   }

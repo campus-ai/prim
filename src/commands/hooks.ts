@@ -7,7 +7,9 @@
  * Two scopes:
  *   project (default) — writes into this repo's .git/hooks (or .husky). Per-repo.
  *   user (--scope user) — installs ONCE at user level via a global
- *     `core.hooksPath`, so every repo captures commits with no per-repo setup.
+ *     `core.hooksPath`. The hooks fire in every repo but only ACT where prim is
+ *     activated (`prim enable` / `git config prim.active`), so commit capture is
+ *     opt-in per repo with no per-repo install — see lib/activation.ts.
  *
  * User-scope caveats (git's own precedence rules):
  *   - A repo with its OWN local `core.hooksPath` (e.g. husky v9 sets
@@ -24,6 +26,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Command, Option } from "commander";
+import { activateRepoBestEffort } from "../lib/activation.js";
 
 type HookSpec = { hookName: string; binName: string };
 
@@ -208,9 +211,14 @@ function globalHookScript(spec: HookSpec): string {
   return `#!/bin/sh
 # prim global ${spec.hookName} hook (core.hooksPath) — managed by prim; do not edit.
 # Install/uninstall: prim hooks install|uninstall --scope user
-if command -v ${spec.binName} >/dev/null 2>&1; then ${spec.binName} || true
-elif [ -f "./node_modules/.bin/${spec.binName}" ]; then ./node_modules/.bin/${spec.binName} || true
-else npx --yes -p @primitive.ai/prim ${spec.binName} 2>/dev/null || true
+# Runs prim only where activated — 'prim enable' (this repo) or
+# 'git config --global prim.active true' (every repo). Chains to the repo's own
+# hook regardless, so inactive repos are unaffected.
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+  if command -v ${spec.binName} >/dev/null 2>&1; then ${spec.binName} || true
+  elif [ -f "./node_modules/.bin/${spec.binName}" ]; then ./node_modules/.bin/${spec.binName} || true
+  else npx --yes -p @primitive.ai/prim ${spec.binName} 2>/dev/null || true
+  fi
 fi
 common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
 repo_hook="$common_dir/hooks/${spec.hookName}"
@@ -272,7 +280,9 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): void {
     }
     writeOwnHooks();
     execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR]);
-    console.log(`Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}`);
+    console.log(
+      `Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}. Repos are opt-in: run \`prim enable\` in each repo to capture, or \`git config --global prim.active true\` for all.`,
+    );
     return;
   }
   if (isOurHooksDir(global)) {
@@ -325,6 +335,9 @@ function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
       installToDotGit(gitRoot, spec);
     }
   }
+  // A per-repo install is itself an opt-in: mark the repo prim-active so the
+  // agent capture/gate/ingest hooks (which gate on prim.active) also run here.
+  activateRepoBestEffort(gitRoot);
 }
 
 export function registerHooksCommands(program: Command) {

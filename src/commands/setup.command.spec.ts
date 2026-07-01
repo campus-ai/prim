@@ -100,6 +100,18 @@ describe("planSetupSteps", () => {
       "user",
     ]);
   });
+
+  it("user scope: appends an 'enable' step to activate this repo (tolerated skip)", () => {
+    const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
+    const enable = steps.find((s) => s.key === "enable");
+    expect(enable?.args).toEqual(["enable"]);
+    expect(enable?.required).toBe(false); // setup may run outside a git repo
+  });
+
+  it("project scope: no 'enable' step — a project install is itself the activation", () => {
+    const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
+    expect(steps.find((s) => s.key === "enable")).toBeUndefined();
+  });
 });
 
 describe("planCleanupUninstalls", () => {

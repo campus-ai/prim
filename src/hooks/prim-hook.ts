@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
+import { isRepoActive } from "../lib/activation.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
@@ -57,16 +58,21 @@ try {
   // already expects.
   const parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
-  // Derive the envelope's identity/control fields (sessionId, eventType,
-  // env.cwd) from the (normalized) event so org binding is provably
-  // independent of redaction, then scrub ONLY the payload body that persists
-  // to the journal, transits to the server, and lands in the moves table.
-  const base = toMove(parsed, resolveCliVersion(), agent);
-  const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
-  const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
-  appendMove(move, orgId);
-  if (shouldFlushAfter(move.eventType)) {
-    spawnBackgroundFlush();
+  // Opt-in gate: capture only in repos where prim is activated (prim.active).
+  // Inactive repos short-circuit here — nothing is built, journaled, or flushed
+  // — so a machine-wide (user-scope) install never captures where unwanted.
+  if (isRepoActive(cwd)) {
+    // Derive the envelope's identity/control fields (sessionId, eventType,
+    // env.cwd) from the (normalized) event so org binding is provably
+    // independent of redaction, then scrub ONLY the payload body that persists
+    // to the journal, transits to the server, and lands in the moves table.
+    const base = toMove(parsed, resolveCliVersion(), agent);
+    const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
+    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
+    appendMove(move, orgId);
+    if (shouldFlushAfter(move.eventType)) {
+      spawnBackgroundFlush();
+    }
   }
 } catch (err) {
   if (process.env.PRIM_HOOK_DEBUG) {

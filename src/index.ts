@@ -23,6 +23,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import updateNotifier from "update-notifier";
+import { registerActivationCommands } from "./commands/activation.js";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerClaudeCommands } from "./commands/claude-install.js";
 import { registerCodexCommands } from "./commands/codex-install.js";
@@ -59,6 +60,7 @@ program
 
 registerAuthCommands(program);
 registerHooksCommands(program);
+registerActivationCommands(program);
 registerSkillCommands(program);
 registerMovesCommands(program);
 registerSessionCommands(program);
