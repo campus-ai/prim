@@ -23,7 +23,9 @@
  * status line. Idempotent — every underlying step is, so re-running is safe.
  */
 
-import { spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Command } from "commander";
 
 const EXIT_INCOMPLETE = 1;
@@ -83,14 +85,99 @@ export function planSetupSteps(opts: {
       required: false,
     });
   }
-  steps.push({ key: "hooks", label: "Git hooks", args: ["hooks", "install"], required: true });
+  // Forward scope to the git hooks and the rules file too, so `--scope user`
+  // (the default) installs a global core.hooksPath and the agent's global rules
+  // file — the whole point of user scope is zero per-repo setup. Unlike the
+  // session step, hooks/skill take `--scope user` for every agent (hermes
+  // included: its global hooks + ~/.hermes/.hermes.md).
+  steps.push({
+    key: "hooks",
+    label: "Git hooks",
+    args: ["hooks", "install", ...scopeArgs],
+    required: true,
+  });
   // The rules file follows the agent: claude→CLAUDE.md, codex→AGENTS.md,
   // hermes→.hermes.md. Passing --agent lets `skill install` pick it
   // deterministically — vs. auto-detection, which could land a non-Claude agent
   // on CLAUDE.md (its no-candidate default).
-  const skillArgs = ["skill", "install", "--agent", opts.agent];
+  const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
   return steps;
+}
+
+type RunFn = (args: string[], capture?: boolean) => { code: number; stdout: string };
+
+/**
+ * The project-scope prim artifacts to detect in the current repo before a
+ * user-scope install. Order matters only for the trail message; each maps to an
+ * existing uninstall subcommand via planCleanupUninstalls.
+ */
+const CONFLICT_SESSION = "session";
+const CONFLICT_HOOKS = "hooks";
+const CONFLICT_SKILL = "skill";
+
+/**
+ * Map detected project-scope conflicts to the uninstall commands that clear
+ * them. Pure, so the migration mapping is unit-tested without spawning. Hermes
+ * has no project scope, so its session hooks are never a conflict.
+ */
+export function planCleanupUninstalls(agent: SetupAgent, conflicts: string[]): string[][] {
+  const steps: string[][] = [];
+  if (conflicts.includes(CONFLICT_SESSION) && agent !== "hermes") {
+    steps.push([agent, "uninstall", "--scope", "project"]);
+  }
+  if (conflicts.includes(CONFLICT_HOOKS)) steps.push(["hooks", "uninstall"]);
+  if (conflicts.includes(CONFLICT_SKILL)) steps.push(["skill", "uninstall", "--agent", agent]);
+  return steps;
+}
+
+/**
+ * Detect project-scoped prim config lingering in the current repo — it would
+ * double-fire alongside a fresh user-scope install. Reuses the existing status
+ * subcommands (their JSON is on STDOUT) for the session + rules file, and a
+ * direct read for the git hook (there is no `hooks status`). Every probe is
+ * fail-soft: a missing/erroring signal is simply "not present".
+ */
+function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
+  const conflicts: string[] = [];
+
+  // Session hooks — hermes has no project scope, so never a conflict.
+  if (agent !== "hermes") {
+    try {
+      const parsed = JSON.parse(run([agent, "status"], true).stdout || "{}") as {
+        project?: { gate?: boolean; capture?: boolean };
+      };
+      if (parsed.project?.gate || parsed.project?.capture) conflicts.push(CONFLICT_SESSION);
+    } catch {
+      // no readable status → treat as absent
+    }
+  }
+
+  // Project git hook in this repo's .git/hooks.
+  try {
+    const root = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const preCommit = join(root, ".git", "hooks", "pre-commit");
+    if (existsSync(preCommit) && readFileSync(preCommit, "utf-8").includes("prim-pre-commit")) {
+      conflicts.push(CONFLICT_HOOKS);
+    }
+  } catch {
+    // not a repo / no hook → absent
+  }
+
+  // Project rules file (skill status without --scope resolves the cwd target).
+  try {
+    const parsed = JSON.parse(
+      run(["skill", "status", "--agent", agent, "--json"], true).stdout || "{}",
+    ) as { installed?: boolean };
+    if (parsed.installed) conflicts.push(CONFLICT_SKILL);
+  } catch {
+    // no readable status → absent
+  }
+
+  return conflicts;
 }
 
 /**
@@ -140,9 +227,17 @@ export function registerSetupCommand(program: Command): void {
       "Install everything in one shot (auth, session + git hooks, daemon, skill, welcome)",
     )
     .option("--agent <agent>", "claude, codex, or hermes (auto-detected when omitted)")
-    .option("--scope <scope>", "project or user (session integration)", "project")
+    .option(
+      "--scope <scope>",
+      "user (default — install once for every repo) or project (this repo only)",
+      "user",
+    )
+    .option(
+      "--migrate",
+      "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
+    )
     .option("--no-daemon", "skip starting the companion daemon")
-    .action((opts: { agent?: string; scope: string; daemon: boolean }) => {
+    .action((opts: { agent?: string; scope: string; migrate?: boolean; daemon: boolean }) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
       // a bare `prim setup` wires the integration matching the calling agent.
@@ -215,6 +310,23 @@ export function registerSetupCommand(program: Command): void {
         note(`${step.label} · installing…`);
         const { code } = run(step.args);
         results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
+      }
+
+      // N+1 · Migrate — with the (default) user scope, a lingering PROJECT-scoped
+      // install in this repo double-fires alongside the user-scope one. Detect it;
+      // with --migrate remove it via the existing uninstall subcommands, else warn
+      // with the one-flag remedy so the user opts in explicitly.
+      if (scope === "user") {
+        const conflicts = detectProjectConflicts(agent, run);
+        if (conflicts.length > 0 && opts.migrate) {
+          note(`migrate · removing project-scoped config (${conflicts.join(", ")})…`);
+          const ok = planCleanupUninstalls(agent, conflicts).every((args) => run(args).code === 0);
+          results.migrate = ok ? "ok" : "failed";
+        } else if (conflicts.length > 0) {
+          note(
+            `migrate · project-scoped prim config present in this repo (${conflicts.join(", ")}) — it will double-fire with the user-scope install. Re-run \`prim setup --migrate\` to remove it.`,
+          );
+        }
       }
 
       // Final · welcome — its output (orientation + any "Your turn" seeding

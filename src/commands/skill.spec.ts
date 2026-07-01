@@ -12,6 +12,8 @@ vi.mock("node:fs", () => ({
 }));
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   SKILL_BEGIN,
   SKILL_END,
@@ -348,6 +350,61 @@ describe("runInstall --agent routing", () => {
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --agent"));
     expect(() => runUninstall("/repo", { agent: "constructor" })).not.toThrow();
     expect(() => runStatus("/repo", { agent: "__proto__" })).not.toThrow();
+    errSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --scope user routing (agent → the machine-global rules file, cwd-independent)
+// ---------------------------------------------------------------------------
+
+describe("runInstall --scope user routing", () => {
+  it("routes --scope user --agent claude to ~/.claude/CLAUDE.md, never resolved against cwd", () => {
+    fsFixture(); // only SKILL.md exists → fresh write
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "claude", scope: "user" })).toBe(0);
+    const target = join(homedir(), ".claude", "CLAUDE.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
+    for (const [path] of mockedRenameSync.mock.calls) {
+      expect(String(path)).not.toContain("/repo/"); // ignores cwd entirely
+    }
+  });
+
+  it("routes --scope user --agent codex to ~/.codex/AGENTS.md", () => {
+    fsFixture();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "codex", scope: "user" })).toBe(0);
+    const target = join(homedir(), ".codex", "AGENTS.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
+  });
+
+  it("routes --scope user --agent hermes to the hermes home .hermes.md", () => {
+    fsFixture();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "hermes", scope: "user" })).toBe(0);
+    const target = join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), ".hermes.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
+  });
+
+  it("aborts --scope user without --agent (can't pick a global rules file)", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runInstall("/repo", { scope: "user" })).toBe(1);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("still prefers an explicit --target over --scope user", () => {
+    fsFixture({ target: "/repo/custom.md", targetContent: "" });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { target: "custom.md", agent: "claude", scope: "user" })).toBe(0);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
+  });
+
+  it("aborts on an unknown --scope without writing", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "claude", scope: "bogus" })).toBe(1);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --scope"));
     errSpy.mockRestore();
   });
 });

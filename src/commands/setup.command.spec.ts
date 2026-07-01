@@ -10,7 +10,13 @@
 
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { detectAgent, planSetupSteps, registerSetupCommand, resolveAgent } from "./setup.js";
+import {
+  detectAgent,
+  planCleanupUninstalls,
+  planSetupSteps,
+  registerSetupCommand,
+  resolveAgent,
+} from "./setup.js";
 
 const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts).map((s) => s.key);
 
@@ -43,10 +49,29 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("user scope: appends --scope user to the session install only", () => {
+  it("user scope: forwards --scope user to session, hooks, AND skill", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["claude", "install", "--scope", "user"]);
-    // hooks/skill are not scoped; skill routes by --agent, not --scope.
+    // The whole point of user scope: git hooks and the rules file go global too.
+    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
+      "hooks",
+      "install",
+      "--scope",
+      "user",
+    ]);
+    expect(steps.find((s) => s.key === "skill")?.args).toEqual([
+      "skill",
+      "install",
+      "--agent",
+      "claude",
+      "--scope",
+      "user",
+    ]);
+  });
+
+  it("project scope: no --scope flag on any step", () => {
+    const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "project" });
+    expect(steps[0].args).toEqual(["claude", "install"]);
     expect(steps.find((s) => s.key === "hooks")?.args).toEqual(["hooks", "install"]);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
@@ -56,21 +81,44 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("project scope: no --scope flag on the session install", () => {
-    const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "project" });
-    expect(steps[0].args).toEqual(["claude", "install"]);
-  });
-
-  it("hermes: global-only, so no scope flag even under --scope user; skill targets .hermes.md via --agent", () => {
+  it("hermes: session stays global-only (no scope flag), but hooks + skill still take --scope user", () => {
     const steps = planSetupSteps({ agent: "hermes", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["hermes", "install"]);
     expect(steps[0].label).toMatch(/hermes/i);
+    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
+      "hooks",
+      "install",
+      "--scope",
+      "user",
+    ]);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
       "--agent",
       "hermes",
+      "--scope",
+      "user",
     ]);
+  });
+});
+
+describe("planCleanupUninstalls", () => {
+  it("maps each detected conflict to its uninstall command (claude)", () => {
+    expect(planCleanupUninstalls("claude", ["session", "hooks", "skill"])).toEqual([
+      ["claude", "uninstall", "--scope", "project"],
+      ["hooks", "uninstall"],
+      ["skill", "uninstall", "--agent", "claude"],
+    ]);
+  });
+
+  it("omits the session uninstall for hermes — it has no project scope", () => {
+    expect(planCleanupUninstalls("hermes", ["session", "skill"])).toEqual([
+      ["skill", "uninstall", "--agent", "hermes"],
+    ]);
+  });
+
+  it("returns nothing when there are no conflicts", () => {
+    expect(planCleanupUninstalls("codex", [])).toEqual([]);
   });
 });
 
@@ -129,5 +177,13 @@ describe("registerSetupCommand", () => {
     const agentOpt = setup?.options.find((o) => o.long === "--agent");
     expect(agentOpt).toBeDefined();
     expect(agentOpt?.defaultValue).toBeUndefined();
+  });
+
+  it("defaults --scope to user, so a bare `prim setup` installs for every repo", () => {
+    const program = new Command();
+    registerSetupCommand(program);
+    const setup = program.commands.find((c) => c.name() === "setup");
+    const scopeOpt = setup?.options.find((o) => o.long === "--scope");
+    expect(scopeOpt?.defaultValue).toBe("user");
   });
 });

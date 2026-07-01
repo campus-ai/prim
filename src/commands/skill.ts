@@ -15,7 +15,8 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { createPatch } from "diff";
@@ -45,6 +46,19 @@ export const AGENT_TARGET = {
   codex: "AGENTS.md",
   hermes: ".hermes.md",
 } as const;
+
+// User scope writes the rules block to each agent's machine-global rules file so
+// every project inherits prim guidance — no per-repo `skill install`. Absolute
+// and cwd-independent (mirrors the session installers' USER_SCOPE_PATH). Hermes
+// honors HERMES_HOME like `prim hermes install` does.
+export function userTargetFor(agent: string): string | null {
+  if (agent === "claude") return join(homedir(), ".claude", "CLAUDE.md");
+  if (agent === "codex") return join(homedir(), ".codex", "AGENTS.md");
+  if (agent === "hermes") {
+    return join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), ".hermes.md");
+  }
+  return null;
+}
 
 export function loadSkill(): string {
   // Walk up from this module looking for SKILL.md so dev (src/commands/) and
@@ -103,11 +117,31 @@ function atomicWrite(target: string, content: string): void {
   renameSync(tmp, target);
 }
 
-function resolveTarget(cwd: string, opts: { target?: string; agent?: string }): string | null {
-  // Precedence: an explicit path wins, then the agent-mapped file, then
-  // auto-detection. An unknown --agent aborts rather than silently falling
-  // through to a CLAUDE.md default.
+function resolveTarget(
+  cwd: string,
+  opts: { target?: string; agent?: string; scope?: string },
+): string | null {
+  // Precedence: an explicit path wins, then (at user scope) the agent's global
+  // rules file, then the agent-mapped project file, then auto-detection. An
+  // unknown --agent aborts rather than silently falling through to a CLAUDE.md
+  // default.
+  if (opts.scope && opts.scope !== "user" && opts.scope !== "project") {
+    console.error(`Unknown --scope "${opts.scope}" (expected user or project)`);
+    return null;
+  }
   if (opts.target) return resolve(cwd, opts.target);
+  if (opts.scope === "user") {
+    // User scope is machine-global, so the target is absolute — never resolved
+    // against cwd. It requires an explicit agent to know which rules file.
+    if (!opts.agent) {
+      console.error("--scope user requires --agent (claude, codex, or hermes)");
+      return null;
+    }
+    const userTarget = userTargetFor(opts.agent);
+    if (userTarget) return userTarget;
+    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, or hermes)`);
+    return null;
+  }
   if (opts.agent) {
     const mapped = AGENT_TARGET[opts.agent as keyof typeof AGENT_TARGET];
     // Gate on the value TYPE, not truthiness: an inherited Object.prototype key
@@ -128,7 +162,7 @@ function resolveTarget(cwd: string, opts: { target?: string; agent?: string }): 
 
 export function runInstall(
   cwd: string,
-  opts: { target?: string; agent?: string; dryRun?: boolean },
+  opts: { target?: string; agent?: string; scope?: string; dryRun?: boolean },
 ): number {
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -151,7 +185,10 @@ export function runInstall(
   return 0;
 }
 
-export function runUninstall(cwd: string, opts: { target?: string; agent?: string }): number {
+export function runUninstall(
+  cwd: string,
+  opts: { target?: string; agent?: string; scope?: string },
+): number {
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
   if (!existsSync(target)) {
@@ -171,7 +208,7 @@ export function runUninstall(cwd: string, opts: { target?: string; agent?: strin
 
 export function runStatus(
   cwd: string,
-  opts: { target?: string; agent?: string; json?: boolean },
+  opts: { target?: string; agent?: string; scope?: string; json?: boolean },
 ): number {
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -210,8 +247,12 @@ export function registerSkillCommands(program: Command) {
     .description("Install the prim skill block into your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .option(
+      "--scope <scope>",
+      "project (default, a rules file in this repo) or user (the agent's global rules file)",
+    )
     .option("--dry-run", "Print a unified diff without writing")
-    .action((opts: { target?: string; agent?: string; dryRun?: boolean }) => {
+    .action((opts: { target?: string; agent?: string; scope?: string; dryRun?: boolean }) => {
       try {
         process.exit(runInstall(process.cwd(), opts));
       } catch (err) {
@@ -225,7 +266,11 @@ export function registerSkillCommands(program: Command) {
     .description("Remove the prim skill block from your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
-    .action((opts: { target?: string; agent?: string }) => {
+    .option(
+      "--scope <scope>",
+      "project (default, a rules file in this repo) or user (the agent's global rules file)",
+    )
+    .action((opts: { target?: string; agent?: string; scope?: string }) => {
       process.exit(runUninstall(process.cwd(), opts));
     });
 
@@ -234,8 +279,12 @@ export function registerSkillCommands(program: Command) {
     .description("Report whether the prim skill block is installed")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .option(
+      "--scope <scope>",
+      "project (default, a rules file in this repo) or user (the agent's global rules file)",
+    )
     .option("--json", "Output as JSON")
-    .action((opts: { target?: string; agent?: string; json?: boolean }) => {
+    .action((opts: { target?: string; agent?: string; scope?: string; json?: boolean }) => {
       process.exit(runStatus(process.cwd(), opts));
     });
 }
