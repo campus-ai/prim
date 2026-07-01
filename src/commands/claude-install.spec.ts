@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
   PRIM_AUTOMODE_TRUST,
@@ -470,6 +470,79 @@ describe("post-tool-use, session hooks, statusline install", () => {
     });
     const out = applyUninstall(installed);
     expect(out.statusLine).toEqual({ type: "command", command: "my-custom-statusline" });
+  });
+});
+
+describe("SessionEnd detached registrations", () => {
+  it("writes BOTH SessionEnd entries in the detached form at matcher *", () => {
+    const out = applyInstall(EMPTY);
+    const entries = out.hooks?.SessionEnd ?? [];
+    const capture = entries.find((e) =>
+      e.hooks?.some((h) => commandMatchesBin(h.command, "prim-hook")),
+    );
+    const sessionEnd = entries.find((e) =>
+      e.hooks?.some((h) => commandMatchesBin(h.command, "prim-session-end")),
+    );
+    expect(capture?.matcher).toBe("*");
+    expect(capture?.hooks?.[0].command).toBe(detachedHookShimCommand("prim-hook"));
+    expect(sessionEnd?.matcher).toBe("*");
+    expect(sessionEnd?.hooks?.[0].command).toBe(detachedHookShimCommand("prim-session-end"));
+  });
+
+  it("keeps every non-SessionEnd capture event on the synchronous shim", () => {
+    // Pins the SessionEnd-only scope: see TODO(detach-all-passive-capture).
+    const out = applyInstall(EMPTY);
+    for (const event of CAPTURE_EVENTS.filter((e) => e !== "SessionEnd")) {
+      const commands = commandsFor(out, event).filter((c) => commandMatchesBin(c, "prim-hook"));
+      expect(commands).toEqual([hookShimCommand("prim-hook")]);
+      expect(commands[0]).not.toMatch(/^payload=/);
+    }
+  });
+
+  it("upgrades a pre-detach synchronous SessionEnd install in place, touching nothing else", () => {
+    const preDetach: ClaudeSettings = {
+      hooks: {
+        SessionEnd: [
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: hookShimCommand("prim-session-end") }],
+          },
+        ],
+        Stop: [
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
+        ],
+      },
+    };
+    const out = applyInstall(preDetach);
+    for (const bin of ["prim-hook", "prim-session-end"]) {
+      const entries = (out.hooks?.SessionEnd ?? []).filter((e) =>
+        e.hooks?.some((h) => commandMatchesBin(h.command, bin)),
+      );
+      // Upgraded, not duplicated: exactly one entry per bin, now detached.
+      expect(entries).toHaveLength(1);
+      expect(entries[0].hooks?.[0].command).toBe(detachedHookShimCommand(bin));
+    }
+    expect(JSON.stringify(out.hooks?.Stop)).toBe(JSON.stringify(preDetach.hooks?.Stop));
+  });
+
+  it("uninstall strips the detached form without dropping a co-located sibling", () => {
+    const installed: ClaudeSettings = {
+      hooks: {
+        SessionEnd: [
+          {
+            matcher: "*",
+            hooks: [
+              { type: "command", command: "/usr/local/bin/other" },
+              { type: "command", command: detachedHookShimCommand("prim-hook") },
+              { type: "command", command: detachedHookShimCommand("prim-session-end") },
+            ],
+          },
+        ],
+      },
+    };
+    const out = applyUninstall(installed);
+    expect(commandsFor(out, "SessionEnd")).toEqual(["/usr/local/bin/other"]);
   });
 });
 

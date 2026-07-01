@@ -9,7 +9,8 @@
  *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse,
  *     both at matcher "Edit|Write|MultiEdit".
  *   - prim-session-start / prim-session-end on the session boundaries, so the
- *     daemon's presence reflects live sessions.
+ *     daemon's presence reflects live sessions. SessionEnd entries use the
+ *     detached shim: Claude Code cancels hooks still running at teardown.
  *   - the `prim statusline` statusLine, so the editor shows "team: N online".
  *
  *   prim claude install                 # <repo-root>/.claude/settings.json (project, default)
@@ -38,7 +39,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
-import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
 
 // Stable bin identities (npm `bin` names). The command actually written into
 // settings.json is the resolution shim from hookShimCommand() (PATH → local →
@@ -123,12 +124,47 @@ export function makeRegistration(
   return { event, matcher, bin, command: hookShimCommand(bin, args) };
 }
 
+function makeDetachedRegistration(
+  event: string,
+  matcher: string,
+  bin: string,
+  args = "",
+): Registration {
+  return { event, matcher, bin, command: detachedHookShimCommand(bin, args) };
+}
+
+// TODO(detach-all-passive-capture): SessionEnd is detached because Claude Code
+// kills hooks still running at session teardown ("Hook cancelled" — older
+// versions allowed ~1.5s regardless of configured timeout; interrupt-style
+// exits cancel outright). The same detached form is safe for every OTHER
+// passive capture registration (prim-hook on SessionStart, UserPromptSubmit,
+// PreToolUse@*, PostToolUse@*, Stop, SubagentStop): capture emits no stdout
+// and always exits 0, so nothing Claude Code consumes is lost, and per-event
+// latency drops from Node startup (or an npx registry round-trip on
+// un-installed hosts) to ~10ms. Three hooks must STAY synchronous:
+//   - prim-pre-tool-use (gate): stdout permissionDecision + exit code ARE the
+//     allow/deny answer — Claude Code must block on it.
+//   - prim-post-tool-use: its stderr verdict footer is a deliberate human
+//     signal (see post-tool-use.ts's AX contract); detaching would /dev/null it.
+//   - prim-session-start: under --agent codex its stdout injects
+//     hookSpecificOutput.additionalContext (team presence); keep it
+//     synchronous everywhere until codex parity lands so both agents share
+//     one command shape.
+// Caveats before flipping: journal appends become async (a host shutdown
+// racing the detach can drop the tail move — acceptable for telemetry),
+// detached failures are fully silent (PRIM_HOOK_DEBUG stderr goes to
+// /dev/null), and on npx-fallback hosts every event spawns a background npm
+// round-trip — measure concurrency on a busy session first.
 const REGISTRATIONS: Registration[] = [
-  ...CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN)),
+  ...CAPTURE_EVENTS.map((event) =>
+    event === "SessionEnd"
+      ? makeDetachedRegistration(event, "*", CAPTURE_BIN)
+      : makeRegistration(event, "*", CAPTURE_BIN),
+  ),
   makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
   makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
   makeRegistration("SessionStart", "*", SESSION_START_BIN),
-  makeRegistration("SessionEnd", "*", SESSION_END_BIN),
+  makeDetachedRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
 
 export type Scope = "user" | "project";
