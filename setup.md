@@ -21,8 +21,8 @@ the user never installs or manages a prim version and always runs the newest CLI
 
 First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
 **Hermes**. It changes one flag in the install command (Hermes is auto-detected,
-so you can skip even that) and how you present the welcome at the end; nothing
-else.
+so you can skip even that), how you present the welcome at the end, and which
+memory surface you mine for the seeding question; nothing else.
 
 ## 1. Install — one command
 
@@ -126,9 +126,19 @@ welcome.
 **If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
 yet (this fires even in an org that already has decisions). Before you ask,
 mine **your own memory and conversation context** for goals — and
-not-focusing-on items — the user has already *stated*. Only their words count:
-never infer goals from the repo — its code, docs, or history — and never
-invent one they didn't say.
+not-focusing-on items — the user has already *stated*. Every agent has a memory
+surface; consult yours:
+
+- **Claude Code** — read your auto-memory (MEMORY.md and the memory files it
+  indexes), plus anything already recalled into this session.
+- **Codex** — the memories injected into this thread. The feature is opt-in:
+  none injected just means found-nothing here — don't dig into memory files
+  the user chose not to inject.
+- **Hermes** — the memory snapshot in your system prompt (`MEMORY.md` /
+  `USER.md` from `~/.hermes/memories/`).
+
+Only their words count: never infer goals from the repo — its code, docs, or
+history — and never invent one they didn't say.
 
 Make the seeding question the LAST thing you say: end your message with it as a
 single, emphasized block addressed to the user — rendered as the "Your turn"
