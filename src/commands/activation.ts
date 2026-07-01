@@ -6,24 +6,13 @@
  * a user installs prim once and opts each repo in (or out) with one command —
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
  */
-import { execFileSync } from "node:child_process";
 import type { Command } from "commander";
 import { setRepoActive } from "../lib/activation.js";
+import { gitToplevel } from "../lib/git.js";
 import { printJson } from "../output.js";
 
-function repoRoot(): string | null {
-  try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
 function applyActivation(active: boolean): void {
-  const root = repoRoot();
+  const root = gitToplevel();
   if (!root) {
     process.stderr.write(
       `[prim] not a git repository — run \`prim ${active ? "enable" : "disable"}\` inside a repo\n`,

@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
-import { isRepoActive } from "../lib/activation.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
   // payload that persists — exactly as the capture hook does.
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
-  if (!isRepoActive(cwd)) {
+  if (!isRepoActiveForCapture(cwd)) {
     emit();
     return;
   }

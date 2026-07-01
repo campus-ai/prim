@@ -170,9 +170,10 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   }
   // A project-scope install targets this repo, so it doubles as `prim enable` —
   // mark the repo prim-active so the (repo-gated) capture/gate/ingest hooks run
-  // here. User scope is machine-global; activation stays opt-in.
+  // here. cwd (not projectRoot()) avoids a second git subprocess. User scope is
+  // machine-global; activation stays opt-in.
   if (scope === "project") {
-    activateRepoBestEffort(projectRoot());
+    activateRepoBestEffort(process.cwd());
   }
   return resultFor(scope, path, after, changed);
 }

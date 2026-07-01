@@ -23,10 +23,11 @@
  * status line. Idempotent — every underlying step is, so re-running is safe.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { gitToplevel } from "../lib/git.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
@@ -162,12 +163,13 @@ function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
 
   // Project git hook in this repo's .git/hooks.
   try {
-    const root = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const preCommit = join(root, ".git", "hooks", "pre-commit");
-    if (existsSync(preCommit) && readFileSync(preCommit, "utf-8").includes("prim-pre-commit")) {
+    const root = gitToplevel();
+    const preCommit = root && join(root, ".git", "hooks", "pre-commit");
+    if (
+      preCommit &&
+      existsSync(preCommit) &&
+      readFileSync(preCommit, "utf-8").includes("prim-pre-commit")
+    ) {
       conflicts.push(CONFLICT_HOOKS);
     }
   } catch {
@@ -264,8 +266,11 @@ export function registerSetupCommand(program: Command): void {
       const self = process.argv[1];
 
       const run = (args: string[], capture = false): { code: number; stdout: string } => {
+        // Capturing a step means we only want its machine STDOUT (JSON) — a
+        // status/auth probe. Silence its human STDERR so status-line noise
+        // ("gate ✓ · capture ✗ …") doesn't interleave into the setup trail.
         const r = spawnSync(process.execPath, [self, ...args], {
-          stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit",
+          stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
           encoding: "utf-8",
         });
         return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
@@ -327,7 +332,11 @@ export function registerSetupCommand(program: Command): void {
         const conflicts = detectProjectConflicts(agent, run);
         if (conflicts.length > 0 && opts.migrate) {
           note(`migrate · removing project-scoped config (${conflicts.join(", ")})…`);
-          const ok = planCleanupUninstalls(agent, conflicts).every((args) => run(args).code === 0);
+          // Attempt EVERY removal (map, not .every) — a short-circuit would leave
+          // a half-migrated, still-double-firing repo on the first failure.
+          const ok = planCleanupUninstalls(agent, conflicts)
+            .map((args) => run(args).code === 0)
+            .every(Boolean);
           results.migrate = ok ? "ok" : "failed";
         } else if (conflicts.length > 0) {
           note(

@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(() => "/fake/root"),
-  // Default: every `git config --get` reads empty (unset). Reset restores this
-  // between tests, so an "unset global + unset system" case needs no per-test setup.
-  execFileSync: vi.fn(() => ""),
+  // `git rev-parse --show-toplevel` (via gitToplevel) → the repo root; every
+  // `git config --get` reads empty (unset). Reset restores this between tests,
+  // so an "unset global + unset system" case needs no per-test setup.
+  execFileSync: vi.fn((_cmd, args) =>
+    Array.isArray(args) && args[0] === "rev-parse" ? "/fake/root" : "",
+  ),
 }));
 
 vi.mock("node:fs", () => ({
@@ -441,6 +444,30 @@ describe("installGlobalHooks (user scope)", () => {
     expect(pre).toContain('"$repo_hook" "$@" || exit $?'); // a repo pre-commit can still block
     expect(pre).toContain("prim-pre-commit || true"); // prim never breaks a commit
     expect(post).toContain('"$repo_hook" "$@" || true'); // post-commit cannot block
+    // STRUCTURAL: the prim invocation must be NESTED inside the gate — between
+    // the `prim.active` check and the chain — not merely present somewhere.
+    // Independent `toContain`s would pass on an ungated invocation (the H2 bug).
+    const gateAt = pre.indexOf("git config --get prim.active");
+    const binAt = pre.indexOf("prim-pre-commit");
+    const chainAt = pre.indexOf("common_dir=");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(binAt).toBeGreaterThan(gateAt); // invocation is after the gate opens
+    expect(binAt).toBeLessThan(chainAt); // and before the chain — i.e. inside the gate
+  });
+
+  it("writes a pass-through stub for every non-prim client-side hook type (no shadowing)", () => {
+    installGlobalHooks();
+    const byPath = new Map(
+      mockedWriteFileSync.mock.calls.map((c) => [String(c[0]), c[1] as string]),
+    );
+    for (const name of ["commit-msg", "pre-push", "prepare-commit-msg", "post-merge"]) {
+      const stub = byPath.get(join(PRIM_GIT_HOOKS_DIR, name));
+      expect(stub, `stub for ${name}`).toBeDefined();
+      // A stub forwards to the repo's real hook and never runs prim.
+      expect(stub).toContain('exec "$repo_hook" "$@"');
+      expect(stub).not.toContain("prim-");
+      expect(stub).not.toContain("prim.active");
+    }
   });
 
   it("refreshes scripts but does not re-set config when core.hooksPath is already prim's", () => {
@@ -463,6 +490,9 @@ describe("installGlobalHooks (user scope)", () => {
     )?.[1] as string;
     expect(pre).toContain(PRIM_BLOCK_START); // a marker block, not the standalone script
     expect(pre).toContain("prim-pre-commit");
+    // H2 fix: the coexist-append block is GATED too, so user scope stays opt-in
+    // even when appended into a foreign core.hooksPath dir.
+    expect(pre).toContain("git config --get prim.active");
   });
 
   it("expands a leading ~ in the existing global hooksPath before writing", () => {
@@ -473,20 +503,22 @@ describe("installGlobalHooks (user scope)", () => {
     expect(paths.some((p) => p.includes("~"))).toBe(false); // no literal tilde reached fs
   });
 
-  it("does not override a system-level hooksPath without --force", () => {
+  it("does not override a system-level hooksPath without --force (returns false to signal the skip)", () => {
     stubHooksPath({ system: "/etc/git/hooks" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    installGlobalHooks();
+    expect(installGlobalHooks()).toBe(false); // caller can report an honest skip
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("system core.hooksPath"));
     errSpy.mockRestore();
   });
 
-  it("overrides a system-level hooksPath with --force", () => {
+  it("overrides a system-level hooksPath with --force (returns true)", () => {
     stubHooksPath({ system: "/etc/git/hooks" });
-    installGlobalHooks({ force: true });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(installGlobalHooks({ force: true })).toBe(true);
     expect(setCalls()).toHaveLength(1);
+    errSpy.mockRestore();
   });
 });
 
@@ -498,6 +530,9 @@ describe("uninstallGlobalHooks (user scope)", () => {
     const unlinked = mockedUnlinkSync.mock.calls.map((c) => String(c[0]));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "post-commit"));
+    // the pass-through stubs prim wrote are removed too, not orphaned
+    expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "commit-msg"));
+    expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-push"));
     expect(mockedExecFileSync).toHaveBeenCalledWith("git", [
       "config",
       "--global",
@@ -506,21 +541,49 @@ describe("uninstallGlobalHooks (user scope)", () => {
     ]);
   });
 
-  it("strips the prim block from a foreign hooksPath dir but leaves the pointer", () => {
+  it("strips the prim block from a foreign hook that has other content, leaving the file + pointer", () => {
     const existing = join(homedir(), ".config", "git", "hooks");
     stubHooksPath({ global: existing });
     mockedExistsSync.mockReturnValue(true);
+    // A foreign tool's hook with prim appended — stripping leaves the tool's line.
     mockedReadFileSync.mockReturnValue(
-      `#!/bin/sh\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
+      `#!/bin/sh\nlint-staged\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
     );
     uninstallGlobalHooks();
     const unsetCalls = mockedExecFileSync.mock.calls.filter((c) =>
       ((c[1] as string[] | undefined) ?? []).includes("--unset"),
     );
-    expect(unsetCalls).toHaveLength(0);
-    expect(mockedWriteFileSync).toHaveBeenCalled();
+    expect(unsetCalls).toHaveLength(0); // pointer untouched
+    expect(mockedUnlinkSync).not.toHaveBeenCalled(); // file has other content — kept
     const written = mockedWriteFileSync.mock.calls.map((c) => c[1] as string);
+    expect(written.some((w) => w.includes("lint-staged"))).toBe(true);
     expect(written.every((w) => !w.includes("prim-pre-commit"))).toBe(true);
+  });
+
+  it("unlinks a prim-CREATED foreign hook (provenance marker + shebang only) instead of orphaning it", () => {
+    const existing = join(homedir(), ".config", "git", "hooks");
+    stubHooksPath({ global: existing });
+    mockedExistsSync.mockReturnValue(true);
+    // prim created this file (mergePrimBlock else-branch): shebang + provenance
+    // marker + prim block only.
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\n# prim-created-hook\n\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
+    );
+    uninstallGlobalHooks();
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(existing, "pre-commit"));
+  });
+
+  it("does NOT unlink a user's shebang-only hook prim merely appended to (no provenance marker)", () => {
+    const existing = join(homedir(), ".config", "git", "hooks");
+    stubHooksPath({ global: existing });
+    mockedExistsSync.mockReturnValue(true);
+    // A user's own shebang-only hook prim appended to — NO prim-created marker.
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
+    );
+    uninstallGlobalHooks();
+    expect(mockedUnlinkSync).not.toHaveBeenCalled(); // never delete a user's file
+    expect(mockedWriteFileSync).toHaveBeenCalled(); // block stripped, file kept
   });
 
   it("reports nothing to remove when no global hooksPath is set", () => {

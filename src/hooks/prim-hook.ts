@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
-import { isRepoActive } from "../lib/activation.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
@@ -61,7 +61,7 @@ try {
   // Opt-in gate: capture only in repos where prim is activated (prim.active).
   // Inactive repos short-circuit here — nothing is built, journaled, or flushed
   // — so a machine-wide (user-scope) install never captures where unwanted.
-  if (isRepoActive(cwd)) {
+  if (isRepoActiveForCapture(cwd)) {
     // Derive the envelope's identity/control fields (sessionId, eventType,
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
