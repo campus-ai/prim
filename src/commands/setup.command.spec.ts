@@ -23,10 +23,16 @@ describe("planSetupSteps", () => {
     expect(steps.filter((s) => !s.required).map((s) => s.key)).toEqual(["daemon"]);
   });
 
-  it("codex: session step targets the codex integration", () => {
+  it("codex: session step targets the codex integration; skill targets AGENTS.md via --agent", () => {
     const steps = planSetupSteps({ agent: "codex", daemon: true, scope: "project" });
     expect(steps[0].args).toEqual(["codex", "install"]);
     expect(steps[0].label).toMatch(/codex/i);
+    expect(steps.find((s) => s.key === "skill")?.args).toEqual([
+      "skill",
+      "install",
+      "--agent",
+      "codex",
+    ]);
   });
 
   it("--no-daemon: drops the daemon step, keeps the required ones", () => {
@@ -40,9 +46,14 @@ describe("planSetupSteps", () => {
   it("user scope: appends --scope user to the session install only", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["claude", "install", "--scope", "user"]);
-    // hooks/skill are not scoped.
+    // hooks/skill are not scoped; skill routes by --agent, not --scope.
     expect(steps.find((s) => s.key === "hooks")?.args).toEqual(["hooks", "install"]);
-    expect(steps.find((s) => s.key === "skill")?.args).toEqual(["skill", "install"]);
+    expect(steps.find((s) => s.key === "skill")?.args).toEqual([
+      "skill",
+      "install",
+      "--agent",
+      "claude",
+    ]);
   });
 
   it("project scope: no --scope flag on the session install", () => {
@@ -50,15 +61,15 @@ describe("planSetupSteps", () => {
     expect(steps[0].args).toEqual(["claude", "install"]);
   });
 
-  it("hermes: global-only, so no scope flag even under --scope user; skill targets .hermes.md", () => {
+  it("hermes: global-only, so no scope flag even under --scope user; skill targets .hermes.md via --agent", () => {
     const steps = planSetupSteps({ agent: "hermes", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["hermes", "install"]);
     expect(steps[0].label).toMatch(/hermes/i);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
-      "--target",
-      ".hermes.md",
+      "--agent",
+      "hermes",
     ]);
   });
 });

@@ -261,6 +261,98 @@ describe("runInstall", () => {
 });
 
 // ---------------------------------------------------------------------------
+// --agent routing (agent → default rules file)
+// ---------------------------------------------------------------------------
+
+describe("runInstall --agent routing", () => {
+  it("routes --agent hermes to .hermes.md, ignoring an existing CLAUDE.md", () => {
+    // CLAUDE.md present on disk; --agent must still target .hermes.md and never
+    // touch CLAUDE.md — the whole point of the hardening.
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      return s.endsWith("SKILL.md") || s === "/repo/CLAUDE.md";
+    });
+    mockedReadFileSync.mockImplementation((p) =>
+      String(p).endsWith("SKILL.md") ? SKILL_CONTENT : "",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "hermes" })).toBe(0);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/.hermes.md.tmp", "/repo/.hermes.md");
+    for (const [path] of mockedWriteFileSync.mock.calls) {
+      expect(String(path)).not.toContain("CLAUDE.md");
+    }
+  });
+
+  it("routes --agent codex to AGENTS.md even when CLAUDE.md is the file on disk", () => {
+    // Discriminating: auto-detect would pick the lone CLAUDE.md, so a passing
+    // assertion proves --agent overrode detection.
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      return s.endsWith("SKILL.md") || s === "/repo/CLAUDE.md";
+    });
+    mockedReadFileSync.mockImplementation((p) =>
+      String(p).endsWith("SKILL.md") ? SKILL_CONTENT : "",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "codex" })).toBe(0);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/AGENTS.md.tmp", "/repo/AGENTS.md");
+    for (const [path] of mockedWriteFileSync.mock.calls) {
+      expect(String(path)).not.toContain("CLAUDE.md");
+    }
+  });
+
+  it("routes --agent claude to CLAUDE.md even when AGENTS.md is the file on disk", () => {
+    mockedExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      return s.endsWith("SKILL.md") || s === "/repo/AGENTS.md";
+    });
+    mockedReadFileSync.mockImplementation((p) =>
+      String(p).endsWith("SKILL.md") ? SKILL_CONTENT : "",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "claude" })).toBe(0);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/CLAUDE.md.tmp", "/repo/CLAUDE.md");
+    for (const [path] of mockedWriteFileSync.mock.calls) {
+      expect(String(path)).not.toContain("AGENTS.md");
+    }
+  });
+
+  it("prefers an explicit --target over --agent", () => {
+    fsFixture({ target: "/repo/custom.md", targetContent: "" });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runInstall("/repo", { target: "custom.md", agent: "hermes" })).toBe(0);
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
+  });
+
+  it("aborts on an unknown --agent without writing (no CLAUDE.md fallthrough)", () => {
+    fsFixture();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runInstall("/repo", { agent: "bogus" })).toBe(1);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --agent"));
+    errSpy.mockRestore();
+  });
+
+  it("aborts cleanly on an --agent that collides with an Object.prototype key", () => {
+    // toString/constructor/__proto__ are truthy inherited members; the guard must
+    // treat them as unknown agents — return 1, print the message, and NOT throw
+    // (uninstall/status have no CLI try/catch, so a throw would dump a stack trace).
+    fsFixture();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let code: number | undefined;
+    expect(() => {
+      code = runInstall("/repo", { agent: "toString" });
+    }).not.toThrow();
+    expect(code).toBe(1);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --agent"));
+    expect(() => runUninstall("/repo", { agent: "constructor" })).not.toThrow();
+    expect(() => runStatus("/repo", { agent: "__proto__" })).not.toThrow();
+    errSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runUninstall
 // ---------------------------------------------------------------------------
 

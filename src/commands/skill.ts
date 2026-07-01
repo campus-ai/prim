@@ -37,6 +37,15 @@ export const TARGET_CANDIDATES = [
 
 const DEFAULT_TARGET = "CLAUDE.md";
 
+// Each coding agent reads a different project rules file, so `--agent` selects
+// the destination deterministically — no auto-detection, and no CLAUDE.md
+// fallback for a non-Claude agent. (All three are also in TARGET_CANDIDATES.)
+export const AGENT_TARGET = {
+  claude: "CLAUDE.md",
+  codex: "AGENTS.md",
+  hermes: ".hermes.md",
+} as const;
+
 export function loadSkill(): string {
   // Walk up from this module looking for SKILL.md so dev (src/commands/) and
   // prod (bundled dist/) both resolve to the package's SKILL.md.
@@ -94,8 +103,21 @@ function atomicWrite(target: string, content: string): void {
   renameSync(tmp, target);
 }
 
-function resolveTarget(cwd: string, override?: string): string | null {
-  if (override) return resolve(cwd, override);
+function resolveTarget(cwd: string, opts: { target?: string; agent?: string }): string | null {
+  // Precedence: an explicit path wins, then the agent-mapped file, then
+  // auto-detection. An unknown --agent aborts rather than silently falling
+  // through to a CLAUDE.md default.
+  if (opts.target) return resolve(cwd, opts.target);
+  if (opts.agent) {
+    const mapped = AGENT_TARGET[opts.agent as keyof typeof AGENT_TARGET];
+    // Gate on the value TYPE, not truthiness: an inherited Object.prototype key
+    // (toString, constructor, __proto__, …) would return a truthy non-string and
+    // reach resolve() as a function — a crash. Only the three real string values
+    // route; everything else (typos and prototype keys alike) aborts cleanly.
+    if (typeof mapped === "string") return resolve(cwd, mapped);
+    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, or hermes)`);
+    return null;
+  }
   const matches = detectTargets(cwd);
   if (matches.length === 0) return resolve(cwd, DEFAULT_TARGET);
   if (matches.length === 1) return resolve(cwd, matches[0]);
@@ -104,8 +126,11 @@ function resolveTarget(cwd: string, override?: string): string | null {
   return null;
 }
 
-export function runInstall(cwd: string, opts: { target?: string; dryRun?: boolean }): number {
-  const target = resolveTarget(cwd, opts.target);
+export function runInstall(
+  cwd: string,
+  opts: { target?: string; agent?: string; dryRun?: boolean },
+): number {
+  const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
 
   const existing = existsSync(target) ? readFileSync(target, "utf-8") : "";
@@ -126,8 +151,8 @@ export function runInstall(cwd: string, opts: { target?: string; dryRun?: boolea
   return 0;
 }
 
-export function runUninstall(cwd: string, opts: { target?: string }): number {
-  const target = resolveTarget(cwd, opts.target);
+export function runUninstall(cwd: string, opts: { target?: string; agent?: string }): number {
+  const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
   if (!existsSync(target)) {
     console.log(`Skill block not present at ${target}`);
@@ -144,8 +169,11 @@ export function runUninstall(cwd: string, opts: { target?: string }): number {
   return 0;
 }
 
-export function runStatus(cwd: string, opts: { target?: string; json?: boolean }): number {
-  const target = resolveTarget(cwd, opts.target);
+export function runStatus(
+  cwd: string,
+  opts: { target?: string; agent?: string; json?: boolean },
+): number {
+  const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
 
   const fileExists = existsSync(target);
@@ -181,8 +209,9 @@ export function registerSkillCommands(program: Command) {
     .command("install")
     .description("Install the prim skill block into your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
+    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
     .option("--dry-run", "Print a unified diff without writing")
-    .action((opts: { target?: string; dryRun?: boolean }) => {
+    .action((opts: { target?: string; agent?: string; dryRun?: boolean }) => {
       try {
         process.exit(runInstall(process.cwd(), opts));
       } catch (err) {
@@ -195,7 +224,8 @@ export function registerSkillCommands(program: Command) {
     .command("uninstall")
     .description("Remove the prim skill block from your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
-    .action((opts: { target?: string }) => {
+    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .action((opts: { target?: string; agent?: string }) => {
       process.exit(runUninstall(process.cwd(), opts));
     });
 
@@ -203,8 +233,9 @@ export function registerSkillCommands(program: Command) {
     .command("status")
     .description("Report whether the prim skill block is installed")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
+    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
     .option("--json", "Output as JSON")
-    .action((opts: { target?: string; json?: boolean }) => {
+    .action((opts: { target?: string; agent?: string; json?: boolean }) => {
       process.exit(runStatus(process.cwd(), opts));
     });
 }
