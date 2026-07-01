@@ -113,7 +113,7 @@ sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` / `hermes status` to match your agent
 - `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
-- `npx --yes @primitive.ai/prim@latest skill status`
+- `npx --yes @primitive.ai/prim@latest skill status --agent claude` — or `codex`/`hermes` to match your agent, so it checks the rules file that agent actually uses (a bare `skill status` can false-negative in a repo that also has another rules file)
 
 Add one line of setup specifics: which rules file received the skill block, and
 (Codex only) the `/hooks` trust reminder or (Hermes only) the hook-consent
@@ -166,10 +166,10 @@ precisely to collapse that to a single approval.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
    pre-commit decision check plus a post-commit capture boundary. Separate from
    the session hooks in step 3.
-6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install`. Writes the
-   managed block teaching you to work with the decision graph into the rules file
-   (CLAUDE.md / AGENTS.md / .cursor/rules / .windsurfrules /
-   .github/instructions/primitive.md). Pass `--target <path>` if detection is
-   ambiguous.
+6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
+   (claude/codex/hermes). Writes the managed block teaching you to work with the
+   decision graph into the file that agent reads — claude→CLAUDE.md, codex→AGENTS.md,
+   hermes→.hermes.md. Omit `--agent` to auto-detect an existing rules file, or pass
+   `--target <path>` to force a specific one.
 7. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome` — then present it as
    in section 2 above.

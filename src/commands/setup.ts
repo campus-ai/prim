@@ -84,11 +84,11 @@ export function planSetupSteps(opts: {
     });
   }
   steps.push({ key: "hooks", label: "Git hooks", args: ["hooks", "install"], required: true });
-  // Hermes loads ONE project context file, first match wins
-  // (.hermes.md → AGENTS.md → CLAUDE.md → .cursorrules), so target .hermes.md
-  // explicitly — deterministic, and side-steps the >1-candidate prompt.
-  const skillArgs =
-    opts.agent === "hermes" ? ["skill", "install", "--target", ".hermes.md"] : ["skill", "install"];
+  // The rules file follows the agent: claude→CLAUDE.md, codex→AGENTS.md,
+  // hermes→.hermes.md. Passing --agent lets `skill install` pick it
+  // deterministically — vs. auto-detection, which could land a non-Claude agent
+  // on CLAUDE.md (its no-candidate default).
+  const skillArgs = ["skill", "install", "--agent", opts.agent];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
   return steps;
 }
