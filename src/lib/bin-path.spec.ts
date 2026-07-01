@@ -6,9 +6,17 @@
  * as declared in the `bin` map — including the stem mismatches a naive
  * `name + ".js"` would get wrong.
  */
-import { isAbsolute } from "node:path";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { binFile, commandMatchesBin, hookShimCommand } from "./bin-path.js";
+import {
+  binFile,
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookShimCommand,
+} from "./bin-path.js";
 
 describe("binFile", () => {
   it("resolves the daemon server to an absolute dist path", () => {
@@ -51,6 +59,78 @@ describe("hookShimCommand", () => {
   });
 });
 
+describe("detachedHookShimCommand", () => {
+  it("embeds the synchronous shim verbatim inside the detached template", () => {
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain(`| { ${hookShimCommand("prim-hook")}; }`);
+  });
+
+  it("captures stdin before backgrounding and pipes it back", () => {
+    // A plain backgrounded chain gets /dev/null stdin (POSIX) and would
+    // silently drop the envelope — the capture-then-pipe is load-bearing.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd.startsWith("payload=$(cat); ")).toBe(true);
+    expect(cmd).toContain(`printf '%s' "$payload" |`);
+  });
+
+  it("puts the redirections and & on the outermost group", () => {
+    // If anything in the detached tree inherited the hook's stdout/stderr
+    // pipes, Claude Code would wait for pipe EOF and the detach would
+    // silently not detach.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd.endsWith("} </dev/null >/dev/null 2>&1 &")).toBe(true);
+  });
+
+  it("ignores SIGHUP across the detached chain and stays a single line", () => {
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain("trap '' HUP;");
+    expect(cmd).not.toContain("\n");
+  });
+
+  it("threads args through the embedded shim", () => {
+    const cmd = detachedHookShimCommand("prim-hook", "--agent codex");
+    expect(cmd).toContain(`| { ${hookShimCommand("prim-hook", "--agent codex")}; }`);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "exits immediately and still delivers the payload to the detached bin",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "prim-detach-"));
+      const outFile = join(dir, "out.json");
+      try {
+        // Stub prim-hook: sleep past the timing budget, then persist stdin.
+        // Write-then-rename so the exists-poll below never observes the file
+        // in its exists-but-empty window between open() and cat's write.
+        writeFileSync(
+          join(dir, "prim-hook"),
+          `#!/bin/sh\nsleep 1\ncat > "$STUB_OUT.tmp" && mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
+        );
+        chmodSync(join(dir, "prim-hook"), 0o755);
+        const payload = '{"hook_event_name":"SessionEnd","session_id":"s-1","cwd":"/tmp"}';
+        const started = performance.now();
+        // spawnSync blocks on pipe EOF as well as exit, so the elapsed budget
+        // alone regression-guards the redirect placement: without the
+        // outermost /dev/null redirects it blocks for the stub's full sleep.
+        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-hook")], {
+          input: payload,
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, STUB_OUT: outFile },
+          timeout: 5000,
+        });
+        const elapsed = performance.now() - started;
+        expect(res.status).toBe(0);
+        expect(elapsed).toBeLessThan(750);
+        const deadline = Date.now() + 5000;
+        while (!existsSync(outFile) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(readFileSync(outFile, "utf-8")).toBe(payload);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe("commandMatchesBin", () => {
   it("matches the legacy bare form, with or without args", () => {
     expect(commandMatchesBin("prim-hook", "prim-hook")).toBe(true);
@@ -64,11 +144,25 @@ describe("commandMatchesBin", () => {
     );
   });
 
+  it("matches the detached form", () => {
+    expect(commandMatchesBin(detachedHookShimCommand("prim-hook"), "prim-hook")).toBe(true);
+    expect(commandMatchesBin(detachedHookShimCommand("prim-session-end"), "prim-session-end")).toBe(
+      true,
+    );
+  });
+
   it("does not cross-match a sibling bin", () => {
     expect(commandMatchesBin(hookShimCommand("prim-post-tool-use"), "prim-pre-tool-use")).toBe(
       false,
     );
     expect(commandMatchesBin("prim-post-tool-use", "prim-pre-tool-use")).toBe(false);
+    // Diverging bin names can never collide on the `command -v <bin> ` token…
+    expect(
+      commandMatchesBin(detachedHookShimCommand("prim-session-end"), "prim-session-start"),
+    ).toBe(false);
+    // …and the token's trailing space is what keeps "prim" (the statusline
+    // bin, a true prefix of every hook bin) from cross-matching a hook shim.
+    expect(commandMatchesBin(detachedHookShimCommand("prim-hook"), "prim")).toBe(false);
   });
 
   it("does not match a foreign command or undefined", () => {

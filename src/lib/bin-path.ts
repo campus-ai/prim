@@ -15,9 +15,10 @@
  *     same ladder the git hooks already use (hooks.ts:hookShim). It resolves
  *     with zero package management and always reaches `@latest` on the npx path.
  *
- * commandMatchesBin() recognizes a written command — legacy bare name OR the
- * current shim — so install/uninstall can identify, upgrade, and strip prim's
- * own entries across both forms.
+ * commandMatchesBin() recognizes a written command — legacy bare name, the
+ * synchronous shim, or the detached wrapper (both shim forms carry the
+ * `command -v <bin>` token) — so install/uninstall can identify, upgrade, and
+ * strip prim's own entries across all three forms.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -83,6 +84,11 @@ export function binFile(bin: string): string | null {
  * git-hook resolver (hooks.ts:hookShim) but — unlike it — adds no
  * `2>/dev/null || true`: a Claude Code / Codex hook's STDOUT (e.g. the gate's
  * permissionDecision) and exit code are load-bearing and must pass through.
+ * That holds for the gate and statusline (stdout), post-tool-use (its stderr
+ * verdict footer is a deliberate human signal), and session-start (its stdout
+ * injects additionalContext under codex) — which is why they stay synchronous;
+ * a hook whose output nothing consumes can use detachedHookShimCommand()
+ * below instead.
  *   hookShimCommand("prim-hook")                 // capture
  *   hookShimCommand("prim-hook", "--agent codex")// codex capture
  *   hookShimCommand("prim", "statusline")        // statusline
@@ -94,6 +100,59 @@ export function hookShimCommand(bin: string, args = ""): string {
     `elif [ -f "./node_modules/.bin/${bin}" ]; then ${invoke(`./node_modules/.bin/${bin}`)}; ` +
     `else ${invoke(`${NPX_FALLBACK} ${bin}`)}; fi`
   );
+}
+
+/**
+ * A fire-and-forget variant of hookShimCommand() for hooks whose output
+ * nothing consumes: capture stdin, then run the shim in a detached background
+ * job so the hook process exits in milliseconds. Claude Code cancels hooks
+ * still running at session teardown ("SessionEnd hook … failed: Hook
+ * cancelled" — older versions allowed ~1.5s regardless of configured timeout,
+ * and interrupt-style exits cancel outright), and the shim's npx fallback
+ * alone takes seconds on an un-installed host. Detached, the hook completes
+ * before teardown has anything to cancel, and the capture still lands.
+ *
+ * Every piece of the template is load-bearing:
+ *   - `payload=$(cat)` drains stdin BEFORE backgrounding — POSIX gives a
+ *     backgrounded job /dev/null stdin, which would silently drop the
+ *     envelope — and `printf '%s'` (a builtin: no exec, no ARG_MAX) re-feeds
+ *     it without interpreting `%` or `\`.
+ *   - The redirections and `&` sit on the OUTERMOST brace group so the whole
+ *     detached tree inherits /dev/null stdio at fork. If any process in it
+ *     inherited the hook's stdout/stderr pipes, Claude Code would keep
+ *     waiting for pipe EOF and the detach would silently not detach. The
+ *     `</dev/null` must never move onto the inner group — there it would
+ *     override the payload pipe.
+ *   - `trap '' HUP` ignores terminal-close SIGHUP across the whole chain
+ *     (SIG_IGN inherits through exec; nohup would cover only one simple
+ *     command and force an inner `sh -c` re-quoting layer). macOS ships no
+ *     setsid(1), so a pgroup-wide SIGTERM could still kill in-flight capture
+ *     — accepted: the window is tiny, and prim-hook re-detaches the flush via
+ *     Node's `detached: true` (a real new session), which is immune.
+ *   - The embedded shim keeps its `command -v <bin> ` token, so
+ *     commandMatchesBin() recognizes the detached form unchanged.
+ *
+ * Detached stderr is discarded, so PRIM_HOOK_DEBUG cannot surface failures
+ * here — debug by piping an envelope into the inner shim by hand.
+ */
+// TODO(codex-hermes-parity): only the Claude Code SessionEnd registrations use
+// this wrapper today.
+//   - Codex (commands/codex-install.ts): same hooks.json shape and shell
+//     execution, so its registrations could adopt this wrapper verbatim via a
+//     detached sibling of makeRegistration. Codex fires no SessionEnd —
+//     Stop/SubagentStop are its terminal capture events — and its gate/
+//     post-tool-use entries must stay synchronous (stdout/exit code are the
+//     answer).
+//   - Hermes (commands/hermes-install.ts): hooks are exec'd with shell=False
+//     (shlex.split), so an inline sh string would be treated as a literal
+//     program name. The detach must live inside the installed shim script
+//     instead: teach ~/.hermes/agent-hooks/prim-shim.sh a mode flag (e.g.
+//     `prim-shim.sh --detach <bin> …`) doing the payload=$(cat) capture +
+//     trap '' HUP + background + /dev/null redirect around its existing
+//     PATH → local → npx resolution, then point the on_session_end
+//     registrations at it. Its gate's `timeout: 10` stays.
+export function detachedHookShimCommand(bin: string, args = ""): string {
+  return `payload=$(cat); { trap '' HUP; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**
