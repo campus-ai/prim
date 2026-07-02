@@ -81,10 +81,25 @@ describe("detachedHookShimCommand", () => {
     expect(cmd.endsWith("} </dev/null >/dev/null 2>&1 &")).toBe(true);
   });
 
-  it("ignores SIGHUP across the detached chain and stays a single line", () => {
+  it("ignores SIGHUP on the exec'd branches and stays a single line", () => {
+    // SIG_IGN survives fork+exec (PATH / node_modules branches) but NOT the
+    // npx branch — Node/libuv resets spawned children to SIG_DFL. See the
+    // docblock's accepted-residual note.
     const cmd = detachedHookShimCommand("prim-hook");
     expect(cmd).toContain("trap '' HUP;");
     expect(cmd).not.toContain("\n");
+  });
+
+  it("bounds the npx branch with explicit npm fetch limits", () => {
+    // Without these, a hung registry holds the invisible detached job open
+    // for ~15 minutes on npm's defaults. They must sit INSIDE the
+    // backgrounded group (they only concern the detached chain) and before
+    // the payload pipe so the exports reach the npx branch's environment.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain(
+      "trap '' HUP; export npm_config_fetch_retries=2 " +
+        "npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf",
+    );
   });
 
   it("threads args through the embedded shim", () => {

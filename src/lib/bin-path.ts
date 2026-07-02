@@ -112,6 +112,16 @@ export function hookShimCommand(bin: string, args = ""): string {
  * alone takes seconds on an un-installed host. Detached, the hook completes
  * before teardown has anything to cancel, and the capture still lands.
  *
+ * Why not Claude Code's native `async: true` hook field (shipped Jan 2026):
+ * async hooks still enforce the configured timeout, so a slow npx resolution
+ * can still be killed mid-capture — the exact loss this wrapper removes;
+ * whether an in-flight async hook survives session teardown at all is
+ * undocumented; the field requires a Claude Code new enough to know it,
+ * while this template works on every version back to the ~1.5s-cap era; and
+ * Codex/Hermes have no equivalent, so the shell shape is needed for parity
+ * anyway (see TODO(codex-hermes-parity)). Revisit if async hooks gain a
+ * documented teardown-survival guarantee.
+ *
  * Every piece of the template is load-bearing:
  *   - `payload=$(cat)` drains stdin BEFORE backgrounding — POSIX gives a
  *     backgrounded job /dev/null stdin, which would silently drop the
@@ -123,12 +133,26 @@ export function hookShimCommand(bin: string, args = ""): string {
  *     waiting for pipe EOF and the detach would silently not detach. The
  *     `</dev/null` must never move onto the inner group — there it would
  *     override the payload pipe.
- *   - `trap '' HUP` ignores terminal-close SIGHUP across the whole chain
- *     (SIG_IGN inherits through exec; nohup would cover only one simple
- *     command and force an inner `sh -c` re-quoting layer). macOS ships no
- *     setsid(1), so a pgroup-wide SIGTERM could still kill in-flight capture
- *     — accepted: the window is tiny, and prim-hook re-detaches the flush via
+ *   - `trap '' HUP` shields the PATH and node_modules branches from
+ *     terminal-close SIGHUP: sh fork+execs the bin directly there, and
+ *     SIG_IGN inherits through exec (nohup would cover only one simple
+ *     command and force an inner `sh -c` re-quoting layer). It does NOT
+ *     shield the npx branch: npx is a Node process, and Node/libuv resets
+ *     every spawned child's signal dispositions to SIG_DFL, so on an
+ *     un-installed host the resolved bin runs with DEFAULT signal handling
+ *     for the whole seconds-wide resolution window — and macOS ships no
+ *     setsid(1) to re-session it. Accepted: the artifact at risk is one
+ *     telemetry move (anything already journaled re-drains via flushIfNeeded
+ *     and server-side moveId dedup), and prim-hook re-detaches the flush via
  *     Node's `detached: true` (a real new session), which is immune.
+ *   - The `npm_config_fetch_*` exports bound the npx branch's runtime: on
+ *     npm's defaults a hung registry connection holds the (invisible)
+ *     detached job open for ~15 minutes (300s fetch-timeout × 3 attempts +
+ *     backoff); 60s × 3 attempts + a 10s-capped backoff keeps it under ~4.
+ *     They ride the environment, so they are inert on the PATH and
+ *     node_modules branches. A sleep-and-kill watchdog was rejected:
+ *     `kill $!` reaches only the inner subshell, orphaning the very npm/node
+ *     grandchildren it means to reap.
  *   - The embedded shim keeps its `command -v <bin> ` token, so
  *     commandMatchesBin() recognizes the detached form unchanged.
  *
@@ -152,7 +176,7 @@ export function hookShimCommand(bin: string, args = ""): string {
 //     PATH → local → npx resolution, then point the on_session_end
 //     registrations at it. Its gate's `timeout: 10` stays.
 export function detachedHookShimCommand(bin: string, args = ""): string {
-  return `payload=$(cat); { trap '' HUP; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
+  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**
