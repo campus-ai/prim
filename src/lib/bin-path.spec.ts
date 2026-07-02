@@ -146,6 +146,36 @@ describe("detachedHookShimCommand", () => {
   );
 });
 
+describe("canonical command strings (golden)", () => {
+  // These pin the EXACT bytes each generator writes into settings.json.
+  // ensureRegistration keys idempotence on full-string equality, so ANY
+  // change to either template — however harmless it looks — is a
+  // settings.json migration: every installed entry becomes non-canonical and
+  // is rewritten on the next install, and any older CLI re-running install
+  // rewrites it back (form ping-pong in a committed project file). The
+  // fragment tests above explain WHY each piece exists; these goldens make
+  // changing the bytes a deliberate act.
+  it("pins the synchronous shim byte-for-byte", () => {
+    expect(hookShimCommand("prim-hook")).toBe(
+      "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
+        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
+        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi",
+    );
+  });
+
+  it("pins the detached wrapper byte-for-byte", () => {
+    expect(detachedHookShimCommand("prim-hook")).toBe(
+      "payload=$(cat); { trap '' HUP; " +
+        "export npm_config_fetch_retries=2 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; " +
+        `printf '%s' "$payload" | { ` +
+        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
+        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
+        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi" +
+        "; }; } </dev/null >/dev/null 2>&1 &",
+    );
+  });
+});
+
 describe("commandMatchesBin", () => {
   it("matches the legacy bare form, with or without args", () => {
     expect(commandMatchesBin("prim-hook", "prim-hook")).toBe(true);
