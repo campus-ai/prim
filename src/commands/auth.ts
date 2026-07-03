@@ -22,6 +22,7 @@ import {
   getTokenExpiresAt,
   saveTokenExpiry,
 } from "../client.js";
+import { stripAnsi } from "../lib/ansi.js";
 import { printJson } from "../output.js";
 
 const FILE_MODE = 0o600;
@@ -105,20 +106,36 @@ export function registerAuthCommands(program: Command) {
         const code = url.searchParams.get("code");
         const returnedState = url.searchParams.get("state");
 
+        // Failure paths exit only from res.end's callback: exiting synchronously
+        // after end() can kill the process before the payload is flushed.
         if (returnedState !== state) {
+          console.error("Authentication failed: state mismatch on the OAuth callback.");
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end("<h1>State mismatch. Authentication failed.</h1>");
-          server.close();
-          process.exit(1);
+          res.end("<h1>State mismatch. Authentication failed.</h1>", () => {
+            server.close();
+            process.exit(1);
+          });
+          return;
         }
 
         if (!code) {
+          // error_description is provider-supplied (untrusted) and not actionable
+          // from a browser tab — report it on STDERR where the user is working,
+          // and keep the page static so nothing external is reflected into HTML.
+          // stripAnsi keeps that untrusted text from smuggling escape sequences
+          // into the terminal it now lands in.
           const error =
             url.searchParams.get("error_description") ?? "No authorization code received";
+          console.error(`Authentication failed: ${stripAnsi(error)}`);
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`<h1>Authentication failed: ${error}</h1>`);
-          server.close();
-          process.exit(1);
+          res.end(
+            "<h1>Authentication failed.</h1><p>Return to your terminal for details.</p>",
+            () => {
+              server.close();
+              process.exit(1);
+            },
+          );
+          return;
         }
 
         res.writeHead(200, { "Content-Type": "text/html" });
@@ -169,12 +186,13 @@ export function registerAuthCommands(program: Command) {
       console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
       console.error("Waiting for callback...");
 
-      // Timeout
+      // Timeout. unref'd so the timer is never what keeps the process alive —
+      // the listening server is, and every path that closes it also exits.
       setTimeout(() => {
         console.error("Authentication timed out.");
         server.close();
         process.exit(1);
-      }, CALLBACK_TIMEOUT_MS);
+      }, CALLBACK_TIMEOUT_MS).unref();
     });
 
   auth
