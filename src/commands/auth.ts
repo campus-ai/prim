@@ -47,6 +47,47 @@ function generatePkce(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+// What the callback serves for a given redirect, resolved as pure data so
+// writing the response stays a single code path in the server handler.
+export type CallbackPage = {
+  status: number;
+  html: string;
+  /** Failure detail for STDERR — the terminal is where errors are actionable. */
+  stderr?: string;
+  /** When set, the process exits with this code once the response has flushed. */
+  exitCode?: number;
+};
+
+const AUTH_SUCCESS_PAGE = "<h1>Authentication successful!</h1><p>You can close this tab.</p>";
+const STATE_MISMATCH_PAGE = "<h1>State mismatch. Authentication failed.</h1>";
+const AUTH_FAILURE_PAGE =
+  "<h1>Authentication failed.</h1><p>Return to your terminal for details.</p>";
+
+// Every page is a static, trusted string by construction — provider-supplied
+// text (error_description) only ever travels via `stderr`, never into HTML.
+export function resolveCallbackPage(params: URLSearchParams, expectedState: string): CallbackPage {
+  if (params.get("state") !== expectedState) {
+    return {
+      status: 400,
+      html: STATE_MISMATCH_PAGE,
+      stderr: "Authentication failed: state mismatch on the OAuth callback.",
+      exitCode: 1,
+    };
+  }
+  if (!params.get("code")) {
+    // stripAnsi keeps the untrusted provider text from smuggling escape
+    // sequences into the terminal it lands in.
+    const error = params.get("error_description") ?? "No authorization code received";
+    return {
+      status: 400,
+      html: AUTH_FAILURE_PAGE,
+      stderr: `Authentication failed: ${stripAnsi(error)}`,
+      exitCode: 1,
+    };
+  }
+  return { status: 200, html: AUTH_SUCCESS_PAGE };
+}
+
 function openBrowser(url: string): void {
   const os = platform();
   const cmd = os === "darwin" ? "open" : os === "win32" ? "start" : "xdg-open";
@@ -103,43 +144,26 @@ export function registerAuthCommands(program: Command) {
           return;
         }
 
-        const code = url.searchParams.get("code");
-        const returnedState = url.searchParams.get("state");
+        const page = resolveCallbackPage(url.searchParams, state);
+        if (page.stderr) {
+          console.error(page.stderr);
+        }
 
-        // Failure paths exit only from res.end's callback: exiting synchronously
-        // after end() can kill the process before the payload is flushed.
-        if (returnedState !== state) {
-          console.error("Authentication failed: state mismatch on the OAuth callback.");
-          res.writeHead(400, { "Content-Type": "text/html" });
-          res.end("<h1>State mismatch. Authentication failed.</h1>", () => {
+        // The single writer for every HTML response the callback serves: the
+        // charset and the flush-before-exit ordering live here and nowhere
+        // else, so neither can drift as call sites are added.
+        res.writeHead(page.status, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(page.html, () => {
+          if (page.exitCode !== undefined) {
             server.close();
-            process.exit(1);
-          });
+            process.exit(page.exitCode);
+          }
+        });
+
+        const code = url.searchParams.get("code");
+        if (page.exitCode !== undefined || code === null) {
           return;
         }
-
-        if (!code) {
-          // error_description is provider-supplied (untrusted) and not actionable
-          // from a browser tab — report it on STDERR where the user is working,
-          // and keep the page static so nothing external is reflected into HTML.
-          // stripAnsi keeps that untrusted text from smuggling escape sequences
-          // into the terminal it now lands in.
-          const error =
-            url.searchParams.get("error_description") ?? "No authorization code received";
-          console.error(`Authentication failed: ${stripAnsi(error)}`);
-          res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(
-            "<h1>Authentication failed.</h1><p>Return to your terminal for details.</p>",
-            () => {
-              server.close();
-              process.exit(1);
-            },
-          );
-          return;
-        }
-
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end("<h1>Authentication successful!</h1><p>You can close this tab.</p>");
 
         // Exchange code for tokens
         exchangeCode(siteUrl, code, verifier, `http://${LOCALHOST}:${port}/callback`)

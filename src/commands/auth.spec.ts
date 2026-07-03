@@ -25,7 +25,7 @@ vi.mock("node:child_process", async () => {
 import { existsSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { getAuthToken, getTokenExpiresAt } from "../client.js";
-import { registerAuthCommands } from "./auth.js";
+import { registerAuthCommands, resolveCallbackPage } from "./auth.js";
 
 describe("registerAuthCommands", () => {
   it("registers the auth command group", () => {
@@ -47,6 +47,37 @@ describe("registerAuthCommands", () => {
     expect(subcommands).toContain("set-token");
     expect(subcommands).toContain("clear");
     expect(subcommands).toContain("status");
+  });
+});
+
+describe("resolveCallbackPage", () => {
+  it("fails closed on a state mismatch", () => {
+    const page = resolveCallbackPage(new URLSearchParams("state=wrong&code=abc"), "expected");
+
+    expect(page.status).toBe(400);
+    expect(page.exitCode).toBe(1);
+    expect(page.html).toContain("State mismatch");
+  });
+
+  it("keeps error_description out of the HTML and routes it to stderr", () => {
+    const payload = "<img src=x onerror=alert(1)>";
+    const params = new URLSearchParams(`state=s&error_description=${encodeURIComponent(payload)}`);
+
+    const page = resolveCallbackPage(params, "s");
+
+    expect(page.status).toBe(400);
+    expect(page.exitCode).toBe(1);
+    expect(page.html).not.toContain(payload);
+    expect(page.stderr).toContain(payload);
+  });
+
+  it("serves the success page without scheduling an exit", () => {
+    const page = resolveCallbackPage(new URLSearchParams("state=s&code=abc"), "s");
+
+    expect(page.status).toBe(200);
+    expect(page.exitCode).toBeUndefined();
+    expect(page.stderr).toBeUndefined();
+    expect(page.html).toContain("Authentication successful");
   });
 });
 
@@ -113,7 +144,7 @@ describe("auth login callback", () => {
     );
 
     expect(res.status).toBe(400);
-    expect(res.contentType).toContain("text/html");
+    expect(res.contentType).toBe("text/html; charset=utf-8");
     expect(res.body).not.toContain("<script>");
     expect(res.body).toContain("Authentication failed");
 
@@ -133,6 +164,7 @@ describe("auth login callback", () => {
     // itself isn't observable here — that invariant lives in the handler,
     // which only exits from res.end's callback.)
     expect(res.status).toBe(400);
+    expect(res.contentType).toBe("text/html; charset=utf-8");
     expect(res.body).toContain("State mismatch. Authentication failed.");
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
   });
