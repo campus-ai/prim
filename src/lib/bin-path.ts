@@ -107,17 +107,19 @@ export function hookShimCommand(bin: string, args = ""): string {
  * nothing consumes: capture stdin, then run the shim in a detached background
  * job so the hook process exits in milliseconds. Claude Code cancels hooks
  * still running at session teardown ("SessionEnd hook … failed: Hook
- * cancelled" — older versions allowed ~1.5s regardless of configured timeout,
- * and interrupt-style exits cancel outright), and the shim's npx fallback
- * alone takes seconds on an un-installed host. Detached, the hook completes
- * before teardown has anything to cancel, and the capture still lands.
+ * cancelled" — older versions killed them near-immediately regardless of the
+ * configured timeout (anthropics/claude-code#41577), and interrupt-style
+ * exits cancel outright (#32712)), and the shim's npx fallback alone takes
+ * seconds on an un-installed host. Detached, the hook completes before
+ * teardown has anything to cancel, and the capture still lands.
  *
  * Why not Claude Code's native `async: true` hook field (shipped Jan 2026):
  * async hooks still enforce the configured timeout, so a slow npx resolution
  * can still be killed mid-capture — the exact loss this wrapper removes;
  * whether an in-flight async hook survives session teardown at all is
  * undocumented; the field requires a Claude Code new enough to know it,
- * while this template works on every version back to the ~1.5s-cap era; and
+ * while this template works on every version back to the kill-on-teardown
+ * era; and
  * Codex/Hermes have no equivalent, so the shell shape is needed for parity
  * anyway (see TODO(codex-hermes-parity)). Revisit if async hooks gain a
  * documented teardown-survival guarantee.
@@ -149,10 +151,19 @@ export function hookShimCommand(bin: string, args = ""): string {
  *     npm's defaults a hung registry connection holds the (invisible)
  *     detached job open for ~15 minutes (300s fetch-timeout × 3 attempts +
  *     backoff); 60s × 3 attempts + a 10s-capped backoff keeps it under ~4.
- *     They ride the environment, so they are inert on the PATH and
- *     node_modules branches. A sleep-and-kill watchdog was rejected:
- *     `kill $!` reaches only the inner subshell, orphaning the very npm/node
- *     grandchildren it means to reap.
+ *     The tuple must stay SELF-COHERENT: env overrides npmrc per-key, so
+ *     shipping a maxtimeout without pinning mintimeout would let a host
+ *     npmrc with fetch-retry-mintimeout > 10s produce min > max — npm's
+ *     retry module then throws before any network attempt, and the capture
+ *     silently never lands on exactly the flaky-network hosts this bound
+ *     protects. They ride the environment, so they are inert on the PATH and
+ *     node_modules branches. The bound is per-job: nothing serializes across
+ *     invocations, so scripted session-cycling against a degraded registry
+ *     can stack concurrent detached npm jobs (arrival rate × ~200s each) —
+ *     accepted for interactive use; add a single-flight guard before
+ *     pointing batch workloads at un-installed hosts. A sleep-and-kill
+ *     watchdog was rejected: `kill $!` reaches only the inner subshell,
+ *     orphaning the very npm/node grandchildren it means to reap.
  *   - The embedded shim keeps its `command -v <bin> ` token, so
  *     commandMatchesBin() recognizes the detached form unchanged.
  *
@@ -176,7 +187,7 @@ export function hookShimCommand(bin: string, args = ""): string {
 //     PATH → local → npx resolution, then point the on_session_end
 //     registrations at it. Its gate's `timeout: 10` stays.
 export function detachedHookShimCommand(bin: string, args = ""): string {
-  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
+  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**

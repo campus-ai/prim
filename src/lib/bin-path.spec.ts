@@ -90,15 +90,19 @@ describe("detachedHookShimCommand", () => {
     expect(cmd).not.toContain("\n");
   });
 
-  it("bounds the npx branch with explicit npm fetch limits", () => {
+  it("bounds the npx branch with a self-coherent npm fetch tuple", () => {
     // Without these, a hung registry holds the invisible detached job open
     // for ~15 minutes on npm's defaults. They must sit INSIDE the
     // backgrounded group (they only concern the detached chain) and before
     // the payload pipe so the exports reach the npx branch's environment.
+    // mintimeout must be pinned alongside maxtimeout: env overrides npmrc
+    // per-key, so a host npmrc with fetch-retry-mintimeout > 10s would
+    // otherwise yield min > max and npm throws before any network attempt.
     const cmd = detachedHookShimCommand("prim-hook");
     expect(cmd).toContain(
       "trap '' HUP; export npm_config_fetch_retries=2 " +
-        "npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf",
+        "npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 " +
+        "npm_config_fetch_timeout=60000; printf",
     );
   });
 
@@ -166,7 +170,8 @@ describe("canonical command strings (golden)", () => {
   it("pins the detached wrapper byte-for-byte", () => {
     expect(detachedHookShimCommand("prim-hook")).toBe(
       "payload=$(cat); { trap '' HUP; " +
-        "export npm_config_fetch_retries=2 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; " +
+        "export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 " +
+        "npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; " +
         `printf '%s' "$payload" | { ` +
         "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
         'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
