@@ -52,18 +52,42 @@ export interface DecisionsRecentResult {
    */
   viewerHasDecisions?: boolean;
   /**
+   * The org member the server resolved an `author` filter to. Present
+   * on every author-filtered response — including zero-row pages; a
+   * response to an author request that carries neither this echo nor
+   * `unavailable` came from a backend that ignored the filter, and
+   * fetchRecent converts it to UNKNOWN rather than presenting the
+   * unfiltered team feed as one person's decisions.
+   */
+  author?: { userId: string; name: string };
+  /**
+   * Whether the resolved author has any FEED-VISIBLE decision in this
+   * org (the server counts only status-stamped rows — legacy rows
+   * pending the status backfill don't count, matching what any feed
+   * view can show). The decisive split between "none the feed can
+   * show" (false) and "has decisions, none in this window" (true with
+   * zero rows). Only rides author-filtered responses.
+   */
+  authorHasDecisions?: boolean;
+  /**
    * Present when the feed could not be verified (state UNKNOWN): an
-   * org-unbound token (server returns this on a 200), or a thrown
-   * transport/auth/validation error whose reason is recorded here.
-   * Absent on a healthy feed — including a healthy feed of zero rows.
+   * org-unbound token (server returns this on a 200), an unknown or
+   * ambiguous `author` name, or a thrown transport/auth/validation
+   * error whose reason is recorded here. Absent on a healthy feed —
+   * including a healthy feed of zero rows.
    */
   unavailable?: string;
 }
 
-/** Wire shape the server returns; `unavailable` arrives on org-unbound. */
+/**
+ * Wire shape the server returns; `unavailable` arrives on org-unbound
+ * and on unknown/ambiguous author names.
+ */
 type RecentResponse = {
   decisions: DecisionFeedRow[];
   viewerHasDecisions?: boolean;
+  author?: { userId: string; name: string };
+  authorHasDecisions?: boolean;
   unavailable?: string;
 };
 
@@ -78,18 +102,33 @@ const defaultDeps: RecentDeps = { getClient };
 export interface RecentArgs {
   limit?: number;
   since?: string;
+  author?: string;
 }
 
 export async function fetchRecent(
   args: RecentArgs,
   deps: RecentDeps = defaultDeps,
 ): Promise<DecisionsRecentResult> {
+  // Reject an empty author locally, before any transport: the new
+  // backend 400s it, but an OLD backend ignores the unknown param and
+  // returns the org feed without an echo — which the skew guard below
+  // would misreport as a backend-version problem when the real problem
+  // is the caller's empty flag.
+  if (args.author !== undefined && args.author.trim() === "") {
+    return {
+      decisions: [],
+      unavailable: "--author must be a non-empty name",
+    };
+  }
   const params = new URLSearchParams();
   if (args.limit !== undefined) {
     params.set("limit", String(args.limit));
   }
   if (args.since !== undefined) {
     params.set("since", args.since);
+  }
+  if (args.author !== undefined) {
+    params.set("author", args.author);
   }
   try {
     // Inside the try so any future eager I/O in getClient surfaces as UNKNOWN
@@ -101,11 +140,30 @@ export async function fetchRecent(
       client,
       RECENT_TIMEOUT_MS,
     );
-    // Read the server's `unavailable` through (org-unbound token → 200 with
-    // an empty feed plus a reason). A healthy feed never carries it.
+    // Version-skew guard: a backend that predates author filtering ignores
+    // the unknown param and returns the UNFILTERED team feed. The new server
+    // echoes `author` on every response where it applied the filter (zero-row
+    // pages included), so no echo and no `unavailable` means the filter was
+    // ignored — surface UNKNOWN, never someone else's rows as the author's.
+    if (args.author !== undefined && res.author === undefined && res.unavailable === undefined) {
+      return {
+        decisions: [],
+        unavailable:
+          "--author requires a newer Primitive backend (no author echo in response); retry without --author for the team-wide feed",
+      };
+    }
+    // Read the server's `unavailable` through (org-unbound token or an
+    // unknown/ambiguous author → 200 with an empty feed plus a reason).
+    // A healthy feed never carries it.
     const result: DecisionsRecentResult = { decisions: res.decisions };
     if (res.viewerHasDecisions !== undefined) {
       result.viewerHasDecisions = res.viewerHasDecisions;
+    }
+    if (res.author !== undefined) {
+      result.author = res.author;
+    }
+    if (res.authorHasDecisions !== undefined) {
+      result.authorHasDecisions = res.authorHasDecisions;
     }
     if (res.unavailable !== undefined) {
       result.unavailable = res.unavailable;
@@ -185,10 +243,25 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
   if (result.unavailable !== undefined) {
     return `[prim] recent · feed not verified — ${result.unavailable}`;
   }
+  if (result.author !== undefined && result.decisions.length === 0) {
+    // Author-filtered empties are two DIFFERENT truths — say which one.
+    // The server always sends authorHasDecisions on a resolved author
+    // (zero-row pages included); an absent flag is an intermediate
+    // backend we make no strong claim about — neutral line, never
+    // "never captured" on missing evidence.
+    if (result.authorHasDecisions === true) {
+      return `[prim] recent · ${result.author.name} · 0 decisions in this window (older decisions exist — widen --since or raise --limit)`;
+    }
+    if (result.authorHasDecisions === false) {
+      return `[prim] recent · ${result.author.name} · no feed-visible decisions yet (if unexpected, check prim setup/doctor on their machine and the repo they work in)`;
+    }
+    return `[prim] recent · ${result.author.name} · 0 decisions`;
+  }
+  const label = result.author === undefined ? "recent" : `recent · ${result.author.name}`;
   if (result.decisions.length === 0) {
     return "[prim] recent · 0 decisions";
   }
-  const lines = [`[prim] recent · ${String(result.decisions.length)} decision(s)`];
+  const lines = [`[prim] ${label} · ${String(result.decisions.length)} decision(s)`];
   for (const row of result.decisions) {
     lines.push(formatRecentRow(row));
   }

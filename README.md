@@ -127,7 +127,7 @@ prim daemon start      # start (stop / restart / status)
 Read and respond to the decision graph.
 
 ```bash
-prim decisions recent                    # Recent decisions feed
+prim decisions recent                    # Recent decisions feed (--author <name> for one teammate's)
 prim decisions show <id>                 # Drill into one decision
 prim decisions cascade <id>              # Blast radius of a decision
 prim decisions check --files <…>         # Active decisions referencing files (warn-only)

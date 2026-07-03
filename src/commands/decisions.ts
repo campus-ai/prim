@@ -104,10 +104,15 @@ export function registerDecisionsCommands(program: Command): void {
       "--since <duration>",
       "Lookback window — accepts `Nm`, `Nh`, `Nd` (minutes / hours / days) or absolute epoch ms",
     )
-    .action(async (opts: { limit?: string; since?: string }) => {
+    .option(
+      "--author <name>",
+      'Filter to one teammate\'s decisions — feed name, "First Last", last name, username, email, or email local-part',
+    )
+    .action(async (opts: { limit?: string; since?: string; author?: string }) => {
       const result = await fetchRecent({
         limit: opts.limit ? Number.parseInt(opts.limit, 10) : undefined,
         since: opts.since,
+        author: opts.author,
       });
       console.error(formatRecentHuman(result));
       console.log(formatRecentJson(result));
