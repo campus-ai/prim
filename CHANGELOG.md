@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.34](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.33...v0.1.0-alpha.34) (2026-07-03)
+
+
+### Features
+
+* **decisions:** add --author to `decisions recent` so agents can answer "what has X decided?" ([#119](https://github.com/campus-ai/prim/issues/119)) ([0fbd2ef](https://github.com/campus-ai/prim/commit/0fbd2ef287dfeae5aef5e0e15c051d22687fb339))
+
 ## [0.1.0-alpha.33](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.32...v0.1.0-alpha.33) (2026-07-03)
 
 
