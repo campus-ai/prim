@@ -1,0 +1,116 @@
+<!doctype html>
+<!--
+  The OAuth callback page — one template for the success page and both failure
+  variants. This tab gets ~3 seconds of a human's attention before they close
+  it, so it's a small, on-brand easter egg rather than a bare h1: the message
+  sits on the homepage's framed canvas (the inset rounded hero, as a hairline)
+  with a mono eyebrow in the brand orange — the system mono face standing in
+  for the brand's Berkeley Mono — and the Primitive lockup resting underneath.
+
+  Fully self-contained: inline CSS, system fonts, inline logo SVG, and a
+  favicon inlined from the sibling SVG asset — it's served off a throwaway
+  localhost server with no static assets, so the page makes zero external
+  requests.
+
+  The document title, favicon, eyebrow, headline, and detail slots are filled
+  by index.ts exclusively from module-local string constants; nothing request-
+  or provider-derived is ever interpolated into this template. (fill() expands
+  placeholders even inside comments, so none appear literally here.)
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{DOC_TITLE}}</title>
+    <link rel="icon" type="image/svg+xml" href="{{FAVICON_HREF}}" />
+    <style>
+      :root {
+        --inter-orange: #ff4f00;
+        --light-bg: #f5f5f5;
+        --black: #333333;
+        --hairline: rgba(0, 0, 0, 0.16);
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        background-color: var(--light-bg);
+        color: var(--black);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        overflow: hidden;
+      }
+      /* The brand frame: the homepage's inset rounded hero canvas, as a hairline. */
+      .frame {
+        position: fixed;
+        inset: 16px;
+        border: 1px solid var(--hairline);
+        border-radius: 24px;
+        pointer-events: none;
+        z-index: 1;
+      }
+      .card { position: relative; z-index: 2; width: 100%; max-width: 460px; text-align: center; }
+
+      .eyebrow {
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+        font-size: 11px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+        color: var(--inter-orange);
+      }
+      .title {
+        font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
+        margin: 14px 0 10px;
+      }
+      .subtitle {
+        font-size: 15px; color: rgba(0, 0, 0, 0.55);
+      }
+      .mark { margin-top: 40px; }
+      .mark svg { height: 22px; width: auto; color: rgba(0, 0, 0, 0.38); }
+
+      @media (max-width: 460px) {
+        .title { font-size: 26px; }
+        .frame { inset: 10px; border-radius: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame" aria-hidden="true"></div>
+    <main class="card">
+      <p class="eyebrow">{{EYEBROW}}</p>
+      <h1 class="title">{{TITLE}}</h1>
+      <p class="subtitle">{{DETAIL}}</p>
+
+      <div class="mark" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="115 160 770 175" fill="currentColor">
+          <g>
+            <path d="M368.76,202.52h-35.98v96.31h12.86v-37.53h23.11c18.6,0,31.08-12.16,31.08-30.28,0-14.19-9.62-28.51-31.08-28.51ZM369.29,249.41h-23.66v-34.95h23.66c10.57,0,17.41,6.52,17.41,16.59,0,11.15-6.82,18.36-17.41,18.36Z"/>
+            <path d="M421.81,237.49v.02l-1.19-11.96h-10.37v73.28h12.74v-38.41c0-14.42,8.48-22.69,23.23-22.69h3.18v-12.6h-3.18c-11.23,0-19.45,4.17-24.42,12.36Z"/>
+            <rect x="463.25" y="225.55" width="12.74" height="73.28"/>
+            <path d="M576.17,223.94h-.02c-10.47,0-20.27,5.19-25.39,13.35-4.13-8.4-12.52-13.35-22.71-13.35-9.66,0-18.66,4.31-23.98,11.37l-.95-9.74h-10.37v73.28h12.74v-44.35c.14-11.48,8.44-19.19,20.66-19.19,9.14,0,14.84,5.8,14.84,15.1v48.44h12.6v-44.35c.14-11.48,8.44-19.19,20.66-19.19,9.14,0,14.84,5.8,14.84,15.1v48.44h12.74v-48.84c0-15.36-10.55-26.07-25.67-26.07Z"/>
+            <rect x="617.38" y="225.55" width="12.74" height="73.28"/>
+            <path d="M669.43,204.95h-12.72v20.62h-13.29v10.97h13.29v41.11c0,13.67,7.87,21.2,22.15,21.2h8.74v-10.97h-8.74c-6.24,0-9.42-3.44-9.42-10.23v-41.11h18.16v-10.97h-18.16v-20.62Z"/>
+            <rect x="702.48" y="225.55" width="12.74" height="73.28"/>
+            <polygon points="762.68 282.97 739.67 226.03 739.47 225.55 725.66 225.55 756.22 298.85 769 298.85 799.56 225.55 785.75 225.55 762.68 282.97"/>
+            <path d="M868.79,260.98l-.02-.02c-.4-23.19-12.99-37.04-33.66-37.04-23.88,0-34.75,19.97-34.75,38.53,0,22.29,14.84,37.87,36.1,37.87,16.39,0,28.67-9.46,32.03-24.7l.2-.91h-12.44l-.16.52c-2.84,8.92-9.8,13.85-19.61,13.85-13.49,0-22.39-9.26-23.33-24.24h55.65v-3.86ZM813.91,254c2.42-11.82,10.29-18.82,21.18-18.82s18.02,6.85,20.25,18.82h-41.43Z"/>
+            <path d="M469.7,199.68c-4.79,0-8.42,3.56-8.42,8.29s3.7,8.42,8.42,8.42,8.29-3.62,8.29-8.42-3.56-8.29-8.29-8.29Z"/>
+            <path d="M623.83,199.68c-4.79,0-8.42,3.56-8.42,8.29s3.7,8.42,8.42,8.42,8.29-3.62,8.29-8.42-3.56-8.29-8.29-8.29Z"/>
+            <path d="M708.91,199.68c-4.79,0-8.42,3.56-8.42,8.29s3.7,8.42,8.42,8.42,8.29-3.62,8.29-8.42-3.56-8.29-8.29-8.29Z"/>
+          </g>
+          <g>
+            <path d="M131.47,199.69c0,4.45,2.3,6.33,3.48,7.07,2.23,1.41,13.96,7.06,25.86,11.39,9.28,3.38,32.82,10.99,43.37,13.27,1.62.35,5.22,1.11,6.55-.5,1.33-1.61-.5-4.95-1.58-6.74-3.27-5.43-9.92-15.39-16.21-24.76-5.25-7.82-15.34-21.33-15.34-21.33-1.36-1.49-3.23-3.54-7.03-3.54l-28.33-.05c-5.96,0-10.78,4.83-10.78,10.78,0,0,0,.08,0,.22h0v14.08h0v.11Z"/>
+            <path d="M232.64,284.23c-2.77-10.24-9.15-29.14-9.73-30.42-.47-1.05-1.23-2.04-2.68-2.04-1.63,0-2.49,1.43-3.28,2.82-2.83,4.95-5.41,10.79-7.89,16.26h0s-.97,2.14-.97,2.14c-3.29,7.19-7.11,15.79-10.56,25.01l-3.54,9.47c-1.42,3.8-2.72,7.79-3.97,12.2-.42,1.49-.25,2.9.49,3.98.61.89,1.83,1.85,3.06,1.85l43.34-.04c1.18,0,2.19-.47,2.91-1.36.93-1.14,1.32-2.89,1.03-4.56-1.85-10.48-4.91-23.22-8.19-35.31Z"/>
+            <path d="M132.98,266.34c1.15.94,2.65,1.24,4.11.82,7.95-2.28,24.75-7.5,35.59-11.38,9.74-3.48,27.05-10.57,30.52-12.16,2.71-1.23,4.61-2.23,4.4-3.8-.12-.94-.87-1.45-1.48-1.71-2.75-1.16-15.01-4.4-36.46-9.6-9.2-2.23-32.27-7.05-34.06-7.05-1.11,0-2.19.45-2.95,1.25-.8.83-1.18,1.97-1.18,3.57v35.87c0,1.86.25,3.14,1.51,4.18Z"/>
+            <path d="M281.35,217.96c-.67-.6-1.59-.95-2.51-.95-.17,0-.33.01-.5.03-1.53.21-18.47,7.09-19.42,7.47-6.93,2.79-18.77,8.38-21.32,9.69,0,0-5.45,2.56-5.45,4.5,0,1.82,3.13,3.14,6.33,4.33.16.06,20.21,7.29,31.88,10.82l.64.2c2.3.7,4.48,1.36,6.93,1.82,1.16.22,2.38-.11,3.27-.87.82-.7,1.27-1.7,1.27-2.8v-31.76c-.01-.96-.4-1.84-1.11-2.48Z"/>
+            <path d="M280.06,270.67c-3.45-2.52-13.76-8.56-20.87-12.02-7.88-3.84-22.27-10.14-26.88-11.29-.41-.1-.81-.15-1.2-.15-.88,0-1.64.27-2.14.75-.96.93-.91,1.98-.73,3.47.27,2.16,8.68,25.04,11.44,32.55,0,0,10.15,27.85,13.37,33.75,2.93,5.45,6.52,7.77,11.98,7.77h6.64c5.96,0,10.78-4.83,10.78-10.78v-37.34c0-4.22-.77-5.53-2.4-6.72Z"/>
+            <path d="M227.72,228.15c-.03,1.15.92,2.07,2.06,2.09.01,0,.03,0,.04,0,.02,0,.03,0,.05-.01,1.23-.04,2.63-.5,2.63-.5,8.06-2.65,37.66-19.95,44.22-24.37,1.72-1.16,5.75-4.6,5.75-10.72v-9.37c0-5.95-4.83-10.78-10.78-10.78h-16.9c-3.38,0-6.22,2.91-7.22,4.74-3.59,6.61-6.96,14.39-8.64,18.45-3.55,8.53-8.86,22.45-10.79,28.55-.13.41-.41,1.49-.42,1.91Z"/>
+            <path d="M201.91,197.31c2.94,6.05,10.39,20.61,14.62,27.01.47.73,1.52,2.65,3.09,2.63,1.58-.02,2.58-2.92,2.63-3.04.7-1.54,5.09-14.96,7.72-24.17,2.71-9.51,4.54-17.99,4.89-20.37.24-1.6-.05-2.7-.74-3.51-.77-.9-2.11-1.36-3.97-1.36h-32.75c-1.21,0-2.24.47-2.9,1.33-.68.88-.91,2.11-.62,3.37.6,2.64,5.83,13.54,8.05,18.1Z"/>
+            <path d="M212.24,250.35c0-.96-.84-1.83-1.76-1.97-1.67-.24-3.97.79-5.47,1.31-14.87,6-39.66,17.87-54.15,25.92l-1.75.97c-4.89,2.7-8.75,4.83-11.97,7.96-3.6,3.49-5.68,7.2-5.68,15.83v14.35c0,5.95,4.83,10.78,10.78,10.78l15.9-.03c5.77,0,8.4-1.91,10.59-4.76,4.38-5.73,16-22.42,20.98-30.64,9.51-15.69,20.57-34.99,21.93-37.7.51-1.03.58-1.49.6-2.01Z"/>
+          </g>
+        </svg>
+      </div>
+    </main>
+  </body>
+</html>

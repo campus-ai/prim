@@ -24,6 +24,7 @@ import {
 } from "../client.js";
 import { stripAnsi } from "../lib/ansi.js";
 import { printJson } from "../output.js";
+import { AUTH_FAILURE_PAGE, AUTH_SUCCESS_PAGE, STATE_MISMATCH_PAGE } from "./auth-pages/index.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -58,13 +59,9 @@ export type CallbackPage = {
   exitCode?: number;
 };
 
-const AUTH_SUCCESS_PAGE = "<h1>Authentication successful!</h1><p>You can close this tab.</p>";
-const STATE_MISMATCH_PAGE = "<h1>State mismatch. Authentication failed.</h1>";
-const AUTH_FAILURE_PAGE =
-  "<h1>Authentication failed.</h1><p>Return to your terminal for details.</p>";
-
-// Every page is a static, trusted string by construction — provider-supplied
-// text (error_description) only ever travels via `stderr`, never into HTML.
+// Every page is a static, trusted string by construction (assembled in
+// ./auth-pages from checked-in assets) — provider-supplied text
+// (error_description) only ever travels via `stderr`, never into HTML.
 export function resolveCallbackPage(params: URLSearchParams, expectedState: string): CallbackPage {
   if (params.get("state") !== expectedState) {
     return {
