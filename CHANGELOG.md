@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.33](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.32...v0.1.0-alpha.33) (2026-07-03)
+
+
+### Features
+
+* **setup:** route the skill file by agent so only Claude Code gets CLAUDE.md ([#114](https://github.com/campus-ai/prim/issues/114)) ([3d22cc0](https://github.com/campus-ai/prim/commit/3d22cc09363b1169e0c82afdd68bfc335cf78962))
+
+
+### Bug Fixes
+
+* **claude:** detach SessionEnd hooks so session teardown never cancels them ([#117](https://github.com/campus-ai/prim/issues/117)) ([4e93fc6](https://github.com/campus-ai/prim/commit/4e93fc650ebbc62e1cbbe1411af7228c878a5176))
+
 ## [0.1.0-alpha.32](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.31...v0.1.0-alpha.32) (2026-06-30)
 
 
