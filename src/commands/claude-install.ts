@@ -135,8 +135,9 @@ function makeDetachedRegistration(
 
 // TODO(detach-all-passive-capture): SessionEnd is detached because Claude Code
 // kills hooks still running at session teardown ("Hook cancelled" — older
-// versions allowed ~1.5s regardless of configured timeout; interrupt-style
-// exits cancel outright). The same detached form is safe for every OTHER
+// versions killed them near-immediately regardless of configured timeout,
+// anthropics/claude-code#41577; interrupt-style exits cancel outright,
+// #32712). The same detached form is safe for every OTHER
 // passive capture registration (prim-hook on SessionStart, UserPromptSubmit,
 // PreToolUse@*, PostToolUse@*, Stop, SubagentStop): capture emits no stdout
 // and always exits 0, so nothing Claude Code consumes is lost, and per-event
@@ -309,22 +310,29 @@ export function stripCommand(list: HookEntry[], bin: string): HookEntry[] {
 
 /**
  * Ensure one registration's entry is present on its event list. Idempotent: a
- * canonical single-hook entry already carrying THIS exact command is a no-op
- * unless `force`. Otherwise only this bin's entries are stripped (legacy bare
- * or stale absolute) before the canonical entry is appended — so a plain
- * re-install upgrades an older bare-name install to the absolute form in place,
- * while a sibling prim binary's entry (and any co-located non-prim hook)
- * survives.
+ * no-op (unless `force`) only when a canonical single-hook entry carrying THIS
+ * exact command is present with no non-canonical twin — a canonical entry
+ * coexisting with a stale form (e.g. a union-style git merge of a committed
+ * settings.json written by two CLI versions) is healed, not skipped, since the
+ * stale twin both double-fires the hook and resurrects the exact failure the
+ * canonical form fixed. (Byte-identical DUPLICATE canonical entries still
+ * no-op — a degenerate external-writer state; `--force` collapses it.)
+ * Otherwise only this bin's entries are stripped (legacy bare or stale
+ * absolute) before the canonical entry is appended — so a plain re-install
+ * upgrades an older install in place, while a sibling prim binary's entry
+ * (and any co-located non-prim hook) survives. Shared with codex-install.ts,
+ * whose mixed states heal the same way.
  */
 export function ensureRegistration(
   list: HookEntry[],
   reg: Registration,
   force: boolean,
 ): HookEntry[] {
-  const hasCanonical = list.some(
-    (e) => e.matcher === reg.matcher && e.hooks?.length === 1 && e.hooks[0].command === reg.command,
-  );
-  if (hasCanonical && !force) {
+  const isCanonical = (e: HookEntry): boolean =>
+    e.matcher === reg.matcher && e.hooks?.length === 1 && e.hooks[0].command === reg.command;
+  const hasStray = (e: HookEntry): boolean =>
+    !isCanonical(e) && (e.hooks ?? []).some((h) => commandMatchesBin(h.command, reg.bin));
+  if (list.some(isCanonical) && !list.some(hasStray) && !force) {
     return list;
   }
   return [...stripCommand(list, reg.bin), canonicalEntry(reg)];

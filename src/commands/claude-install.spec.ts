@@ -526,6 +526,36 @@ describe("SessionEnd detached registrations", () => {
     expect(JSON.stringify(out.hooks?.Stop)).toBe(JSON.stringify(preDetach.hooks?.Stop));
   });
 
+  it("heals a mixed canonical+stale SessionEnd state on a plain re-install", () => {
+    // Reachable only via an external writer (e.g. a union-style git merge of
+    // a committed settings.json written by two CLI versions): the canonical
+    // detached entry coexists with a stale synchronous twin. The stale twin
+    // double-fires capture AND still hits the teardown cancellation the
+    // detached form exists to eliminate — a plain install must heal it, not
+    // report "already present".
+    const mixed: ClaudeSettings = {
+      hooks: {
+        SessionEnd: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: detachedHookShimCommand("prim-hook") }],
+          },
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: detachedHookShimCommand("prim-session-end") }],
+          },
+        ],
+      },
+    };
+    const out = applyInstall(mixed);
+    const captureEntries = (out.hooks?.SessionEnd ?? []).filter((e) =>
+      e.hooks?.some((h) => commandMatchesBin(h.command, "prim-hook")),
+    );
+    expect(captureEntries).toHaveLength(1);
+    expect(captureEntries[0].hooks?.[0].command).toBe(detachedHookShimCommand("prim-hook"));
+  });
+
   it("uninstall strips the detached form without dropping a co-located sibling", () => {
     const installed: ClaudeSettings = {
       hooks: {
