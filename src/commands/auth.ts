@@ -24,6 +24,7 @@ import {
 } from "../client.js";
 import { stripControlChars } from "../lib/ansi.js";
 import { printJson } from "../output.js";
+import { FAILURE_HTML, STATE_MISMATCH_HTML, SUCCESS_HTML } from "./auth-pages.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
@@ -32,9 +33,6 @@ const CALLBACK_TIMEOUT_MS = 120_000; // 2 minutes
 const EXIT_OK = 0;
 const EXIT_FAIL = 1;
 const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" } as const;
-const SUCCESS_HTML = "<h1>Authentication successful!</h1><p>You can close this tab.</p>";
-const FAILURE_HTML = "<h1>Authentication failed.</h1><p>Return to your terminal for details.</p>";
-const STATE_MISMATCH_HTML = "<h1>State mismatch. Authentication failed.</h1>";
 const BASE64_PLUS_RE = /\+/g;
 const BASE64_SLASH_RE = /\//g;
 const BASE64_PAD_RE = /=+$/;
@@ -76,7 +74,7 @@ export type CallbackPage = { status: number; html: string; result: CallbackResul
 
 /**
  * Map an OAuth callback request to the page to serve and the outcome to report.
- * Pure and total: `html` is always one of the module-local constants above, so
+ * Pure and total: `html` is always one of the branded pages in ./auth-pages, so
  * provider-supplied text can only ever travel through `result.error`/`detail`
  * (onto STDERR/STDOUT), never into the HTML. State is checked first so a
  * mismatched callback fails closed.
