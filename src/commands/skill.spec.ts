@@ -11,9 +11,19 @@ vi.mock("node:fs", () => ({
   renameSync: vi.fn(),
 }));
 
+// The Claude branch delegates to the skills-directory plugin module; mock it so
+// these tests assert routing (claude → plugin, never a rules-file write). The
+// plugin's real behavior is covered by claude-plugin.spec.ts against real fs.
+vi.mock("./claude-plugin.js", () => ({
+  installClaudePlugin: vi.fn(),
+  uninstallClaudePlugin: vi.fn(),
+  statusClaudePlugin: vi.fn(),
+}));
+
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
 import {
   SKILL_BEGIN,
   SKILL_END,
@@ -32,6 +42,9 @@ const mockedExistsSync = vi.mocked(existsSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedWriteFileSync = vi.mocked(writeFileSync);
 const mockedRenameSync = vi.mocked(renameSync);
+const mockedInstallPlugin = vi.mocked(installClaudePlugin);
+const mockedUninstallPlugin = vi.mocked(uninstallClaudePlugin);
+const mockedStatusPlugin = vi.mocked(statusClaudePlugin);
 
 const SKILL_CONTENT = "---\nname: prim\n---\n\nbody\n";
 
@@ -303,20 +316,13 @@ describe("runInstall --agent routing", () => {
     }
   });
 
-  it("routes --agent claude to CLAUDE.md even when AGENTS.md is the file on disk", () => {
-    mockedExistsSync.mockImplementation((p) => {
-      const s = String(p);
-      return s.endsWith("SKILL.md") || s === "/repo/AGENTS.md";
-    });
-    mockedReadFileSync.mockImplementation((p) =>
-      String(p).endsWith("SKILL.md") ? SKILL_CONTENT : "",
-    );
-    vi.spyOn(console, "log").mockImplementation(() => {});
+  it("routes --agent claude to the skills-dir plugin, never a rules-file write", () => {
+    // Claude reads a skills-directory plugin, not CLAUDE.md — install must
+    // delegate to the plugin module and write no rules file.
+    mockedInstallPlugin.mockReturnValue(0);
     expect(runInstall("/repo", { agent: "claude" })).toBe(0);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/CLAUDE.md.tmp", "/repo/CLAUDE.md");
-    for (const [path] of mockedWriteFileSync.mock.calls) {
-      expect(String(path)).not.toContain("AGENTS.md");
-    }
+    expect(mockedInstallPlugin).toHaveBeenCalledWith("/repo", { agent: "claude" });
+    expect(mockedRenameSync).not.toHaveBeenCalled();
   });
 
   it("prefers an explicit --target over --agent", () => {
@@ -359,15 +365,11 @@ describe("runInstall --agent routing", () => {
 // ---------------------------------------------------------------------------
 
 describe("runInstall --scope user routing", () => {
-  it("routes --scope user --agent claude to ~/.claude/CLAUDE.md, never resolved against cwd", () => {
-    fsFixture(); // only SKILL.md exists → fresh write
-    vi.spyOn(console, "log").mockImplementation(() => {});
+  it("routes --scope user --agent claude to the plugin module, never a rules-file write", () => {
+    mockedInstallPlugin.mockReturnValue(0);
     expect(runInstall("/repo", { agent: "claude", scope: "user" })).toBe(0);
-    const target = join(homedir(), ".claude", "CLAUDE.md");
-    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
-    for (const [path] of mockedRenameSync.mock.calls) {
-      expect(String(path)).not.toContain("/repo/"); // ignores cwd entirely
-    }
+    expect(mockedInstallPlugin).toHaveBeenCalledWith("/repo", { agent: "claude", scope: "user" });
+    expect(mockedRenameSync).not.toHaveBeenCalled();
   });
 
   it("routes --scope user --agent codex to ~/.codex/AGENTS.md", () => {
@@ -401,8 +403,10 @@ describe("runInstall --scope user routing", () => {
   });
 
   it("aborts on an unknown --scope without writing", () => {
+    // No --agent → the file-block path validates scope in resolveTarget. (The
+    // claude plugin path validates scope in claude-plugin.spec.ts.)
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(runInstall("/repo", { agent: "claude", scope: "bogus" })).toBe(1);
+    expect(runInstall("/repo", { scope: "bogus" })).toBe(1);
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --scope"));
     errSpy.mockRestore();
@@ -438,6 +442,22 @@ describe("runUninstall", () => {
     const written = String(mockedWriteFileSync.mock.calls[0][1]);
     expect(written).toBe("# CLAUDE.md\n");
     expect(mockedRenameSync).toHaveBeenCalledWith("/repo/CLAUDE.md.tmp", "/repo/CLAUDE.md");
+  });
+
+  it("routes --agent claude to the plugin module, never a rules-file write", () => {
+    mockedUninstallPlugin.mockReturnValue(0);
+    expect(runUninstall("/repo", { agent: "claude" })).toBe(0);
+    expect(mockedUninstallPlugin).toHaveBeenCalledWith("/repo", { agent: "claude" });
+    expect(mockedRenameSync).not.toHaveBeenCalled();
+  });
+
+  it("routes --agent claude WITH --target to the file-block path, not the plugin", () => {
+    const existing = `# x\n${SKILL_BEGIN}\nbody\n${SKILL_END}\n`;
+    fsFixture({ target: "/repo/custom.md", targetContent: existing });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runUninstall("/repo", { agent: "claude", target: "custom.md" })).toBe(0);
+    expect(mockedUninstallPlugin).not.toHaveBeenCalled();
+    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
   });
 });
 
@@ -481,6 +501,20 @@ describe("runStatus", () => {
       target: "/repo/CLAUDE.md",
     });
     logSpy.mockRestore();
+  });
+
+  it("routes --agent claude to the plugin module", () => {
+    mockedStatusPlugin.mockReturnValue(0);
+    expect(runStatus("/repo", { agent: "claude", json: true })).toBe(0);
+    expect(mockedStatusPlugin).toHaveBeenCalledWith("/repo", { agent: "claude", json: true });
+  });
+
+  it("routes --agent claude WITH --target to the file-block path, not the plugin", () => {
+    const existing = `${SKILL_BEGIN}\nbody\n${SKILL_END}\n`;
+    fsFixture({ target: "/repo/custom.md", targetContent: existing });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runStatus("/repo", { agent: "claude", target: "custom.md" })).toBe(0);
+    expect(mockedStatusPlugin).not.toHaveBeenCalled();
   });
 });
 

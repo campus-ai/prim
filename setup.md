@@ -113,9 +113,9 @@ sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` / `hermes status` to match your agent
 - `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
-- `npx --yes @primitive.ai/prim@latest skill status --agent claude` — or `codex`/`hermes` to match your agent, so it checks the rules file that agent actually uses (a bare `skill status` can false-negative in a repo that also has another rules file)
+- `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude the `~/.claude/skills/prim` plugin; for others the rules-file block)
 
-Add one line of setup specifics: which rules file received the skill block, and
+Add one line of setup specifics: where the skill landed (Claude's plugin dir or the agent's rules file), and
 (Codex only) the `/hooks` trust reminder or (Hermes only) the hook-consent
 reminder. The daemon confirm is expected to vary;
 an unexpected non-zero from auth or skill is worth a note — but never retract the
@@ -195,10 +195,14 @@ user` where noted, then `prim enable` in each repo you want captured.
    fire everywhere but only act where activated — see step 7). Separate from the
    session hooks in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
-   (claude/codex/hermes). Writes the managed block teaching you to work with the
-   decision graph into the file that agent reads — claude→CLAUDE.md, codex→AGENTS.md,
-   hermes→.hermes.md. Add `--scope user` for the agent's global rules file. Omit
-   `--agent` to auto-detect an existing rules file, or pass `--target <path>`.
+   (claude/codex/hermes). Teaches you to work with the decision graph. For
+   **claude** it installs a skills-directory plugin at `<repo>/.claude/skills/prim/`
+   (or `~/.claude/skills/prim/` with `--scope user`) that auto-loads as a
+   model-invoked skill — restart Claude Code or run `/reload-plugins` to pick it up.
+   For **codex**/**hermes** it writes the managed guide block into that agent's
+   rules file (codex→AGENTS.md, hermes→.hermes.md). Add `--scope user` for the
+   global location. Omit `--agent` to auto-detect an existing rules file (block
+   path), or pass `--target <path>`.
 7. **Activate** (user scope): `npx --yes @primitive.ai/prim@latest enable` marks
    this repo prim-active (`git config prim.active true`) so the global hooks
    capture here. Repeat in each repo you want; `… disable` mutes one. A per-repo
