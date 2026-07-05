@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0-alpha.35](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.34...v0.1.0-alpha.35) (2026-07-05)
+
+
+### Features
+
+* **auth:** brand the OAuth callback pages ([#124](https://github.com/campus-ai/prim/issues/124)) ([a704d31](https://github.com/campus-ai/prim/commit/a704d3114ef0dedfcec0de2955c1cbc538554f5f))
+* **auth:** model the OAuth callback outcome and exit once ([#123](https://github.com/campus-ai/prim/issues/123)) ([ca1c538](https://github.com/campus-ai/prim/commit/ca1c538063f42c3661ecaf41e3cfb184d96a724d))
+* default prim to user scope with per-repo opt-in activation ([#116](https://github.com/campus-ai/prim/issues/116)) ([93765ce](https://github.com/campus-ai/prim/commit/93765ce5ebfb1c6f780d8d3eab63aee4064c5e57))
+* **setup:** agent mines its memory to draft seeding goals during onboarding ([#118](https://github.com/campus-ai/prim/issues/118)) ([5ff7b90](https://github.com/campus-ai/prim/commit/5ff7b907ab9f5b0ca3ede7a6057930253a473e62))
+* **skill:** deliver the Claude guide as a skills-directory plugin ([#126](https://github.com/campus-ai/prim/issues/126)) ([115e700](https://github.com/campus-ai/prim/commit/115e7001e1936cdf35a739be68632bd747ca64bb))
+
 ## [0.1.0-alpha.34](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.33...v0.1.0-alpha.34) (2026-07-03)
 
 
