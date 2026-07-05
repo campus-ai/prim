@@ -13,6 +13,7 @@ import type { DecisionFeedRow } from "../decisions/recent.js";
 import { stripAnsi } from "../lib/ansi.js";
 import {
   REVERSE_PROMPT,
+  REVERSE_PROMPT_TEMPLATE,
   type WelcomeState,
   formatWelcome,
   welcomeJson,
@@ -111,6 +112,9 @@ describe("formatWelcome", () => {
     // ends the block, and the App footer is suppressed so nothing follows it.
     expect(plain).not.toContain("App: https://app.getprimitive.ai");
     expect(plain.trimEnd().endsWith("┘")).toBe(true);
+    // The review template is agent-only (JSON): the human render never carries
+    // its unfilled $FOUND_GOALS slot.
+    expect(plain).not.toContain("$FOUND_GOALS");
   });
 
   it("seed (active org): team decisions inlined above the ruled question callout, question still terminal", () => {
@@ -149,12 +153,13 @@ describe("welcomeJson", () => {
     });
   });
 
-  it("seed carries org + the flat reverse-prompt + team context", () => {
+  it("seed carries org + the flat reverse-prompt + the review template + team context", () => {
     const recent = [row()];
     expect(welcomeJson({ org: "seed", recent })).toEqual({
       welcomed: true,
       org: "seed",
       reversePrompt: REVERSE_PROMPT,
+      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
       recent,
     });
   });
@@ -164,6 +169,7 @@ describe("welcomeJson", () => {
       welcomed: true,
       org: "seed",
       reversePrompt: REVERSE_PROMPT,
+      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
       recent: [],
     });
   });
@@ -175,6 +181,12 @@ describe("welcomeJson", () => {
   it("REVERSE_PROMPT is the verbatim onboarding question", () => {
     expect(REVERSE_PROMPT).toBe(
       "What are the most important goals in your organization that you're responsible for, right now? What are you not focusing on, in order to focus on those goals?",
+    );
+  });
+
+  it("REVERSE_PROMPT_TEMPLATE is the verbatim review framing with the $FOUND_GOALS slot", () => {
+    expect(REVERSE_PROMPT_TEMPLATE).toBe(
+      "We're interested in learning your current goals, as well as what you're not focusing on to achieve those goals. We found the following:\n\n$FOUND_GOALS\n\nHow do these look to you? Would you like to change these goals?",
     );
   });
 });

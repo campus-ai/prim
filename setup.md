@@ -21,8 +21,8 @@ the user never installs or manages a prim version and always runs the newest CLI
 
 First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
 **Hermes**. It changes one flag in the install command (Hermes is auto-detected,
-so you can skip even that) and how you present the welcome at the end; nothing
-else.
+so you can skip even that), how you present the welcome at the end, and which
+memory surface you mine for the seeding question; nothing else.
 
 ## 1. Install — one command
 
@@ -103,9 +103,9 @@ context when the org has any. It always exits 0 (a failed decisions fetch degrad
 gracefully).
 
 If the output ends with that "Your turn" callout, **hold it back here** — surface
-only the orientation above it for now; you'll reproduce the callout once, at the
-very end, as the closing call-to-action. Showing it now and again later buries the
-first copy in the middle of your message, which is exactly what we're avoiding.
+only the orientation above it for now; you'll render the seeding callout once, at
+the very end, as the closing call-to-action. Showing it now and again later buries
+the first copy in the middle of your message, which is exactly what we're avoiding.
 
 Then **run the confirmations** and surface their results — informational (a
 non-zero must NOT abort the run or retract the welcome), but run them so the user
@@ -124,17 +124,39 @@ welcome.
 **Then close:**
 
 **If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
-yet (this fires even in an org that already has decisions). Make the seeding
-question the LAST thing you say: end your message with it as a single, emphasized
-block addressed to the user — render it the way welcome did, as the "Your turn"
-callout (the question text is on STDOUT as `reversePrompt`) — with **nothing after
-it**: no confirmations, no orientation, no sign-off. Then **stop and wait** for
-their answer; a question buried above other text reads as if no answer is expected,
-and this one must be unmistakably theirs to answer.
-When the user replies (your next turn), break their answer into **one decision per
-goal** they name (infer the best `--kind`; map a goal to `--intent` / `--decided`,
-and what they're *not* focusing on to `--alternatives`), show the drafted
-decisions, **confirm before creating**, then record each:
+yet (this fires even in an org that already has decisions). Before you ask,
+mine **your own memory and conversation context** for goals — and
+not-focusing-on items — the user has already *stated*. Every agent has a memory
+surface; consult yours:
+
+- **Claude Code** — read your auto-memory (MEMORY.md and the memory files it
+  indexes), plus anything already recalled into this session.
+- **Codex** — the memories injected into this thread. The feature is opt-in:
+  none injected just means found-nothing here — don't dig into memory files
+  the user chose not to inject.
+- **Hermes** — the memory snapshot in your system prompt (`MEMORY.md` /
+  `USER.md` from `~/.hermes/memories/`).
+
+Only their words count: never infer goals from the repo — its code, docs, or
+history — and never invent one they didn't say.
+
+Make the seeding question the LAST thing you say: end your message with it as a
+single, emphasized block addressed to the user — rendered as the "Your turn"
+callout, the way welcome rendered its own — with **nothing after it**: no
+confirmations, no orientation, no sign-off. What goes inside:
+
+- **Found stated goals** → STDOUT's `reversePromptTemplate`, with `$FOUND_GOALS`
+  replaced by a short bulleted list of what you found. (Template absent on an
+  older CLI? Treat it as found-nothing.)
+- **Found nothing** → STDOUT's `reversePrompt` — the open question — verbatim.
+
+Then **stop and wait** for their answer; a question buried above other text
+reads as if no answer is expected, and this one must be unmistakably theirs to
+answer. When the user replies (your next turn), settle the goals first —
+iterate until the list is theirs, not yours. Then break the settled goals into
+**one decision per goal** (infer the best `--kind`; map a goal to `--intent` /
+`--decided`, and what they're *not* focusing on to `--alternatives`), show the
+drafted decisions, **confirm before creating**, then record each:
 `npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
 
 **If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
