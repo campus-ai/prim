@@ -3,12 +3,31 @@
  *
  * prim hooks install   — Install the prim git hooks (pre-commit + post-commit)
  * prim hooks uninstall — Remove the prim git hooks
+ *
+ * Two scopes:
+ *   project (default) — writes into this repo's .git/hooks (or .husky). Per-repo.
+ *   user (--scope user) — installs ONCE at user level via a global
+ *     `core.hooksPath`. The hooks fire in every repo but only ACT where prim is
+ *     activated (`prim enable` / `git config prim.active`), so commit capture is
+ *     opt-in per repo with no per-repo install — see lib/activation.ts.
+ *
+ * User-scope caveats (git's own precedence rules):
+ *   - A repo with its OWN local `core.hooksPath` (e.g. husky v9 sets
+ *     `.husky/_`) overrides the global one, so prim's global hook won't fire
+ *     there — run per-repo `prim hooks install` in those repos.
+ *   - If a global `core.hooksPath` already points elsewhere, prim appends its
+ *     block into that dir instead of hijacking the pointer.
+ *   - A system-level `core.hooksPath` is not overridden without --force.
+ *   - Requires git ≥ 2.9.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { type Command, Option } from "commander";
+import { activateRepoBestEffort } from "../lib/activation.js";
+import { gitToplevel } from "../lib/git.js";
 
 type HookSpec = { hookName: string; binName: string };
 
@@ -28,21 +47,41 @@ function blockMarkers(spec: HookSpec): { start: string; end: string } {
 export const PRIM_BLOCK_START = blockMarkers(PRE_COMMIT).start;
 export const PRIM_BLOCK_END = blockMarkers(PRE_COMMIT).end;
 
-// The shell that resolves and runs a prim hook bin — PATH, local
-// node_modules, then npx — never failing the commit (`|| true`).
+// A sentinel line every prim-MANAGED .git/hooks script carries, so the global
+// hook's chain-back can recognize (and skip) a prim hook without matching the
+// bare bin name — which a user's own hook might merely mention in a comment.
+const PRIM_MANAGED_MARK = "prim-managed-hook";
+
+// A provenance sentinel written ONLY into files prim itself creates (a foreign
+// hooksPath dir that lacked the hook). Uninstall removes a stripped-empty file
+// only when this marker is present, so prim never deletes a user's own hook it
+// merely appended to.
+const PRIM_CREATED_MARK = "prim-created-hook";
+
+// The shell that resolves and runs a prim hook bin — PATH, local node_modules,
+// then npx. Fail-soft on EVERY branch (`|| true`): these run on the commit path
+// (and, at user scope, in every repo), so prim must never break a commit.
 function hookShim(binName: string): string {
   return `if command -v ${binName} >/dev/null 2>&1; then
-  ${binName}
+  ${binName} || true
 elif [ -f "./node_modules/.bin/${binName}" ]; then
-  ./node_modules/.bin/${binName}
+  ./node_modules/.bin/${binName} || true
 else
   npx --yes -p @primitive.ai/prim ${binName} 2>/dev/null || true
 fi`;
 }
 
+// hookShim, gated on the per-repo opt-in flag. Shared by the user-scope owned
+// script and the coexist-append block so BOTH honor prim.active identically.
+function gatedShim(binName: string): string {
+  return `if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+${hookShim(binName)}
+fi`;
+}
+
 function dotGitScript(spec: HookSpec): string {
   return `#!/bin/sh
-# prim ${spec.hookName} hook — installed by: prim hooks install
+# prim ${spec.hookName} hook — installed by: prim hooks install (${PRIM_MANAGED_MARK})
 
 ${hookShim(spec.binName)}
 `;
@@ -55,10 +94,42 @@ ${hookShim(spec.binName)}
 ${end}`;
 }
 
+// The user-scope coexist block: like huskyBlock but GATED on prim.active, since
+// at user scope prim must stay opt-in even when appended into a foreign
+// core.hooksPath dir. Same markers, so stripPrimBlock removes it identically.
+function gatedBlock(spec: HookSpec): string {
+  const { start, end } = blockMarkers(spec);
+  return `${start}
+${gatedShim(spec.binName)}
+${end}`;
+}
+
+// Append a marker-delimited block into a hook file, or create the file with a
+// shebang if absent. Idempotent (no-op when the bin is already present).
+// Returns whether it wrote. Shared by the husky and coexist-append paths.
+function mergePrimBlock(hookPath: string, block: string, binName: string): boolean {
+  if (existsSync(hookPath)) {
+    const existing = readFileSync(hookPath, "utf-8");
+    if (containsPrimHook(existing, binName)) return false;
+    const separator = existing.endsWith("\n") ? "\n" : "\n\n";
+    writeFileSync(hookPath, `${existing}${separator}${block}\n`, { mode: 0o755 });
+    return true;
+  }
+  // Creating the file: the foreign hooksPath dir may not exist yet (a user set
+  // core.hooksPath but never populated it), so ensure it. Stamp the provenance
+  // marker so uninstall can safely remove a file prim created (vs. one it only
+  // appended to).
+  mkdirSync(dirname(hookPath), { recursive: true });
+  writeFileSync(hookPath, `#!/bin/sh\n# ${PRIM_CREATED_MARK}\n\n${block}\n`, { mode: 0o755 });
+  return true;
+}
+
 function getGitRoot(): string {
-  return execSync("git rev-parse --show-toplevel", {
-    encoding: "utf-8",
-  }).trim();
+  const root = gitToplevel();
+  if (root === null) {
+    throw new Error("not a git repository (run inside a repo, or use --scope user)");
+  }
+  return root;
 }
 
 export function detectHusky(gitRoot: string): boolean {
@@ -104,22 +175,13 @@ export async function askConfirmation(question: string): Promise<boolean> {
 
 export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
   const hookPath = resolve(gitRoot, ".husky", spec.hookName);
-
-  if (existsSync(hookPath)) {
-    const existing = readFileSync(hookPath, "utf-8");
-    if (containsPrimHook(existing, spec.binName)) {
-      console.log(`Prim ${spec.hookName} hook is already installed in .husky/${spec.hookName}.`);
-      return;
-    }
-    const separator = existing.endsWith("\n") ? "\n" : "\n\n";
-    writeFileSync(hookPath, `${existing}${separator}${huskyBlock(spec)}\n`, {
-      mode: 0o755,
-    });
+  const existed = existsSync(hookPath);
+  const wrote = mergePrimBlock(hookPath, huskyBlock(spec), spec.binName);
+  if (!wrote) {
+    console.log(`Prim ${spec.hookName} hook is already installed in .husky/${spec.hookName}.`);
+  } else if (existed) {
     console.log(`Appended prim hook block to .husky/${spec.hookName}.`);
   } else {
-    writeFileSync(hookPath, `#!/bin/sh\n\n${huskyBlock(spec)}\n`, {
-      mode: 0o755,
-    });
     console.log(`Created .husky/${spec.hookName} with prim hook block.`);
   }
 }
@@ -147,6 +209,220 @@ export function installToDotGit(gitRoot: string, spec: HookSpec = PRE_COMMIT): v
   console.log(`Installed ${spec.hookName} hook at ${hookPath}`);
 }
 
+// ---------------------------------------------------------------------------
+// User scope — a global core.hooksPath that captures commits in every repo.
+// ---------------------------------------------------------------------------
+
+// Prim owns this dir (distinct from git's own ~/.config/git/hooks). Mirrors the
+// ~/.config/prim convention used everywhere else; deliberately NOT XDG-aware,
+// since prim doesn't honor XDG_CONFIG_HOME anywhere.
+export const PRIM_GIT_HOOKS_DIR = join(homedir(), ".config", "prim", "git-hooks");
+
+// git stores core.hooksPath verbatim (a leading ~ is expanded by git at runtime,
+// not by us), so normalize before any filesystem use or equality check.
+function expandTilde(p: string): string {
+  return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+}
+
+function isOurHooksDir(value: string): boolean {
+  return value !== "" && expandTilde(value) === PRIM_GIT_HOOKS_DIR;
+}
+
+// Read core.hooksPath at a specific level only. NEVER a bare `--get`: inside a
+// husky repo that would read the repo-local `.husky/_` and we'd corrupt it.
+function gitConfigGet(level: "--global" | "--system"): string {
+  try {
+    return execFileSync("git", ["config", level, "--get", "core.hooksPath"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Unset (exit 1) or no such config file — treat as empty.
+    return "";
+  }
+}
+
+// Client-side hooks prim does NOT manage but which git's core.hooksPath would
+// otherwise shadow: setting a global core.hooksPath REPLACES .git/hooks for
+// every hook type, so without a stub for these, a repo's own commit-msg /
+// pre-push / git-lfs / pre-commit-framework hooks silently stop firing. We
+// write a pass-through stub for each so they still reach the repo's real hook.
+// (pre-commit / post-commit are prim's own — see HOOKS — and are not here.)
+const PASSTHROUGH_HOOKS = [
+  "applypatch-msg",
+  "pre-applypatch",
+  "post-applypatch",
+  "pre-merge-commit",
+  "prepare-commit-msg",
+  "commit-msg",
+  "pre-rebase",
+  "post-checkout",
+  "post-merge",
+  "pre-push",
+  "post-rewrite",
+  "pre-auto-gc",
+  "push-to-checkout",
+  "sendemail-validate",
+  "reference-transaction",
+  "post-index-change",
+  // (fsmonitor-watchman is intentionally omitted — it's driven by core.fsmonitor
+  //  with a query protocol, not a lifecycle event, so a bare exec stub is wrong.)
+] as const;
+
+// A standalone global hook: gate prim on prim.active (gatedShim), then chain to
+// the repo's own hook so a global core.hooksPath doesn't silently disable it.
+// --git-common-dir is NOT core.hooksPath-aware, so the chained path is always
+// the repo's real .git/hooks — never this script (no recursion). --git-path
+// hooks/… IS core.hooksPath-aware and would self-reference, so it must not be
+// used. The chain guard matches prim's managed-hook SENTINEL (not the bare bin
+// name, which a user's own hook might mention) to avoid double-invoking prim.
+function globalHookScript(spec: HookSpec): string {
+  // pre-commit may legitimately block the commit — propagate the repo hook's
+  // exit; post-commit runs after the commit and cannot block, so ignore it.
+  const chainExit = spec.hookName === "pre-commit" ? "|| exit $?" : "|| true";
+  return `#!/bin/sh
+# prim global ${spec.hookName} hook (core.hooksPath) — managed by prim; do not edit.
+# Install/uninstall: prim hooks install|uninstall --scope user
+# Runs prim only where activated — 'prim enable' (this repo) or
+# 'git config --global prim.active true' (every repo). Chains to the repo's own
+# hook regardless, so inactive repos are unaffected.
+${gatedShim(spec.binName)}
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+repo_hook="$common_dir/hooks/${spec.hookName}"
+if [ -x "$repo_hook" ] && ! grep -q '${PRIM_MANAGED_MARK}' "$repo_hook" 2>/dev/null; then
+  "$repo_hook" "$@" ${chainExit}
+fi
+exit 0
+`;
+}
+
+// A pass-through stub for a hook type prim does not manage: forward to the
+// repo's real hook (exec, so its exit code propagates) or exit 0 if none.
+function passThroughScript(hookName: string): string {
+  return `#!/bin/sh
+# prim pass-through hook (core.hooksPath) — managed by prim; do not edit.
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+repo_hook="$common_dir/hooks/${hookName}"
+[ -x "$repo_hook" ] && exec "$repo_hook" "$@"
+exit 0
+`;
+}
+
+// The complete set of files prim owns in PRIM_GIT_HOOKS_DIR: its two real hooks
+// plus a pass-through stub for every other client-side hook type.
+function ownedHookNames(): string[] {
+  return [...HOOKS.map((s) => s.hookName), ...PASSTHROUGH_HOOKS];
+}
+
+function writeOwnHooks(): void {
+  if (!existsSync(PRIM_GIT_HOOKS_DIR)) {
+    mkdirSync(PRIM_GIT_HOOKS_DIR, { recursive: true });
+  }
+  for (const spec of HOOKS) {
+    writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, spec.hookName), globalHookScript(spec), {
+      mode: 0o755,
+    });
+  }
+  for (const name of PASSTHROUGH_HOOKS) {
+    writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, name), passThroughScript(name), { mode: 0o755 });
+  }
+}
+
+// Append prim's GATED block into a hook file in a foreign global core.hooksPath
+// dir we don't own. Idempotent. No chain tail: git already runs only this dir,
+// so the file's other contents are the repo owner's, left in place. Gated, so
+// user scope stays opt-in even here.
+function appendPrimBlock(hookPath: string, spec: HookSpec): void {
+  mergePrimBlock(hookPath, gatedBlock(spec), spec.binName);
+}
+
+function stripPrimBlock(hookPath: string, spec: HookSpec): void {
+  if (!existsSync(hookPath)) return;
+  const existing = readFileSync(hookPath, "utf-8");
+  const primCreated = existing.includes(PRIM_CREATED_MARK);
+  const { start, end } = blockMarkers(spec);
+  const s = existing.indexOf(start);
+  const e = existing.indexOf(end);
+  if (s === -1 || e === -1) return;
+  const out = (existing.slice(0, s) + existing.slice(e + end.length)).replace(/\n{2,}$/, "\n");
+  // Remove the file only when PRIM created it (provenance marker) and nothing
+  // but prim's own scaffold (shebang + marker) is left — NEVER a user's own
+  // hook prim merely appended to, even if that hook was shebang-only.
+  const remainder = out.replaceAll("#!/bin/sh", "").replaceAll(`# ${PRIM_CREATED_MARK}`, "").trim();
+  if (primCreated && remainder === "") {
+    unlinkSync(hookPath);
+    return;
+  }
+  writeFileSync(hookPath, out, { mode: 0o755 });
+}
+
+// Install prim's git hooks at USER scope via a global core.hooksPath. Coexists
+// with an existing global hooksPath (appends into it) rather than clobbering.
+// Returns whether hooks were installed — false when it declines (system
+// hooksPath present without --force) so callers can report an honest skip.
+export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
+  const global = gitConfigGet("--global");
+  if (global === "") {
+    const system = gitConfigGet("--system");
+    if (system !== "" && !isOurHooksDir(system)) {
+      if (!opts.force) {
+        console.error(
+          `[prim] system core.hooksPath is set to ${system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipping — re-run with --force to override, or run per-repo \`prim hooks install\`.`,
+        );
+        return false;
+      }
+      console.error(
+        `[prim] --force: overriding system core.hooksPath ${system}; its hooks will no longer fire (prim chains only to .git/hooks).`,
+      );
+    }
+    writeOwnHooks();
+    execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR]);
+    console.log(
+      `Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}. Repos are opt-in: run \`prim enable\` in each repo to capture, or \`git config --global prim.active true\` for all.`,
+    );
+    return true;
+  }
+  if (isOurHooksDir(global)) {
+    writeOwnHooks(); // idempotent refresh of the scripts
+    console.log(`Prim global git hooks already active (${PRIM_GIT_HOOKS_DIR}); refreshed scripts.`);
+    return true;
+  }
+  // Coexist: a global core.hooksPath already points elsewhere — append prim's
+  // gated block into that dir and leave the pointer untouched.
+  const dir = expandTilde(global);
+  for (const spec of HOOKS) {
+    appendPrimBlock(resolve(dir, spec.hookName), spec);
+  }
+  console.log(
+    `Appended prim hooks into existing core.hooksPath dir ${global} (pointer unchanged).`,
+  );
+  return true;
+}
+
+export function uninstallGlobalHooks(): void {
+  const global = gitConfigGet("--global");
+  if (isOurHooksDir(global)) {
+    for (const name of ownedHookNames()) {
+      const p = resolve(PRIM_GIT_HOOKS_DIR, name);
+      if (existsSync(p)) unlinkSync(p);
+    }
+    // Only unset because the value is still ours (avoids the exit-5-on-absent
+    // and multivar footguns of a blind --unset).
+    execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"]);
+    console.log("Removed prim global git hooks and unset core.hooksPath.");
+    return;
+  }
+  if (global !== "") {
+    const dir = expandTilde(global);
+    for (const spec of HOOKS) {
+      stripPrimBlock(resolve(dir, spec.hookName), spec);
+    }
+    console.log(`Removed the prim block from ${global} (left the dir and core.hooksPath intact).`);
+    return;
+  }
+  console.log("No prim global git hooks found.");
+}
+
 // Install every prim git hook (pre-commit + post-commit) to the chosen
 // destination, pre-commit first so its write is calls[0] in tests.
 function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
@@ -157,6 +433,9 @@ function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
       installToDotGit(gitRoot, spec);
     }
   }
+  // A per-repo install is itself an opt-in: mark the repo prim-active so the
+  // agent capture/gate/ingest hooks (which gate on prim.active) also run here.
+  activateRepoBestEffort(gitRoot);
 }
 
 export function registerHooksCommands(program: Command) {
@@ -173,45 +452,79 @@ export function registerHooksCommands(program: Command) {
         "git-hooks",
       ]),
     )
-    .action(async (opts: { target?: "husky" | "git-hooks" }, command: Command) => {
-      const globals = command.optsWithGlobals();
-      const nonInteractive = Boolean(
-        globals.nonInteractive || process.env.CI || process.env.PRIM_NON_INTERACTIVE,
-      );
-      const gitRoot = getGitRoot();
-
-      if (opts.target === "husky") return installHooks(gitRoot, "husky");
-      if (opts.target === "git-hooks") return installHooks(gitRoot, "git-hooks");
-
-      if (detectHusky(gitRoot)) {
-        if (globals.yes) return installHooks(gitRoot, "husky");
-        if (nonInteractive) {
-          throw new Error(
-            "--non-interactive set, refusing to prompt for Husky-hook installation. Pass --yes to confirm or --target=git-hooks to choose.",
-          );
+    .addOption(
+      new Option(
+        "--scope <scope>",
+        "project (default, this repo) or user (a global core.hooksPath capturing every repo)",
+      ).choices(["project", "user"]),
+    )
+    .option("--force", "with --scope user, override a system-level core.hooksPath")
+    .action(
+      async (
+        opts: { target?: "husky" | "git-hooks"; scope?: "project" | "user"; force?: boolean },
+        command: Command,
+      ) => {
+        // User scope is repo-agnostic — a global core.hooksPath, no gitRoot and
+        // no --target (husky/git-hooks are per-repo concepts). A declined install
+        // (system hooksPath without --force) is a legitimate config, not a
+        // failure: installGlobalHooks already prints a loud STDERR warning with
+        // the remedy, so exit 0 and let `prim setup` complete rather than report
+        // an incomplete run for a benign case.
+        if (opts.scope === "user") {
+          installGlobalHooks({ force: opts.force });
+          return;
         }
-        if (!process.stdin.isTTY) {
-          console.error(
-            "Note: Husky detected but stdin is not a TTY — falling back to .git/hooks. Pass --yes for Husky or --non-interactive to fail fast.",
-          );
-        } else if (
-          await askConfirmation(
-            "Husky detected. Install prim hooks into .husky/ instead of .git/hooks/?",
-          )
-        ) {
-          return installHooks(gitRoot, "husky");
-        } else {
-          console.log("Falling back to .git/hooks install.");
-        }
-      }
+        const globals = command.optsWithGlobals();
+        const nonInteractive = Boolean(
+          globals.nonInteractive || process.env.CI || process.env.PRIM_NON_INTERACTIVE,
+        );
+        const gitRoot = getGitRoot();
 
-      installHooks(gitRoot, "git-hooks");
-    });
+        if (opts.target === "husky") return installHooks(gitRoot, "husky");
+        if (opts.target === "git-hooks") return installHooks(gitRoot, "git-hooks");
+
+        if (detectHusky(gitRoot)) {
+          if (globals.yes) return installHooks(gitRoot, "husky");
+          if (nonInteractive) {
+            throw new Error(
+              "--non-interactive set, refusing to prompt for Husky-hook installation. Pass --yes to confirm or --target=git-hooks to choose.",
+            );
+          }
+          if (!process.stdin.isTTY) {
+            console.error(
+              "Note: Husky detected but stdin is not a TTY — falling back to .git/hooks. Pass --yes for Husky or --non-interactive to fail fast.",
+            );
+          } else if (
+            await askConfirmation(
+              "Husky detected. Install prim hooks into .husky/ instead of .git/hooks/?",
+            )
+          ) {
+            return installHooks(gitRoot, "husky");
+          } else {
+            console.log("Falling back to .git/hooks install.");
+          }
+        }
+
+        installHooks(gitRoot, "git-hooks");
+      },
+    );
 
   hooks
     .command("uninstall")
-    .description("Remove the prim git hooks (.git/hooks)")
-    .action(() => {
+    .description(
+      "Remove the prim git hooks (.git/hooks, or the global core.hooksPath with --scope user)",
+    )
+    .addOption(
+      new Option(
+        "--scope <scope>",
+        "project (default, this repo) or user (global core.hooksPath)",
+      ).choices(["project", "user"]),
+    )
+    .action((opts: { scope?: "project" | "user" }) => {
+      if (opts.scope === "user") {
+        uninstallGlobalHooks();
+        return;
+      }
       const gitRoot = getGitRoot();
       for (const spec of HOOKS) {
         const hookPath = resolve(gitRoot, ".git", "hooks", spec.hookName);

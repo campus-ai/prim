@@ -25,7 +25,6 @@
  * (tmp + fsync + rename) so a crash can never leave a torn settings.json. AX
  * contract: STDOUT is the resulting JSON; STDERR is the human verdict.
  */
-import { execSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -39,7 +38,9 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
+import { activateRepoBestEffort } from "../lib/activation.js";
 import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
+import { gitToplevel } from "../lib/git.js";
 
 // Stable bin identities (npm `bin` names). The command actually written into
 // settings.json is the resolution shim from hookShimCommand() (PATH → local →
@@ -80,14 +81,7 @@ const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
  * module load) so unrelated prim commands never shell out to git.
  */
 export function projectRoot(): string {
-  try {
-    return execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return process.cwd();
-  }
+  return gitToplevel() ?? process.cwd();
 }
 
 const projectScopePath = (): string => join(projectRoot(), ".claude", "settings.json");
@@ -551,6 +545,14 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
+  }
+  // A project-scope install targets this repo specifically, so it doubles as
+  // `prim enable` — mark the repo prim-active so the (repo-gated) capture/gate/
+  // ingest hooks run here. cwd (not projectRoot()) avoids a second git subprocess
+  // — `git config --local` finds the repo from any subdir. User scope is
+  // machine-global; activation stays opt-in.
+  if (scope === "project") {
+    activateRepoBestEffort(process.cwd());
   }
   return {
     scope,

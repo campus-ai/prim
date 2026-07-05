@@ -167,9 +167,13 @@ question; the setup-specifics line is your close.
 ## Appendix — manual steps (fallback only)
 
 Prefer the one command above. Run these individually only if `setup` is
-unavailable. They are the exact steps `setup` runs, in order; each is idempotent.
+unavailable. They mirror the steps `setup` runs, in order; each is idempotent.
 Note that running them separately means one approval per command — `setup` exists
 precisely to collapse that to a single approval.
+
+`setup` defaults to `--scope user` (install once, for every repo) and activates
+the current repo. The commands below show the machine-wide flow: add `--scope
+user` where noted, then `prim enable` in each repo you want captured.
 
 1. **Pre-authorize** (Claude Code only): `npx --yes @primitive.ai/prim@latest claude preauth`
    — writes prim's allow-rule to `~/.claude/settings.json` so the remaining
@@ -186,12 +190,18 @@ precisely to collapse that to a single approval.
    Accelerates the in-session checks and powers the "team: N online" count. If it
    fails, continue — the hooks fall back to direct calls and never block on it.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
-   pre-commit decision check plus a post-commit capture boundary. Separate from
-   the session hooks in step 3.
+   pre-commit decision check plus a post-commit capture boundary. Add `--scope
+   user` to install one global `core.hooksPath` covering every repo (the hooks
+   fire everywhere but only act where activated — see step 7). Separate from the
+   session hooks in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
    (claude/codex/hermes). Writes the managed block teaching you to work with the
    decision graph into the file that agent reads — claude→CLAUDE.md, codex→AGENTS.md,
-   hermes→.hermes.md. Omit `--agent` to auto-detect an existing rules file, or pass
-   `--target <path>` to force a specific one.
-7. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome` — then present it as
+   hermes→.hermes.md. Add `--scope user` for the agent's global rules file. Omit
+   `--agent` to auto-detect an existing rules file, or pass `--target <path>`.
+7. **Activate** (user scope): `npx --yes @primitive.ai/prim@latest enable` marks
+   this repo prim-active (`git config prim.active true`) so the global hooks
+   capture here. Repeat in each repo you want; `… disable` mutes one. A per-repo
+   (project-scope) install in step 3/5 activates automatically.
+8. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome` — then present it as
    in section 2 above.
