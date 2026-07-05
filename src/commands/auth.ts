@@ -22,12 +22,17 @@ import {
   getTokenExpiresAt,
   saveTokenExpiry,
 } from "../client.js";
+import { stripControlChars } from "../lib/ansi.js";
 import { printJson } from "../output.js";
+import { FAILURE_HTML, STATE_MISMATCH_HTML, SUCCESS_HTML } from "./auth-pages.js";
 
 const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
 const CALLBACK_PORT = 19_876;
 const CALLBACK_TIMEOUT_MS = 120_000; // 2 minutes
+const EXIT_OK = 0;
+const EXIT_FAIL = 1;
+const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" } as const;
 const BASE64_PLUS_RE = /\+/g;
 const BASE64_SLASH_RE = /\//g;
 const BASE64_PAD_RE = /=+$/;
@@ -61,6 +66,85 @@ function saveToken(token: string): void {
   writeFileSync(TOKEN_FILE_PATH, token, { mode: FILE_MODE });
 }
 
+export type CallbackResult =
+  | { authenticated: true; code: string }
+  | { authenticated: false; error: string; detail?: string };
+
+export type CallbackPage = { status: number; html: string; result: CallbackResult };
+
+/**
+ * Map an OAuth callback request to the page to serve and the outcome to report.
+ * Pure and total: `html` is always one of the branded pages in ./auth-pages, so
+ * provider-supplied text can only ever travel through `result.error`/`detail`
+ * (onto STDERR/STDOUT), never into the HTML. State is checked first so a
+ * mismatched callback fails closed.
+ */
+export function resolveCallbackPage(params: URLSearchParams, expectedState: string): CallbackPage {
+  if (params.get("state") !== expectedState) {
+    return {
+      status: 400,
+      html: STATE_MISMATCH_HTML,
+      result: {
+        authenticated: false,
+        error: "state_mismatch",
+        detail: "state mismatch on the OAuth callback",
+      },
+    };
+  }
+
+  // RFC 6749 §4.1.2.1: a denial/error redirect carries the required `error`
+  // code (e.g. access_denied) and an optional human `error_description`.
+  const providerError = params.get("error");
+  if (providerError) {
+    return {
+      status: 400,
+      html: FAILURE_HTML,
+      result: {
+        authenticated: false,
+        error: providerError,
+        detail: params.get("error_description") ?? undefined,
+      },
+    };
+  }
+
+  const code = params.get("code");
+  if (!code) {
+    return {
+      status: 400,
+      html: FAILURE_HTML,
+      result: {
+        authenticated: false,
+        error: "no_code",
+        detail: "No authorization code received",
+      },
+    };
+  }
+
+  return { status: 200, html: SUCCESS_HTML, result: { authenticated: true, code } };
+}
+
+/**
+ * The single terminal-failure emitter. Human verdict on STDERR with the
+ * untrusted error/detail control-stripped so nothing smuggles escape sequences
+ * into the terminal; machine-readable result on STDOUT (JSON.stringify renders
+ * any residual control byte inert). Sets the exit code once and returns — the
+ * event loop drains and the process exits on its own.
+ */
+function reportFailure(error: string, detail?: string): void {
+  const human = detail
+    ? `${stripControlChars(error)}: ${stripControlChars(detail)}`
+    : stripControlChars(error);
+  console.error(`Authentication failed: ${human}`);
+  console.log(JSON.stringify({ authenticated: false, error, detail }));
+  process.exitCode = EXIT_FAIL;
+}
+
+function reportSuccess(): void {
+  console.error(`Authenticated! Token saved to ${TOKEN_FILE_PATH}`);
+  console.log(JSON.stringify({ authenticated: true, tokenFile: TOKEN_FILE_PATH }));
+  process.exitCode = EXIT_OK;
+}
+
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
 
@@ -81,19 +165,31 @@ export function registerAuthCommands(program: Command) {
         const res = await fetch(`${siteUrl}/mcp/config`);
         config = (await res.json()) as typeof config;
       } catch {
-        console.error("Failed to fetch MCP config. Is the Convex backend running?");
-        process.exit(1);
+        reportFailure(
+          "config_fetch_failed",
+          "Failed to fetch MCP config. Is the Convex backend running?",
+        );
+        return;
       }
 
       if (!config.authorization_server || !config.client_id) {
-        console.error("MCP broker is not configured on the server.");
-        process.exit(1);
+        reportFailure("broker_not_configured", "MCP broker is not configured on the server.");
+        return;
       }
 
       const { verifier, challenge } = generatePkce();
       const state = base64url(randomBytes(16));
+      const redirectUri = `http://${LOCALHOST}:${CALLBACK_PORT}/callback`;
 
-      // Start local callback server on a random port
+      // The handler is the only code that writes a callback response or knows
+      // about HTML, and it never exits the process: it resolves an outcome from
+      // res.end's flush callback (so the page is always on the wire first) that
+      // the single exit point below turns into one exit.
+      let settle!: (result: CallbackResult) => void;
+      const outcome = new Promise<CallbackResult>((resolve) => {
+        settle = resolve;
+      });
+
       const server = createServer((req, res) => {
         const url = new URL(req.url ?? "/", `http://${LOCALHOST}`);
         if (url.pathname !== "/callback") {
@@ -101,55 +197,44 @@ export function registerAuthCommands(program: Command) {
           res.end("Not found");
           return;
         }
+        const page = resolveCallbackPage(url.searchParams, state);
+        res.writeHead(page.status, HTML_HEADERS);
+        res.end(page.html, () => settle(page.result));
+      });
 
-        const code = url.searchParams.get("code");
-        const returnedState = url.searchParams.get("state");
-
-        if (returnedState !== state) {
-          res.writeHead(400, { "Content-Type": "text/html" });
-          res.end("<h1>State mismatch. Authentication failed.</h1>");
-          server.close();
-          process.exit(1);
-        }
-
-        if (!code) {
-          const error =
-            url.searchParams.get("error_description") ?? "No authorization code received";
-          res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`<h1>Authentication failed: ${error}</h1>`);
-          server.close();
-          process.exit(1);
-        }
-
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end("<h1>Authentication successful!</h1><p>You can close this tab.</p>");
-
-        // Exchange code for tokens
-        exchangeCode(siteUrl, code, verifier, `http://${LOCALHOST}:${port}/callback`)
-          .then((token) => {
-            saveToken(token);
-            // Human verdict on STDERR; machine-readable result on STDOUT so an
-            // agent driving the login can confirm success without scraping prose.
-            console.error(`Authenticated! Token saved to ${TOKEN_FILE_PATH}`);
-            console.log(JSON.stringify({ authenticated: true, tokenFile: TOKEN_FILE_PATH }));
-            server.close();
-            process.exit(0);
-          })
-          .catch((err) => {
-            console.error("Token exchange failed:", err);
-            server.close();
-            process.exit(1);
+      // Bind the fixed callback port. Without an error handler a stale or
+      // parallel login holding the port would hang forever, since the timeout
+      // is only armed after a successful bind.
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: NodeJS.ErrnoException) => reject(err);
+          server.once("error", onError);
+          server.listen(CALLBACK_PORT, LOCALHOST, () => {
+            server.removeListener("error", onError);
+            resolve();
           });
-      });
-
-      const port: number = await new Promise((resolve) => {
-        server.listen(CALLBACK_PORT, LOCALHOST, () => {
-          const addr = server.address();
-          resolve(typeof addr === "object" && addr ? addr.port : 0);
         });
+      } catch (err) {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+          reportFailure(
+            "callback_port_in_use",
+            `Port ${CALLBACK_PORT} is in use — another 'prim auth login' may be running. Close it and retry.`,
+          );
+        } else {
+          reportFailure(
+            "callback_bind_failed",
+            `Could not start the local callback server: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        return;
+      }
+
+      // A post-bind server error would otherwise be an unhandled emitter error
+      // that crashes the process; the timeout still bounds the wait.
+      server.on("error", () => {
+        // Swallow late socket errors — the outcome/timeout still resolves.
       });
 
-      const redirectUri = `http://${LOCALHOST}:${port}/callback`;
       const authorizeUrl =
         config.authorization_endpoint ?? "https://api.workos.com/user_management/authorize";
       const authUrl = new URL(authorizeUrl);
@@ -169,12 +254,32 @@ export function registerAuthCommands(program: Command) {
       console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
       console.error("Waiting for callback...");
 
-      // Timeout
-      setTimeout(() => {
-        console.error("Authentication timed out.");
-        server.close();
-        process.exit(1);
+      // Timeout resolves the same outcome as a callback, so every path funnels
+      // through the single exit below. unref'd so the timer never keeps the
+      // process alive — the listening server does, and closing it lets us exit.
+      const timer = setTimeout(() => {
+        settle({ authenticated: false, error: "timeout", detail: "Authentication timed out." });
       }, CALLBACK_TIMEOUT_MS);
+      timer.unref();
+
+      const result = await outcome;
+      clearTimeout(timer);
+      server.close();
+
+      if (!result.authenticated) {
+        reportFailure(result.error, result.detail);
+        return;
+      }
+
+      // The success page is already flushed; exchange the code here so the exit
+      // decision lives in exactly one place.
+      try {
+        const token = await exchangeCode(siteUrl, result.code, verifier, redirectUri);
+        saveToken(token);
+        reportSuccess();
+      } catch (err) {
+        reportFailure("token_exchange_failed", err instanceof Error ? err.message : String(err));
+      }
     });
 
   auth

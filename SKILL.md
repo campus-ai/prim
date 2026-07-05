@@ -44,7 +44,7 @@ The gate fail-opens on its *own* infrastructure errors (no daemon, network blip,
 ## Read the graph before large or load-bearing edits
 
 - `npx --yes @primitive.ai/prim decisions check --files "src/a.ts,src/b.ts"` -- which active decisions reference the files you're about to touch (comma-separated paths, one `--files` value). Run it before a big change.
-- `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex` / `Your Hermes`); `--limit <n>` and `--since <dur>` narrow it.
+- `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex` / `Your Hermes`); `--limit <n>` and `--since <dur>` narrow it. `--author "<name>"` filters to one teammate (feed name, `"First Last"`, last name, username, email, or email local-part) -- the way to answer "what has X decided?"; an unknown or ambiguous name comes back as `unavailable` with the reason, and `authorHasDecisions` in the JSON distinguishes "no feed-visible decisions" (false) from "has decisions, none in this window" (true).
 - `npx --yes @primitive.ai/prim decisions show <idOrShortId>` and `npx --yes @primitive.ai/prim decisions cascade <idOrShortId>` -- full detail, and the downstream blast radius a change would disturb.
 
 ## Reconcile and the verdict footer
@@ -130,6 +130,7 @@ Examples:
 
 - `npx --yes @primitive.ai/prim auth status --json | jq -r .authenticated` — boolean; the exit code remains the authoritative signal
 - `npx --yes @primitive.ai/prim decisions recent | jq -r '.decisions[].shortId'` — list recent decision short ids (STDOUT is already JSON)
+- `npx --yes @primitive.ai/prim decisions recent --author "Maya" | jq -r 'if .unavailable then "UNAVAILABLE: \(.unavailable)" else .decisions[].intent end'` — one teammate's latest decisions (check `.unavailable` first; empty output alone is not "no decisions")
 - `npx --yes @primitive.ai/prim decisions show <id> | jq .` — full decision detail
 
 ## Pitfalls

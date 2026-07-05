@@ -6,9 +6,17 @@
  * as declared in the `bin` map — including the stem mismatches a naive
  * `name + ".js"` would get wrong.
  */
-import { isAbsolute } from "node:path";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { binFile, commandMatchesBin, hookShimCommand } from "./bin-path.js";
+import {
+  binFile,
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookShimCommand,
+} from "./bin-path.js";
 
 describe("binFile", () => {
   it("resolves the daemon server to an absolute dist path", () => {
@@ -51,6 +59,128 @@ describe("hookShimCommand", () => {
   });
 });
 
+describe("detachedHookShimCommand", () => {
+  it("embeds the synchronous shim verbatim inside the detached template", () => {
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain(`| { ${hookShimCommand("prim-hook")}; }`);
+  });
+
+  it("captures stdin before backgrounding and pipes it back", () => {
+    // A plain backgrounded chain gets /dev/null stdin (POSIX) and would
+    // silently drop the envelope — the capture-then-pipe is load-bearing.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd.startsWith("payload=$(cat); ")).toBe(true);
+    expect(cmd).toContain(`printf '%s' "$payload" |`);
+  });
+
+  it("puts the redirections and & on the outermost group", () => {
+    // If anything in the detached tree inherited the hook's stdout/stderr
+    // pipes, Claude Code would wait for pipe EOF and the detach would
+    // silently not detach.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd.endsWith("} </dev/null >/dev/null 2>&1 &")).toBe(true);
+  });
+
+  it("ignores SIGHUP on the exec'd branches and stays a single line", () => {
+    // SIG_IGN survives fork+exec (PATH / node_modules branches) but NOT the
+    // npx branch — Node/libuv resets spawned children to SIG_DFL. See the
+    // docblock's accepted-residual note.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain("trap '' HUP;");
+    expect(cmd).not.toContain("\n");
+  });
+
+  it("bounds the npx branch with a self-coherent npm fetch tuple", () => {
+    // Without these, a hung registry holds the invisible detached job open
+    // for ~15 minutes on npm's defaults. They must sit INSIDE the
+    // backgrounded group (they only concern the detached chain) and before
+    // the payload pipe so the exports reach the npx branch's environment.
+    // mintimeout must be pinned alongside maxtimeout: env overrides npmrc
+    // per-key, so a host npmrc with fetch-retry-mintimeout > 10s would
+    // otherwise yield min > max and npm throws before any network attempt.
+    const cmd = detachedHookShimCommand("prim-hook");
+    expect(cmd).toContain(
+      "trap '' HUP; export npm_config_fetch_retries=2 " +
+        "npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 " +
+        "npm_config_fetch_timeout=60000; printf",
+    );
+  });
+
+  it("threads args through the embedded shim", () => {
+    const cmd = detachedHookShimCommand("prim-hook", "--agent codex");
+    expect(cmd).toContain(`| { ${hookShimCommand("prim-hook", "--agent codex")}; }`);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "exits immediately and still delivers the payload to the detached bin",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "prim-detach-"));
+      const outFile = join(dir, "out.json");
+      try {
+        // Stub prim-hook: sleep past the timing budget, then persist stdin.
+        // Write-then-rename so the exists-poll below never observes the file
+        // in its exists-but-empty window between open() and cat's write.
+        writeFileSync(
+          join(dir, "prim-hook"),
+          `#!/bin/sh\nsleep 1\ncat > "$STUB_OUT.tmp" && mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
+        );
+        chmodSync(join(dir, "prim-hook"), 0o755);
+        const payload = '{"hook_event_name":"SessionEnd","session_id":"s-1","cwd":"/tmp"}';
+        const started = performance.now();
+        // spawnSync blocks on pipe EOF as well as exit, so the elapsed budget
+        // alone regression-guards the redirect placement: without the
+        // outermost /dev/null redirects it blocks for the stub's full sleep.
+        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-hook")], {
+          input: payload,
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, STUB_OUT: outFile },
+          timeout: 5000,
+        });
+        const elapsed = performance.now() - started;
+        expect(res.status).toBe(0);
+        expect(elapsed).toBeLessThan(750);
+        const deadline = Date.now() + 5000;
+        while (!existsSync(outFile) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(readFileSync(outFile, "utf-8")).toBe(payload);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("canonical command strings (golden)", () => {
+  // These pin the EXACT bytes each generator writes into settings.json.
+  // ensureRegistration keys idempotence on full-string equality, so ANY
+  // change to either template — however harmless it looks — is a
+  // settings.json migration: every installed entry becomes non-canonical and
+  // is rewritten on the next install, and any older CLI re-running install
+  // rewrites it back (form ping-pong in a committed project file). The
+  // fragment tests above explain WHY each piece exists; these goldens make
+  // changing the bytes a deliberate act.
+  it("pins the synchronous shim byte-for-byte", () => {
+    expect(hookShimCommand("prim-hook")).toBe(
+      "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
+        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
+        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi",
+    );
+  });
+
+  it("pins the detached wrapper byte-for-byte", () => {
+    expect(detachedHookShimCommand("prim-hook")).toBe(
+      "payload=$(cat); { trap '' HUP; " +
+        "export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 " +
+        "npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; " +
+        `printf '%s' "$payload" | { ` +
+        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
+        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
+        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi" +
+        "; }; } </dev/null >/dev/null 2>&1 &",
+    );
+  });
+});
+
 describe("commandMatchesBin", () => {
   it("matches the legacy bare form, with or without args", () => {
     expect(commandMatchesBin("prim-hook", "prim-hook")).toBe(true);
@@ -64,11 +194,25 @@ describe("commandMatchesBin", () => {
     );
   });
 
+  it("matches the detached form", () => {
+    expect(commandMatchesBin(detachedHookShimCommand("prim-hook"), "prim-hook")).toBe(true);
+    expect(commandMatchesBin(detachedHookShimCommand("prim-session-end"), "prim-session-end")).toBe(
+      true,
+    );
+  });
+
   it("does not cross-match a sibling bin", () => {
     expect(commandMatchesBin(hookShimCommand("prim-post-tool-use"), "prim-pre-tool-use")).toBe(
       false,
     );
     expect(commandMatchesBin("prim-post-tool-use", "prim-pre-tool-use")).toBe(false);
+    // Diverging bin names can never collide on the `command -v <bin> ` token…
+    expect(
+      commandMatchesBin(detachedHookShimCommand("prim-session-end"), "prim-session-start"),
+    ).toBe(false);
+    // …and the token's trailing space is what keeps "prim" (the statusline
+    // bin, a true prefix of every hook bin) from cross-matching a hook shim.
+    expect(commandMatchesBin(detachedHookShimCommand("prim-hook"), "prim")).toBe(false);
   });
 
   it("does not match a foreign command or undefined", () => {

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bold, color, colorForArea, dim, stripAnsi, supportsColor } from "./ansi.js";
+import {
+  bold,
+  color,
+  colorForArea,
+  dim,
+  stripAnsi,
+  stripControlChars,
+  supportsColor,
+} from "./ansi.js";
 
 const originalIsTTY = process.stderr.isTTY;
 const originalNoColor = process.env.NO_COLOR;
@@ -105,5 +113,41 @@ describe("stripAnsi", () => {
 
   it("is a no-op on plain text", () => {
     expect(stripAnsi("nothing to strip")).toBe("nothing to strip");
+  });
+});
+
+describe("stripControlChars", () => {
+  // Build control bytes at runtime so the source stays free of escape literals.
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const CR = String.fromCharCode(0x0d);
+  const BS = String.fromCharCode(0x08);
+  const LF = String.fromCharCode(0x0a);
+
+  it("removes the ESC that introduces CSI and OSC sequences", () => {
+    // OSC 52 writes the clipboard; CSI 2J clears the screen. Both start with ESC.
+    const osc = `${ESC}]52;c;cGF5bG9hZA==${BEL}`;
+    const csi = `${ESC}[2J`;
+    expect(stripControlChars(osc)).toBe("]52;c;cGF5bG9hZA==");
+    expect(stripControlChars(csi)).toBe("[2J");
+    expect(stripControlChars(osc)).not.toContain(ESC);
+  });
+
+  it("removes raw C0 controls that overwrite or hide output (CR, BS, BEL, LF)", () => {
+    expect(stripControlChars(`safe${CR}spoofed`)).toBe("safespoofed");
+    expect(stripControlChars(`a${BS}${BEL}b`)).toBe("ab");
+    expect(stripControlChars(`line1${LF}line2`)).toBe("line1line2");
+  });
+
+  it("strips DEL and C1 control bytes", () => {
+    const del = String.fromCharCode(0x7f);
+    const c1csi = String.fromCharCode(0x9b); // CSI as a single C1 introducer
+    expect(stripControlChars(`x${del}${c1csi}y`)).toBe("xy");
+  });
+
+  it("preserves ordinary printable text (incl. non-ASCII)", () => {
+    expect(stripControlChars("access_denied: user cancelled — é")).toBe(
+      "access_denied: user cancelled — é",
+    );
   });
 });

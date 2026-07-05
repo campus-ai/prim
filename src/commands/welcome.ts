@@ -13,8 +13,12 @@
  *               asking what they are focusing on (and not), rendered as a
  *               ruled "Your turn" callout that is the terminal call to action
  *               (no footer follows it), which the setup agent collects and
- *               breaks into decisions. If the team has decisions, they are
- *               inlined above the prompt for context.
+ *               breaks into decisions. The JSON also carries a review template
+ *               (`reversePromptTemplate`) the agent renders instead when its
+ *               own memory/conversation context yields goals the user already
+ *               stated — the open question is the verbatim fallback. If the
+ *               team has decisions, they are inlined above the prompt for
+ *               context.
  *   - active  → the viewer has decisions: inline the latest few team
  *               decisions (reused renderer), no prompt.
  *   - unknown → the static get-started copy (feed unverifiable: offline,
@@ -22,7 +26,8 @@
  *
  * AX contract: the human orientation block goes to STDERR (the `[prim]`
  * human-readable convention); STDOUT carries the `org` discriminant + payload
- * so the agent can branch — `seed` carries both `reversePrompt` and `recent`,
+ * so the agent can branch — `seed` carries `reversePrompt`,
+ * `reversePromptTemplate`, and `recent`,
  * `active` carries `recent`, `unknown` carries neither. The fetch is
  * best-effort and **always exits 0** — a failure degrades to the `unknown`
  * branch, never an error, preserving setup's "welcome always lands" guarantee.
@@ -56,6 +61,19 @@ const REVERSE_PROMPT_LINES = [
   "to focus on those goals?",
 ];
 export const REVERSE_PROMPT = REVERSE_PROMPT_LINES.join(" ");
+
+// The review-framed variant for an agent-driven setup: before asking the open
+// question, the agent mines its own memory and conversation context for goals
+// the user has already STATED (never inferred from the repo — code, docs, or
+// history) and, when it finds some, renders this with $FOUND_GOALS replaced by
+// that list. Found nothing → it falls back to REVERSE_PROMPT verbatim. The
+// copy stays source-neutral ("We found") — every agent has a memory surface,
+// but it may be disabled (Codex's is opt-in) or empty, leaving the current
+// conversation as the only source, so the copy must not claim
+// prior-conversation provenance. JSON-only: a human running `prim welcome` has
+// no agent to gather goals, so STDERR always shows the open question.
+export const REVERSE_PROMPT_TEMPLATE =
+  "We're interested in learning your current goals, as well as what you're not focusing on to achieve those goals. We found the following:\n\n$FOUND_GOALS\n\nHow do these look to you? Would you like to change these goals?";
 
 // The seeding question is the human's one call-to-action — the thing they must
 // answer for setup to finish. Frame it in a ruled "Your turn" callout so it
@@ -180,13 +198,16 @@ export function welcomeJson(state: WelcomeState): Record<string, unknown> {
     return { welcomed: true, org: "active", recent: state.recent };
   }
   if (state.org === "seed") {
-    // Carry both signals: the reverse-prompt to ask, and any team decisions
-    // (empty when the org itself has none) so the agent has the same context
-    // shown on STDERR.
+    // Carry the seeding signals: the open reverse-prompt (kept verbatim — it
+    // is the agent's found-nothing fallback, and older setup.md copies read it
+    // by name), the review template the agent prefers when its memory yields
+    // candidate goals, and any team decisions (empty when the org itself has
+    // none) so the agent has the same context shown on STDERR.
     return {
       welcomed: true,
       org: "seed",
       reversePrompt: REVERSE_PROMPT,
+      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
       recent: state.recent,
     };
   }
