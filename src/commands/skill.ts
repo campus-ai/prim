@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { createPatch } from "diff";
 import { printJson } from "../output.js";
+import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -105,7 +106,7 @@ export function removeBlock(existing: string): string | null {
   return out.replace(/(\r?\n){2,}$/, "$1");
 }
 
-function atomicWrite(target: string, content: string): void {
+export function atomicWrite(target: string, content: string): void {
   const tmp = `${target}.tmp`;
   writeFileSync(tmp, content);
   const fd = openSync(tmp, "r+");
@@ -164,6 +165,10 @@ export function runInstall(
   cwd: string,
   opts: { target?: string; agent?: string; scope?: string; dryRun?: boolean },
 ): number {
+  // Claude reads a skills-directory plugin, not a rules-file block. An explicit
+  // --target still writes a file block (the escape hatch).
+  if (opts.agent === "claude" && !opts.target) return installClaudePlugin(cwd, opts);
+
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
 
@@ -189,6 +194,8 @@ export function runUninstall(
   cwd: string,
   opts: { target?: string; agent?: string; scope?: string },
 ): number {
+  if (opts.agent === "claude" && !opts.target) return uninstallClaudePlugin(cwd, opts);
+
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
   if (!existsSync(target)) {
@@ -210,6 +217,8 @@ export function runStatus(
   cwd: string,
   opts: { target?: string; agent?: string; scope?: string; json?: boolean },
 ): number {
+  if (opts.agent === "claude" && !opts.target) return statusClaudePlugin(cwd, opts);
+
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
 
@@ -247,10 +256,7 @@ export function registerSkillCommands(program: Command) {
     .description("Install the prim skill block into your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
-    .option(
-      "--scope <scope>",
-      "project (default, a rules file in this repo) or user (the agent's global rules file)",
-    )
+    .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .option("--dry-run", "Print a unified diff without writing")
     .action((opts: { target?: string; agent?: string; scope?: string; dryRun?: boolean }) => {
       try {
@@ -266,10 +272,7 @@ export function registerSkillCommands(program: Command) {
     .description("Remove the prim skill block from your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
-    .option(
-      "--scope <scope>",
-      "project (default, a rules file in this repo) or user (the agent's global rules file)",
-    )
+    .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .action((opts: { target?: string; agent?: string; scope?: string }) => {
       process.exit(runUninstall(process.cwd(), opts));
     });
@@ -279,10 +282,7 @@ export function registerSkillCommands(program: Command) {
     .description("Report whether the prim skill block is installed")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
     .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
-    .option(
-      "--scope <scope>",
-      "project (default, a rules file in this repo) or user (the agent's global rules file)",
-    )
+    .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .option("--json", "Output as JSON")
     .action((opts: { target?: string; agent?: string; scope?: string; json?: boolean }) => {
       process.exit(runStatus(process.cwd(), opts));

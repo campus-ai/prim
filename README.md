@@ -192,13 +192,22 @@ prim moves flush          # Drain the local journals to the server (also runs fr
 ### Skill
 
 ```bash
-prim skill install     # Install the decision-graph agent guide into your rules file
-prim skill uninstall   # Remove the managed block
-prim skill status      # Report whether the block is installed
+prim skill install --agent claude   # Install the decision-graph guide for Claude Code
+prim skill install --agent codex    # …or write the guide into another agent's rules file
+prim skill uninstall --agent claude # Remove it
+prim skill status --agent claude    # Report whether it's installed
 ```
 
-Writes a managed block teaching your agent how to work with the decision graph
-into the rules file it reads (CLAUDE.md, AGENTS.md, .cursor/rules, …).
+Teaches your agent how to work with the decision graph. For **Claude Code**
+(`--agent claude`) this installs a skills-directory plugin at
+`<repo>/.claude/skills/prim/` (or `~/.claude/skills/prim/` with `--scope user`)
+— a `.claude-plugin/plugin.json` + `SKILL.md` that auto-loads as the model-invoked
+`prim@skills-dir` skill, no marketplace step; restart Claude Code or run
+`/reload-plugins` after installing. For every other agent it writes a managed
+block into the rules file that agent reads (`--agent codex` → AGENTS.md,
+`--agent hermes` → .hermes.md, or an auto-detected .cursor/rules, …). A bare
+`prim skill install` (no `--agent`) auto-detects a rules file and writes the
+block; pass `--target <path>` for an explicit file.
 
 ## Development
 
