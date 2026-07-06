@@ -9,9 +9,9 @@ description: Use the prim CLI for Primitive's decision graph — passive decisio
 
 ## Mental model
 
-As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. When a later change conflicts with a load-bearing prior decision, prim **gates** the edit and surfaces the decision for review.
+As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with; with **Enforcement**, prim blocks the edit until you reconcile the decision and retry. Conflict Gates are **not currently enabled** — capture runs regardless. To enable them for your team, contact support@getprimitive.ai.
 
-You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Your job is to **respond** to the gate, **read** the graph before load-bearing edits, and **answer** the occasional rationale confirmation.
+You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Your job is to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
 
 ## Auth
 
@@ -29,17 +29,19 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 
 1. Every command accepts `--help`. When unsure of flags, run `npx --yes @primitive.ai/prim <cmd> --help` rather than guessing.
 2. The CLI prints API errors as one-liners to stderr and exits non-zero. Treat any non-zero exit as actionable. If auth-related, re-check `auth status`.
-3. `<idOrShortId>` arguments accept either a full decision ID or the short ID shown in feeds and gate reasons.
+3. `<idOrShortId>` arguments accept either a full decision ID or the short ID shown in feeds (and gate reasons, when Conflict Gates are enabled).
 
-## Heed the conflict gate
+## Conflict Gates & Enforcement (not currently enabled)
 
-Before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
+**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. Their **Enforcement** tier goes further -- a conflicting edit is blocked (or paused for confirmation) until you reconcile the decision and retry. **Conflict Gates are not currently enabled** — automatic decision capture (above) runs regardless. To enable Conflict Gates and Enforcement for your team, contact support@getprimitive.ai.
+
+When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
 
 - **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
 - **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. On Codex a would-be `ask` is delivered as allow-plus-context (Codex can't pause mid-tool), so that context is your only signal -- read it before continuing. Hermes has no soft-confirm tier, so a would-be `ask` arrives as a **deny** carrying the same reconcile directive: reconcile and retry, or set `PRIM_HOOK_MODE=warn` to downgrade it to context-only.
 - **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
 
-The gate fail-opens on its *own* infrastructure errors (no daemon, network blip, org-unbound token) -- a setup problem never blocks your edit. That is exactly why an "unavailable" note matters: it is the honest signal that the check, not your edit, is what failed.
+When enabled, the gate fail-opens on its *own* infrastructure errors (no daemon, network blip, org-unbound token) -- a setup problem would not block your edit. That is why an "unavailable" note would matter: it is the honest signal that the check, not your edit, is what failed.
 
 ## Read the graph before large or load-bearing edits
 
@@ -48,6 +50,8 @@ The gate fail-opens on its *own* infrastructure errors (no daemon, network blip,
 - `npx --yes @primitive.ai/prim decisions show <idOrShortId>` and `npx --yes @primitive.ai/prim decisions cascade <idOrShortId>` -- full detail, and the downstream blast radius a change would disturb.
 
 ## Reconcile and the verdict footer
+
+Reconcile and the verdict footer are part of Conflict Gates **Enforcement**, which is **not currently enabled** (contact support@getprimitive.ai to turn it on); the `reconcile` command stays available regardless. When Enforcement is on:
 
 `npx --yes @primitive.ai/prim reconcile <idOrShortId>` mints a single-use bypass for the named decision -- it prints `[prim] reconcile bypass issued for dec_<short> (expires in ...)` to STDERR, with the bypass JSON on STDOUT. Your *next* edit to the governed file then goes through, and on that edit prim prints a verdict footer to STDERR -- confirmation the override was recorded, not silently dropped:
 
@@ -75,7 +79,7 @@ Capture is automatic for the decisions you *make while coding*. When the user in
 npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
 ```
 
-Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — pass these to make the conflict gate fire on later edits to those files, same path form as `decisions check`). STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`. Author on the user's behalf only when they ask for a decision to be recorded; don't narrate your own routine edits into the graph (the hooks already do that).
+Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`. Author on the user's behalf only when they ask for a decision to be recorded; don't narrate your own routine edits into the graph (the hooks already do that).
 
 ## Relate decisions (link / unlink)
 
@@ -116,14 +120,14 @@ npx --yes @primitive.ai/prim hooks uninstall
 
 Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` only removes the `.git/hooks` copies — if a hook was installed into `.husky/`, remove the prim block from that file manually. To suppress the hooks for one commit, use `git commit --no-verify`.
 
-These git hooks are separate from the **session hooks** (`claude install` / `codex install` / `hermes install`) that drive in-session capture and the conflict gate.
+These git hooks are separate from the **session hooks** (`claude install` / `codex install` / `hermes install`) that drive in-session capture (and Conflict Gates, when enabled).
 
 ## Output formats
 
 The CLI keeps STDOUT machine-readable and STDERR human-readable. The `decisions` and `reconcile` commands **always** emit a single JSON document on STDOUT — no flag needed; pipe straight to `jq`. The `decisions` commands have **no** `--json` flag and reject one; `reconcile` accepts a reserved no-op `--json`. `auth status` and `skill status` default to human-readable STDOUT and take `--json` to switch to JSON.
 
 - **STDOUT is machine-readable** — JSON (one document per invocation). `decisions` reads project lean shapes, not raw rows.
-- **STDERR is human-readable** — a verdict-first line, plus the gate/verdict-footer/presence notes.
+- **STDERR is human-readable** — a verdict-first line, plus presence notes (and, when Conflict Gates are enabled, the gate/verdict-footer notes).
 - **Exit code is authoritative** where it carries meaning — `auth status` exits 0 when authenticated; `decisions show`/`cascade`/`confirm` exit non-zero (e.g. 4 not-found) on a missing or unauthorized id.
 
 Examples:
@@ -135,12 +139,12 @@ Examples:
 
 ## Pitfalls
 
-- **An "unavailable" / "not verified" gate or check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval.
-- **A `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
+- **An "unavailable" / "not verified" decision check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval — the same holds for Conflict Gates once enabled.
+- **When Enforcement is enabled, a `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
 - **Capture of your coding activity is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running — don't try to inject moves by hand. (Deliberately *authoring* a decision the user asks you to record is a separate, supported path — `decisions create`, above.)
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 
 ## After each task
 
-If the conflict gate denied or warned you, report which decision(s) it named and whether you reconciled. If you read the graph before a load-bearing change, note what you found so the user can verify in the dashboard.
+If Conflict Gates are enabled and one denied or warned you, report which decision(s) it named and whether you reconciled. If you read the graph before a load-bearing change, note what you found so the user can verify in the dashboard.

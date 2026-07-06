@@ -1,12 +1,18 @@
 # @primitive.ai/prim
 
 The official CLI for [Primitive](https://getprimitive.ai)'s **decision graph**. It
-passively captures the decisions your team makes while coding, gates edits that
-conflict with prior team decisions, and reports team presence — from the command
-line and via session + git hooks.
+passively captures the decisions your team makes while coding and reports team
+presence — from the command line and via session + git hooks.
 
 > [!WARNING]
 > This project is in **alpha**. Commands and APIs may change between releases.
+
+> [!NOTE]
+> **Conflict Gates** check each edit against the decision graph and surface any
+> load-bearing decision it conflicts with; their **Enforcement** tier blocks or pauses
+> a conflicting edit until you reconcile and retry. Conflict Gates are **not currently
+> enabled** — automatic decision capture runs regardless. To enable them for your team,
+> contact **support@getprimitive.ai**.
 
 ## Installation
 
@@ -37,7 +43,7 @@ Or run the steps individually:
 # 1. Authenticate via browser (WorkOS OAuth)
 prim auth login
 
-# 2. Wire the session hooks (decision capture + conflict gate + presence)
+# 2. Wire the session hooks (decision capture + presence)
 prim claude install        # or: prim codex install / prim hermes install
 
 # 3. Start the companion daemon (latency + team presence)
@@ -94,7 +100,7 @@ prim auth status             # Check authentication status
 ### Session integration
 
 Wires the agent's session hooks so the decisions you make are captured into the
-graph, conflicting edits are gated, and presence is reported. Each hook
+graph, and presence is reported. Each hook
 self-resolves the CLI at run time (PATH, then a local install, then
 `npx --yes @latest`), so it keeps working with no global install.
 
@@ -147,8 +153,11 @@ would create a cycle (exit 2); an unresolved id exits 4.
 ### Reconcile
 
 ```bash
-prim reconcile <id>    # Mint a single-use bypass for a decision a gate flagged
+prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
 ```
+
+Part of Conflict Gates **Enforcement**, which is not currently enabled (see the note
+at the top). Contact support@getprimitive.ai to enable it.
 
 ### Hooks
 

@@ -132,7 +132,7 @@ export function registerReconcileCommands(program: Command): void {
   program
     .command("reconcile <idOrShortId>")
     .description(
-      "Issue a single-use bypass for a flagged decision (used by the cooperative reconcile loop)",
+      "Issue a single-use bypass for a decision flagged by Conflict Gates Enforcement (not currently enabled)",
     )
     .option(
       "--flag <conflictFlagId>",
