@@ -190,7 +190,7 @@ export function registerDecisionsCommands(program: Command): void {
     .option("--reversibility <level>", "high | low (default high)")
     .option(
       "--files <paths>",
-      "Comma-separated repo-relative paths this decision governs (gates edits to them)",
+      "Comma-separated repo-relative paths this decision governs (the files Conflict Gates would check — not currently enabled)",
     )
     .action(async (opts: CreateOptions) => {
       const request: CreateRequest = {
