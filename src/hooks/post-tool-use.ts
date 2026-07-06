@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -115,6 +116,7 @@ async function ingestMove(move: Move): Promise<IngestResponse> {
 }
 
 async function main(): Promise<void> {
+  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   try {

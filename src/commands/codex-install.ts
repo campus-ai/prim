@@ -81,7 +81,9 @@ const CODEX_REGISTRATIONS: Registration[] = [
   ...CODEX_CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN, CODEX_ARGS)),
   makeRegistration("PreToolUse", "apply_patch", GATE_BIN, CODEX_ARGS),
   makeRegistration("PostToolUse", "apply_patch", POST_TOOL_USE_BIN, CODEX_ARGS),
-  makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS),
+  // Bare ladder (no branch-0): SessionStart re-resolves @latest each session to
+  // refresh the bin cache the other hooks read. See lib/bin-cache.ts.
+  makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS, { cacheRead: false }),
 ];
 
 const USER_SCOPE_PATH = join(homedir(), ".codex", "hooks.json");

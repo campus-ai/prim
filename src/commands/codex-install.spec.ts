@@ -68,6 +68,12 @@ describe("codex applyInstall", () => {
     expect(cmds).toHaveLength(2);
     expect(commandMatchesBin(cmds[0], "prim-hook")).toBe(true);
     expect(commandMatchesBin(cmds[1], "prim-session-start")).toBe(true);
+    // Exact-equality (not commandMatchesBin, which matches both forms) pins the
+    // bare ladder so a flip to the cache-reading shim — which would freeze the
+    // per-session @latest refresh — is caught.
+    expect(cmds[1]).toBe(
+      hookShimCommand("prim-session-start", "--agent codex", { cacheRead: false }),
+    );
   });
 
   it("does NOT register SessionEnd (Codex has no such event) or a statusLine", () => {
