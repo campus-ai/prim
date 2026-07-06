@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.37](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.36...v0.1.0-alpha.37) (2026-07-06)
+
+
+### Bug Fixes
+
+* **hooks:** cache resolved bin paths so session hooks skip per-fire npx ([#129](https://github.com/campus-ai/prim/issues/129)) ([414017a](https://github.com/campus-ai/prim/commit/414017a42d48f617b61d8c4014be10271d926805))
+
 ## [0.1.0-alpha.36](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.35...v0.1.0-alpha.36) (2026-07-06)
 
 
