@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.36](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.35...v0.1.0-alpha.36) (2026-07-06)
+
+
+### Features
+
+* **cli:** mark Conflict Gates & Enforcement as not currently enabled ([#127](https://github.com/campus-ai/prim/issues/127)) ([bf86510](https://github.com/campus-ai/prim/commit/bf86510b40118ce2c2c37c7520473297c39aea68))
+
 ## [0.1.0-alpha.35](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.34...v0.1.0-alpha.35) (2026-07-05)
 
 
