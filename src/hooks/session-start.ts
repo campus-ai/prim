@@ -18,6 +18,7 @@
 
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 
@@ -62,6 +63,9 @@ function emit(additionalContext?: string): void {
 }
 
 async function main(): Promise<void> {
+  // SessionStart runs the bare ladder (cacheRead:false), so it always resolves
+  // @latest fresh — the authoritative once-per-session refresh of the bin cache.
+  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   try {

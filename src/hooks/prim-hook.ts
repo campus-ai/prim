@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
@@ -50,6 +51,9 @@ function spawnBackgroundFlush(): void {
 }
 
 try {
+  // Refresh the resolved-path cache so subsequent hook fires skip npx (no-op on
+  // the cache-hit path and under the kill switch; never throws).
+  warmBinCache();
   const agent = parseAgent(process.argv);
   const raw = readFileSync(0, "utf-8");
   // Normalize Hermes event names into prim's internal vocabulary at the wire

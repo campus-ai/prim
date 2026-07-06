@@ -429,6 +429,19 @@ describe("post-tool-use, session hooks, statusline install", () => {
     expect(hasBin(out, "SessionEnd", "prim-session-end")).toBe(true);
   });
 
+  it("pins SessionStart to the bare ladder (cacheRead:false) so it re-resolves @latest each session", () => {
+    // commandMatchesBin matches BOTH shim forms, so an exact-equality assertion
+    // is what catches a flip to the cache-reading shim — which would freeze the
+    // per-session refresh the whole bin cache depends on.
+    const out = applyInstall(EMPTY);
+    const entry = out.hooks?.SessionStart?.find((e) =>
+      e.hooks?.some((h) => commandMatchesBin(h.command, "prim-session-start")),
+    );
+    expect(entry?.hooks?.[0].command).toBe(
+      hookShimCommand("prim-session-start", "", { cacheRead: false }),
+    );
+  });
+
   it("installs the prim statusLine (shim) with a refresh interval when the slot is empty", () => {
     const out = applyInstall(EMPTY);
     expect(out.statusLine?.type).toBe("command");

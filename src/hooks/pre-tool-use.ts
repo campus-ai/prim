@@ -33,6 +33,7 @@
 import { getClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
@@ -122,6 +123,7 @@ async function checkOneFile(file: string): Promise<ConflictCheckResult> {
 }
 
 async function main(): Promise<void> {
+  warmBinCache();
   let raw: string;
   try {
     raw = await readStdin();

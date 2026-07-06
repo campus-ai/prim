@@ -29,6 +29,11 @@ const ROOT_WALK_LIMIT = 6;
 // The npx fallback pins @latest so an un-installed host always resolves the
 // newest CLI; the PATH / node_modules branches are taken first when present.
 const NPX_FALLBACK = `npx --yes -p ${PKG_NAME}@latest`;
+// Branch-0 resolved-path cache. The shell dir expression MUST mirror
+// binCacheDir() in bin-cache.ts byte-for-byte (a spec pins the pair). TTL is a
+// backstop only — SessionStart (cacheRead:false) refreshes @latest per session.
+const BIN_CACHE_DIR_SH = "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";
+const BIN_CACHE_TTL_MIN_DEFAULT = 1440;
 
 type PackageManifest = { name?: string; bin?: Record<string, string> };
 
@@ -92,14 +97,35 @@ export function binFile(bin: string): string | null {
  *   hookShimCommand("prim-hook")                 // capture
  *   hookShimCommand("prim-hook", "--agent codex")// codex capture
  *   hookShimCommand("prim", "statusline")        // statusline
+ *
+ * cacheRead (default true) prepends branch-0: if the hooks have cached this
+ * bin's resolved entry within TTL, `exec` it directly — turning a per-fire
+ * npx@latest resolution into a `cat` + exec (see lib/bin-cache.ts). It marks
+ * the exec with PRIM_BIN_CACHE_HIT (so the warmer does not bump mtime and
+ * freeze the TTL) and `exec` both preserves the hook's stdout/exit code AND
+ * stops fallthrough to the ladder. Any doubt — kill switch (PRIM_BIN_CACHE=0),
+ * missing/expired entry, an npx-GC'd target — fails open to the unchanged
+ * ladder. Pass cacheRead:false to emit the bare ladder (SessionStart, which
+ * must re-resolve @latest each session, and the detached wrapper).
  */
-export function hookShimCommand(bin: string, args = ""): string {
+export function hookShimCommand(
+  bin: string,
+  args = "",
+  opts: { cacheRead?: boolean } = {},
+): string {
   const invoke = (cmd: string): string => (args ? `${cmd} ${args}` : cmd);
-  return (
+  const ladder =
     `if command -v ${bin} >/dev/null 2>&1; then ${invoke(bin)}; ` +
     `elif [ -f "./node_modules/.bin/${bin}" ]; then ${invoke(`./node_modules/.bin/${bin}`)}; ` +
-    `else ${invoke(`${NPX_FALLBACK} ${bin}`)}; fi`
-  );
+    `else ${invoke(`${NPX_FALLBACK} ${bin}`)}; fi`;
+  if (opts.cacheRead === false) {
+    return ladder;
+  }
+  const execArgs = args ? ` ${args}` : "";
+  // One template literal (not a concat) so lint doesn't split hairs over the
+  // trailing `fi; ` operand; kept on a single logical line like the ladder.
+  const cacheBranch = `d="${BIN_CACHE_DIR_SH}"; if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$d/${bin}" ] && [ -f "$d/node" ] && [ -n "$(find "$d/${bin}" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then n=$(cat "$d/node"); p=$(cat "$d/${bin}"); if [ -x "$n" ] && [ -f "$p" ]; then export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p"${execArgs}; fi; fi; `;
+  return cacheBranch + ladder;
 }
 
 /**
@@ -187,7 +213,9 @@ export function hookShimCommand(bin: string, args = ""): string {
 //     PATH → local → npx resolution, then point the on_session_end
 //     registrations at it. Its gate's `timeout: 10` stays.
 export function detachedHookShimCommand(bin: string, args = ""): string {
-  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
+  // cacheRead:false: the detached wrapper stays byte-identical to its
+  // pre-cache form; branch-0's `exec` semantics are for the synchronous hooks.
+  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args, { cacheRead: false })}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**

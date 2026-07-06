@@ -114,8 +114,9 @@ export function makeRegistration(
   matcher: string,
   bin: string,
   args = "",
+  opts: { cacheRead?: boolean } = {},
 ): Registration {
-  return { event, matcher, bin, command: hookShimCommand(bin, args) };
+  return { event, matcher, bin, command: hookShimCommand(bin, args, opts) };
 }
 
 function makeDetachedRegistration(
@@ -158,7 +159,9 @@ const REGISTRATIONS: Registration[] = [
   ),
   makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
   makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
-  makeRegistration("SessionStart", "*", SESSION_START_BIN),
+  // Bare ladder (no branch-0): SessionStart must re-resolve @latest each session
+  // to refresh the bin cache the other hooks read. See lib/bin-cache.ts.
+  makeRegistration("SessionStart", "*", SESSION_START_BIN, "", { cacheRead: false }),
   makeDetachedRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
 

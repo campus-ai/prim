@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { formatTeammates } from "../lib/presence.js";
 
 type StatusSnapshot = {
@@ -122,6 +123,9 @@ export function registerStatuslineCommands(program: Command): void {
     .description("Render the Claude Code statusLine for the prim companion daemon")
     .action(async () => {
       try {
+        // ~1Hz refresh is the highest-frequency shim caller; keep the bin cache
+        // warm so it execs directly instead of re-resolving npx each tick.
+        warmBinCache();
         const line = await renderStatusline();
         process.stdout.write(line);
       } catch {
