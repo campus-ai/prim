@@ -64,6 +64,7 @@ let lastHeartbeatAt: number | undefined;
 // the caller's online teammates (self excluded), already deduped and sorted.
 let lastOnlineCount: number | undefined;
 let lastOnlineNames: string[] | undefined;
+let lastOnlineTeammates: { name: string; area?: string }[] | undefined;
 // Daemon-local timestamp of the last ACCEPTED heartbeat ack. Used to decide
 // whether the cached presence (count + names) is still fresh; a daemon whose
 // heartbeats are failing keeps running but stops advancing this.
@@ -120,6 +121,7 @@ async function sendHeartbeat(): Promise<void> {
       created?: boolean;
       onlineCount?: number;
       onlineNames?: string[];
+      onlineTeammates?: { name: string; area?: string }[];
       unavailable?: string;
     };
     if (result.accepted) {
@@ -127,14 +129,17 @@ async function sendHeartbeat(): Promise<void> {
       if (typeof result.lastHeartbeatAt === "number") {
         lastHeartbeatAt = result.lastHeartbeatAt;
       }
-      // Count and names ride the SAME ack — cache them atomically (clearing on
-      // absence), never overwrite-only. Otherwise a names-less ack from an
-      // older or rolled-back server (mixed-version deploy) advances the
-      // freshness clock and updates the count while a prior roster stays
-      // frozen, and the statusline would render that stale list as fresh
-      // instead of falling back to the live count.
+      // Count, names, and teammates(+area) ride the SAME ack — cache them
+      // atomically (clearing on absence), never overwrite-only. Otherwise a
+      // partial ack from an older or rolled-back server (mixed-version deploy)
+      // advances the freshness clock while a prior roster stays frozen, and the
+      // statusline would render that stale list as fresh instead of falling
+      // back down the ladder (teammates → names → count).
       lastOnlineCount = typeof result.onlineCount === "number" ? result.onlineCount : undefined;
       lastOnlineNames = Array.isArray(result.onlineNames) ? result.onlineNames : undefined;
+      lastOnlineTeammates = Array.isArray(result.onlineTeammates)
+        ? result.onlineTeammates
+        : undefined;
     }
   } catch (err) {
     process.stderr.write(
@@ -208,6 +213,7 @@ function handleStatusSnapshot(params: Record<string, unknown>): unknown {
       ...base,
       onlineCount: undefined,
       onlineNames: undefined,
+      onlineTeammates: undefined,
       presenceStale: false,
       envMismatch: true,
     };
@@ -219,10 +225,11 @@ function handleStatusSnapshot(params: Record<string, unknown>): unknown {
   const presenceStale = lastOkAtLocal !== undefined && !presenceFresh;
   return {
     ...base,
-    // Withhold a frozen count/names once they're no longer fresh; the
+    // Withhold a frozen count/names/teammates once they're no longer fresh; the
     // statusline shows "presence: stale" rather than a confident, wrong list.
     onlineCount: presenceFresh ? lastOnlineCount : undefined,
     onlineNames: presenceFresh ? lastOnlineNames : undefined,
+    onlineTeammates: presenceFresh ? lastOnlineTeammates : undefined,
     presenceStale,
   };
 }

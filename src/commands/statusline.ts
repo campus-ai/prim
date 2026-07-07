@@ -24,7 +24,7 @@ import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { warmBinCache } from "../lib/bin-cache.js";
-import { formatTeammates } from "../lib/presence.js";
+import { formatTeammates, formatTeammatesWithArea } from "../lib/presence.js";
 
 type StatusSnapshot = {
   pid: number;
@@ -32,11 +32,14 @@ type StatusSnapshot = {
   sessionId: string;
   lastHeartbeatAt?: number;
   // From the daemon's last accepted heartbeat ack (server-derived from the
-  // token). `onlineNames` are the caller's online teammates (self excluded),
-  // sorted — the statusline renders these. `onlineCount` is the self-inclusive
-  // count, kept as a fallback for a server that predates `onlineNames`.
+  // token). `onlineTeammates` are the online teammates (self excluded), sorted,
+  // each with the area of their most recent decision — preferred when present.
+  // `onlineNames` is the same roster without areas, kept for a server that
+  // predates `onlineTeammates`. `onlineCount` is the self-inclusive count, a
+  // last-resort fallback for a server that predates names entirely.
   onlineCount?: number;
   onlineNames?: string[];
+  onlineTeammates?: { name: string; area?: string }[];
   // True when the daemon is alive but its heartbeats have stopped landing, so
   // the cached presence is frozen and not to be trusted.
   presenceStale?: boolean;
@@ -102,12 +105,15 @@ export async function renderStatusline(): Promise<string> {
   if (snapshot.presenceStale) {
     return `primitive ${version} (daemon: live · presence: stale)`;
   }
-  // Prefer teammate names ("Maya, Alex +3" / "just you"). Fall back to the
-  // bare count for an older server that predates `onlineNames` — better than
-  // regressing to "—"; and to "—" when neither is fresh (no ack yet, or the
-  // last ack was org-unbound), which is unknown, not necessarily a team of one.
+  // Prefer teammates-with-area ("Kasey - auth, Sam +3"); fall back to bare
+  // names for a server that predates areas ("Maya, Alex +3" / "just you"); then
+  // to the bare count for one that predates names — each better than regressing
+  // to "—"; and to "—" when none is fresh (no ack yet, or the last ack was
+  // org-unbound), which is unknown, not necessarily a team of one.
   let team: string;
-  if (snapshot.onlineNames !== undefined) {
+  if (snapshot.onlineTeammates !== undefined) {
+    team = `team: ${formatTeammatesWithArea(snapshot.onlineTeammates, STATUSLINE_NAME_CAP)}`;
+  } else if (snapshot.onlineNames !== undefined) {
     team = `team: ${formatTeammates(snapshot.onlineNames, STATUSLINE_NAME_CAP)}`;
   } else if (typeof snapshot.onlineCount === "number") {
     team = `team: ${String(snapshot.onlineCount)} online`;

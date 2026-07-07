@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTeammates } from "./presence.js";
+import { formatTeammates, formatTeammatesWithArea } from "./presence.js";
 
 describe("formatTeammates", () => {
   it("renders an em dash when names are unknown (no fresh ack)", () => {
@@ -24,5 +24,50 @@ describe("formatTeammates", () => {
     expect(formatTeammates(["Maya", "Alex", "Sam", "Tom"], Number.POSITIVE_INFINITY)).toBe(
       "Maya, Alex, Sam, Tom",
     );
+  });
+});
+
+describe("formatTeammatesWithArea", () => {
+  it("renders an em dash when the roster is unknown (no fresh ack)", () => {
+    expect(formatTeammatesWithArea(undefined, 3)).toBe("—");
+  });
+
+  it("renders 'just you' when no teammates are online", () => {
+    expect(formatTeammatesWithArea([], 3)).toBe("just you");
+  });
+
+  it("annotates each name with its area, leaving area-less names bare", () => {
+    expect(formatTeammatesWithArea([{ name: "Kasey", area: "auth" }, { name: "Sam" }], 3)).toBe(
+      "Kasey - auth, Sam",
+    );
+  });
+
+  it("renders name-only when the area is blank or whitespace", () => {
+    expect(formatTeammatesWithArea([{ name: "Kasey", area: "  " }, { name: "Sam" }], 3)).toBe(
+      "Kasey, Sam",
+    );
+  });
+
+  it("truncates on the teammate count, not the label width", () => {
+    expect(
+      formatTeammatesWithArea(
+        [
+          { name: "Kasey", area: "auth" },
+          { name: "Sam", area: "data" },
+          { name: "Alex" },
+          { name: "Tom", area: "ui" },
+        ],
+        3,
+      ),
+    ).toBe("Kasey - auth, Sam - data, Alex +1");
+  });
+
+  it("renders the full annotated list when cap is Infinity (daemon status)", () => {
+    expect(
+      formatTeammatesWithArea(
+        [{ name: "Maya", area: "infra" }, { name: "Alex" }],
+        Number.POSITIVE_INFINITY,
+      ),
+    ).toBe("Maya - infra, Alex");
   });
 });
