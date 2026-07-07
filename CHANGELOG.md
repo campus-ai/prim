@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.38](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.37...v0.1.0-alpha.38) (2026-07-07)
+
+
+### Features
+
+* **statusline:** show each teammate's working area ([#131](https://github.com/campus-ai/prim/issues/131)) ([864c3a0](https://github.com/campus-ai/prim/commit/864c3a047b4cea6a6f6d001fcebaf8226d38f4c8))
+
 ## [0.1.0-alpha.37](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.36...v0.1.0-alpha.37) (2026-07-06)
 
 
