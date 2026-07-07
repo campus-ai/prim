@@ -8,7 +8,11 @@ vi.mock("../daemon/client.js", () => ({
 
 const mockDaemonRequest = vi.mocked(daemonRequest);
 
-function snapshot(onlineCount?: number, onlineNames?: string[]) {
+function snapshot(
+  onlineCount?: number,
+  onlineNames?: string[],
+  onlineTeammates?: { name: string; area?: string }[],
+) {
   return {
     pid: 1,
     uptimeMs: 1_000,
@@ -16,6 +20,7 @@ function snapshot(onlineCount?: number, onlineNames?: string[]) {
     lastHeartbeatAt: 1_700_000_000_000,
     onlineCount,
     onlineNames,
+    onlineTeammates,
   };
 }
 
@@ -37,6 +42,33 @@ describe("renderStatusline", () => {
     expect(line).toContain("team: Alex, Maya");
   });
 
+  it("annotates teammates with their area when the snapshot carries teammates", async () => {
+    mockDaemonRequest.mockResolvedValue(
+      snapshot(3, ["Kasey", "Sam"], [{ name: "Kasey", area: "auth" }, { name: "Sam" }]),
+    );
+    const line = await renderStatusline();
+    expect(line).toContain("team: Kasey - auth, Sam");
+  });
+
+  it("prefers teammates(+area) over the bare names when both are present", async () => {
+    mockDaemonRequest.mockResolvedValue(snapshot(2, ["Sam"], [{ name: "Sam", area: "data" }]));
+    const line = await renderStatusline();
+    expect(line).toContain("team: Sam - data");
+  });
+
+  it("truncates an annotated teammate list with an overflow marker", async () => {
+    mockDaemonRequest.mockResolvedValue(
+      snapshot(5, undefined, [
+        { name: "Alex", area: "ui" },
+        { name: "Maya" },
+        { name: "Sam", area: "data" },
+        { name: "Tom", area: "infra" },
+      ]),
+    );
+    const line = await renderStatusline();
+    expect(line).toContain("team: Alex - ui, Maya, Sam - data +1");
+  });
+
   it("truncates a long teammate list with an overflow marker", async () => {
     mockDaemonRequest.mockResolvedValue(snapshot(5, ["Alex", "Maya", "Sam", "Tom"]));
     const line = await renderStatusline();
@@ -45,6 +77,13 @@ describe("renderStatusline", () => {
 
   it("renders 'team: just you' when online with no teammates", async () => {
     mockDaemonRequest.mockResolvedValue(snapshot(1, []));
+    const line = await renderStatusline();
+    expect(line).toContain("team: just you");
+  });
+
+  it("renders 'team: just you' via the teammates branch when onlineTeammates is empty", async () => {
+    // [] is not undefined, so the preferred onlineTeammates branch is taken.
+    mockDaemonRequest.mockResolvedValue(snapshot(1, undefined, []));
     const line = await renderStatusline();
     expect(line).toContain("team: just you");
   });
