@@ -250,7 +250,11 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
     // backend we make no strong claim about — neutral line, never
     // "never captured" on missing evidence.
     if (result.authorHasDecisions === true) {
-      return `[prim] recent · ${result.author.name} · 0 decisions in this window (older decisions exist — widen --since or raise --limit)`;
+      // The server filters the author feed before it pages, so an empty page
+      // with authorHasDecisions holds every in-window visible decision — none
+      // exist here, they're older than --since. Raising --limit can't un-empty
+      // it; --since is the only remedy, so it's the only one offered.
+      return `[prim] recent · ${result.author.name} · 0 decisions in this window (older decisions exist — widen --since)`;
     }
     if (result.authorHasDecisions === false) {
       return `[prim] recent · ${result.author.name} · no feed-visible decisions yet (if unexpected, check prim setup/doctor on their machine and the repo they work in)`;

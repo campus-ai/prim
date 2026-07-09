@@ -322,14 +322,14 @@ describe("formatRecentHuman", () => {
     expect(out).toContain(formatRecentRow(TEAMMATE_ROW));
   });
 
-  it("says older decisions exist on an empty author page with authorHasDecisions", () => {
+  it("points an empty author page with authorHasDecisions at --since, not --limit", () => {
     const out = formatRecentHuman({
       decisions: [],
       author: { userId: "u_ian", name: "Ian" },
       authorHasDecisions: true,
     });
     expect(out).toBe(
-      "[prim] recent · Ian · 0 decisions in this window (older decisions exist — widen --since or raise --limit)",
+      "[prim] recent · Ian · 0 decisions in this window (older decisions exist — widen --since)",
     );
   });
 
