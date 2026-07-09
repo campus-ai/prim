@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.40](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.39...v0.1.0-alpha.40) (2026-07-09)
+
+
+### Bug Fixes
+
+* **ci:** pin npm to 11.18.0 so provenance publish stops breaking ([#136](https://github.com/campus-ai/prim/issues/136)) ([ac1943f](https://github.com/campus-ai/prim/commit/ac1943f791a632e6c7f0f5e988eb0cef78424b1c))
+
 ## [0.1.0-alpha.39](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.38...v0.1.0-alpha.39) (2026-07-09)
 
 
