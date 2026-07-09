@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.39](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.38...v0.1.0-alpha.39) (2026-07-09)
+
+
+### Bug Fixes
+
+* **recent:** drop the dead --limit hint from an empty author page ([#134](https://github.com/campus-ai/prim/issues/134)) ([7c99d93](https://github.com/campus-ai/prim/commit/7c99d930eb6619cc68b6ecf42b0f9a05697aa913))
+
 ## [0.1.0-alpha.38](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.37...v0.1.0-alpha.38) (2026-07-07)
 
 
