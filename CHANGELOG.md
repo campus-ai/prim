@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.41](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.40...v0.1.0-alpha.41) (2026-07-09)
+
+
+### Bug Fixes
+
+* **recent:** tell the reader how many author decisions the page hides ([#138](https://github.com/campus-ai/prim/issues/138)) ([e4b8d20](https://github.com/campus-ai/prim/commit/e4b8d205728690109942b38748c6edafd7733848))
+
 ## [0.1.0-alpha.40](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.39...v0.1.0-alpha.40) (2026-07-09)
 
 
