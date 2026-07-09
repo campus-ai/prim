@@ -208,6 +208,36 @@ describe("fetchRecent", () => {
     expect(result.unavailable).toBeUndefined();
   });
 
+  it("reads windowTotal + windowTotalCapped through on a filtered feed", async () => {
+    const result = await fetchRecent(
+      { author: "maya" },
+      depsReturning({
+        decisions: [TEAMMATE_ROW],
+        viewerHasDecisions: true,
+        author: { userId: "u_maya", name: "Maya" },
+        authorHasDecisions: true,
+        windowTotal: 47,
+        windowTotalCapped: false,
+      }),
+    );
+    expect(result.windowTotal).toBe(47);
+    expect(result.windowTotalCapped).toBe(false);
+  });
+
+  it("leaves windowTotal undefined on a pre-flag backend", async () => {
+    const result = await fetchRecent(
+      { author: "maya" },
+      depsReturning({
+        decisions: [TEAMMATE_ROW],
+        viewerHasDecisions: true,
+        author: { userId: "u_maya", name: "Maya" },
+        authorHasDecisions: true,
+      }),
+    );
+    expect(result.windowTotal).toBeUndefined();
+    expect(result.windowTotalCapped).toBeUndefined();
+  });
+
   it("skew guard also covers the daemon proxy path (old daemon-side backend)", async () => {
     // The daemon forwards the path verbatim, so the author param rides
     // through — but the BACKEND behind it may still predate the filter.
@@ -322,6 +352,64 @@ describe("formatRecentHuman", () => {
     expect(out).toContain(formatRecentRow(TEAMMATE_ROW));
   });
 
+  it("folds an exact 'N more not shown' hint into the verdict when the window exceeds the page", () => {
+    const out = formatRecentHuman({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+      windowTotal: 5,
+    });
+    expect(out).toContain(
+      "[prim] recent · Maya · 1 decision(s) · 4 more not shown — re-run with --limit 5 to see all",
+    );
+  });
+
+  it("renders the remainder as N+ and points at the feed cap when the count is capped", () => {
+    const out = formatRecentHuman({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+      windowTotal: 200,
+      windowTotalCapped: true,
+    });
+    expect(out).toContain(
+      "199+ more not shown — re-run with --limit 100 for the newest 100 (the full set exceeds the feed cap)",
+    );
+  });
+
+  it("clamps the suggested --limit to the ceiling for an uncapped window past 100", () => {
+    const out = formatRecentHuman({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+      windowTotal: 150,
+    });
+    expect(out).toContain(
+      "149 more not shown — re-run with --limit 100 for the newest 100 (the full set exceeds the feed cap)",
+    );
+  });
+
+  it("adds no hint when the page already holds the whole window", () => {
+    const out = formatRecentHuman({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+      windowTotal: 1,
+    });
+    expect(out.split("\n")[0]).toBe("[prim] recent · Maya · 1 decision(s)");
+    expect(out).not.toContain("more not shown");
+  });
+
+  it("adds no hint on a pre-flag backend that omits windowTotal", () => {
+    const out = formatRecentHuman({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+    });
+    expect(out.split("\n")[0]).toBe("[prim] recent · Maya · 1 decision(s)");
+    expect(out).not.toContain("more not shown");
+  });
+
   it("points an empty author page with authorHasDecisions at --since, not --limit", () => {
     const out = formatRecentHuman({
       decisions: [],
@@ -414,6 +502,20 @@ describe("formatRecentJson", () => {
       decisions: [],
       author: { userId: "u_ian", name: "Ian" },
       authorHasDecisions: false,
+    });
+  });
+
+  it("carries windowTotal + windowTotalCapped through to STDOUT JSON for the agent", () => {
+    const out = formatRecentJson({
+      decisions: [TEAMMATE_ROW],
+      author: { userId: "u_maya", name: "Maya" },
+      authorHasDecisions: true,
+      windowTotal: 47,
+      windowTotalCapped: false,
+    });
+    expect(JSON.parse(out)).toMatchObject({
+      windowTotal: 47,
+      windowTotalCapped: false,
     });
   });
 });

@@ -70,6 +70,21 @@ export interface DecisionsRecentResult {
    */
   authorHasDecisions?: boolean;
   /**
+   * Author-filtered responses only: how many feed-visible decisions the
+   * resolved author has in the requested window (the same author+since
+   * filter the page uses), counted server-side up to a cap. When it
+   * exceeds `decisions.length` the page was capped and more exist — the
+   * "N more" awareness signal. Absent on a pre-flag backend, so treat
+   * absent as "unknown", never as "no more".
+   */
+  windowTotal?: number;
+  /**
+   * True when `windowTotal` hit the server's count cap, so it's a lower
+   * bound — render the remainder as `N+`. Only rides author-filtered
+   * responses that carry `windowTotal`.
+   */
+  windowTotalCapped?: boolean;
+  /**
    * Present when the feed could not be verified (state UNKNOWN): an
    * org-unbound token (server returns this on a 200), an unknown or
    * ambiguous `author` name, or a thrown transport/auth/validation
@@ -88,6 +103,8 @@ type RecentResponse = {
   viewerHasDecisions?: boolean;
   author?: { userId: string; name: string };
   authorHasDecisions?: boolean;
+  windowTotal?: number;
+  windowTotalCapped?: boolean;
   unavailable?: string;
 };
 
@@ -165,6 +182,12 @@ export async function fetchRecent(
     if (res.authorHasDecisions !== undefined) {
       result.authorHasDecisions = res.authorHasDecisions;
     }
+    if (res.windowTotal !== undefined) {
+      result.windowTotal = res.windowTotal;
+    }
+    if (res.windowTotalCapped !== undefined) {
+      result.windowTotalCapped = res.windowTotalCapped;
+    }
     if (res.unavailable !== undefined) {
       result.unavailable = res.unavailable;
     }
@@ -237,6 +260,32 @@ export function formatRecentRow(row: DecisionFeedRow): string {
   return `  ${clock}  ${author}${areaCol}${row.intent}`;
 }
 
+// Mirrors the server's RECENT_LIMIT_CEILING: the largest page a single
+// `--limit` can request. A window wider than this can't be fetched whole
+// today (no pagination — server #994), so the hint says so honestly.
+const RECENT_LIMIT_CEILING = 100;
+
+/**
+ * The "N more not shown" awareness line, or undefined when the page holds
+ * the whole window. `windowTotal` counts the author's feed-visible
+ * decisions in the requested window (author branch only); when it exceeds
+ * the returned rows, the page was capped and more exist. `windowTotalCapped`
+ * means the count itself is a lower bound, so the remainder renders `N+`.
+ * The suggested `--limit` is clamped to the feed ceiling.
+ */
+function remainingHint(result: DecisionsRecentResult): string | undefined {
+  const { windowTotal } = result;
+  if (windowTotal === undefined || windowTotal <= result.decisions.length) {
+    return;
+  }
+  const remaining = windowTotal - result.decisions.length;
+  const remainingText = result.windowTotalCapped === true ? `${remaining}+` : String(remaining);
+  if (windowTotal <= RECENT_LIMIT_CEILING) {
+    return `${remainingText} more not shown — re-run with --limit ${windowTotal} to see all`;
+  }
+  return `${remainingText} more not shown — re-run with --limit ${RECENT_LIMIT_CEILING} for the newest ${RECENT_LIMIT_CEILING} (the full set exceeds the feed cap)`;
+}
+
 export function formatRecentHuman(result: DecisionsRecentResult): string {
   // UNKNOWN beats empty: when the feed couldn't be verified, never render a
   // clean "0 decisions" the reader would trust as a healthy all-clear.
@@ -265,7 +314,11 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
   if (result.decisions.length === 0) {
     return "[prim] recent · 0 decisions";
   }
-  const lines = [`[prim] ${label} · ${String(result.decisions.length)} decision(s)`];
+  const header = `[prim] ${label} · ${String(result.decisions.length)} decision(s)`;
+  // Verdict-first: fold the "N more" awareness into the summary line so the
+  // reader sees it before the rows. Only the author branch carries windowTotal.
+  const hint = remainingHint(result);
+  const lines = [hint === undefined ? header : `${header} · ${hint}`];
   for (const row of result.decisions) {
     lines.push(formatRecentRow(row));
   }
