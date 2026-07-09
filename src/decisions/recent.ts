@@ -65,8 +65,10 @@ export interface DecisionsRecentResult {
    * org (the server counts only status-stamped rows — legacy rows
    * pending the status backfill don't count, matching what any feed
    * view can show). The decisive split between "none the feed can
-   * show" (false) and "has decisions, none in this window" (true with
-   * zero rows). Only rides author-filtered responses.
+   * show" (false) and "has decisions, none surfaced on this page"
+   * (true with zero rows — they may sit outside the window OR deeper
+   * than the scan, behind non-decision captures). Only rides
+   * author-filtered responses.
    */
   authorHasDecisions?: boolean;
   /**
@@ -250,7 +252,15 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
     // backend we make no strong claim about — neutral line, never
     // "never captured" on missing evidence.
     if (result.authorHasDecisions === true) {
-      return `[prim] recent · ${result.author.name} · 0 decisions in this window (older decisions exist — widen --since or raise --limit)`;
+      // Say only what the flag attests: the author HAS feed-visible
+      // decisions, just none on this page. Never claim the missing rows
+      // are "older" — the feed reads newest-first and post-filters
+      // non-decision captures, so the page can starve on a run of
+      // hidden rows while visible decisions sit deeper in the SAME
+      // window. --limit is the remedy that reaches past that run;
+      // --since only helps when the window itself is the problem, so
+      // it is offered second.
+      return `[prim] recent · ${result.author.name} · 0 decisions surfaced in this window (they have decisions — raise --limit to reach past non-decision captures, or widen --since)`;
     }
     if (result.authorHasDecisions === false) {
       return `[prim] recent · ${result.author.name} · no feed-visible decisions yet (if unexpected, check prim setup/doctor on their machine and the repo they work in)`;

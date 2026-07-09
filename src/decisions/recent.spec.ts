@@ -322,14 +322,20 @@ describe("formatRecentHuman", () => {
     expect(out).toContain(formatRecentRow(TEAMMATE_ROW));
   });
 
-  it("says older decisions exist on an empty author page with authorHasDecisions", () => {
+  it("says the author has decisions on an empty page, leading with --limit", () => {
+    // Not "older decisions exist": the feed reads newest-first and
+    // post-filters non-decision captures, so an empty page can hide
+    // visible decisions deeper in the SAME window — behind newer hidden
+    // rows, not older ones. The hint must offer --limit (reaches past
+    // the hidden run) before --since (only helps when the window is
+    // actually the problem).
     const out = formatRecentHuman({
       decisions: [],
       author: { userId: "u_ian", name: "Ian" },
       authorHasDecisions: true,
     });
     expect(out).toBe(
-      "[prim] recent · Ian · 0 decisions in this window (older decisions exist — widen --since or raise --limit)",
+      "[prim] recent · Ian · 0 decisions surfaced in this window (they have decisions — raise --limit to reach past non-decision captures, or widen --since)",
     );
   });
 
