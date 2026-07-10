@@ -24,7 +24,13 @@ import { binFile } from "./bin-path.js";
 // The bins the shim execs directly on a hit — mirrors the cacheRead:true shims
 // (capture, gate, ingest, statusline). Any single warm pass writes them all,
 // since binFile() reads the whole bin map regardless of which one is running.
-const CACHED_BINS = ["prim", "prim-hook", "prim-pre-tool-use", "prim-post-tool-use"] as const;
+const CACHED_BINS = [
+  "prim",
+  "prim-hook",
+  "prim-pre-tool-use",
+  "prim-post-tool-use",
+  "prim-decision-feedback",
+] as const;
 
 /**
  * Absolute cache dir. The shell dir expression in bin-path.ts

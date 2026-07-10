@@ -107,7 +107,13 @@ describe("warmBinCache", () => {
     warmBinCache();
     const cacheDir = join(dir, "prim", "bin");
     expect(readFileSync(join(cacheDir, "node"), "utf-8")).toBe(process.execPath);
-    for (const bin of ["prim", "prim-hook", "prim-pre-tool-use", "prim-post-tool-use"]) {
+    for (const bin of [
+      "prim",
+      "prim-hook",
+      "prim-pre-tool-use",
+      "prim-post-tool-use",
+      "prim-decision-feedback",
+    ]) {
       expect(readFileSync(join(cacheDir, bin), "utf-8")).toBe(binFile(bin));
     }
   });

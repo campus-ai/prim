@@ -24,6 +24,7 @@ import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { gitToplevel } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
@@ -70,7 +71,7 @@ try {
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
     // to the journal, transits to the server, and lands in the moves table.
-    const base = toMove(parsed, resolveCliVersion(), agent);
+    const base = toMove(parsed, resolveCliVersion(), agent, gitToplevel(cwd) ?? undefined);
     const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
     appendMove(move, orgId);

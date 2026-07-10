@@ -8,6 +8,8 @@
  *   - prim-pre-tool-use (the conflict gate) on PreToolUse, and
  *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse,
  *     both at matcher "Edit|Write|MultiEdit".
+ *   - prim-decision-feedback on Stop and SessionStart, so asynchronous
+ *     Decision creation is surfaced as Claude system messages.
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live sessions. SessionEnd entries use the
  *     detached shim: Claude Code cancels hooks still running at teardown.
@@ -49,6 +51,7 @@ import { gitToplevel } from "../lib/git.js";
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
+const DECISION_FEEDBACK_BIN = "prim-decision-feedback";
 const SESSION_START_BIN = "prim-session-start";
 const SESSION_END_BIN = "prim-session-end";
 // The statusline rides the `prim` bin, invoked as `… statusline`.
@@ -64,6 +67,7 @@ const PRIM_BINS: readonly string[] = [
   CAPTURE_BIN,
   GATE_BIN,
   POST_TOOL_USE_BIN,
+  DECISION_FEEDBACK_BIN,
   SESSION_START_BIN,
   SESSION_END_BIN,
 ];
@@ -159,6 +163,10 @@ const REGISTRATIONS: Registration[] = [
   ),
   makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
   makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
+  // Feedback is drained by Claude session so one repo session cannot consume
+  // another session's Decision feedback.
+  makeRegistration("Stop", "*", DECISION_FEEDBACK_BIN),
+  makeRegistration("SessionStart", "*", DECISION_FEEDBACK_BIN),
   // Bare ladder (no branch-0): SessionStart must re-resolve @latest each session
   // to refresh the bin cache the other hooks read. See lib/bin-cache.ts.
   makeRegistration("SessionStart", "*", SESSION_START_BIN, "", { cacheRead: false }),

@@ -206,7 +206,7 @@ export function registerDecisionsCommands(program: Command): void {
       };
       try {
         const outcome = await fetchCreate(request);
-        console.error(formatCreateHuman(outcome));
+        console.error(formatCreateHuman(outcome, request.intent));
         console.log(formatCreateJson(outcome));
       } catch (err) {
         if (err instanceof HttpError && err.status >= 400 && err.status < 500) {

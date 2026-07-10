@@ -429,6 +429,12 @@ describe("post-tool-use, session hooks, statusline install", () => {
     expect(hasBin(out, "SessionEnd", "prim-session-end")).toBe(true);
   });
 
+  it("registers decision feedback on Stop and SessionStart", () => {
+    const out = applyInstall(EMPTY);
+    expect(hasBin(out, "Stop", "prim-decision-feedback")).toBe(true);
+    expect(hasBin(out, "SessionStart", "prim-decision-feedback")).toBe(true);
+  });
+
   it("pins SessionStart to the bare ladder (cacheRead:false) so it re-resolves @latest each session", () => {
     // commandMatchesBin matches BOTH shim forms, so an exact-equality assertion
     // is what catches a flip to the cache-reading shim — which would freeze the
@@ -471,6 +477,7 @@ describe("post-tool-use, session hooks, statusline install", () => {
     const out = applyUninstall(applyInstall(EMPTY));
     for (const event of CAPTURE_EVENTS) {
       expect(hasBin(out, event, "prim-post-tool-use")).toBe(false);
+      expect(hasBin(out, event, "prim-decision-feedback")).toBe(false);
       expect(hasBin(out, event, "prim-session-start")).toBe(false);
       expect(hasBin(out, event, "prim-session-end")).toBe(false);
     }
@@ -536,7 +543,8 @@ describe("SessionEnd detached registrations", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0].hooks?.[0].command).toBe(detachedHookShimCommand(bin));
     }
-    expect(JSON.stringify(out.hooks?.Stop)).toBe(JSON.stringify(preDetach.hooks?.Stop));
+    expect(hasBin(out, "Stop", "prim-hook")).toBe(true);
+    expect(hasBin(out, "Stop", "prim-decision-feedback")).toBe(true);
   });
 
   it("heals a mixed canonical+stale SessionEnd state on a plain re-install", () => {

@@ -33,12 +33,14 @@ function clientWith(post: CliClient["post"]): CliClient {
 
 describe("formatCreateHuman", () => {
   it("renders the dec_ short form", () => {
-    expect(formatCreateHuman(OUTCOME)).toBe(`[prim] created dec_${SHORT_ID}.`);
+    expect(formatCreateHuman(OUTCOME, "Use X")).toBe(
+      `[prim] response → created Decision (dec_${SHORT_ID}): Use X`,
+    );
   });
 
   it("falls back to the full id when the server returned no shortId", () => {
-    expect(formatCreateHuman({ decisionId: FULL_ID, createdAt: 1 })).toBe(
-      `[prim] created ${FULL_ID}.`,
+    expect(formatCreateHuman({ decisionId: FULL_ID, createdAt: 1 }, "Use X")).toBe(
+      `[prim] response → created Decision (${FULL_ID}): Use X`,
     );
   });
 });

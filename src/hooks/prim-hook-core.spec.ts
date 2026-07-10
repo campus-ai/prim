@@ -6,10 +6,13 @@ describe("toMove", () => {
     const move = toMove(
       { session_id: "sess-123", hook_event_name: "PostToolUse", cwd: "/repo" },
       "1.2.3",
+      "claude_code",
+      "/repo",
     );
     expect(move.sessionId).toBe("sess-123");
     expect(move.eventType).toBe("PostToolUse");
     expect(move.env.cwd).toBe("/repo");
+    expect(move.env.repoCwd).toBe("/repo");
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(typeof move.moveId).toBe("string");
     expect(typeof move.capturedAt).toBe("number");
@@ -96,6 +99,7 @@ describe("toCommitMove", () => {
   it("stamps env + envelopeVersion and never a producer", () => {
     const move = toCommitMove(commit, "1.2.3", "/repo");
     expect(move.env.cwd).toBe("/repo");
+    expect(move.env.repoCwd).toBe("/repo");
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(move.envelopeVersion).toBe(1);
     expect("producer" in move).toBe(false);

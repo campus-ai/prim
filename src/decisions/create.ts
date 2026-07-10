@@ -17,7 +17,7 @@
  */
 
 import { type CliClient, getClient } from "../client.js";
-import { renderIdentifier } from "./recent.js";
+import { formatDecisionCreatedFeedback } from "./feedback.js";
 
 export interface CreateRequest {
   intent: string;
@@ -85,9 +85,13 @@ export async function fetchCreate(
   })) as CreateOutcome;
 }
 
-export function formatCreateHuman(outcome: CreateOutcome): string {
-  const id = renderIdentifier({ shortId: outcome.shortId, id: outcome.decisionId });
-  return `[prim] created ${id}.`;
+export function formatCreateHuman(outcome: CreateOutcome, intent = ""): string {
+  return formatDecisionCreatedFeedback({
+    decisionId: outcome.decisionId,
+    shortId: outcome.shortId,
+    intent,
+    createdAt: outcome.createdAt,
+  });
 }
 
 export function formatCreateJson(outcome: CreateOutcome): string {

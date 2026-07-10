@@ -163,11 +163,13 @@ export async function refreshToken(): Promise<string | undefined> {
     // lost auth (and CLI 401s) undebuggable — the caller only ever saw
     // "Authentication expired" with no cause.
     const detail = (await response.text().catch(() => "")).slice(0, 200);
-    process.stderr.write(
-      `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
-        detail ? ` — ${detail}` : ""
-      }\n`,
-    );
+    if (process.env.PRIM_SUPPRESS_AUTH_REFRESH_ERRORS !== "1") {
+      process.stderr.write(
+        `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
+          detail ? ` — ${detail}` : ""
+        }\n`,
+      );
+    }
     return undefined;
   }
 

@@ -16,7 +16,9 @@ export function toMove(
   parsed: Record<string, unknown>,
   cliVersion: string,
   agent: Agent = "claude_code",
+  repoCwd?: string,
 ): Move {
+  const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   return {
     moveId: randomUUID(),
     capturedAt: Date.now(),
@@ -24,7 +26,8 @@ export function toMove(
     eventType: (parsed.hook_event_name as string | undefined) ?? "unknown",
     payload: parsed,
     env: {
-      cwd: (parsed.cwd as string | undefined) ?? process.cwd(),
+      cwd,
+      ...(repoCwd ? { repoCwd } : {}),
       cliVersion,
       osPlatform: platform(),
     },
@@ -53,7 +56,12 @@ export type CommitInfo = {
  * running, and the decision's agent attribution comes from the session's
  * own moves, not the commit envelope.
  */
-export function toCommitMove(commit: CommitInfo, cliVersion: string, cwd: string): Move {
+export function toCommitMove(
+  commit: CommitInfo,
+  cliVersion: string,
+  cwd: string,
+  repoCwd: string = cwd,
+): Move {
   return {
     moveId: `commit:${commit.sha}`,
     capturedAt: Date.now(),
@@ -68,6 +76,7 @@ export function toCommitMove(commit: CommitInfo, cliVersion: string, cwd: string
     },
     env: {
       cwd,
+      repoCwd,
       cliVersion,
       osPlatform: platform(),
     },

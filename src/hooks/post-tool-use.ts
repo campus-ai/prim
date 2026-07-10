@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { gitToplevel } from "../lib/git.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -155,7 +156,7 @@ async function main(): Promise<void> {
     emit();
     return;
   }
-  const base = toMove(parsed, resolveCliVersion(), agent);
+  const base = toMove(parsed, resolveCliVersion(), agent, gitToplevel(cwd) ?? undefined);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   try {
     const result = await ingestMove(move);

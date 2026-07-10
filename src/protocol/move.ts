@@ -22,6 +22,7 @@ export type Move = {
   payload: unknown;
   env: {
     cwd: string;
+    repoCwd?: string;
     cliVersion: string;
     osPlatform: NodeJS.Platform;
   };
