@@ -21,12 +21,12 @@ import {
 const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts).map((s) => s.key);
 
 describe("planSetupSteps", () => {
-  it("claude, with daemon: session → daemon → hooks → skill, in order", () => {
+  it("claude, with daemon: session → daemon → health → hooks → skill, in order", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
-    expect(steps.map((s) => s.key)).toEqual(["session", "daemon", "hooks", "skill"]);
+    expect(steps.map((s) => s.key)).toEqual(["session", "daemon", "health", "hooks", "skill"]);
     expect(steps[0].args).toEqual(["claude", "install"]);
-    // daemon is the only tolerated-skip step; the rest are required.
-    expect(steps.filter((s) => !s.required).map((s) => s.key)).toEqual(["daemon"]);
+    // A requested daemon is required: --no-daemon is the explicit opt-out.
+    expect(steps.filter((s) => !s.required).map((s) => s.key)).toEqual([]);
   });
 
   it("codex: session step targets the codex integration; skill targets AGENTS.md via --agent", () => {
@@ -41,12 +41,17 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("--no-daemon: drops the daemon step, keeps the required ones", () => {
+  it("--no-daemon: persists the opt-out so SessionStart cannot heal it back on", () => {
     expect(keys({ agent: "claude", daemon: false, scope: "project" })).toEqual([
       "session",
+      "daemon-opt-out",
       "hooks",
       "skill",
     ]);
+    const optOut = planSetupSteps({ agent: "claude", daemon: false, scope: "project" }).find(
+      (step) => step.key === "daemon-opt-out",
+    );
+    expect(optOut).toMatchObject({ args: ["daemon", "stop"], required: true });
   });
 
   it("user scope: forwards --scope user to session, hooks, AND skill", () => {

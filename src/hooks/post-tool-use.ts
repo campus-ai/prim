@@ -5,9 +5,9 @@
  * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit or Codex
  * apply_patch (selected by `--agent`) — as `moves` rows by POSTing them to the
  * server's ingest endpoint, where the extractor / classifier /
- * linker pipeline turns them into decisions. Unlike the passive capture hook
- * (which journals locally and drains later), this hook ingests synchronously
- * so the server can return an immediate verdict footer for a reconciled edit.
+ * linker pipeline turns them into decisions. It writes the Move to the same
+ * durable journal first, then attempts synchronous ingest so the server can
+ * return an immediate verdict footer without making recovery depend on HTTP.
  *
  * The move carries the canonical envelope — including env.cwd — so the server
  * can relativize the edited file into the repository-relative key its
@@ -25,18 +25,18 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getClient } from "../client.js";
+import { resolveOrg } from "../binding.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
+import { deliverPostToolMove } from "./post-tool-delivery.js";
 import { toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
-const INGEST_TIMEOUT_MS = 4_000;
 const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 // Codex routes file edits through apply_patch (its single edit tool).
 const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
@@ -73,11 +73,6 @@ interface PostToolUseEnvelope {
   cwd?: string;
 }
 
-interface IngestResponse {
-  accepted: number;
-  verdictFooter?: unknown;
-}
-
 function readStdin(): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -104,15 +99,6 @@ function debug(msg: string): void {
   if (process.env.PRIM_HOOK_VERBOSE === "1") {
     process.stderr.write(`[prim-post-tool-use] ${msg}\n`);
   }
-}
-
-async function ingestMove(move: Move): Promise<IngestResponse> {
-  const client = getClient();
-  return (await client.post(
-    "/api/cli/moves/ingest",
-    { batch: [move] },
-    { signal: AbortSignal.timeout(INGEST_TIMEOUT_MS) },
-  )) as IngestResponse;
 }
 
 async function main(): Promise<void> {
@@ -157,9 +143,14 @@ async function main(): Promise<void> {
   }
   const base = toMove(parsed, resolveCliVersion(), agent);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
+  // Write-ahead before the synchronous fast path. The direct POST and every
+  // later replay carry this exact moveId, so a timeout/crash cannot create an
+  // ingestion gap and a successful direct delivery deduplicates safely when
+  // the daemon eventually drains the journal.
+  const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
   try {
-    const result = await ingestMove(move);
-    debug(`ingested ${move.moveId} (${toolName})`);
+    const result = await deliverPostToolMove(move, orgId);
+    debug(`durably ingested ${move.moveId} (${toolName})`);
     // Render the verdict footer when the ingest response carries the
     // bypass-correlation context (the user just completed a reconcile within
     // the server-side footer window). It rides STDERR as a human signal.

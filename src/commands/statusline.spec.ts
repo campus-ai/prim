@@ -113,6 +113,41 @@ describe("renderStatusline", () => {
     expect(line).not.toContain("team:");
   });
 
+  it("surfaces a stalled delivery queue instead of masking it with presence", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Sam"]),
+      healthy: false,
+      heartbeat: { healthy: true },
+      ingestion: { healthy: false, pendingCount: 4 },
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: degraded");
+    expect(line).toContain("delivery: stalled");
+    expect(line).toContain("4 pending");
+    expect(line).not.toContain("team:");
+  });
+
+  it("labels a sampled pending count as a lower bound", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Sam"]),
+      healthy: false,
+      ingestion: { healthy: false, pendingCount: 64, pendingSampled: true },
+    });
+    expect(await renderStatusline()).toContain("at least 64 pending");
+  });
+
+  it("surfaces heartbeat failure without rendering a frozen team", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Sam"]),
+      healthy: false,
+      heartbeat: { healthy: false },
+      ingestion: { healthy: true, pendingCount: 0 },
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("presence: unavailable");
+    expect(line).not.toContain("team:");
+  });
+
   it("shows 'presence: other env' (never another deployment's team) on an env mismatch", async () => {
     // Daemon alive but bound to a different deployment than this statusline
     // targets: it withholds the roster and flags envMismatch, so we render the

@@ -16,18 +16,38 @@
  * down, hooks degrade to ~200ms instead of ~30ms; never to an outright block.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { type Socket, createServer } from "node:net";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { type Server, type Socket, createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getClient, getSiteUrl, getTokenExpiresAt, refreshToken } from "../client.js";
+import { FlushError, flush } from "../flusher.js";
+import { pendingJournalStats } from "../journal.js";
+import { daemonRequest } from "./client.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
+import {
+  createDaemonHealthState,
+  heartbeatRetryDelayMs,
+  ingestionRetryDelayMs,
+  refreshDaemonHealth,
+  writeDaemonHealthState,
+} from "./health.js";
+import {
+  DAEMON_STARTUP_GRACE_MS,
+  type DaemonOwnership,
+  acquireDaemonOwnership,
+  daemonProcessIsAlive,
+  readDaemonOwner,
+  readDaemonPid,
+  releaseDaemonOwnership,
+} from "./instance-lock.js";
 
 const CONFIG_DIR = join(homedir(), ".config", "prim");
 const SOCK_PATH = join(CONFIG_DIR, "sock");
-const PID_PATH = join(CONFIG_DIR, "daemon.pid");
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const INGESTION_POLL_INTERVAL_MS = 15_000;
 const TOKEN_CHECK_INTERVAL_MS = 60_000;
 const TOKEN_REFRESH_THRESHOLD_MS = 90_000;
 const HTTP_PROXY_TIMEOUT_MS = 10_000;
@@ -35,8 +55,6 @@ const HTTP_PROXY_TIMEOUT_MS = 10_000;
 // accepted heartbeat (≈ 3 heartbeat cadences). Past this, the daemon is alive
 // but its heartbeats are failing, so the frozen data is reported as stale.
 const PRESENCE_FRESH_WINDOW_MS = 90_000;
-const SOCKET_DIR_MODE = 0o700;
-const PID_FILE_MODE = 0o600;
 const EXIT_OK = 0;
 const EXIT_CRASH = 1;
 
@@ -55,6 +73,8 @@ interface SocketResponse {
 
 const startedAt = Date.now();
 const client = getClient();
+const runtimeVersion = resolveRuntimeVersion();
+const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 let lastHeartbeatAt: number | undefined;
 // From the last accepted heartbeat ack, cached for the statusline /
@@ -70,52 +90,133 @@ let lastOnlineTeammates: { name: string; area?: string }[] | undefined;
 // heartbeats are failing keeps running but stops advancing this.
 let lastOkAtLocal: number | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
+let ingestionTimer: NodeJS.Timeout | undefined;
 let tokenCheckTimer: NodeJS.Timeout | undefined;
+let heartbeatInFlight: Promise<void> | undefined;
+let heartbeatRerunRequested = false;
+let ownership: DaemonOwnership | undefined;
+let socketServer: Server | undefined;
+let shuttingDown = false;
 
-function processIsAlive(pid: number): boolean {
+function resolveRuntimeVersion(): string {
+  if (process.env.PRIM_RUNTIME_VERSION) {
+    return process.env.PRIM_RUNTIME_VERSION;
+  }
   try {
-    process.kill(pid, 0);
-    return true;
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf-8")) as {
+      version?: string;
+    };
+    return pkg.version ?? "unknown";
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
-function takePidfile(): void {
-  if (existsSync(PID_PATH)) {
-    const existing = Number(readFileSync(PID_PATH, "utf-8").trim());
-    if (!Number.isNaN(existing) && processIsAlive(existing)) {
-      throw new Error(`daemon already running (pid=${existing})`);
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function persistHealth(): void {
+  refreshDaemonHealth(daemonHealth, Date.now());
+  daemonHealth.updatedAt = Date.now();
+  try {
+    writeDaemonHealthState(daemonHealth);
+  } catch (err) {
+    process.stderr.write(`[prim-daemon] health-state error: ${errorMessage(err)}\n`);
+  }
+}
+
+function updatePendingHealth(): void {
+  const pending = pendingJournalStats();
+  daemonHealth.ingestion.pendingCount = pending.pendingCount;
+  daemonHealth.ingestion.pendingSampled = pending.sampled;
+  daemonHealth.ingestion.oldestPendingAt = pending.oldestPendingAt;
+  daemonHealth.ingestion.strandedCount = pending.strandedCount;
+}
+
+async function takeOwnership(): Promise<void> {
+  const now = Date.now();
+  const recordedOwner = readDaemonOwner(CONFIG_DIR);
+  const recordedPid = readDaemonPid(CONFIG_DIR);
+  const candidatePids = new Set(
+    [recordedOwner?.pid, recordedPid?.pid].filter(
+      (pid): pid is number => pid !== undefined && daemonProcessIsAlive(pid),
+    ),
+  );
+
+  // A positive socket handshake is authoritative, but a failed handshake is
+  // not proof that a still-live lock owner has exited: it may only be wedged.
+  // Never admit a second owner in that state. launchd's kickstart path owns
+  // terminating the tracked process before a replacement can acquire the lock.
+  if (existsSync(SOCK_PATH) || candidatePids.size > 0) {
+    const snapshot = await daemonRequest<{ pid?: number }>(
+      "status_snapshot",
+      {},
+      { timeoutMs: 500 },
+    );
+    if (typeof snapshot?.pid === "number") {
+      throw new Error(`daemon already running (pid=${String(snapshot.pid)})`);
     }
   }
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: SOCKET_DIR_MODE });
+  const ownerIsStarting =
+    recordedOwner !== undefined &&
+    candidatePids.has(recordedOwner.pid) &&
+    now - recordedOwner.startedAt < DAEMON_STARTUP_GRACE_MS;
+  const legacyIsStarting =
+    recordedPid !== undefined &&
+    candidatePids.has(recordedPid.pid) &&
+    now - recordedPid.mtimeMs < DAEMON_STARTUP_GRACE_MS;
+  if (ownerIsStarting || legacyIsStarting) {
+    throw new Error("daemon startup already in progress");
   }
-  writeFileSync(PID_PATH, String(process.pid), { mode: PID_FILE_MODE });
+  if (recordedOwner !== undefined && candidatePids.has(recordedOwner.pid)) {
+    throw new Error(
+      `daemon ownership held by live pid=${String(recordedOwner.pid)} (socket unavailable)`,
+    );
+  }
+  if (recordedPid !== undefined && candidatePids.has(recordedPid.pid)) {
+    throw new Error(
+      `legacy daemon pid=${String(recordedPid.pid)} is still alive (socket unavailable)`,
+    );
+  }
+
+  ownership = acquireDaemonOwnership(CONFIG_DIR);
+  // With the exclusive instance lock held and no live legacy owner, any
+  // remaining socket is a crash artifact. A second live daemon never reaches
+  // this point and therefore cannot unlink the winner's socket.
+  try {
+    unlinkSync(SOCK_PATH);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw err;
+    }
+  }
 }
 
 function cleanup(): void {
-  try {
-    unlinkSync(SOCK_PATH);
-  } catch {
-    // socket may already be gone; nothing to do
-  }
-  try {
-    unlinkSync(PID_PATH);
-  } catch {
-    // pidfile may already be gone
+  if (ownership) {
+    try {
+      releaseDaemonOwnership(ownership, SOCK_PATH);
+    } catch (err) {
+      process.stderr.write(`[prim-daemon] cleanup error: ${errorMessage(err)}\n`);
+    }
   }
 }
 
-async function sendHeartbeat(): Promise<void> {
+async function performHeartbeat(): Promise<void> {
+  daemonHealth.heartbeat.lastAttemptAt = Date.now();
+  persistHealth();
   try {
     // The body is `{ sessionId }` ONLY — the server derives identity and the
     // display names from the authenticated token. The ack carries the online
     // count and the teammate names, which we cache for the statusline and
     // daemon status.
-    const result = (await client.post("/api/cli/presence/heartbeat", {
-      sessionId: activeSessionId,
-    })) as {
+    const result = (await client.post(
+      "/api/cli/presence/heartbeat",
+      { sessionId: activeSessionId },
+      { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) },
+    )) as {
       accepted?: boolean;
       lastHeartbeatAt?: number;
       created?: boolean;
@@ -125,7 +226,11 @@ async function sendHeartbeat(): Promise<void> {
       unavailable?: string;
     };
     if (result.accepted) {
-      lastOkAtLocal = Date.now();
+      const now = Date.now();
+      lastOkAtLocal = now;
+      daemonHealth.heartbeat.lastSuccessAt = now;
+      daemonHealth.heartbeat.lastError = undefined;
+      daemonHealth.heartbeat.consecutiveFailures = 0;
       if (typeof result.lastHeartbeatAt === "number") {
         lastHeartbeatAt = result.lastHeartbeatAt;
       }
@@ -140,12 +245,56 @@ async function sendHeartbeat(): Promise<void> {
       lastOnlineTeammates = Array.isArray(result.onlineTeammates)
         ? result.onlineTeammates
         : undefined;
+    } else {
+      daemonHealth.heartbeat.lastRejectedAt = Date.now();
+      daemonHealth.heartbeat.lastError =
+        typeof result.unavailable === "string" ? result.unavailable : "heartbeat rejected";
+      daemonHealth.heartbeat.consecutiveFailures += 1;
     }
+    persistHealth();
   } catch (err) {
-    process.stderr.write(
-      `[prim-daemon] heartbeat error: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    daemonHealth.heartbeat.lastError = errorMessage(err);
+    daemonHealth.heartbeat.consecutiveFailures += 1;
+    persistHealth();
+    process.stderr.write(`[prim-daemon] heartbeat error: ${errorMessage(err)}\n`);
   }
+}
+
+/** Collapse concurrent timer/session requests into one heartbeat, then rerun
+ * once if the active session changed while that request was in flight. */
+function sendHeartbeat(): Promise<void> {
+  if (heartbeatInFlight) {
+    heartbeatRerunRequested = true;
+    return heartbeatInFlight;
+  }
+  if (heartbeatTimer) {
+    clearTimeout(heartbeatTimer);
+    heartbeatTimer = undefined;
+  }
+  heartbeatInFlight = (async () => {
+    do {
+      heartbeatRerunRequested = false;
+      await performHeartbeat();
+    } while (heartbeatRerunRequested && !shuttingDown);
+  })().finally(() => {
+    heartbeatInFlight = undefined;
+    scheduleHeartbeat();
+  });
+  return heartbeatInFlight;
+}
+
+function scheduleHeartbeat(): void {
+  if (shuttingDown) {
+    return;
+  }
+  const failures = daemonHealth.heartbeat.consecutiveFailures;
+  const delay = failures > 0 ? heartbeatRetryDelayMs(failures) : HEARTBEAT_INTERVAL_MS;
+  daemonHealth.heartbeat.nextRetryAt = failures > 0 ? Date.now() + delay : undefined;
+  persistHealth();
+  heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = undefined;
+    void sendHeartbeat();
+  }, delay);
 }
 
 async function ensureTokenFresh(): Promise<void> {
@@ -155,10 +304,75 @@ async function ensureTokenFresh(): Promise<void> {
   }
   if (Date.now() >= expiresAt - TOKEN_REFRESH_THRESHOLD_MS) {
     try {
-      await refreshToken();
+      await refreshToken({ signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
     } catch {
       // best-effort; the next hook call's reactive 401 path will retry
     }
+  }
+}
+
+function scheduleIngestion(delayMs: number): void {
+  if (shuttingDown) {
+    return;
+  }
+  ingestionTimer = setTimeout(() => {
+    ingestionTimer = undefined;
+    void runIngestionLoop();
+  }, delayMs);
+}
+
+async function runIngestionLoop(): Promise<void> {
+  try {
+    updatePendingHealth();
+  } catch (err) {
+    const failures = daemonHealth.ingestion.consecutiveFailures + 1;
+    const delay = ingestionRetryDelayMs(failures);
+    daemonHealth.ingestion.consecutiveFailures = failures;
+    daemonHealth.ingestion.lastError = `journal scan failed: ${errorMessage(err)}`;
+    daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
+    persistHealth();
+    scheduleIngestion(delay);
+    return;
+  }
+
+  if (daemonHealth.ingestion.pendingCount === 0 && !daemonHealth.ingestion.pendingSampled) {
+    // Another bounded flusher may have completed a previously-failed queue.
+    // Once nothing remains, the resolved failure should not poison health.
+    daemonHealth.ingestion.consecutiveFailures = 0;
+    daemonHealth.ingestion.lastError = undefined;
+    daemonHealth.ingestion.nextRetryAt = undefined;
+    persistHealth();
+    scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
+    return;
+  }
+
+  daemonHealth.ingestion.lastAttemptAt = Date.now();
+  daemonHealth.ingestion.nextRetryAt = undefined;
+  persistHealth();
+  try {
+    const result = await flush();
+    daemonHealth.ingestion.lastSuccessAt = Date.now();
+    daemonHealth.ingestion.lastAcknowledgedCount = result.flushed;
+    daemonHealth.ingestion.consecutiveFailures = 0;
+    daemonHealth.ingestion.lastError = undefined;
+    updatePendingHealth();
+    persistHealth();
+    scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
+  } catch (err) {
+    const failures = daemonHealth.ingestion.consecutiveFailures + 1;
+    const delay = ingestionRetryDelayMs(failures);
+    daemonHealth.ingestion.lastAcknowledgedCount = err instanceof FlushError ? err.flushed : 0;
+    daemonHealth.ingestion.consecutiveFailures = failures;
+    daemonHealth.ingestion.lastError = errorMessage(err);
+    daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
+    try {
+      updatePendingHealth();
+    } catch {
+      // The delivery error is already recorded; retry will rescan.
+    }
+    persistHealth();
+    process.stderr.write(`[prim-daemon] ingestion error: ${errorMessage(err)}\n`);
+    scheduleIngestion(delay);
   }
 }
 
@@ -196,11 +410,26 @@ async function proxyGet(params: Record<string, unknown>, allowedPrefix: string):
 }
 
 function handleStatusSnapshot(params: Record<string, unknown>): unknown {
+  const wasHealthy = daemonHealth.healthy;
+  const heartbeatWasHealthy = daemonHealth.heartbeat.healthy;
+  const ingestionWasHealthy = daemonHealth.ingestion.healthy;
+  refreshDaemonHealth(daemonHealth, Date.now());
+  if (
+    wasHealthy !== daemonHealth.healthy ||
+    heartbeatWasHealthy !== daemonHealth.heartbeat.healthy ||
+    ingestionWasHealthy !== daemonHealth.ingestion.healthy
+  ) {
+    persistHealth();
+  }
   const base = {
     pid: process.pid,
     uptimeMs: Date.now() - startedAt,
     sessionId: activeSessionId,
     lastHeartbeatAt,
+    version: runtimeVersion,
+    healthy: daemonHealth.healthy,
+    heartbeat: { ...daemonHealth.heartbeat },
+    ingestion: { ...daemonHealth.ingestion },
   };
   // Presence is this daemon's own bound-env heartbeat. A cross-env caller (e.g. a
   // prod statusline reading a staging-bound daemon) must not see that roster:
@@ -219,7 +448,9 @@ function handleStatusSnapshot(params: Record<string, unknown>): unknown {
     };
   }
   const presenceFresh =
-    lastOkAtLocal !== undefined && Date.now() - lastOkAtLocal < PRESENCE_FRESH_WINDOW_MS;
+    lastOkAtLocal !== undefined &&
+    daemonHealth.heartbeat.consecutiveFailures === 0 &&
+    Date.now() - lastOkAtLocal < PRESENCE_FRESH_WINDOW_MS;
   // Stale only once we HAD an accepted ack that has since aged out — a daemon
   // that simply hasn't acked yet is not stale, just countless ("team: —").
   const presenceStale = lastOkAtLocal !== undefined && !presenceFresh;
@@ -318,70 +549,93 @@ function handleConnection(conn: Socket): void {
   });
 }
 
-function startSocketServer(): void {
-  try {
-    unlinkSync(SOCK_PATH);
-  } catch {
-    // no stale socket to remove
+function shutdown(exitCode: number, reason: string): void {
+  if (shuttingDown) {
+    return;
   }
-  const server = createServer(handleConnection);
-  server.on("error", (err) => {
-    process.stderr.write(`[prim-daemon] socket error: ${err.message}\n`);
+  shuttingDown = true;
+  process.stderr.write(`${reason}\n`);
+  stopTimers();
+  try {
+    socketServer?.close();
+  } catch {
+    // The listener may not have bound yet.
+  }
+  cleanup();
+  process.exit(exitCode);
+}
+
+function startSocketServer(): void {
+  socketServer = createServer(handleConnection);
+  socketServer.on("error", (err) => {
+    // A bind/runtime socket failure means the daemon cannot serve hooks. Exit
+    // non-zero so launchd restarts it; staying PID-alive/socket-dead is never a
+    // valid degraded mode.
+    shutdown(EXIT_CRASH, `[prim-daemon] fatal socket error: ${err.message}`);
   });
-  server.listen(SOCK_PATH, () => {
+  socketServer.listen(SOCK_PATH, () => {
     process.stderr.write(`[prim-daemon] listening on ${SOCK_PATH}\n`);
+    startTimers();
+    process.stderr.write(
+      `[prim-daemon] started (pid=${process.pid}, session=${activeSessionId}, version=${runtimeVersion})\n`,
+    );
   });
 }
 
 function startTimers(): void {
+  persistHealth();
   void sendHeartbeat();
-  heartbeatTimer = setInterval(() => {
-    void sendHeartbeat();
-  }, HEARTBEAT_INTERVAL_MS);
-  tokenCheckTimer = setInterval(() => {
-    void ensureTokenFresh();
-  }, TOKEN_CHECK_INTERVAL_MS);
+  void runIngestionLoop();
+  void runTokenCheckLoop();
+}
+
+async function runTokenCheckLoop(): Promise<void> {
+  await ensureTokenFresh();
+  if (!shuttingDown) {
+    tokenCheckTimer = setTimeout(() => {
+      tokenCheckTimer = undefined;
+      void runTokenCheckLoop();
+    }, TOKEN_CHECK_INTERVAL_MS);
+  }
 }
 
 function stopTimers(): void {
   if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
+    clearTimeout(heartbeatTimer);
+  }
+  if (ingestionTimer) {
+    clearTimeout(ingestionTimer);
   }
   if (tokenCheckTimer) {
-    clearInterval(tokenCheckTimer);
+    clearTimeout(tokenCheckTimer);
   }
 }
 
 function installSignalHandlers(): void {
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => {
-      process.stderr.write(`[prim-daemon] ${signal}, shutting down (pid=${process.pid})\n`);
-      stopTimers();
-      cleanup();
-      process.exit(EXIT_OK);
+      shutdown(EXIT_OK, `[prim-daemon] ${signal}, shutting down (pid=${process.pid})`);
     });
   }
   process.on("uncaughtException", (err) => {
-    process.stderr.write(`[prim-daemon] uncaught: ${err.message}\n`);
-    stopTimers();
-    cleanup();
-    process.exit(EXIT_CRASH);
+    shutdown(EXIT_CRASH, `[prim-daemon] uncaught: ${err.message}`);
+  });
+  process.on("unhandledRejection", (err) => {
+    shutdown(EXIT_CRASH, `[prim-daemon] unhandled rejection: ${errorMessage(err)}`);
   });
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    takePidfile();
+    await takeOwnership();
   } catch (err) {
-    process.stderr.write(`[prim-daemon] ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`[prim-daemon] ${errorMessage(err)}\n`);
+    cleanup();
     process.exit(EXIT_CRASH);
   }
 
   installSignalHandlers();
   startSocketServer();
-  startTimers();
-
-  process.stderr.write(`[prim-daemon] started (pid=${process.pid}, session=${activeSessionId})\n`);
 }
 
-main();
+void main();
