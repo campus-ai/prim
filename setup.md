@@ -34,7 +34,9 @@ npx --yes @primitive.ai/prim@latest setup
 
 - If you are **OpenAI Codex**, add `--agent codex`.
 - If you are **Hermes**, `setup` auto-detects it; add `--agent hermes` to be explicit.
-- Add `--no-daemon` to skip the optional companion daemon.
+- Add `--no-daemon` to explicitly opt out of the supervised companion daemon
+  and its continuous-delivery guarantee. This stops an existing service and
+  persists the opt-out so SessionStart self-healing will not turn it back on.
 
 This runs every step in order inside one process — pre-authorization, auth, the
 session integration (decision capture + presence), the companion
@@ -54,8 +56,8 @@ support@getprimitive.ai.
 interrupts a step, keep driving until it goes through (approve it, retry, work
 around it); do not skip it and do not ask the user to run it. `setup` is
 idempotent, so re-running is always safe. It exits 0 on success and non-zero only
-if a **required** step failed — the daemon is optional, so a daemon that doesn't
-come up never fails setup.
+if a **required** step failed. The daemon is required unless `--no-daemon` was
+supplied, so setup cannot report success while continuous delivery is down.
 
 ### Auth — the one human touch
 
@@ -117,7 +119,7 @@ non-zero must NOT abort the run or retract the welcome), but run them so the use
 sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` / `hermes status` to match your agent
-- `npx --yes @primitive.ai/prim@latest daemon status` — optional; a non-zero just means the daemon isn't running, which is fine
+- `npx --yes @primitive.ai/prim@latest daemon status` — must report healthy unless setup used `--no-daemon`
 - `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude the `~/.claude/skills/prim` plugin; for others the rules-file block)
 
 Add one line of setup specifics: where the skill landed (Claude's plugin dir or the agent's rules file), and
@@ -191,9 +193,10 @@ user` where noted, then `prim enable` in each repo you want captured.
    (or `codex install`). Wires the capture + presence hooks into
    the repo's `.claude/settings.json` / `.codex/hooks.json` (resolved from the git
    root, so any subdirectory works). Add `--scope user` to install machine-wide.
-4. **Daemon** (optional): `npx --yes @primitive.ai/prim@latest daemon start`.
-   Accelerates the in-session checks and powers the "team: N online" count. If it
-   fails, continue — the hooks fall back to direct calls and never block on it.
+4. **Daemon**: `npx --yes @primitive.ai/prim@latest daemon start`. It owns the
+   continuous journal drain and powers the "team: N online" count. Skip it only
+   with the explicit `--no-daemon` opt-out; otherwise a failed health check makes
+   setup incomplete.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
    pre-commit decision check plus a post-commit capture boundary. Add `--scope
    user` to install one global `core.hooksPath` covering every repo (the hooks

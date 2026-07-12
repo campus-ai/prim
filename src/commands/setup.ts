@@ -77,13 +77,30 @@ export function planSetupSteps(opts: {
     },
   ];
   if (opts.daemon) {
-    // Optional: the hooks fall back to direct calls if the daemon is down, so a
-    // failed start must not fail setup.
+    // The supervised daemon owns the continuous, durable journal drain. Setup
+    // must not claim completion when the user asked for that guarantee but the
+    // service failed to become healthy; --no-daemon is the explicit opt-out.
     steps.push({
       key: "daemon",
       label: "Companion daemon",
       args: ["daemon", "start"],
-      required: false,
+      required: true,
+    });
+    steps.push({
+      key: "health",
+      label: "Capture health",
+      args: ["doctor"],
+      required: true,
+    });
+  } else {
+    // Persist the opt-out, not merely the absence of a start attempt. The
+    // SessionStart self-healer respects the same explicit-stop marker, so it
+    // cannot silently undo `setup --no-daemon` on the next agent session.
+    steps.push({
+      key: "daemon-opt-out",
+      label: "Daemon opt-out",
+      args: ["daemon", "stop"],
+      required: true,
     });
   }
   // Forward scope to the git hooks and the rules file too, so `--scope user`
@@ -245,7 +262,7 @@ export function registerSetupCommand(program: Command): void {
       "--migrate",
       "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
     )
-    .option("--no-daemon", "skip starting the companion daemon")
+    .option("--no-daemon", "stop and disable the companion daemon")
     .action((opts: { agent?: string; scope: string; migrate?: boolean; daemon: boolean }) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so

@@ -56,21 +56,25 @@ export function registerMovesCommands(program: Command): void {
       console.log(`[prim] root: ${JOURNAL_DIR}`);
       for (const s of stats) {
         const ageS = Math.round((Date.now() - s.mtimeMs) / MS_PER_SECOND);
+        const count = `${String(s.lineCount)}${s.sampled ? "+" : ""}`;
         console.log(
-          `  ${s.bucket.padEnd(BUCKET_COL_WIDTH)} ${String(s.lineCount).padStart(5)} pending, ${String(s.sizeBytes).padStart(8)} bytes, last write ${String(ageS)}s ago`,
+          `  ${s.bucket.padEnd(BUCKET_COL_WIDTH)} ${count.padStart(5)} pending, ${String(s.sizeBytes).padStart(8)} bytes, last write ${String(ageS)}s ago`,
         );
       }
       if (stranded.length > 0) {
         const moveCount = stranded.reduce((n, f) => n + f.lineCount, 0);
         const byteCount = stranded.reduce((n, f) => n + f.sizeBytes, 0);
+        const sampled = stranded.some((file) => file.sampled);
+        const qualifier = sampled ? "at least " : "";
         console.log(
-          `[prim] ⚠ ${String(stranded.length)} stranded flush file(s): ${String(moveCount)} move(s), ${String(byteCount)} bytes — recover with \`prim moves flush\``,
+          `[prim] ⚠ ${String(stranded.length)} stranded flush file(s): ${qualifier}${String(moveCount)} move(s), ${String(byteCount)} bytes — recover with \`prim moves flush\``,
         );
         for (const f of stranded) {
           const ageS = Math.round((Date.now() - f.mtimeMs) / MS_PER_SECOND);
           const owner = f.pid === undefined ? "no pid" : `pid ${String(f.pid)}`;
+          const count = `${String(f.lineCount)}${f.sampled ? "+" : ""}`;
           console.log(
-            `  ${f.bucket.padEnd(BUCKET_COL_WIDTH)} ${String(f.lineCount).padStart(5)} stranded, ${String(f.sizeBytes).padStart(8)} bytes, ${String(ageS)}s ago (${owner})`,
+            `  ${f.bucket.padEnd(BUCKET_COL_WIDTH)} ${count.padStart(5)} stranded, ${String(f.sizeBytes).padStart(8)} bytes, ${String(ageS)}s ago (${owner})`,
           );
         }
       }

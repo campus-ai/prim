@@ -34,7 +34,7 @@ One command does the whole install — auth, session hooks, daemon, git hooks,
 skill, and the welcome:
 
 ```bash
-prim setup                 # add --agent codex or --agent hermes, --no-daemon to skip the daemon
+prim setup                 # add --agent codex or --agent hermes; --no-daemon explicitly opts out
 ```
 
 Or run the steps individually:
@@ -81,10 +81,10 @@ and the manual fallback — live in [`setup.md`](./setup.md).
 prim setup                   # Run the whole install in one shot
 prim setup --agent codex     # Same, for OpenAI Codex
 prim setup --agent hermes    # Same, for Hermes Agent (global-only config)
-prim setup --no-daemon       # Skip the companion daemon
+prim setup --no-daemon       # Stop it and persistently opt out of supervised delivery
 ```
 
-Orchestrates auth → session hooks → daemon → git hooks → skill → welcome,
+Orchestrates auth → session hooks → supervised daemon → capture-health gate → git hooks → skill → welcome,
 re-running each underlying command so every step behaves exactly as if run by
 hand (including the browser login). Idempotent — safe to re-run.
 
@@ -120,9 +120,10 @@ prim hermes install                # Install Hermes Agent hooks (global ~/.herme
 
 ### Daemon
 
-A long-lived companion process that accelerates the in-session decision checks
-and powers the "team: N online" presence count. Optional — hooks fall back to
-direct calls if it is down.
+A supervised long-lived companion process that continuously drains captured
+Moves, accelerates in-session decision checks, and powers the "team: N online"
+presence count. `prim setup` requires it to become healthy unless the explicit
+`--no-daemon` opt-out is supplied; hooks still fail soft if it later degrades.
 
 ```bash
 prim daemon start      # start (stop / restart / status)
@@ -177,6 +178,11 @@ and offers to install into `.husky/`.
 ```bash
 prim statusline        # Render the team-presence statusline (reads the daemon)
 ```
+
+Claude Code has one custom status-line slot. Installation uses a staged,
+lightweight Primitive renderer when that slot is empty or already Primitive's;
+an existing custom status line is preserved and reported explicitly. Use
+`prim daemon status` or `prim doctor` for the same health signal in that case.
 
 ### Welcome
 
