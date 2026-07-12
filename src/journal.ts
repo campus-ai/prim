@@ -25,11 +25,15 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
+  opendirSync,
   readFileSync,
+  readSync,
   readdirSync,
-  statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -39,6 +43,8 @@ import type { Move } from "./protocol/move.js";
 export const JOURNAL_DIR = join(homedir(), ".config", "prim", "moves");
 const UNBOUND_BUCKET = "_unbound";
 const JOURNAL_BASENAME = "journal.ndjson";
+export const JOURNAL_STATS_SAMPLE_BYTES = 64 * 1024;
+const PENDING_STATS_MAX_FILES = 128;
 
 /**
  * A filesystem-safe slug for the resolved API base URL, used as the journal's
@@ -111,11 +117,7 @@ export function appendMove(move: Move, orgId: string | undefined): void {
   appendMoveToPath(journalPath(orgId), move);
 }
 
-export function readMovesFromPath(path: string): Move[] {
-  if (!existsSync(path)) {
-    return [];
-  }
-  const content = readFileSync(path, "utf-8");
+function parseMoves(content: string): Move[] {
   const moves: Move[] = [];
   for (const line of content.split("\n")) {
     if (line.length === 0) {
@@ -128,6 +130,13 @@ export function readMovesFromPath(path: string): Move[] {
     }
   }
   return moves;
+}
+
+export function readMovesFromPath(path: string): Move[] {
+  if (!existsSync(path)) {
+    return [];
+  }
+  return parseMoves(readFileSync(path, "utf-8"));
 }
 
 /**
@@ -168,7 +177,73 @@ export type FlushingFile = {
   sizeBytes: number;
   mtimeMs: number;
   lineCount: number;
+  oldestCapturedAt?: number;
+  /** True when lineCount is a lower bound from a fixed-size prefix. */
+  sampled: boolean;
+  sampledBytes: number;
 };
+
+function oldestCapturedAt(moves: Move[]): number | undefined {
+  let oldest: number | undefined;
+  for (const move of moves) {
+    if (!Number.isFinite(move.capturedAt)) {
+      continue;
+    }
+    oldest = oldest === undefined ? move.capturedAt : Math.min(oldest, move.capturedAt);
+  }
+  return oldest;
+}
+
+export type JournalFileSample = {
+  sizeBytes: number;
+  mtimeMs: number;
+  lineCount: number;
+  oldestCapturedAt?: number;
+  sampled: boolean;
+  sampledBytes: number;
+};
+
+/** Read only a fixed prefix; sampled line counts are explicit lower bounds. */
+export function sampleJournalFile(
+  path: string,
+  maxBytes: number = JOURNAL_STATS_SAMPLE_BYTES,
+): JournalFileSample {
+  const fd = openSync(path, "r");
+  try {
+    const initial = fstatSync(fd);
+    const target = Math.min(initial.size, Math.max(0, maxBytes));
+    const buffer = Buffer.allocUnsafe(target);
+    let sampledBytes = 0;
+    while (sampledBytes < target) {
+      const count = readSync(fd, buffer, sampledBytes, target - sampledBytes, sampledBytes);
+      if (count === 0) {
+        break;
+      }
+      sampledBytes += count;
+    }
+    const stat = fstatSync(fd);
+    const sampled = stat.size > sampledBytes;
+    let content = buffer.subarray(0, sampledBytes).toString("utf-8");
+    if (sampled) {
+      // The prefix may end inside a UTF-8 sequence or JSON record. Only parse
+      // newline-terminated records that are known to be complete.
+      const lastNewline = content.lastIndexOf("\n");
+      content = lastNewline === -1 ? "" : content.slice(0, lastNewline + 1);
+    }
+    const lines = content.split("\n").filter((line) => line.length > 0);
+    const moves = parseMoves(content);
+    return {
+      sizeBytes: stat.size,
+      mtimeMs: stat.mtimeMs,
+      lineCount: sampled && stat.size > 0 ? Math.max(1, lines.length) : lines.length,
+      oldestCapturedAt: oldestCapturedAt(moves),
+      sampled,
+      sampledBytes,
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function parseFlushingPid(name: string): number | undefined {
   // The flusher names rotations `journal.ndjson.flushing.<ts>.<pid>`; older
@@ -186,28 +261,48 @@ function parseFlushingPid(name: string): number | undefined {
  * unlink-on-success; nothing else enumerates them, so both `prim moves status`
  * and the recovery sweep read this.
  */
-export function listFlushingInDir(dir: string, bucket: string): FlushingFile[] {
+export function listFlushingInDir(
+  dir: string,
+  bucket: string,
+  options: { sampleBytes?: number; maxFiles?: number } = {},
+): FlushingFile[] {
   if (!existsSync(dir)) {
     return [];
   }
   const out: FlushingFile[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.startsWith(FLUSHING_PREFIX)) {
-      continue;
+  let remainingBytes = options.sampleBytes ?? JOURNAL_STATS_SAMPLE_BYTES;
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
+  const entries = opendirSync(dir);
+  try {
+    let entry = entries.readSync();
+    while (entry && out.length < maxFiles) {
+      if (!entry.isFile() || !entry.name.startsWith(FLUSHING_PREFIX)) {
+        entry = entries.readSync();
+        continue;
+      }
+      const path = join(dir, entry.name);
+      let sample: JournalFileSample;
+      try {
+        sample = sampleJournalFile(path, remainingBytes);
+      } catch (err) {
+        // A concurrent drain may unlink the rotation between readdir and stat.
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          entry = entries.readSync();
+          continue;
+        }
+        throw err;
+      }
+      remainingBytes = Math.max(0, remainingBytes - sample.sampledBytes);
+      out.push({
+        bucket,
+        path,
+        pid: parseFlushingPid(entry.name),
+        ...sample,
+      });
+      entry = entries.readSync();
     }
-    const path = join(dir, entry.name);
-    const stat = statSync(path);
-    const lineCount = readFileSync(path, "utf-8")
-      .split("\n")
-      .filter((l) => l.length > 0).length;
-    out.push({
-      bucket,
-      path,
-      pid: parseFlushingPid(entry.name),
-      sizeBytes: stat.size,
-      mtimeMs: stat.mtimeMs,
-      lineCount,
-    });
+  } finally {
+    entries.closeSync();
   }
   return out;
 }
@@ -220,15 +315,30 @@ export function listFlushingInDir(dir: string, bucket: string): FlushingFile[] {
  * environments; leftovers under another env slug (or a pre-partition legacy
  * layout) are orphaned, not mis-flushed. listBuckets() never names these.
  */
-export function listFlushing(): FlushingFile[] {
+export function listFlushing(
+  options: { sampleBytes?: number; maxFiles?: number } = {},
+): FlushingFile[] {
   const envDir = currentEnvDir();
   if (!existsSync(envDir)) {
     return [];
   }
   const out: FlushingFile[] = [];
+  let remainingBytes = options.sampleBytes ?? JOURNAL_STATS_SAMPLE_BYTES;
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
   for (const entry of readdirSync(envDir, { withFileTypes: true })) {
+    if (out.length >= maxFiles) {
+      break;
+    }
     if (entry.isDirectory()) {
-      out.push(...listFlushingInDir(join(envDir, entry.name), entry.name));
+      const found = listFlushingInDir(join(envDir, entry.name), entry.name, {
+        sampleBytes: remainingBytes,
+        maxFiles: maxFiles - out.length,
+      });
+      out.push(...found);
+      remainingBytes = Math.max(
+        0,
+        remainingBytes - found.reduce((count, file) => count + file.sampledBytes, 0),
+      );
     }
   }
   return out;
@@ -240,19 +350,72 @@ export type BucketStats = {
   sizeBytes: number;
   mtimeMs: number;
   lineCount: number;
+  oldestCapturedAt?: number;
+  sampled: boolean;
+  sampledBytes: number;
 };
 
-export function bucketStats(): BucketStats[] {
-  return listBuckets().map(({ bucket, path }) => {
-    const stat = statSync(path);
-    const content = readFileSync(path, "utf-8");
-    const lineCount = content.split("\n").filter((l) => l.length > 0).length;
-    return {
+export function bucketStats(
+  options: { sampleBytes?: number; maxFiles?: number } = {},
+): BucketStats[] {
+  const out: BucketStats[] = [];
+  let remainingBytes = options.sampleBytes ?? JOURNAL_STATS_SAMPLE_BYTES;
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
+  for (const { bucket, path } of listBuckets()) {
+    if (out.length >= maxFiles) {
+      break;
+    }
+    let sample: JournalFileSample;
+    try {
+      sample = sampleJournalFile(path, remainingBytes);
+    } catch (err) {
+      // The flusher rotates with rename, so enumeration can legitimately race
+      // a path that no longer exists.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw err;
+    }
+    remainingBytes = Math.max(0, remainingBytes - sample.sampledBytes);
+    out.push({
       bucket,
       path,
-      sizeBytes: stat.size,
-      mtimeMs: stat.mtimeMs,
-      lineCount,
-    };
-  });
+      ...sample,
+    });
+  }
+  return out;
+}
+
+export type PendingJournalStats = {
+  pendingCount: number;
+  oldestPendingAt?: number;
+  strandedCount: number;
+  strandedFileCount: number;
+  /** Counts are lower bounds whenever the fixed byte/file budget was hit. */
+  sampled: boolean;
+  strandedSampled: boolean;
+};
+
+/** Aggregate live journals and rotations, including an orphan-only queue. */
+export function pendingJournalStats(): PendingJournalStats {
+  const perKindBytes = Math.floor(JOURNAL_STATS_SAMPLE_BYTES / 2);
+  const perKindFiles = Math.floor(PENDING_STATS_MAX_FILES / 2);
+  const live = bucketStats({ sampleBytes: perKindBytes, maxFiles: perKindFiles });
+  const stranded = listFlushing({ sampleBytes: perKindBytes, maxFiles: perKindFiles });
+  const timestamps = [...live, ...stranded]
+    .map((entry) => entry.oldestCapturedAt)
+    .filter((value): value is number => value !== undefined);
+  const liveSampled = live.some((entry) => entry.sampled) || live.length >= perKindFiles;
+  const strandedSampled =
+    stranded.some((entry) => entry.sampled) || stranded.length >= perKindFiles;
+  return {
+    pendingCount:
+      live.reduce((count, entry) => count + entry.lineCount, 0) +
+      stranded.reduce((count, entry) => count + entry.lineCount, 0),
+    oldestPendingAt: timestamps.length > 0 ? Math.min(...timestamps) : undefined,
+    strandedCount: stranded.reduce((count, entry) => count + entry.lineCount, 0),
+    strandedFileCount: stranded.length,
+    sampled: liveSampled || strandedSampled,
+    strandedSampled,
+  };
 }

@@ -38,6 +38,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
+import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
 import { activateRepoBestEffort } from "../lib/activation.js";
 import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
@@ -338,6 +339,12 @@ export function ensureRegistration(
 }
 
 const LEGACY_STATUSLINE_COMMAND = "prim statusline";
+const RUNTIME_STATUSLINE_SUFFIXES = [
+  "/prim/runtime/prim-statusline",
+  // One pre-launcher build persisted the JS entry directly. Keep recognizing
+  // it so reinstall migrates and uninstall removes that older staged form.
+  "/prim/runtime/current/prim-statusline",
+] as const;
 function isPrimStatusLine(settings: ClaudeSettings): boolean {
   const s = settings.statusLine;
   if (s?.type !== "command") {
@@ -348,7 +355,8 @@ function isPrimStatusLine(settings: ClaudeSettings): boolean {
   // in its branches). A user's own statusLine references neither.
   return (
     c === LEGACY_STATUSLINE_COMMAND ||
-    (c.includes("@primitive.ai/prim") && c.includes("statusline"))
+    (c.includes("@primitive.ai/prim") && c.includes("statusline")) ||
+    RUNTIME_STATUSLINE_SUFFIXES.some((suffix) => c.includes(suffix))
   );
 }
 
@@ -357,7 +365,16 @@ function isPrimStatusLine(settings: ClaudeSettings): boolean {
  * user's own statusLine is never clobbered. Always writes the refreshInterval,
  * so re-running install upgrades an older prim statusLine that predates it.
  */
-function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
+function applyStatusLine(
+  settings: ClaudeSettings,
+  command: string | false = STATUSLINE_COMMAND,
+): ClaudeSettings {
+  if (command === false) {
+    // A custom user-scope statusLine is the effective owner when project scope
+    // has no custom slot of its own. Remove an older Primitive project entry
+    // as well as declining a new one, so reinstall cannot keep shadowing it.
+    return isPrimStatusLine(settings) ? { ...settings, statusLine: undefined } : settings;
+  }
   if (settings.statusLine && !isPrimStatusLine(settings)) {
     return settings;
   }
@@ -365,7 +382,7 @@ function applyStatusLine(settings: ClaudeSettings): ClaudeSettings {
     ...settings,
     statusLine: {
       type: "command",
-      command: STATUSLINE_COMMAND,
+      command,
       refreshInterval: STATUSLINE_REFRESH_SECONDS,
     },
   };
@@ -459,13 +476,20 @@ function removeAutoModeTrust(settings: ClaudeSettings): ClaudeSettings {
 
 export function applyInstall(
   settings: ClaudeSettings,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; statuslineCommand?: string; installStatusline?: boolean } = {},
 ): ClaudeSettings {
   const hooks: Record<string, HookEntry[] | undefined> = { ...(settings.hooks ?? {}) };
   for (const reg of REGISTRATIONS) {
     hooks[reg.event] = ensureRegistration(hooks[reg.event] ?? [], reg, options.force ?? false);
   }
-  return applyPermissions(applyStatusLine({ ...settings, hooks }));
+  return applyPermissions(
+    applyStatusLine(
+      { ...settings, hooks },
+      options.installStatusline === false
+        ? false
+        : (options.statuslineCommand ?? STATUSLINE_COMMAND),
+    ),
+  );
 }
 
 export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
@@ -510,6 +534,15 @@ function statuslineInstalled(settings: ClaudeSettings): boolean {
   return isPrimStatusLine(settings);
 }
 
+export type StatuslineState = "primitive" | "custom" | "empty";
+
+export function statuslineState(settings: ClaudeSettings): StatuslineState {
+  if (isPrimStatusLine(settings)) {
+    return "primitive";
+  }
+  return settings.statusLine ? "custom" : "empty";
+}
+
 /**
  * The unified surface is "installed" when the conflict GATE is present —
  * capture alone (passive telemetry) does not count. `prim claude status`
@@ -544,6 +577,7 @@ export type ScopeStatus = {
   capture: boolean;
   feedback: boolean;
   statusline: boolean;
+  statuslineState: StatuslineState;
 };
 
 export type InstallResult = {
@@ -553,13 +587,54 @@ export type InstallResult = {
   capture: boolean;
   feedback: boolean;
   statusline: boolean;
+  statuslineState: StatuslineState;
   changed: boolean;
 };
+
+/** Project scalar settings override user settings, so never shadow a custom
+ * user status line with Primitive merely because the project slot is empty. */
+export function userStatuslineBlocksProjectInstall(
+  scope: Scope,
+  userSettings: ClaudeSettings,
+): boolean {
+  return scope === "project" && statuslineState(userSettings) === "custom";
+}
 
 export function performInstall(scope: Scope, force: boolean): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const after = applyInstall(before, { force });
+  const blockedByUserStatusline = userStatuslineBlocksProjectInstall(
+    scope,
+    scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
+  );
+  let statuslineCommand = STATUSLINE_COMMAND;
+  // A long-lived Claude setting must not point into an npx cache that package
+  // cleanup can remove. On macOS, stage the standalone status-line entry beside
+  // the supervised daemon and persist that stable path. Custom slots are left
+  // entirely untouched, so there is nothing to stage for them.
+  if (
+    !blockedByUserStatusline &&
+    process.platform === "darwin" &&
+    (!before.statusLine || isPrimStatusLine(before))
+  ) {
+    try {
+      const runtime = stageRuntime();
+      if (!runtime.manifest.statuslineFile) {
+        throw new Error("standalone prim-statusline entry is unavailable");
+      }
+      statuslineCommand = runtimeStatuslineCommand();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `[prim] ⚠ could not stage the durable statusline runtime (${detail}); using the package resolver\n`,
+      );
+    }
+  }
+  const after = applyInstall(before, {
+    force,
+    statuslineCommand,
+    installStatusline: !blockedByUserStatusline,
+  });
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
@@ -579,6 +654,7 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     capture: captureInstalled(after),
     feedback: feedbackInstalled(after),
     statusline: statuslineInstalled(after),
+    statuslineState: statuslineState(after),
     changed,
   };
 }
@@ -598,6 +674,7 @@ export function performUninstall(scope: Scope): InstallResult {
     capture: captureInstalled(after),
     feedback: feedbackInstalled(after),
     statusline: statuslineInstalled(after),
+    statuslineState: statuslineState(after),
     changed,
   };
 }
@@ -645,6 +722,7 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
       capture: captureInstalled(settings),
       feedback: feedbackInstalled(settings),
       statusline: statuslineInstalled(settings),
+      statuslineState: statuslineState(settings),
     };
   };
   return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
@@ -688,6 +766,23 @@ export function registerClaudeCommands(program: Command): void {
       } else {
         console.error(
           `[prim] Claude Code integration already present at ${result.path} (no changes)`,
+        );
+      }
+      const projectState = scope === "user" ? performStatus().project.statuslineState : undefined;
+      const userState = scope === "project" ? performStatus().user.statuslineState : undefined;
+      if (
+        result.statuslineState === "custom" ||
+        projectState === "custom" ||
+        userState === "custom"
+      ) {
+        const owner =
+          result.statuslineState === "custom"
+            ? result.path
+            : projectState === "custom"
+              ? projectScopePath()
+              : USER_SCOPE_PATH;
+        console.error(
+          `[prim] ⚠ statusline skipped: an existing custom statusLine is preserved at ${owner}; run \`prim daemon status\` for Primitive health`,
         );
       }
       console.log(JSON.stringify(result, null, JSON_INDENT));
@@ -743,7 +838,7 @@ export function registerClaudeCommands(program: Command): void {
       const result = performStatus();
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
-        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${mark(s.statusline)} (${s.path})`;
+        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${s.statuslineState} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });

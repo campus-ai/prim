@@ -21,6 +21,8 @@ import {
   feedbackInstalled,
   isGateInstalled,
   resolveScope,
+  statuslineState,
+  userStatuslineBlocksProjectInstall,
 } from "./claude-install.js";
 
 const CAPTURE_EVENTS = [
@@ -477,6 +479,25 @@ describe("post-tool-use, session hooks, statusline install", () => {
     expect(out.statusLine?.command).toContain("@primitive.ai/prim");
   });
 
+  it("can install and recognize the durable staged statusLine command", () => {
+    const command = "'/Users/test/.local/share/prim/runtime/prim-statusline'";
+    const out = applyInstall(EMPTY, { statuslineCommand: command });
+    expect(out.statusLine?.command).toBe(command);
+    expect(statuslineState(out)).toBe("primitive");
+    expect(applyUninstall(out).statusLine).toBeUndefined();
+  });
+
+  it("recognizes and upgrades the older direct staged statusLine command", () => {
+    const old: ClaudeSettings = {
+      statusLine: {
+        type: "command",
+        command: "'/usr/bin/node' '/Users/test/.local/share/prim/runtime/current/prim-statusline'",
+      },
+    };
+    const command = "'/Users/test/.local/share/prim/runtime/prim-statusline'";
+    expect(applyInstall(old, { statuslineCommand: command }).statusLine?.command).toBe(command);
+  });
+
   it("upgrades an older (bare) prim statusLine that predates the refresh interval", () => {
     const old: ClaudeSettings = {
       statusLine: { type: "command", command: "prim statusline" },
@@ -492,6 +513,33 @@ describe("post-tool-use, session hooks, statusline install", () => {
     };
     const out = applyInstall(userStatusLine);
     expect(out.statusLine).toEqual({ type: "command", command: "my-custom-statusline" });
+    expect(statuslineState(out)).toBe("custom");
+  });
+
+  it("does not let a project Primitive statusLine shadow a custom user statusLine", () => {
+    const user: ClaudeSettings = {
+      statusLine: { type: "command", command: "my-global-statusline" },
+    };
+    expect(userStatuslineBlocksProjectInstall("project", user)).toBe(true);
+    const priorProjectPrimitive = applyInstall(EMPTY);
+    const out = applyInstall(priorProjectPrimitive, { installStatusline: false });
+    expect(out.statusLine).toBeUndefined();
+    expect(isGateInstalled(out)).toBe(true);
+  });
+
+  it("allows user-scope Primitive installation because a project custom line remains effective", () => {
+    const user: ClaudeSettings = {
+      statusLine: { type: "command", command: "my-global-statusline" },
+    };
+    expect(userStatuslineBlocksProjectInstall("user", user)).toBe(false);
+  });
+
+  it("reports primitive/custom/empty statusline ownership explicitly", () => {
+    expect(statuslineState(applyInstall(EMPTY))).toBe("primitive");
+    expect(
+      statuslineState({ statusLine: { type: "command", command: "my-custom-statusline" } }),
+    ).toBe("custom");
+    expect(statuslineState(EMPTY)).toBe("empty");
   });
 
   it("uninstall strips every prim hook binary and the prim statusLine", () => {

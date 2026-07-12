@@ -3,11 +3,12 @@
  * companion process.
  *
  * Lifecycle:
- *   prim daemon start                spawn detached, return immediately
- *   prim daemon start --foreground   run inline (useful under launchd)
- *   prim daemon stop                 SIGTERM, wait up to 5s, cleanup
+ *   prim daemon start                supervise with launchd on macOS
+ *   prim daemon start --foreground   run inline (or detached fallback elsewhere)
+ *   prim daemon stop                 bootout on macOS; verified SIGTERM elsewhere
  *   prim daemon status               liveness probe + status snapshot
- *   prim daemon restart              stop + start
+ *   prim daemon restart              supervised kickstart/reload on macOS
+ *   prim daemon ensure               repair unless explicitly disabled
  *
  * The daemon binary is `prim-daemon-server`, installed alongside the
  * other bins by `npm i -g @primitive.ai/prim`. In a dev checkout you
@@ -23,6 +24,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
+import {
+  type LaunchdService,
+  bootoutMacDaemon,
+  daemonExplicitlyDisabled,
+  ensureMacDaemon,
+  getLaunchdService,
+  setDaemonExplicitlyDisabled,
+  withDaemonLifecycleLock,
+} from "../daemon/launchd.js";
 import { binFile } from "../lib/bin-path.js";
 import { formatTeammates } from "../lib/presence.js";
 
@@ -46,6 +56,8 @@ const STATUS_PROBE_TIMEOUT_MS = 500;
 const READY_TIMEOUT_MS = 5_000;
 const READY_POLL_MS = 100;
 const READY_PROBE_TIMEOUT_MS = 250;
+const HEALTHY_TIMEOUT_MS = 30_000;
+const HEALTHY_POLL_MS = 250;
 const EXIT_OK = 0;
 const EXIT_NOT_RUNNING = 2;
 // Pidfile alive but the socket isn't answering yet — booting (or wedged),
@@ -62,6 +74,8 @@ interface StatusSnapshot {
   uptimeMs: number;
   sessionId: string;
   lastHeartbeatAt?: number;
+  healthy?: boolean;
+  version?: string;
   onlineCount?: number;
   // Online teammates (self excluded), sorted. Surfaced in full here, where
   // there's room; the statusline truncates the same list.
@@ -103,10 +117,7 @@ function clearStaleArtifacts(): void {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref();
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -146,14 +157,76 @@ async function waitForReady(): Promise<boolean> {
   return daemonIsLive(READY_PROBE_TIMEOUT_MS);
 }
 
-async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
+async function waitForHealthySnapshot(expectedVersion: string): Promise<StatusSnapshot | null> {
+  const deadline = Date.now() + HEALTHY_TIMEOUT_MS;
+  let snapshot: StatusSnapshot | null = null;
+  while (Date.now() < deadline) {
+    snapshot = await daemonRequest<StatusSnapshot>(
+      "status_snapshot",
+      {},
+      { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+    );
+    if (snapshot?.healthy === true && snapshot.version === expectedVersion) return snapshot;
+    await sleep(HEALTHY_POLL_MS);
+  }
+  return snapshot;
+}
+
+async function verifiedPid(existing: RunningPid): Promise<StatusSnapshot | null> {
+  if (!existing.alive) return null;
+  const snapshot = await daemonRequest<StatusSnapshot>(
+    "status_snapshot",
+    {},
+    { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+  );
+  return snapshot?.pid === existing.pid ? snapshot : null;
+}
+
+export function daemonStartIsHealthy(
+  serviceReady: boolean,
+  snapshot: Pick<StatusSnapshot, "healthy" | "version"> | null,
+  expectedVersion: string | undefined,
+): boolean {
+  return (
+    serviceReady &&
+    snapshot?.healthy === true &&
+    expectedVersion !== undefined &&
+    snapshot.version === expectedVersion
+  );
+}
+
+async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void> {
   const existing = readPidfile();
   if (existing?.alive) {
-    process.stderr.write(`[prim] daemon already running (pid=${existing.pid})\n`);
-    console.log(JSON.stringify({ started: false, pid: existing.pid }, null, 2));
+    const snapshot = await verifiedPid(existing);
+    if (snapshot) {
+      process.stderr.write(`[prim] daemon already running (pid=${existing.pid})\n`);
+      console.log(JSON.stringify({ started: false, pid: existing.pid }, null, 2));
+      return;
+    }
+    process.stderr.write(
+      `[prim] refusing to replace live pid=${existing.pid}: daemon ownership could not be verified over ${SOCK_PATH}\n`,
+    );
+    console.log(JSON.stringify({ started: false, pid: existing.pid, verified: false }, null, 2));
+    if (!process.exitCode) process.exitCode = EXIT_BOOTING;
     return;
   }
   if (existing && !existing.alive) {
+    const socketOwner = await daemonRequest<StatusSnapshot>(
+      "status_snapshot",
+      {},
+      { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+    );
+    if (socketOwner) {
+      process.stderr.write(
+        `[prim] refusing to clear stale pidfile: socket is owned by pid=${socketOwner.pid}\n`,
+      );
+      console.log(
+        JSON.stringify({ started: false, pid: socketOwner.pid, verified: false }, null, 2),
+      );
+      if (!process.exitCode) process.exitCode = EXIT_BOOTING;
+      return;
+    }
     clearStaleArtifacts();
   }
 
@@ -205,7 +278,7 @@ async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
   }
 }
 
-async function daemonStop(): Promise<void> {
+async function detachedDaemonStop(): Promise<void> {
   const existing = readPidfile();
   if (!existing) {
     process.stderr.write("[prim] daemon not running (no pidfile)\n");
@@ -213,9 +286,32 @@ async function daemonStop(): Promise<void> {
     return;
   }
   if (!existing.alive) {
+    const socketOwner = await daemonRequest<StatusSnapshot>(
+      "status_snapshot",
+      {},
+      { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+    );
+    if (socketOwner) {
+      process.stderr.write(
+        `[prim] refusing to clear stale pidfile: socket is owned by pid=${socketOwner.pid}\n`,
+      );
+      console.log(
+        JSON.stringify({ stopped: false, pid: socketOwner.pid, verified: false }, null, 2),
+      );
+      return;
+    }
     clearStaleArtifacts();
     process.stderr.write("[prim] daemon not running (cleared stale pidfile)\n");
     console.log(JSON.stringify({ stopped: false, wasRunning: false }, null, 2));
+    return;
+  }
+  const snapshot = await verifiedPid(existing);
+  if (!snapshot) {
+    process.stderr.write(
+      `[prim] refusing to signal live pid=${existing.pid}: daemon ownership could not be verified over ${SOCK_PATH}\n`,
+    );
+    console.log(JSON.stringify({ stopped: false, pid: existing.pid, verified: false }, null, 2));
+    if (!process.exitCode) process.exitCode = EXIT_BOOTING;
     return;
   }
   try {
@@ -242,6 +338,87 @@ async function daemonStop(): Promise<void> {
     `[prim] daemon did not exit within ${STOP_TIMEOUT_MS}ms (pid=${existing.pid} still alive)\n`,
   );
   console.log(JSON.stringify({ stopped: false, pid: existing.pid }, null, 2));
+  if (!process.exitCode) process.exitCode = EXIT_BOOTING;
+}
+
+async function macDaemonStart(forceRestart = false): Promise<void> {
+  const result = await ensureMacDaemon({ explicitlyStarted: true, forceRestart });
+  const serviceReady = result.state === "running";
+  const expectedVersion = result.runtime?.manifest.version;
+  const snapshot =
+    serviceReady && expectedVersion ? await waitForHealthySnapshot(expectedVersion) : null;
+  const healthy = daemonStartIsHealthy(serviceReady, snapshot, expectedVersion);
+  if (healthy) {
+    const verb = result.action === "none" ? "already running" : "started";
+    process.stderr.write(
+      `[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? result.service.pid ?? "?"})\n`,
+    );
+  } else {
+    process.stderr.write(
+      `[prim] ✗ launchd daemon did not reach healthy heartbeat + ingestion state (see ${LOG_PATH})\n`,
+    );
+    if (!process.exitCode) process.exitCode = EXIT_NOT_RUNNING;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        started: healthy,
+        supervised: true,
+        action: result.action,
+        pid: snapshot?.pid ?? result.service.pid,
+        loaded: result.service.loaded,
+        responding: result.responding,
+        healthy,
+        version: snapshot?.version,
+        expectedVersion,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function daemonStart(opts: { foreground?: boolean }): Promise<void> {
+  if (process.platform === "darwin") {
+    if (!opts.foreground) {
+      await macDaemonStart(false);
+      return;
+    }
+  }
+  await withDaemonLifecycleLock(async () => {
+    setDaemonExplicitlyDisabled(false);
+    await detachedDaemonStart(opts);
+  });
+}
+
+async function daemonStop(): Promise<void> {
+  if (process.platform !== "darwin") {
+    await withDaemonLifecycleLock(async () => {
+      setDaemonExplicitlyDisabled(true);
+      await detachedDaemonStop();
+    });
+    return;
+  }
+  const result = await bootoutMacDaemon();
+  process.stderr.write(
+    result.wasLoaded
+      ? "[prim] daemon stopped and explicitly disabled\n"
+      : result.legacyStopped
+        ? "[prim] legacy daemon stopped and explicitly disabled\n"
+        : "[prim] daemon was not loaded; explicitly disabled\n",
+  );
+  console.log(
+    JSON.stringify(
+      {
+        stopped: result.wasLoaded || result.legacyStopped,
+        wasRunning: result.wasLoaded || result.legacyStopped,
+        supervised: true,
+        disabled: true,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 export type DaemonStatusVerdict = {
@@ -277,10 +454,132 @@ export function classifyStatus(
   if (!snapshot) {
     return { json: { running: true, responding: true }, exitCode: EXIT_OK };
   }
+  if (snapshot.healthy === false) {
+    return {
+      json: { running: true, responding: true, state: "degraded", ...snapshot },
+      exitCode: EXIT_BOOTING,
+    };
+  }
   return { json: { running: true, responding: true, ...snapshot }, exitCode: EXIT_OK };
 }
 
-async function daemonStatus(): Promise<void> {
+export function classifyLaunchdStatus(
+  service: LaunchdService,
+  responding: boolean,
+  snapshot: StatusSnapshot | null,
+  disabled: boolean,
+): DaemonStatusVerdict {
+  if (!service.loaded) {
+    if (responding) {
+      return {
+        json: {
+          running: true,
+          responding: true,
+          supervised: false,
+          state: "unsupervised",
+          disabled,
+          ...snapshot,
+        },
+        exitCode: EXIT_BOOTING,
+      };
+    }
+    return {
+      json: { running: false, supervised: true, loaded: false, disabled },
+      exitCode: EXIT_NOT_RUNNING,
+    };
+  }
+  if (!responding) {
+    return {
+      json: {
+        running: true,
+        responding: false,
+        supervised: true,
+        state: service.state ?? "starting",
+        pid: service.pid,
+        disabled,
+      },
+      exitCode: EXIT_BOOTING,
+    };
+  }
+  if (!snapshot || service.pid === undefined) {
+    return {
+      json: {
+        running: true,
+        responding: true,
+        supervised: true,
+        state: "ownership_unverified",
+        pid: service.pid,
+        socketPid: snapshot?.pid,
+        disabled,
+      },
+      exitCode: EXIT_BOOTING,
+    };
+  }
+  if (service.pid !== snapshot.pid) {
+    return {
+      json: {
+        running: true,
+        responding: true,
+        supervised: true,
+        state: "pid_mismatch",
+        pid: service.pid,
+        socketPid: snapshot.pid,
+        disabled,
+      },
+      exitCode: EXIT_BOOTING,
+    };
+  }
+  if (snapshot?.healthy === false) {
+    return {
+      json: {
+        running: true,
+        responding: true,
+        supervised: true,
+        state: "degraded",
+        disabled,
+        ...snapshot,
+      },
+      exitCode: EXIT_BOOTING,
+    };
+  }
+  return {
+    json: {
+      running: true,
+      responding: true,
+      supervised: true,
+      state: service.state ?? "running",
+      disabled,
+      ...snapshot,
+    },
+    exitCode: EXIT_OK,
+  };
+}
+
+function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false): void {
+  if (!snapshot) {
+    process.stderr.write(
+      supervised ? "[prim] ✓ daemon live under launchd (no snapshot)\n" : "[prim] ✓ daemon live\n",
+    );
+    return;
+  }
+  const team =
+    snapshot.onlineNames !== undefined
+      ? ` · team: ${formatTeammates(snapshot.onlineNames, Number.POSITIVE_INFINITY)}`
+      : "";
+  if (snapshot.healthy === false) {
+    process.stderr.write(
+      `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}\n`,
+    );
+    return;
+  }
+  process.stderr.write(
+    `[prim] ✓ daemon live${supervised ? " under launchd" : ""} · pid=${snapshot.pid} · uptime=${Math.round(
+      snapshot.uptimeMs / 1000,
+    )}s · session=${snapshot.sessionId}${team}\n`,
+  );
+}
+
+async function detachedDaemonStatus(): Promise<void> {
   const pid = readPidfile();
   const pidAlive = pid?.alive ?? false;
   const responding = pidAlive ? await daemonIsLive(STATUS_PROBE_TIMEOUT_MS) : false;
@@ -298,18 +597,8 @@ async function daemonStatus(): Promise<void> {
     process.stderr.write("[prim] ✗ daemon down\n");
   } else if (!responding) {
     process.stderr.write(`[prim] ◌ daemon pid=${pid?.pid} starting (socket not responding yet)\n`);
-  } else if (!snapshot) {
-    process.stderr.write("[prim] ✓ daemon live (no snapshot)\n");
   } else {
-    // Full teammate list (self excluded) when presence is fresh; omit the
-    // segment entirely when names are unknown rather than print "team: —".
-    const team =
-      snapshot.onlineNames !== undefined
-        ? ` · team: ${formatTeammates(snapshot.onlineNames, Number.POSITIVE_INFINITY)}`
-        : "";
-    process.stderr.write(
-      `[prim] ✓ daemon live · pid=${snapshot.pid} · uptime=${Math.round(snapshot.uptimeMs / 1000)}s · session=${snapshot.sessionId}${team}\n`,
-    );
+    writeLiveSnapshot(snapshot);
   }
   console.log(JSON.stringify(json, null, 2));
   if (exitCode !== EXIT_OK && !process.exitCode) {
@@ -317,9 +606,101 @@ async function daemonStatus(): Promise<void> {
   }
 }
 
+async function macDaemonStatus(): Promise<void> {
+  const service = getLaunchdService();
+  const responding = await daemonIsLive(STATUS_PROBE_TIMEOUT_MS);
+  const snapshot = responding
+    ? await daemonRequest<StatusSnapshot>(
+        "status_snapshot",
+        {},
+        { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+      )
+    : null;
+  const disabled = daemonExplicitlyDisabled();
+  const { json, exitCode } = classifyLaunchdStatus(service, responding, snapshot, disabled);
+
+  if (!service.loaded && responding) {
+    process.stderr.write(
+      `[prim] ◌ daemon pid=${snapshot?.pid ?? "?"} is live but not supervised by launchd\n`,
+    );
+  } else if (!service.loaded) {
+    process.stderr.write(`[prim] ✗ daemon down${disabled ? " (explicitly disabled)" : ""}\n`);
+  } else if (!responding) {
+    process.stderr.write(
+      `[prim] ◌ launchd service ${service.state ?? "loaded"}; socket is not responding yet\n`,
+    );
+  } else if (!snapshot || service.pid === undefined) {
+    process.stderr.write("[prim] ✗ launchd daemon socket ownership could not be verified\n");
+  } else if (service.pid !== snapshot.pid) {
+    process.stderr.write(
+      `[prim] ✗ launchd pid=${service.pid} does not own the daemon socket (pid=${snapshot.pid})\n`,
+    );
+  } else {
+    writeLiveSnapshot(snapshot, true);
+  }
+  console.log(JSON.stringify(json, null, 2));
+  if (exitCode !== EXIT_OK && !process.exitCode) process.exitCode = exitCode;
+}
+
+async function daemonStatus(): Promise<void> {
+  if (process.platform === "darwin") {
+    await macDaemonStatus();
+    return;
+  }
+  await detachedDaemonStatus();
+}
+
 async function daemonRestart(opts: { foreground?: boolean }): Promise<void> {
+  if (process.platform === "darwin" && !opts.foreground) {
+    await macDaemonStart(true);
+    return;
+  }
+  if (process.platform !== "darwin") {
+    await withDaemonLifecycleLock(async () => {
+      setDaemonExplicitlyDisabled(false);
+      await detachedDaemonStop();
+      await detachedDaemonStart(opts);
+    });
+    return;
+  }
   await daemonStop();
   await daemonStart(opts);
+}
+
+async function daemonEnsure(): Promise<void> {
+  if (process.platform !== "darwin") {
+    const disabled = await withDaemonLifecycleLock(async () => {
+      if (daemonExplicitlyDisabled()) return true;
+      await detachedDaemonStart({});
+      return false;
+    });
+    if (disabled) {
+      process.stderr.write("[prim] daemon remains explicitly disabled\n");
+      console.log(JSON.stringify({ ensured: false, disabled: true, supervised: false }, null, 2));
+    }
+    return;
+  }
+  const result = await ensureMacDaemon();
+  if (result.state === "disabled") {
+    process.stderr.write("[prim] daemon remains explicitly disabled\n");
+  } else if (result.state === "running") {
+    process.stderr.write(`[prim] ✓ daemon ensured under launchd (${result.action})\n`);
+  } else {
+    process.stderr.write(`[prim] ✗ daemon ensure failed; see ${LOG_PATH}\n`);
+    if (!process.exitCode) process.exitCode = EXIT_NOT_RUNNING;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        ensured: result.state === "running",
+        disabled: result.state === "disabled",
+        supervised: true,
+        action: result.action,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 export function registerDaemonCommands(program: Command): void {
@@ -329,7 +710,7 @@ export function registerDaemonCommands(program: Command): void {
 
   daemon
     .command("start")
-    .description("Spawn the prim-daemon-server in the background")
+    .description("Start the daemon (installs a supervised LaunchAgent on macOS)")
     .option("--foreground", "Run in the foreground (inherit stdio); use under launchd / systemd")
     .action(async (opts: { foreground?: boolean }) => {
       await daemonStart(opts);
@@ -337,7 +718,7 @@ export function registerDaemonCommands(program: Command): void {
 
   daemon
     .command("stop")
-    .description("Send SIGTERM to the running daemon and clean up the socket")
+    .description("Stop and explicitly disable the daemon")
     .action(async () => {
       await daemonStop();
     });
@@ -351,9 +732,16 @@ export function registerDaemonCommands(program: Command): void {
 
   daemon
     .command("restart")
-    .description("Stop, then start (preserves no state today)")
+    .description("Restart the daemon and clear any explicit disable marker")
     .option("--foreground", "Restart in the foreground")
     .action(async (opts: { foreground?: boolean }) => {
       await daemonRestart(opts);
+    });
+
+  daemon
+    .command("ensure")
+    .description("Idempotently install, upgrade, and heal the daemon unless explicitly disabled")
+    .action(async () => {
+      await daemonEnsure();
     });
 }

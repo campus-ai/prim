@@ -4,18 +4,20 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   JOURNAL_DIR,
+  JOURNAL_STATS_SAMPLE_BYTES,
   appendMoveToPath,
   envSlug,
   journalPath,
   listFlushingInDir,
   readMovesFromPath,
+  sampleJournalFile,
 } from "./journal.js";
 import type { Move } from "./protocol/move.js";
 
-function sampleMove(eventType: string): Move {
+function sampleMove(eventType: string, capturedAt = 1): Move {
   return {
     moveId: `m-${eventType}`,
-    capturedAt: 1,
+    capturedAt,
     sessionId: "s",
     eventType,
     payload: { ok: true },
@@ -56,6 +58,21 @@ describe("journal", () => {
     const moves = readMovesFromPath(path);
     expect(moves.map((m) => m.eventType)).toEqual(["PreToolUse", "Stop"]);
   });
+
+  it("bounds health sampling regardless of journal size", () => {
+    const moves = Array.from({ length: 2_000 }, (_, index) =>
+      sampleMove(`PostToolUse-${String(index)}`, index + 1),
+    );
+    const large = join(dir, "large.ndjson");
+    writeFileSync(large, moves.map((move) => `${JSON.stringify(move)}\n`).join(""));
+
+    const sample = sampleJournalFile(large, JOURNAL_STATS_SAMPLE_BYTES);
+    expect(sample.sampled).toBe(true);
+    expect(sample.sampledBytes).toBe(JOURNAL_STATS_SAMPLE_BYTES);
+    expect(sample.lineCount).toBeGreaterThan(0);
+    expect(sample.lineCount).toBeLessThan(moves.length);
+    expect(sample.oldestCapturedAt).toBe(1);
+  });
 });
 
 describe("listFlushingInDir", () => {
@@ -82,6 +99,25 @@ describe("listFlushingInDir", () => {
     const files = listFlushingInDir(dir, "orgA");
     expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ bucket: "orgA", pid: 4242, lineCount: 2 });
+  });
+
+  it("reports oldest pending age from Move capturedAt, not file mtime", () => {
+    writeFlushing(
+      "journal.ndjson.flushing.1700000000000.4242",
+      sampleMove("PreToolUse", 9_000),
+      sampleMove("PostToolUse", 2_000),
+    );
+    expect(listFlushingInDir(dir, "orgA")[0].oldestCapturedAt).toBe(2_000);
+  });
+
+  it("shares one fixed read budget across many rotation files", () => {
+    writeFlushing("journal.ndjson.flushing.1.11", sampleMove("PreToolUse", 1));
+    writeFlushing("journal.ndjson.flushing.2.12", sampleMove("PostToolUse", 2));
+
+    const files = listFlushingInDir(dir, "orgA", { sampleBytes: 64 });
+    expect(files).toHaveLength(2);
+    expect(files.reduce((bytes, file) => bytes + file.sampledBytes, 0)).toBeLessThanOrEqual(64);
+    expect(files.every((file) => file.sampled)).toBe(true);
   });
 
   it("treats the legacy pid-less variant as pid undefined", () => {

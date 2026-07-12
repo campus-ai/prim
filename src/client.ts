@@ -145,7 +145,7 @@ export type RequestOptions = {
   quietRefresh?: boolean;
 };
 
-export async function refreshToken(
+async function performTokenRefresh(
   options: { signal?: AbortSignal; quiet?: boolean } = {},
 ): Promise<string | undefined> {
   if (!existsSync(REFRESH_TOKEN_PATH)) {
@@ -201,6 +201,31 @@ export async function refreshToken(
   saveTokenExpiry(data.access_token, data.expires_in);
 
   return data.access_token;
+}
+
+let _refreshInFlight: Promise<string | undefined> | undefined;
+
+/** One refresh-token rotation at a time; successful rotations update all callers. */
+export function refreshToken(
+  options: { signal?: AbortSignal; quiet?: boolean } = {},
+): Promise<string | undefined> {
+  if (_refreshInFlight) {
+    return _refreshInFlight;
+  }
+  const attempt = performTokenRefresh(options)
+    .then((token) => {
+      if (token) {
+        _cachedToken = token;
+      }
+      return token;
+    })
+    .finally(() => {
+      if (_refreshInFlight === attempt) {
+        _refreshInFlight = undefined;
+      }
+    });
+  _refreshInFlight = attempt;
+  return attempt;
 }
 
 /**
@@ -269,14 +294,22 @@ async function request(
     });
   };
 
-  let res = await doFetch(_cachedToken);
+  const tokenUsed = _cachedToken;
+  let res = await doFetch(tokenUsed);
 
   // Attempt refresh on 401
   if (res.status === 401) {
-    const newToken = await refreshToken({
-      signal: options?.signal,
-      quiet: options?.quietRefresh,
-    });
+    // Another daemon request (or the proactive token loop) may have completed
+    // a single-flight refresh while this older-token request was in flight.
+    // Reuse that cache entry instead of rotating the one-time refresh token a
+    // second time after the first refresh promise has already settled.
+    const newToken =
+      _cachedToken && _cachedToken !== tokenUsed
+        ? _cachedToken
+        : await refreshToken({
+            signal: options?.signal,
+            quiet: options?.quietRefresh,
+          });
     if (newToken) {
       _cachedToken = newToken;
       res = await doFetch(newToken);

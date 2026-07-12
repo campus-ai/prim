@@ -18,6 +18,7 @@
 
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
   FEEDBACK_DEADLINE_MS,
   acknowledgeDecisionFeedback,
@@ -98,6 +99,10 @@ async function main(): Promise<void> {
     await emitOutput(buildHookOutput({}));
     return;
   }
+  // Repair or start the supervised daemon once per agent session. This is
+  // intentionally detached: hook latency and output must never depend on
+  // launchctl or network health, and `daemon ensure` honors an explicit stop.
+  kickDaemonEnsure();
   await daemonRequest(
     "session_start",
     { sessionId: envelope.session_id },

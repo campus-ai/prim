@@ -19,14 +19,16 @@
  * on a clean failure. Uses getClient() for bearer auth + auto-refresh.
  */
 
-import { renameSync, unlinkSync } from "node:fs";
-import { getClient } from "./client.js";
+import { createReadStream, renameSync, unlinkSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { type CliClient, getClient } from "./client.js";
+import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
 import {
   type FlushingFile,
-  bucketStats,
+  type PendingJournalStats,
   listBuckets,
   listFlushing,
-  readMovesFromPath,
+  pendingJournalStats,
 } from "./journal.js";
 import type { Move } from "./protocol/move.js";
 
@@ -61,23 +63,51 @@ export function batchMoves(moves: Move[], size: number = BATCH_SIZE): Move[][] {
  * file stays on disk for the next sweep — no moves are lost on a clean
  * failure. Shared by the normal rotate path and orphan recovery.
  */
-async function drainFlushingPath(flushingPath: string): Promise<number> {
-  const moves = readMovesFromPath(flushingPath);
-  if (moves.length === 0) {
-    unlinkSync(flushingPath);
-    return 0;
-  }
-
-  const client = getClient();
-  for (const batch of batchMoves(moves)) {
-    await client.post(
+export async function drainFlushingPath(
+  flushingPath: string,
+  client: CliClient = getClient(),
+): Promise<number> {
+  const postBatch = async (batch: Move[]): Promise<void> => {
+    const response = await client.post(
       "/api/cli/moves/ingest",
       { batch },
       { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
     );
+    requireDurableIngestAcknowledgement(response, batch.length);
+  };
+
+  const input = createReadStream(flushingPath, { encoding: "utf-8" });
+  const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
+  let batch: Move[] = [];
+  let total = 0;
+  try {
+    for await (const line of lines) {
+      if (line.length === 0) {
+        continue;
+      }
+      try {
+        batch.push(JSON.parse(line) as Move);
+      } catch {
+        // Preserve the journal's established malformed-line behavior: invalid
+        // records are skipped rather than blocking every valid Move behind it.
+        continue;
+      }
+      if (batch.length === BATCH_SIZE) {
+        await postBatch(batch);
+        total += batch.length;
+        batch = [];
+      }
+    }
+    if (batch.length > 0) {
+      await postBatch(batch);
+      total += batch.length;
+    }
+  } finally {
+    lines.close();
+    input.destroy();
   }
   unlinkSync(flushingPath);
-  return moves.length;
+  return total;
 }
 
 async function drainPath(path: string): Promise<number> {
@@ -112,13 +142,23 @@ function processIsAlive(pid: number): boolean {
 export function selectRecoverable(
   files: FlushingFile[],
   now: number,
-  opts: { quarantineMs?: number; isAlive?: (pid: number) => boolean } = {},
+  opts: {
+    quarantineMs?: number;
+    isAlive?: (pid: number) => boolean;
+    ownerPid?: number;
+  } = {},
 ): FlushingFile[] {
   const quarantineMs = opts.quarantineMs ?? ORPHAN_QUARANTINE_MS;
   const isAlive = opts.isAlive ?? processIsAlive;
-  return files.filter((f) =>
-    f.pid === undefined ? now - f.mtimeMs > quarantineMs : !isAlive(f.pid),
-  );
+  return files.filter((f) => {
+    if (f.pid === undefined) {
+      return now - f.mtimeMs > quarantineMs;
+    }
+    // A failed drain in this process leaves its own rotation behind. flush()
+    // is single-flight below, so reclaiming that file on the next attempt
+    // cannot steal it from another in-process request.
+    return f.pid === opts.ownerPid || !isAlive(f.pid);
+  });
 }
 
 /**
@@ -128,37 +168,114 @@ export function selectRecoverable(
  * crash replays harmlessly), then unlinked. A file whose POST fails is left
  * for the next sweep rather than aborting recovery of the rest.
  */
-async function recoverOrphans(): Promise<number> {
-  let total = 0;
-  for (const file of selectRecoverable(listFlushing(), Date.now())) {
+export type DrainSummary = { flushed: number; errors: unknown[]; failedBuckets: Set<string> };
+
+export async function recoverOrphans(
+  candidates: FlushingFile[] = listFlushing({ sampleBytes: 0 }),
+  options: {
+    now?: number;
+    ownerPid?: number;
+    isAlive?: (pid: number) => boolean;
+    drain?: (path: string) => Promise<number>;
+  } = {},
+): Promise<DrainSummary> {
+  const summary: DrainSummary = { flushed: 0, errors: [], failedBuckets: new Set() };
+  const recoverable = selectRecoverable(candidates, options.now ?? Date.now(), {
+    ownerPid: options.ownerPid ?? process.pid,
+    isAlive: options.isAlive,
+  }).sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path));
+  const drain = options.drain ?? drainFlushingPath;
+  for (const file of recoverable) {
+    if (summary.failedBuckets.has(file.bucket)) {
+      continue;
+    }
     try {
-      total += await drainFlushingPath(file.path);
-    } catch {
+      summary.flushed += await drain(file.path);
+    } catch (err) {
       // Leave this orphan on disk for a later sweep; keep recovering the rest.
+      summary.errors.push(err);
+      summary.failedBuckets.add(file.bucket);
     }
   }
-  return total;
+  return summary;
 }
 
-export async function flush(): Promise<{ flushed: number }> {
+export class FlushError extends Error {
+  readonly flushed: number;
+
+  constructor(cause: unknown, flushed: number) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "FlushError";
+    this.flushed = flushed;
+  }
+}
+
+async function flushOnce(): Promise<{ flushed: number }> {
   // Reclaim crash-stranded orphans first, then drain the live buckets.
   // Path-only enumeration (listBuckets does not stat/read), so the only
   // race-sensitive op is drainPath's ENOENT-tolerant rename.
-  let total = await recoverOrphans();
-  for (const { path } of listBuckets()) {
-    total += await drainPath(path);
+  const recovered = await recoverOrphans();
+  let total = recovered.flushed;
+  const errors = recovered.errors;
+  for (const { bucket, path } of listBuckets()) {
+    // Do not create one new failed rotation per retry while a prior rotation
+    // for this bucket is still undeliverable (for example, capture disabled).
+    // Other buckets remain independent and continue draining.
+    if (recovered.failedBuckets.has(bucket)) {
+      continue;
+    }
+    try {
+      total += await drainPath(path);
+    } catch (err) {
+      // One broken/disabled bucket must not prevent independent buckets from
+      // draining. Every failed rotation remains on disk for the next attempt.
+      errors.push(err);
+    }
+  }
+  if (errors.length > 0) {
+    throw new FlushError(errors[0], total);
   }
   return { flushed: total };
 }
 
+let flushInFlight: Promise<{ flushed: number }> | undefined;
+
+/** Serialize drains in this process so rotations are never self-stolen. */
+export function flush(): Promise<{ flushed: number }> {
+  if (flushInFlight) {
+    return flushInFlight;
+  }
+  const attempt = flushOnce().finally(() => {
+    if (flushInFlight === attempt) {
+      flushInFlight = undefined;
+    }
+  });
+  flushInFlight = attempt;
+  return attempt;
+}
+
+export function shouldFlushPending(
+  stats: PendingJournalStats,
+  now: number,
+  thresholdMs: number = OPPORTUNISTIC_FLUSH_AFTER_MS,
+): boolean {
+  if (stats.sampled) {
+    return true;
+  }
+  return (
+    stats.pendingCount > 0 &&
+    (stats.oldestPendingAt === undefined || now - stats.oldestPendingAt > thresholdMs)
+  );
+}
+
 export async function flushIfNeeded(): Promise<void> {
   try {
-    const stats = bucketStats();
-    if (stats.length === 0) {
-      return;
-    }
-    const oldest = stats.reduce((min, s) => (s.mtimeMs < min ? s.mtimeMs : min), stats[0].mtimeMs);
-    if (Date.now() - oldest > OPPORTUNISTIC_FLUSH_AFTER_MS) {
+    const stats = pendingJournalStats();
+    // capturedAt measures how long a Move has actually waited. Journal mtime
+    // measures only the latest append and can postpone a continuously-written
+    // queue forever. Missing timestamps are flushed defensively rather than
+    // stranded.
+    if (shouldFlushPending(stats, Date.now())) {
       await flush();
     }
   } catch {

@@ -18,7 +18,7 @@
  *     the repo's code, docs, or history), pointing each agent at its own
  *     memory surface, and reviews them via the CLI-owned template, with the
  *     open question as the verbatim fallback;
- *   - the daemon stays optional;
+ *   - the daemon has an explicit --no-daemon opt-out;
  *   - the now-false "next session" permissions premise never returns (Claude Code
  *     hot-reloads permissions, so the allow-rule takes effect this session).
  */
@@ -90,8 +90,7 @@ describe("setup.md onboarding flow", () => {
     expect(SETUP).not.toMatch(/npx --yes @primitive\.ai\/prim[^@]/);
   });
 
-  it("keeps the daemon optional so a down daemon never blocks setup", () => {
-    expect(SETUP.toLowerCase()).toContain("optional");
+  it("documents --no-daemon as the explicit durability opt-out", () => {
     expect(SETUP).toContain("--no-daemon");
   });
 

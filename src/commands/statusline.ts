@@ -46,6 +46,11 @@ type StatusSnapshot = {
   // True when the daemon is bound to a DIFFERENT deployment than this statusline
   // targets; presence is withheld (it would be another env's roster).
   envMismatch?: boolean;
+  // Newer supervised daemons expose end-to-end heartbeat + delivery health.
+  // Undefined preserves mixed-version rollout behavior with older daemons.
+  healthy?: boolean;
+  heartbeat?: { healthy?: boolean };
+  ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
 };
 
 const STATUSLINE_TIMEOUT_MS = 200;
@@ -53,10 +58,16 @@ const STATUSLINE_TIMEOUT_MS = 200;
 // statusline from overflowing on a busy team.
 const STATUSLINE_NAME_CAP = 3;
 
-function readPackageVersion(): string {
+export function readPackageVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    const candidates = [resolve(here, "../../package.json"), resolve(here, "../package.json")];
+    const candidates = [
+      // The supervised runtime stages a tiny manifest beside the standalone
+      // statusline bundle, so it remains versioned without loading the package.
+      resolve(here, "manifest.json"),
+      resolve(here, "../../package.json"),
+      resolve(here, "../package.json"),
+    ];
     for (const path of candidates) {
       try {
         const pkg = JSON.parse(readFileSync(path, "utf-8")) as {
@@ -93,6 +104,17 @@ export async function renderStatusline(): Promise<string> {
   if (!snapshot) {
     debug("daemon snapshot missing");
     return `primitive ${version} (daemon: down)`;
+  }
+  if (snapshot.healthy === false) {
+    if (snapshot.ingestion?.healthy === false) {
+      const pending = snapshot.ingestion.pendingCount;
+      const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
+      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""})`;
+    }
+    if (snapshot.heartbeat?.healthy === false) {
+      return `primitive ${version} (daemon: degraded · presence: unavailable)`;
+    }
+    return `primitive ${version} (daemon: starting)`;
   }
   // The daemon is alive but on another deployment — show that honestly rather
   // than its env's team or a misleading "down".
@@ -135,7 +157,9 @@ export function registerStatuslineCommands(program: Command): void {
         const line = await renderStatusline();
         process.stdout.write(line);
       } catch {
-        // fail soft — emit nothing so Claude Code's statusline stays blank
+        // A configured statusline that emits nothing disappears completely in
+        // Claude Code. Fail soft, but stay visible and honest.
+        process.stdout.write(`primitive ${readPackageVersion()} (daemon: unavailable)`);
       }
     });
 }

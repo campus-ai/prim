@@ -4,9 +4,10 @@
  * Answers "is decision capture actually working, end to end?" in a single
  * command, instead of forcing an operator to correlate `auth status`,
  * `daemon status`, `moves status`, and a filesystem listing by hand (the
- * ~20-minute archaeology the user study turned into). Checks auth, daemon
- * liveness, journals, worktree identity, server reachability, and decision-
- * feedback capability, then renders them
+ * ~20-minute archaeology the user study turned into). Checks auth, supervised
+ * daemon health, durable queue age, stranded rotations, capture entitlement,
+ * classifier progress, worktree identity, and decision-feedback readiness,
+ * then renders them
  * verdict-first on STDERR with machine-readable JSON on STDOUT, exiting
  * non-zero when a check is red so an agent or installer can gate on it.
  *
@@ -22,19 +23,24 @@ import {
   getClient,
   getTokenExpiresAt,
 } from "../client.js";
-import { daemonIsLive } from "../daemon/client.js";
+import { daemonRequest } from "../daemon/client.js";
+import type { DaemonHeartbeatHealth, DaemonIngestionHealth } from "../daemon/health.js";
+import {
+  type LaunchdService,
+  daemonExplicitlyDisabled,
+  getLaunchdService,
+} from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
-import { bucketStats, listFlushing } from "../journal.js";
+import { pendingJournalStats } from "../journal.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
 const MS_PER_SECOND = 1000;
-// Past this the opportunistic drain should already have fired, so a journal
-// still pending beyond it is a signal, not normal lag. Mirrors the flusher's
-// OPPORTUNISTIC_FLUSH_AFTER_MS.
-const STALE_PENDING_MS = 60_000;
+// User-facing durability contract: a captured Move should be durably ingested
+// within 30 seconds. The daemon uses the same threshold in its health state.
+const STALE_PENDING_MS = 30_000;
 const EXIT_UNHEALTHY = 1;
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -43,6 +49,23 @@ export type Check = { name: string; status: CheckStatus; detail: string };
 export type DoctorVerdict = {
   json: { ok: boolean; status: CheckStatus; checks: Check[] };
   exitCode: number;
+};
+
+export type DaemonDoctorSnapshot = {
+  pid?: number;
+  version?: string;
+  healthy?: boolean;
+  heartbeat?: DaemonHeartbeatHealth;
+  ingestion?: DaemonIngestionHealth;
+};
+
+export type MovesStatus = {
+  captureState: "enabled" | "disabled";
+  latestIngestAt: number | null;
+  latestClassificationAt: number | null;
+  highWaterMark: number | null;
+  pendingSessionCount: number;
+  sampled: boolean;
 };
 
 /**
@@ -89,45 +112,143 @@ function checkAuth(): Check {
   return { name: "auth", status: "ok", detail };
 }
 
+export function classifyDaemonHealth(
+  snapshot: DaemonDoctorSnapshot | null,
+  options: { disabled?: boolean; service?: LaunchdService } = {},
+): Check {
+  if (options.disabled) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "explicitly stopped — run `prim daemon start`",
+    };
+  }
+  if (options.service && !options.service.loaded) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "launchd service is not loaded — run `prim daemon start`",
+    };
+  }
+  if (!snapshot) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "socket unavailable — run `prim daemon start`",
+    };
+  }
+  if (
+    options.service &&
+    (!Number.isInteger(options.service.pid) ||
+      (options.service.pid ?? 0) <= 0 ||
+      !Number.isInteger(snapshot.pid) ||
+      (snapshot.pid ?? 0) <= 0 ||
+      options.service.pid !== snapshot.pid)
+  ) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: `launchd does not own the daemon socket (launchd ${String(options.service.pid ?? "none")} · socket ${String(snapshot.pid ?? "none")})`,
+    };
+  }
+  if (!snapshot.heartbeat?.healthy) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: `heartbeat unhealthy${snapshot.heartbeat?.lastError ? ` — ${snapshot.heartbeat.lastError}` : ""}`,
+    };
+  }
+  if (!snapshot.ingestion?.healthy) {
+    const pending = snapshot.ingestion?.pendingCount ?? 0;
+    const pendingLabel = snapshot.ingestion?.pendingSampled
+      ? `at least ${String(pending)}`
+      : String(pending);
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: `ingestion unhealthy · ${pendingLabel} pending${snapshot.ingestion?.lastError ? ` — ${snapshot.ingestion.lastError}` : ""}`,
+    };
+  }
+  if (snapshot.healthy !== true) {
+    return { name: "daemon", status: "fail", detail: "health state is not ready" };
+  }
+  return {
+    name: "daemon",
+    status: "ok",
+    detail: `supervised and healthy${snapshot.version ? ` · v${snapshot.version}` : ""}`,
+  };
+}
+
 async function checkDaemon(): Promise<Check> {
-  const live = await daemonIsLive(DAEMON_PROBE_TIMEOUT_MS);
-  return live
-    ? { name: "daemon", status: "ok", detail: "live" }
-    : {
-        name: "daemon",
-        status: "warn",
-        detail: "down — capture still journals; drains on next `prim` invocation",
-      };
+  let service: LaunchdService | undefined;
+  if (process.platform === "darwin") {
+    try {
+      service = getLaunchdService();
+    } catch {
+      service = { loaded: false };
+    }
+  }
+  const snapshot = await daemonRequest<DaemonDoctorSnapshot>(
+    "status_snapshot",
+    {},
+    { timeoutMs: DAEMON_PROBE_TIMEOUT_MS },
+  );
+  return classifyDaemonHealth(snapshot, {
+    disabled: daemonExplicitlyDisabled(),
+    service,
+  });
 }
 
 function checkJournal(): Check {
-  const stats = bucketStats();
-  const pending = stats.reduce((n, s) => n + s.lineCount, 0);
+  const stats = pendingJournalStats();
+  const pending = stats.pendingCount;
+  const pendingLabel = stats.sampled ? `at least ${String(pending)}` : String(pending);
   if (pending === 0) {
+    if (stats.sampled) {
+      return {
+        name: "journal",
+        status: "fail",
+        detail: "bounded journal sample could not prove the queue is empty",
+      };
+    }
     return { name: "journal", status: "ok", detail: "no pending moves" };
   }
-  const oldestMs = Math.max(...stats.map((s) => Date.now() - s.mtimeMs));
+  if (stats.oldestPendingAt === undefined) {
+    return {
+      name: "journal",
+      status: "fail",
+      detail: `${pendingLabel} pending with no readable capture timestamp`,
+    };
+  }
+  const oldestMs = Date.now() - stats.oldestPendingAt;
   const oldestS = Math.round(oldestMs / MS_PER_SECOND);
   if (oldestMs > STALE_PENDING_MS) {
     return {
       name: "journal",
-      status: "warn",
-      detail: `${String(pending)} pending, oldest ${String(oldestS)}s — drain may be stalled`,
+      status: "fail",
+      detail: `${pendingLabel} pending, oldest observed ${String(oldestS)}s — 30s delivery SLA missed`,
+    };
+  }
+  if (stats.sampled) {
+    return {
+      name: "journal",
+      status: "fail",
+      detail: `${pendingLabel} pending in bounded sample; 30s delivery SLA cannot be proven`,
     };
   }
   return { name: "journal", status: "ok", detail: `${String(pending)} pending, draining` };
 }
 
 function checkStranded(): Check {
-  const stranded = listFlushing();
-  if (stranded.length === 0) {
+  const stats = pendingJournalStats();
+  if (stats.strandedFileCount === 0 && !stats.strandedSampled) {
     return { name: "stranded", status: "ok", detail: "none" };
   }
-  const moves = stranded.reduce((n, f) => n + f.lineCount, 0);
+  const qualifier = stats.strandedSampled ? "at least " : "";
   return {
     name: "stranded",
     status: "warn",
-    detail: `${String(moves)} move(s) in ${String(stranded.length)} file(s) — run \`prim moves flush\``,
+    detail: `${qualifier}${String(stats.strandedCount)} move(s) in ${qualifier}${String(stats.strandedFileCount)} file(s) — run \`prim moves flush\``,
   };
 }
 
@@ -184,20 +305,78 @@ function checkFeedbackHooks(): Check {
   }
 }
 
-async function checkConnectivity(): Promise<Check> {
+function parseMovesStatus(value: unknown): MovesStatus {
+  if (!value || typeof value !== "object") {
+    throw new Error("moves status returned a non-object response");
+  }
+  const status = value as Partial<MovesStatus>;
+  const nullableNumber = (candidate: unknown): boolean =>
+    candidate === null || (typeof candidate === "number" && Number.isFinite(candidate));
+  if (
+    (status.captureState !== "enabled" && status.captureState !== "disabled") ||
+    !nullableNumber(status.latestIngestAt) ||
+    !nullableNumber(status.latestClassificationAt) ||
+    !nullableNumber(status.highWaterMark) ||
+    typeof status.pendingSessionCount !== "number" ||
+    !Number.isInteger(status.pendingSessionCount) ||
+    status.pendingSessionCount < 0 ||
+    typeof status.sampled !== "boolean"
+  ) {
+    throw new Error("moves status returned an invalid response");
+  }
+  return status as MovesStatus;
+}
+
+export function classifyMovesStatus(status: MovesStatus): Check[] {
+  const capture: Check =
+    status.captureState === "enabled"
+      ? { name: "capture", status: "ok", detail: "enabled; ingest endpoint durable" }
+      : {
+          name: "capture",
+          status: "fail",
+          detail: "disabled for the current organization; local Moves are retained",
+        };
+  let classification: Check;
+  if (status.pendingSessionCount > 0) {
+    classification = {
+      name: "classification",
+      status: "warn",
+      detail: `${String(status.pendingSessionCount)} session(s) pending${status.sampled ? " in a bounded sample" : ""}`,
+    };
+  } else if (status.sampled) {
+    classification = {
+      name: "classification",
+      status: "warn",
+      detail: "caught up in the bounded sample; older sessions were not inspected",
+    };
+  } else {
+    classification = {
+      name: "classification",
+      status: "ok",
+      detail:
+        status.latestClassificationAt === null
+          ? "no sessions awaiting classification"
+          : `caught up · last ${new Date(status.latestClassificationAt).toISOString()}`,
+    };
+  }
+  return [capture, classification];
+}
+
+async function checkBackend(): Promise<Check[]> {
   try {
-    // Probe the real server with the stored token (bypassing the daemon
-    // proxy) so this verifies reachability AND auth end to end.
-    await getClient().get("/api/cli/decisions/recent?limit=1", {
+    // Bypass the daemon so this independently verifies server reachability,
+    // auth, capture entitlement, and the durable/classification read model.
+    const response = await getClient().get("/api/cli/moves/status", {
       signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
     });
-    return { name: "connectivity", status: "ok", detail: "server reachable" };
+    const status = parseMovesStatus(response);
+    return [
+      { name: "connectivity", status: "ok", detail: "server reachable and authenticated" },
+      ...classifyMovesStatus(status),
+    ];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    // A 401 is an actionable auth failure; anything else (timeout, network,
-    // 5xx) is a softer "can't reach right now".
-    const status: CheckStatus = message.includes("Authentication") ? "fail" : "warn";
-    return { name: "connectivity", status, detail: message.slice(0, 80) };
+    return [{ name: "connectivity", status: "fail", detail: message.slice(0, 120) }];
   }
 }
 
@@ -228,6 +407,7 @@ async function checkFeedbackCapability(): Promise<Check> {
 }
 
 async function collectChecks(): Promise<Check[]> {
+  const backend = await checkBackend();
   return [
     checkAuth(),
     await checkDaemon(),
@@ -235,7 +415,7 @@ async function collectChecks(): Promise<Check[]> {
     checkStranded(),
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
-    await checkConnectivity(),
+    ...backend,
     await checkFeedbackCapability(),
   ];
 }
@@ -265,7 +445,7 @@ export function registerDoctorCommands(program: Command): void {
   program
     .command("doctor")
     .description(
-      "Check capture and feedback health end to end (auth, daemon, journal, worktree, server)",
+      "Check capture and feedback health end to end (auth, supervisor, delivery, worktree, server)",
     )
     .action(async () => {
       await runDoctor();
