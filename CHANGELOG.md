@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0-alpha.42](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.41...v0.1.0-alpha.42) (2026-07-12)
+
+
+### Features
+
+* **hooks:** deliver Claude decision feedback ([#143](https://github.com/campus-ai/prim/issues/143)) ([acf9a18](https://github.com/campus-ai/prim/commit/acf9a18a42336f8d6b35c80b90efd85b1649d3a5))
+
+### Bug Fixes
+
+* daemon supervision and durable ingestion ([#141](https://github.com/campus-ai/prim/issues/141)) ([9525480](https://github.com/campus-ai/prim/commit/952548035e59db4087b9df0bf2d7289d51360d5e))
+
 ## [0.1.0-alpha.41](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.40...v0.1.0-alpha.41) (2026-07-09)
 
 
