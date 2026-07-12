@@ -53,6 +53,51 @@ describe("client", () => {
       expect(typeof client.get).toBe("function");
       expect(typeof client.post).toBe("function");
     });
+
+    it("uses one caller signal for proactive refresh, request, 401 refresh, and retry", async () => {
+      process.env.PRIM_TOKEN = "initial-token";
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockImplementation((path) => {
+        const value = String(path);
+        return value.endsWith("token_expires_at") || value.endsWith("refresh_token");
+      });
+      vi.mocked(fs.readFileSync).mockImplementation((path) =>
+        String(path).endsWith("token_expires_at") ? "0" : "refresh-token",
+      );
+      let refreshes = 0;
+      let requests = 0;
+      const signal = new AbortController().signal;
+      const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+        expect(init?.signal).toBe(signal);
+        if (String(url).includes("/mcp/broker/refresh")) {
+          refreshes += 1;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ access_token: `refreshed-${String(refreshes)}` }),
+          });
+        }
+        requests += 1;
+        return Promise.resolve(
+          requests === 1
+            ? { ok: false, status: 401 }
+            : { ok: true, status: 200, json: () => Promise.resolve({ ok: true }) },
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { getClient } = await import("./client.js");
+      await expect(
+        getClient().post("/api/cli/test", {}, { signal, quietRefresh: true }),
+      ).resolves.toEqual({ ok: true });
+      expect(refreshes).toBe(2);
+      expect(requests).toBe(2);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+
+      vi.unstubAllGlobals();
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue("");
+    });
   });
 
   describe("TOKEN_FILE_PATH", () => {
@@ -108,6 +153,38 @@ describe("client", () => {
       expect(msg).toContain("invalid_grant");
       // The diagnostic must never leak the refresh token itself.
       expect(msg).not.toContain("rt-value");
+
+      stderr.mockRestore();
+      vi.unstubAllGlobals();
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue("");
+    });
+
+    it("propagates the shared abort signal and can suppress hook diagnostics", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
+      const fetchMock = vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          text: () => Promise.resolve("invalid_grant"),
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      const controller = new AbortController();
+
+      const { refreshToken } = await import("./client.js");
+      await expect(
+        refreshToken({ signal: controller.signal, quiet: true }),
+      ).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/mcp/broker/refresh"),
+        expect.objectContaining({ signal: controller.signal }),
+      );
+      expect(stderr).not.toHaveBeenCalled();
 
       stderr.mockRestore();
       vi.unstubAllGlobals();

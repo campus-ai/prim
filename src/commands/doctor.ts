@@ -4,9 +4,9 @@
  * Answers "is decision capture actually working, end to end?" in a single
  * command, instead of forcing an operator to correlate `auth status`,
  * `daemon status`, `moves status`, and a filesystem listing by hand (the
- * ~20-minute archaeology the user study turned into). Runs five checks — auth
- * + token expiry, daemon liveness, pending journal depth, stranded-orphan
- * count, and an authenticated server reachability probe — and renders them
+ * ~20-minute archaeology the user study turned into). Checks auth, daemon
+ * liveness, journals, worktree identity, server reachability, and decision-
+ * feedback capability, then renders them
  * verdict-first on STDERR with machine-readable JSON on STDOUT, exiting
  * non-zero when a check is red so an agent or installer can gate on it.
  *
@@ -15,9 +15,18 @@
 
 import { existsSync } from "node:fs";
 import type { Command } from "commander";
-import { REFRESH_TOKEN_PATH, getAuthToken, getClient, getTokenExpiresAt } from "../client.js";
+import {
+  HttpError,
+  REFRESH_TOKEN_PATH,
+  getAuthToken,
+  getClient,
+  getTokenExpiresAt,
+} from "../client.js";
 import { daemonIsLive } from "../daemon/client.js";
+import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { bucketStats, listFlushing } from "../journal.js";
+import { inspectWorkspaceId } from "../lib/workspace-id.js";
+import { performStatus as claudeStatus } from "./claude-install.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -122,6 +131,59 @@ function checkStranded(): Check {
   };
 }
 
+function checkWorkspaceIdentity(): Check {
+  const identity = inspectWorkspaceId();
+  switch (identity.status) {
+    case "ready":
+      return { name: "feedback-id", status: "ok", detail: "stable worktree identity ready" };
+    case "missing":
+      return {
+        name: "feedback-id",
+        status: "warn",
+        detail: "not initialized — the next active hook will create it",
+      };
+    case "not_git":
+      return {
+        name: "feedback-id",
+        status: "warn",
+        detail: "not in a Git worktree — capture falls back to legacy V1",
+      };
+    case "corrupt":
+      return {
+        name: "feedback-id",
+        status: "warn",
+        detail: "identity is corrupt — not rotated; capture falls back to legacy V1",
+      };
+    case "unavailable":
+      return {
+        name: "feedback-id",
+        status: "warn",
+        detail: `identity unavailable during ${identity.operation} — capture falls back to legacy V1`,
+      };
+  }
+}
+
+function checkFeedbackHooks(): Check {
+  try {
+    const status = claudeStatus();
+    if (status.project.feedback || status.user.feedback) {
+      return {
+        name: "feedback-hooks",
+        status: "ok",
+        detail: status.project.feedback ? "project handlers ready" : "user handlers ready",
+      };
+    }
+    return {
+      name: "feedback-hooks",
+      status: "warn",
+      detail: "Stop + SessionStart handlers missing — run `prim claude install`",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { name: "feedback-hooks", status: "warn", detail: message.slice(0, 80) };
+  }
+}
+
 async function checkConnectivity(): Promise<Check> {
   try {
     // Probe the real server with the stored token (bypassing the daemon
@@ -139,13 +201,42 @@ async function checkConnectivity(): Promise<Check> {
   }
 }
 
+async function checkFeedbackCapability(): Promise<Check> {
+  try {
+    const capability = await fetchFeedbackCapability(AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS));
+    return capability.status === "available"
+      ? { name: "feedback-api", status: "ok", detail: "server supports decision feedback" }
+      : {
+          name: "feedback-api",
+          status: "warn",
+          detail: "available after binding this CLI to an organization",
+        };
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      return {
+        name: "feedback-api",
+        status: "warn",
+        detail: "server does not support decision feedback yet",
+      };
+    }
+    if (error instanceof HttpError && error.status === 401) {
+      return { name: "feedback-api", status: "fail", detail: error.message.slice(0, 80) };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return { name: "feedback-api", status: "warn", detail: message.slice(0, 80) };
+  }
+}
+
 async function collectChecks(): Promise<Check[]> {
   return [
     checkAuth(),
     await checkDaemon(),
     checkJournal(),
     checkStranded(),
+    checkFeedbackHooks(),
+    checkWorkspaceIdentity(),
     await checkConnectivity(),
+    await checkFeedbackCapability(),
   ];
 }
 
@@ -173,7 +264,9 @@ async function runDoctor(): Promise<void> {
 export function registerDoctorCommands(program: Command): void {
   program
     .command("doctor")
-    .description("Check capture-pipeline health end to end (auth, daemon, journal, server)")
+    .description(
+      "Check capture and feedback health end to end (auth, daemon, journal, worktree, server)",
+    )
     .action(async () => {
       await runDoctor();
     });

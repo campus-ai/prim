@@ -18,6 +18,7 @@ import {
   applyAutoModeTrust,
   applyInstall,
   applyUninstall,
+  feedbackInstalled,
   isGateInstalled,
   resolveScope,
 } from "./claude-install.js";
@@ -411,6 +412,32 @@ describe("isGateInstalled", () => {
 
   it("is false for empty settings", () => {
     expect(isGateInstalled(EMPTY)).toBe(false);
+  });
+});
+
+describe("feedbackInstalled", () => {
+  it("requires both existing synchronous feedback handlers", () => {
+    const installed = applyInstall(EMPTY);
+    expect(feedbackInstalled(installed)).toBe(true);
+    expect(
+      feedbackInstalled({
+        ...installed,
+        hooks: { ...installed.hooks, Stop: undefined },
+      }),
+    ).toBe(false);
+    expect(
+      feedbackInstalled({
+        ...installed,
+        hooks: { ...installed.hooks, SessionStart: undefined },
+      }),
+    ).toBe(false);
+  });
+
+  it("does not add a new binary or event registration", () => {
+    const installed = applyInstall(EMPTY);
+    expect(hasBin(installed, "Stop", "prim-hook")).toBe(true);
+    expect(hasBin(installed, "SessionStart", "prim-session-start")).toBe(true);
+    expect(JSON.stringify(installed)).not.toContain("prim-decision-feedback");
   });
 });
 

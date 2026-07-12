@@ -18,16 +18,35 @@
 
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import {
+  FEEDBACK_DEADLINE_MS,
+  acknowledgeDecisionFeedback,
+  leaseDecisionFeedback,
+  renderFeedback,
+} from "../decisions/feedback.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
+import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
+let outputAttempted = false;
+
+function emitOutput(
+  output: ReturnType<typeof buildHookOutput>,
+  acknowledge?: () => Promise<unknown>,
+): Promise<boolean> {
+  outputAttempted = true;
+  return handoffHookOutput(output, acknowledge);
+}
 
 interface SessionEnvelope {
   session_id?: string;
   hook_event_name?: string;
+  cwd?: string;
 }
 
 function readStdin(): Promise<string> {
@@ -48,21 +67,8 @@ function readStdin(): Promise<string> {
   });
 }
 
-function emit(additionalContext?: string): void {
-  if (!additionalContext) {
-    process.stdout.write("{}\n");
-    return;
-  }
-  const out = {
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext,
-    },
-  };
-  process.stdout.write(`${JSON.stringify(out)}\n`);
-}
-
 async function main(): Promise<void> {
+  const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
   // SessionStart runs the bare ladder (cacheRead:false), so it always resolves
   // @latest fresh — the authoritative once-per-session refresh of the bin cache.
   warmBinCache();
@@ -71,7 +77,7 @@ async function main(): Promise<void> {
   try {
     raw = await readStdin();
   } catch {
-    emit();
+    await emitOutput(buildHookOutput({}));
     return;
   }
   let envelope: SessionEnvelope;
@@ -81,15 +87,15 @@ async function main(): Promise<void> {
       agent,
     ) as SessionEnvelope;
   } catch {
-    emit();
+    await emitOutput(buildHookOutput({}));
     return;
   }
   if (envelope.hook_event_name !== "SessionStart") {
-    emit();
+    await emitOutput(buildHookOutput({}));
     return;
   }
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
-    emit();
+    await emitOutput(buildHookOutput({}));
     return;
   }
   await daemonRequest(
@@ -112,13 +118,44 @@ async function main(): Promise<void> {
     // Mirror the statusline's honest-presence rule: inject the count only when
     // the daemon has a fresh accepted ack — never a stale (frozen) count.
     if (snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number") {
-      emit(`[prim] team: ${snapshot.onlineCount} online`);
+      await emitOutput(
+        buildHookOutput({ additionalContext: `[prim] team: ${snapshot.onlineCount} online` }),
+      );
       return;
     }
   }
-  emit();
+
+  if (agent === "claude_code") {
+    const cwd = envelope.cwd ?? process.cwd();
+    if (isRepoActiveForCapture(cwd)) {
+      const identity = getOrCreateWorkspaceId(cwd);
+      if (identity.status === "ready") {
+        const lease = await leaseDecisionFeedback({
+          workspaceId: identity.workspaceId,
+          currentSessionId: envelope.session_id,
+          signal: feedbackSignal,
+        });
+        const rendered = lease ? renderFeedback(lease) : undefined;
+        await emitOutput(
+          buildHookOutput({ systemMessage: rendered?.systemMessage }),
+          rendered
+            ? async () => {
+                await acknowledgeDecisionFeedback({
+                  workspaceId: identity.workspaceId,
+                  deliveries: rendered.deliveries,
+                  signal: feedbackSignal,
+                });
+              }
+            : undefined,
+        );
+        return;
+      }
+    }
+  }
+
+  await emitOutput(buildHookOutput({}));
 }
 
-main().catch(() => {
-  emit();
+void main().catch(async () => {
+  if (!outputAttempted) await emitOutput(buildHookOutput({}));
 });

@@ -43,6 +43,24 @@ describe("toMove", () => {
     const move = toMove({ session_id: "s" }, "x", "codex");
     expect(move.producer).toBe("codex");
   });
+
+  it("stamps explicit V2 Claude provenance only when worktree identity is ready", () => {
+    const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
+    const move = toMove({ session_id: "s", cwd: "/repo" }, "x", "claude_code", workspaceId);
+    expect(move).toMatchObject({
+      envelopeVersion: 2,
+      producer: "claude_code",
+      env: { cwd: "/repo", workspaceId },
+    });
+  });
+
+  it("uses the same V2 provenance shape for other agents", () => {
+    const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
+    const move = toMove({ session_id: "s" }, "x", "codex", workspaceId);
+    expect(move.envelopeVersion).toBe(2);
+    expect(move.producer).toBe("codex");
+    expect(move.env).toMatchObject({ workspaceId });
+  });
 });
 
 describe("shouldFlushAfter", () => {

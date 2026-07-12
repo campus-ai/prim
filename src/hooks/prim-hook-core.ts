@@ -9,15 +9,16 @@
  */
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import { ENVELOPE_VERSION, type Move } from "../protocol/move.js";
+import { ENVELOPE_VERSION, type Move, type MoveV1, withAgentProvenance } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
 
 export function toMove(
   parsed: Record<string, unknown>,
   cliVersion: string,
   agent: Agent = "claude_code",
+  workspaceId?: string,
 ): Move {
-  return {
+  const move: MoveV1 = {
     moveId: randomUUID(),
     capturedAt: Date.now(),
     sessionId: (parsed.session_id as string | undefined) ?? "",
@@ -34,6 +35,7 @@ export function toMove(
     // keeping the Claude wire shape byte-identical.
     ...(agent === "claude_code" ? {} : { producer: agent }),
   };
+  return workspaceId ? withAgentProvenance(move, agent, workspaceId) : move;
 }
 
 export type CommitInfo = {

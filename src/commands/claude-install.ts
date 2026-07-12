@@ -134,10 +134,11 @@ function makeDetachedRegistration(
 // anthropics/claude-code#41577; interrupt-style exits cancel outright,
 // #32712). The same detached form is safe for every OTHER
 // passive capture registration (prim-hook on SessionStart, UserPromptSubmit,
-// PreToolUse@*, PostToolUse@*, Stop, SubagentStop): capture emits no stdout
-// and always exits 0, so nothing Claude Code consumes is lost, and per-event
+// PreToolUse@*, PostToolUse@*, Stop, SubagentStop): routine capture emits no
+// stdout and always exits 0, so nothing Claude Code consumes is lost, and per-event
 // latency drops from Node startup (or an npx registry round-trip on
-// un-installed hosts) to ~10ms. Three hooks must STAY synchronous:
+// un-installed hosts) to ~10ms. Four hook command paths must STAY synchronous:
+//   - prim-hook on Stop: stdout carries decision feedback; ack follows write.
 //   - prim-pre-tool-use (gate): stdout permissionDecision + exit code ARE the
 //     allow/deny answer — Claude Code must block on it.
 //   - prim-post-tool-use: its stderr verdict footer is a deliberate human
@@ -146,7 +147,8 @@ function makeDetachedRegistration(
 //     hookSpecificOutput.additionalContext (team presence); keep it
 //     synchronous everywhere until codex parity lands so both agents share
 //     one command shape.
-// Caveats before flipping: journal appends become async (a host shutdown
+// Caveats before flipping any remaining passive event: journal appends become
+// async (a host shutdown
 // racing the detach can drop the tail move — acceptable for telemetry),
 // detached failures are fully silent (PRIM_HOOK_DEBUG stderr goes to
 // /dev/null), and on npx-fallback hosts every event spawns a background npm
@@ -493,6 +495,17 @@ function captureInstalled(settings: ClaudeSettings): boolean {
   );
 }
 
+/** Feedback needs both load-bearing stdout handlers, not merely any capture hook. */
+export function feedbackInstalled(settings: ClaudeSettings): boolean {
+  const stopCapture = (settings.hooks?.Stop ?? []).some((entry) =>
+    entryHasCommand(entry, CAPTURE_BIN),
+  );
+  const sessionStart = (settings.hooks?.SessionStart ?? []).some((entry) =>
+    entryHasCommand(entry, SESSION_START_BIN),
+  );
+  return stopCapture && sessionStart;
+}
+
 function statuslineInstalled(settings: ClaudeSettings): boolean {
   return isPrimStatusLine(settings);
 }
@@ -529,6 +542,7 @@ export type ScopeStatus = {
   path: string;
   gate: boolean;
   capture: boolean;
+  feedback: boolean;
   statusline: boolean;
 };
 
@@ -537,6 +551,7 @@ export type InstallResult = {
   path: string;
   gate: boolean;
   capture: boolean;
+  feedback: boolean;
   statusline: boolean;
   changed: boolean;
 };
@@ -562,6 +577,7 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     path,
     gate: isGateInstalled(after),
     capture: captureInstalled(after),
+    feedback: feedbackInstalled(after),
     statusline: statuslineInstalled(after),
     changed,
   };
@@ -580,6 +596,7 @@ export function performUninstall(scope: Scope): InstallResult {
     path,
     gate: isGateInstalled(after),
     capture: captureInstalled(after),
+    feedback: feedbackInstalled(after),
     statusline: statuslineInstalled(after),
     changed,
   };
@@ -626,6 +643,7 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
       path,
       gate: isGateInstalled(settings),
       capture: captureInstalled(settings),
+      feedback: feedbackInstalled(settings),
       statusline: statuslineInstalled(settings),
     };
   };
@@ -719,13 +737,13 @@ export function registerClaudeCommands(program: Command): void {
   claude
     .command("status")
     .description(
-      "Report whether each prim surface (gate, capture, statusline) is installed per scope",
+      "Report whether each prim surface (gate, capture, feedback, statusline) is installed per scope",
     )
     .action(() => {
       const result = performStatus();
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
-        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · statusline ${mark(s.statusline)} (${s.path})`;
+        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${mark(s.statusline)} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });

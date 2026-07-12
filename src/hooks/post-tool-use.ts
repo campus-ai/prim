@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { getClient } from "../client.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -155,7 +156,11 @@ async function main(): Promise<void> {
     emit();
     return;
   }
-  const base = toMove(parsed, resolveCliVersion(), agent);
+  // Stamp the same worktree provenance as passive prim-hook. The classifier
+  // may collapse these duplicate PostToolUse observations and keep either one.
+  const identity = getOrCreateWorkspaceId(cwd);
+  const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
+  const base = toMove(parsed, resolveCliVersion(), agent, workspaceId);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   try {
     const result = await ingestMove(move);
