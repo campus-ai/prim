@@ -139,8 +139,14 @@ export function getSiteUrl(): string {
  * Attempt to refresh the access token using a stored refresh token.
  * Returns the new access token, or undefined if refresh is not possible.
  */
+export type RequestOptions = {
+  signal?: AbortSignal;
+  /** Suppress broker diagnostics on machine-protocol hook paths. */
+  quietRefresh?: boolean;
+};
+
 async function performTokenRefresh(
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; quiet?: boolean } = {},
 ): Promise<string | undefined> {
   if (!existsSync(REFRESH_TOKEN_PATH)) {
     return undefined;
@@ -165,6 +171,7 @@ async function performTokenRefresh(
     // silently. A swallowed rejection here is what made a daemon that had
     // lost auth (and CLI 401s) undebuggable — the caller only ever saw
     // "Authentication expired" with no cause.
+    if (options.quiet) return undefined;
     const detail = (await response.text().catch(() => "")).slice(0, 200);
     process.stderr.write(
       `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
@@ -199,7 +206,9 @@ async function performTokenRefresh(
 let _refreshInFlight: Promise<string | undefined> | undefined;
 
 /** One refresh-token rotation at a time; successful rotations update all callers. */
-export function refreshToken(options: { signal?: AbortSignal } = {}): Promise<string | undefined> {
+export function refreshToken(
+  options: { signal?: AbortSignal; quiet?: boolean } = {},
+): Promise<string | undefined> {
   if (_refreshInFlight) {
     return _refreshInFlight;
   }
@@ -239,8 +248,8 @@ export class HttpError extends Error {
  * Thin REST client wrapping fetch with bearer auth and auto-refresh.
  */
 export interface CliClient {
-  get(path: string, options?: { signal?: AbortSignal }): Promise<unknown>;
-  post(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
+  get(path: string, options?: RequestOptions): Promise<unknown>;
+  post(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
 }
 
 let _cachedToken: string | undefined;
@@ -249,7 +258,7 @@ async function request(
   method: string,
   path: string,
   body?: unknown,
-  options?: { signal?: AbortSignal },
+  options?: RequestOptions,
 ): Promise<unknown> {
   const siteUrl = getSiteUrl();
   const url = `${siteUrl}${path}`;
@@ -260,7 +269,10 @@ async function request(
 
   // Proactive refresh: avoid 401 round-trip by refreshing before expiry
   if (_cachedToken && isTokenExpiringSoon()) {
-    const newToken = await refreshToken({ signal: options?.signal });
+    const newToken = await refreshToken({
+      signal: options?.signal,
+      quiet: options?.quietRefresh,
+    });
     if (newToken) {
       _cachedToken = newToken;
     }
@@ -294,7 +306,10 @@ async function request(
     const newToken =
       _cachedToken && _cachedToken !== tokenUsed
         ? _cachedToken
-        : await refreshToken({ signal: options?.signal });
+        : await refreshToken({
+            signal: options?.signal,
+            quiet: options?.quietRefresh,
+          });
     if (newToken) {
       _cachedToken = newToken;
       res = await doFetch(newToken);

@@ -118,6 +118,58 @@ prim codex install                 # Install OpenAI Codex hooks (project scope)
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 
+#### Claude decision feedback
+
+Claude Code receives eventual, human-visible feedback when automatic capture
+creates an accepted `change` Decision. A later Claude `Stop` or fresh
+`SessionStart` in the same Git worktree can display:
+
+```text
+[prim] response → created Decision (dec_a1b2c3d4): Use the stable API
+```
+
+This is a hook `systemMessage` for the person using Claude Code; it is not
+injected into the model's context. Delivery is at-least-once at the stdout
+handoff boundary: prim acknowledges only after writing the hook response, so a
+failed acknowledgment can show the same notification again. Notifications are
+eligible for 24 hours. The originating session gets limited preference, but any
+concurrent Claude session in the same worktree may consume the backlog. A hook
+claims at most 40 notifications and renders at most 8,000 Unicode code points;
+`hasMore` work is left for a later Stop or SessionStart rather than extending
+the current hook.
+
+Worktree scope comes from an opaque UUID stored under the worktree's Git
+metadata (equivalent to `git rev-parse --git-path prim/workspace-id`), never an
+absolute repository path. Linked worktrees receive distinct IDs, moving a
+worktree preserves its ID, and a clone creates a new one. A corrupt or
+unwritable identity is never silently replaced: capture falls back to the
+legacy envelope and `prim doctor` reports the limitation. Disable/uninstall
+does not delete the identity.
+
+Feedback uses the invoking CLI's credentials for direct HTTPS calls rather
+than the daemon, avoiding cross-organization token ambiguity. One absolute
+three-second in-process budget covers token refresh, lease, parsing, rendering,
+and acknowledgment. This is not a hard three-second wall clock: it cannot
+preempt shell/PATH or `npx` resolution, Node startup, Claude's own hook
+scheduling, or synchronous filesystem work. The Git fallback has a separate
+short timeout.
+
+Alternatives considered:
+
+| Option | Benefit | Limitation |
+| --- | --- | --- |
+| Existing hooks + direct HTTPS (current) | No new install surface; uses the invoking credentials | In-process budget is not a host-enforced wall clock |
+| Claude's native hook timeout | Host-enforced termination | Settings migration; may kill a cold `npx` startup |
+| Daemon routing | Lower steady-state latency | Daemon token/org may not match a concurrent session |
+| Dedicated feedback binary | Lower startup overhead | New distribution and install migration |
+| Synchronous pre-Stop classification | Stronger same-turn immediacy | Adds model latency and cost to the hook path |
+| Detached delivery | Does not block Stop | Cannot return the current hook's `systemMessage` |
+
+Run `prim claude status` to verify both existing feedback handlers are installed
+and `prim doctor` to inspect the worktree identity and server capability. No new
+hook registration or binary is required when upgrading an existing correct
+installation.
+
 ### Daemon
 
 A supervised long-lived companion process that continuously drains captured

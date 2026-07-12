@@ -4,9 +4,9 @@
  *
  * Reads a single hook event from stdin, scrubs PII/secrets, wraps it in a
  * Move envelope, resolves its owning org, appends to that org's local
- * NDJSON journal, exits 0. Never blocks the Claude Code session: any error
- * is swallowed (set PRIM_HOOK_DEBUG to surface it on stderr) and the
- * process always exits 0.
+ * NDJSON journal, exits 0. On Claude Stop it also leases any eventual
+ * same-worktree Decision feedback and returns it as a human-visible
+ * systemMessage. Capture and feedback fail independently.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
@@ -21,15 +21,32 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
+import {
+  FEEDBACK_DEADLINE_MS,
+  acknowledgeDecisionFeedback,
+  leaseDecisionFeedback,
+  renderFeedback,
+} from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
+import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+let outputAttempted = false;
+
+function emitOutput(
+  output: ReturnType<typeof buildHookOutput>,
+  acknowledge?: () => Promise<unknown>,
+): Promise<boolean> {
+  outputAttempted = true;
+  return handoffHookOutput(output, acknowledge);
+}
 
 function resolveCliVersion(): string {
   try {
@@ -50,38 +67,90 @@ function spawnBackgroundFlush(): void {
   }).unref();
 }
 
-try {
+function debug(area: "capture" | "feedback", error: unknown): void {
+  if (!process.env.PRIM_HOOK_DEBUG) return;
+  const detail = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`[prim-hook] ${area} failed: ${detail}\n`);
+}
+
+async function main(): Promise<void> {
+  // One absolute budget covers every feedback auth/HTTP operation after this
+  // point. It cannot preempt Node startup or synchronous filesystem work; see
+  // the README's explicit timeout boundary.
+  const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
   // Refresh the resolved-path cache so subsequent hook fires skip npx (no-op on
   // the cache-hit path and under the kill switch; never throws).
   warmBinCache();
   const agent = parseAgent(process.argv);
-  const raw = readFileSync(0, "utf-8");
+  let raw: string;
+  let parsed: Record<string, unknown>;
+  try {
+    raw = readFileSync(0, "utf-8");
+    parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
+  } catch (error) {
+    debug("capture", error);
+    await emitOutput(buildHookOutput({}));
+    return;
+  }
   // Normalize Hermes event names into prim's internal vocabulary at the wire
   // boundary (a no-op for Claude Code / Codex), so eventType and the
   // shouldFlushAfter drain trigger key on the names every downstream guard
   // already expects.
-  const parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: capture only in repos where prim is activated (prim.active).
   // Inactive repos short-circuit here — nothing is built, journaled, or flushed
   // — so a machine-wide (user-scope) install never captures where unwanted.
-  if (isRepoActiveForCapture(cwd)) {
+  const isClaudeStop = agent === "claude_code" && parsed.hook_event_name === "Stop";
+  if (!isRepoActiveForCapture(cwd)) {
+    if (isClaudeStop) await emitOutput(buildHookOutput({}));
+    return;
+  }
+
+  const identity = getOrCreateWorkspaceId(cwd);
+  const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
+
+  try {
     // Derive the envelope's identity/control fields (sessionId, eventType,
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
     // to the journal, transits to the server, and lands in the moves table.
-    const base = toMove(parsed, resolveCliVersion(), agent);
+    const base = toMove(parsed, resolveCliVersion(), agent, workspaceId);
     const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
     appendMove(move, orgId);
     if (shouldFlushAfter(move.eventType)) {
       spawnBackgroundFlush();
     }
+  } catch (error) {
+    debug("capture", error);
   }
-} catch (err) {
-  if (process.env.PRIM_HOOK_DEBUG) {
-    const detail = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[prim-hook] capture failed: ${detail}\n`);
+
+  if (!isClaudeStop) return;
+  const sessionId = typeof parsed.session_id === "string" ? parsed.session_id : "";
+  if (!workspaceId || !sessionId) {
+    await emitOutput(buildHookOutput({}));
+    return;
   }
+
+  const lease = await leaseDecisionFeedback(
+    { workspaceId, currentSessionId: sessionId, signal: feedbackSignal },
+    { onError: (error) => debug("feedback", error) },
+  );
+  const rendered = lease ? renderFeedback(lease) : undefined;
+  await emitOutput(
+    buildHookOutput({ systemMessage: rendered?.systemMessage }),
+    rendered
+      ? async () => {
+          await acknowledgeDecisionFeedback(
+            { workspaceId, deliveries: rendered.deliveries, signal: feedbackSignal },
+            { onError: (error) => debug("feedback", error) },
+          );
+        }
+      : undefined,
+  );
 }
-process.exit(0);
+
+void main().catch(async (error: unknown) => {
+  debug("capture", error);
+  if (!outputAttempted) await emitOutput(buildHookOutput({}));
+});

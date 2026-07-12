@@ -1,0 +1,114 @@
+{
+  "contract": "decision-feedback",
+  "protocolVersion": 1,
+  "moveEnvelopes": {
+    "legacyV1": {
+      "moveId": "11111111-1111-4111-8111-111111111111",
+      "capturedAt": 1700000000000,
+      "sessionId": "session-legacy",
+      "eventType": "PostToolUse",
+      "payload": { "hook_event_name": "PostToolUse" },
+      "env": { "cwd": "/repo", "cliVersion": "1.0.0", "osPlatform": "darwin" },
+      "envelopeVersion": 1
+    },
+    "claudeV2": {
+      "moveId": "22222222-2222-4222-8222-222222222222",
+      "capturedAt": 1700000000001,
+      "sessionId": "session-claude",
+      "eventType": "PostToolUse",
+      "payload": { "hook_event_name": "PostToolUse" },
+      "env": {
+        "cwd": "/repo",
+        "cliVersion": "1.0.0",
+        "osPlatform": "darwin",
+        "workspaceId": "d84b97dc-b69f-4b59-9d0a-f6b3436239a4"
+      },
+      "envelopeVersion": 2,
+      "producer": "claude_code"
+    },
+    "codexV2": {
+      "moveId": "33333333-3333-4333-8333-333333333333",
+      "capturedAt": 1700000000002,
+      "sessionId": "session-codex",
+      "eventType": "PostToolUse",
+      "payload": { "hook_event_name": "PostToolUse" },
+      "env": {
+        "cwd": "/repo",
+        "cliVersion": "1.0.0",
+        "osPlatform": "darwin",
+        "workspaceId": "d84b97dc-b69f-4b59-9d0a-f6b3436239a4"
+      },
+      "envelopeVersion": 2,
+      "producer": "codex"
+    },
+    "hermesV2": {
+      "moveId": "44444444-4444-4444-8444-444444444444",
+      "capturedAt": 1700000000003,
+      "sessionId": "session-hermes",
+      "eventType": "PostToolUse",
+      "payload": { "hook_event_name": "PostToolUse" },
+      "env": {
+        "cwd": "/repo",
+        "cliVersion": "1.0.0",
+        "osPlatform": "darwin",
+        "workspaceId": "d84b97dc-b69f-4b59-9d0a-f6b3436239a4"
+      },
+      "envelopeVersion": 2,
+      "producer": "hermes"
+    }
+  },
+  "lease": {
+    "request": {
+      "protocolVersion": 1,
+      "workspaceId": "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
+      "currentSessionId": "session-claude"
+    },
+    "leased": {
+      "protocolVersion": 1,
+      "status": "leased",
+      "events": [
+        {
+          "eventId": "notification-id",
+          "leaseVersion": 1,
+          "shortId": "a1b2c3d4",
+          "intent": "Use the stable API"
+        }
+      ],
+      "hasMore": false
+    },
+    "empty": { "protocolVersion": 1, "status": "empty", "hasMore": false },
+    "unavailable": {
+      "protocolVersion": 1,
+      "status": "unavailable",
+      "reason": "organization_unbound"
+    }
+  },
+  "ack": {
+    "request": {
+      "protocolVersion": 1,
+      "workspaceId": "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
+      "deliveries": [{ "eventId": "notification-id", "leaseVersion": 1 }]
+    },
+    "response": {
+      "protocolVersion": 1,
+      "status": "acked",
+      "acknowledgedEventIds": ["notification-id"]
+    }
+  },
+  "status": {
+    "available": { "protocolVersion": 1, "status": "available" },
+    "unavailable": {
+      "protocolVersion": 1,
+      "status": "unavailable",
+      "reason": "organization_unbound"
+    }
+  },
+  "normalization": [
+    {
+      "input": "  Use\n\tthe\u0000 safe\u202e API  ",
+      "expected": "Use the safe API"
+    },
+    { "input": "Ship 🚀 café \ud800 now", "expected": "Ship 🚀 café � now" }
+  ],
+  "rendered": "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API"
+}

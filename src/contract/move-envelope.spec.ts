@@ -14,9 +14,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Move } from "../protocol/move";
+import {
+  AGENT_ENVELOPE_VERSION,
+  LEGACY_ENVELOPE_VERSION,
+  type Move,
+  type MoveV1,
+  withAgentProvenance,
+} from "../protocol/move";
 
-function sample(): Move {
+function sample(): MoveV1 {
   return {
     moveId: "00000000-0000-4000-8000-000000000000",
     capturedAt: 1_700_000_000_000,
@@ -28,7 +34,7 @@ function sample(): Move {
       cliVersion: "0.1.0-alpha.15",
       osPlatform: "darwin",
     },
-    envelopeVersion: 1,
+    envelopeVersion: LEGACY_ENVELOPE_VERSION,
   };
 }
 
@@ -82,5 +88,51 @@ describe("Move envelope contract", () => {
     const restored = JSON.parse(JSON.stringify(codex)) as Move;
     expect(restored.producer).toBe("codex");
     expect("producer" in (JSON.parse(JSON.stringify(sample())) as object)).toBe(false);
+  });
+
+  it("keeps the V1 wire representation byte-compatible", () => {
+    expect(JSON.parse(JSON.stringify(sample()))).toEqual({
+      moveId: "00000000-0000-4000-8000-000000000000",
+      capturedAt: 1_700_000_000_000,
+      sessionId: "session-abc",
+      eventType: "PostToolUse",
+      payload: { tool_name: "Read", tool_input: { file_path: "/tmp/x" } },
+      env: {
+        cwd: "/Users/jth/repo",
+        cliVersion: "0.1.0-alpha.15",
+        osPlatform: "darwin",
+      },
+      envelopeVersion: 1,
+    });
+  });
+
+  it("upgrades agent moves to V2 with explicit nested provenance", () => {
+    const original = sample();
+    const upgraded = withAgentProvenance(
+      original,
+      "claude_code",
+      "123e4567-e89b-42d3-a456-426614174000",
+    );
+
+    expect(upgraded.envelopeVersion).toBe(AGENT_ENVELOPE_VERSION);
+    expect(upgraded.producer).toBe("claude_code");
+    expect(upgraded.env.workspaceId).toBe("123e4567-e89b-42d3-a456-426614174000");
+    expect(upgraded.env.cwd).toBe(original.env.cwd);
+    expect(original.envelopeVersion).toBe(LEGACY_ENVELOPE_VERSION);
+    expect("workspaceId" in original.env).toBe(false);
+  });
+
+  it("round-trips V2 without moving workspaceId to the closed top level", () => {
+    const upgraded = withAgentProvenance(
+      sample(),
+      "hermes",
+      "123e4567-e89b-42d3-a456-426614174000",
+    );
+    const wire = JSON.parse(JSON.stringify(upgraded)) as Record<string, unknown>;
+
+    expect(wire.envelopeVersion).toBe(2);
+    expect(wire.producer).toBe("hermes");
+    expect(wire).not.toHaveProperty("workspaceId");
+    expect(wire).toHaveProperty("env.workspaceId", "123e4567-e89b-42d3-a456-426614174000");
   });
 });
