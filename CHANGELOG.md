@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.44](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.43...v0.1.0-alpha.44) (2026-07-13)
+
+
+### Features
+
+* **statusline:** style teammate Decision links web-hyperlink blue ([6e0f1b8](https://github.com/campus-ai/prim/commit/6e0f1b80b13d9f3c45e149ff47808b0dde76435b))
+
+
+### Bug Fixes
+
+* **statusline:** strip control bytes from teammate name/area ([de2fb62](https://github.com/campus-ai/prim/commit/de2fb629e3a73431b0d92d5fe691d8ecfd8fbbd8))
+
 ## [0.1.0-alpha.43](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.42...v0.1.0-alpha.43) (2026-07-13)
 
 
