@@ -283,4 +283,66 @@ describe("client", () => {
       vi.mocked(fs.readFileSync).mockReturnValue("");
     });
   });
+
+  describe("isSessionEnded", () => {
+    it("marks the session ended on a terminal invalid_grant and stops replaying the dead token", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("dead-rt");
+      const fetchMock = vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          text: () =>
+            Promise.resolve(
+              '{"error":"invalid_grant","error_description":"Session has already ended."}',
+            ),
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { refreshToken, isSessionEnded } = await import("./client.js");
+      expect(isSessionEnded()).toBe(false);
+
+      await expect(refreshToken({ quiet: true })).resolves.toBeUndefined();
+      expect(isSessionEnded()).toBe(true);
+
+      // A second refresh must short-circuit — never replay the dead token.
+      await expect(refreshToken({ quiet: true })).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      vi.unstubAllGlobals();
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue("");
+    });
+
+    it("clears once a fresh login rotates in a new refresh token", async () => {
+      const fs = await import("node:fs");
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("dead-rt");
+      const fetchMock = vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          text: () => Promise.resolve('{"error":"invalid_grant"}'),
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { refreshToken, isSessionEnded } = await import("./client.js");
+      await refreshToken({ quiet: true });
+      expect(isSessionEnded()).toBe(true);
+
+      // `prim auth login` writes a new refresh token; the marker no longer
+      // matches the file, so the session reads as live again.
+      vi.mocked(fs.readFileSync).mockReturnValue("fresh-rt");
+      expect(isSessionEnded()).toBe(false);
+
+      vi.unstubAllGlobals();
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue("");
+    });
+  });
 });

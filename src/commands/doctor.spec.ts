@@ -107,6 +107,31 @@ describe("daemon health diagnostics", () => {
     );
     expect(classifyDaemonHealth(healthy, { service: { loaded: true, pid: 42 } }).status).toBe("ok");
   });
+
+  it("surfaces a terminal-auth-death daemon as an actionable re-auth prompt", () => {
+    const check = classifyDaemonHealth(
+      {
+        pid: 42,
+        healthy: false,
+        needsReauth: true,
+        // Heartbeat is unhealthy too, but re-auth is the actionable cause and
+        // must win over the opaque "heartbeat unhealthy — HTTP 500".
+        heartbeat: { healthy: false, consecutiveFailures: 5, lastError: "HTTP 500" },
+        ingestion: {
+          healthy: true,
+          consecutiveFailures: 0,
+          pendingCount: 0,
+          pendingSampled: false,
+          strandedCount: 0,
+          lastAcknowledgedCount: 0,
+        },
+      },
+      { service: { loaded: true, pid: 42 } },
+    );
+    expect(check.status).toBe("fail");
+    expect(check.detail).toContain("prim auth login");
+    expect(check.detail).not.toContain("HTTP 500");
+  });
 });
 
 describe("moves status diagnostics", () => {
