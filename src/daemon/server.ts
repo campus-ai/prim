@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { getClient, getSiteUrl, getTokenExpiresAt, refreshToken } from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
+import type { Teammate } from "../lib/presence.js";
 import { daemonRequest } from "./client.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 import {
@@ -84,7 +85,7 @@ let lastHeartbeatAt: number | undefined;
 // the caller's online teammates (self excluded), already deduped and sorted.
 let lastOnlineCount: number | undefined;
 let lastOnlineNames: string[] | undefined;
-let lastOnlineTeammates: { name: string; area?: string }[] | undefined;
+let lastOnlineTeammates: Teammate[] | undefined;
 // Daemon-local timestamp of the last ACCEPTED heartbeat ack. Used to decide
 // whether the cached presence (count + names) is still fresh; a daemon whose
 // heartbeats are failing keeps running but stops advancing this.
@@ -222,7 +223,7 @@ async function performHeartbeat(): Promise<void> {
       created?: boolean;
       onlineCount?: number;
       onlineNames?: string[];
-      onlineTeammates?: { name: string; area?: string }[];
+      onlineTeammates?: Teammate[];
       unavailable?: string;
     };
     if (result.accepted) {

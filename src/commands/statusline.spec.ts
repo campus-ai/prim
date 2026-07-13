@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequest } from "../daemon/client.js";
+import type { Teammate } from "../lib/presence.js";
 import { renderStatusline } from "./statusline.js";
 
 vi.mock("../daemon/client.js", () => ({
@@ -8,11 +9,7 @@ vi.mock("../daemon/client.js", () => ({
 
 const mockDaemonRequest = vi.mocked(daemonRequest);
 
-function snapshot(
-  onlineCount?: number,
-  onlineNames?: string[],
-  onlineTeammates?: { name: string; area?: string }[],
-) {
+function snapshot(onlineCount?: number, onlineNames?: string[], onlineTeammates?: Teammate[]) {
   return {
     pid: 1,
     uptimeMs: 1_000,
@@ -48,6 +45,22 @@ describe("renderStatusline", () => {
     );
     const line = await renderStatusline();
     expect(line).toContain("team: Kasey - auth, Sam");
+  });
+
+  it("renders the whole teammate label as an OSC 8 Decision link", async () => {
+    mockDaemonRequest.mockResolvedValue(
+      snapshot(2, undefined, [
+        {
+          name: "Kasey",
+          area: "auth",
+          decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+        },
+      ]),
+    );
+    const line = await renderStatusline();
+    expect(line).toContain(
+      "team: \x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07Kasey - auth\x1b]8;;\x07",
+    );
   });
 
   it("prefers teammates(+area) over the bare names when both are present", async () => {
@@ -153,25 +166,37 @@ describe("renderStatusline", () => {
     // targets: it withholds the roster and flags envMismatch, so we render the
     // honest cross-env state — not its team, and not a misleading "down".
     mockDaemonRequest.mockResolvedValue({
-      ...snapshot(undefined),
+      ...snapshot(undefined, undefined, [
+        {
+          name: "Kasey",
+          decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+        },
+      ]),
       envMismatch: true,
     });
     const line = await renderStatusline();
     expect(line).toContain("daemon: live");
     expect(line).toContain("presence: other env");
     expect(line).not.toContain("team:");
+    expect(line).not.toContain("\x1b]8;;");
   });
 
   it("renders 'presence: stale' (never a frozen count) when the daemon flags staleness", async () => {
     // Daemon alive but heartbeats failing: it drops the count and sets
     // presenceStale, so the statusline must not render a confident "team: N".
     mockDaemonRequest.mockResolvedValue({
-      ...snapshot(undefined),
+      ...snapshot(undefined, undefined, [
+        {
+          name: "Kasey",
+          decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+        },
+      ]),
       presenceStale: true,
     });
     const line = await renderStatusline();
     expect(line).toContain("daemon: live");
     expect(line).toContain("presence: stale");
     expect(line).not.toContain("team:");
+    expect(line).not.toContain("\x1b]8;;");
   });
 });
