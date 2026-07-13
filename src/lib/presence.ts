@@ -32,7 +32,11 @@ function validDecisionUrl(value: string | undefined): string | undefined {
 
 function decisionLink(label: string, decisionUrl: string | undefined): string {
   const url = validDecisionUrl(decisionUrl);
-  return url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
+  // Style the visible label blue + underlined — a web-style link — so it reads
+  // as clickable. Emitted unconditionally, like the OSC 8 escapes: Claude Code
+  // renders the statusline, so there is no TTY to gate on. The reset lands
+  // before the OSC 8 close, keeping the style off the ", " separator.
+  return url ? `\x1b]8;;${url}\x07\x1b[34;4m${label}\x1b[0m\x1b]8;;\x07` : label;
 }
 
 /**
