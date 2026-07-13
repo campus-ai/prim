@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.45](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.44...v0.1.0-alpha.45) (2026-07-13)
+
+
+### Bug Fixes
+
+* **daemon:** halt heartbeat + ingestion on terminal auth death ([#150](https://github.com/campus-ai/prim/issues/150)) ([58a98b2](https://github.com/campus-ai/prim/commit/58a98b20c9923ccea39067e2671a7a11b5739339))
+
 ## [0.1.0-alpha.44](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.43...v0.1.0-alpha.44) (2026-07-13)
 
 
