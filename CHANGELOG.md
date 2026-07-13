@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.43](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.42...v0.1.0-alpha.43) (2026-07-13)
+
+
+### Features
+
+* add Decision URLs to hook feedback ([#144](https://github.com/campus-ai/prim/issues/144)) ([b393d79](https://github.com/campus-ai/prim/commit/b393d7970d974208408f68ef2ceecbac1e11fd14))
+* **statusline:** link teammates to latest decisions ([#145](https://github.com/campus-ai/prim/issues/145)) ([ebea278](https://github.com/campus-ai/prim/commit/ebea2782ffeac32158583661f5b7bf0b58f4253e))
+
 ## [0.1.0-alpha.42](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.41...v0.1.0-alpha.42) (2026-07-12)
 
 
