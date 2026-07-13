@@ -125,7 +125,7 @@ creates an accepted `change` Decision. A later Claude `Stop` or fresh
 `SessionStart` in the same Git worktree can display:
 
 ```text
-[prim] response → created Decision (dec_a1b2c3d4): Use the stable API
+[prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q)
 ```
 
 This is a hook `systemMessage` for the person using Claude Code; it is not

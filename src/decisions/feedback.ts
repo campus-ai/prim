@@ -12,6 +12,7 @@ const STATUS_PATH = "/api/cli/decisions/feedback/status";
 const SHORT_ID = /^[0-9a-f]{8}$/u;
 const MAX_EVENT_ID_CHARS = 128;
 const MAX_RAW_INTENT_CODE_UNITS = 512;
+const MAX_FEEDBACK_WEB_URL_CHARS = 2_048;
 
 export type FeedbackDeliveryToken = {
   eventId: string;
@@ -21,6 +22,7 @@ export type FeedbackDeliveryToken = {
 export type FeedbackEvent = FeedbackDeliveryToken & {
   shortId: string;
   intent: string;
+  webUrl?: string;
 };
 
 export type FeedbackLease = {
@@ -91,6 +93,34 @@ export function normalizeFeedbackIntent(value: string): string {
   return `${points.slice(0, MAX_FEEDBACK_INTENT_CODE_POINTS - 1).join("")}…`;
 }
 
+function parseFeedbackWebUrl(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_FEEDBACK_WEB_URL_CHARS ||
+    !/^https:\/\//iu.test(value) ||
+    /\s/u.test(value) ||
+    replaceIsolatedSurrogates(value) !== value ||
+    Array.from(value).some((character) => isUnsafeControl(character.codePointAt(0) ?? 0))
+  ) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      !url.hostname ||
+      url.username.length > 0 ||
+      url.password.length > 0
+    ) {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return value;
+}
+
 function parseEvent(value: unknown): FeedbackEvent | undefined {
   if (!isRecord(value)) return undefined;
   if (
@@ -112,11 +142,14 @@ function parseEvent(value: unknown): FeedbackEvent | undefined {
   }
   const intent = normalizeFeedbackIntent(value.intent);
   if (!intent) return undefined;
+  const webUrl = value.webUrl === undefined ? undefined : parseFeedbackWebUrl(value.webUrl);
+  if (value.webUrl !== undefined && webUrl === undefined) return undefined;
   return {
     eventId: value.eventId,
     leaseVersion: Number(value.leaseVersion),
     shortId: value.shortId,
     intent,
+    ...(webUrl === undefined ? {} : { webUrl }),
   };
 }
 
@@ -150,7 +183,7 @@ export function renderFeedback(lease: FeedbackLease): RenderedFeedback | undefin
   const deliveries: FeedbackDeliveryToken[] = [];
   let pointCount = 0;
   for (const event of lease.events) {
-    const line = `[prim] response → created Decision (dec_${event.shortId}): ${event.intent}`;
+    const line = `[prim] response → created Decision (dec_${event.shortId}): ${event.intent}${event.webUrl ? ` (${event.webUrl})` : ""}`;
     const extra = Array.from(line).length + (lines.length === 0 ? 0 : 1);
     if (pointCount + extra > MAX_FEEDBACK_MESSAGE_CODE_POINTS) break;
     lines.push(line);

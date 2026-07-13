@@ -9,7 +9,7 @@ import {
   renderFeedback,
 } from "./feedback.js";
 
-const EXPECTED_FIXTURE_SHA256 = "2d7bfb14998e9f2e12242434d374e6754354ec98d9a8f5b0a4b35b09bac5d4b2";
+const EXPECTED_FIXTURE_SHA256 = "368255ebd79a84fa6b32d706b0e35f26c0c2719a249bc8eeb6906b4226a61cd9";
 const bytes = readFileSync(resolve("contracts", "decision-feedback-v1.json"));
 const fixture = JSON.parse(bytes.toString("utf8")) as {
   moveEnvelopes: {
