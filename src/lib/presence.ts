@@ -1,6 +1,39 @@
+import { stripControlChars } from "./ansi.js";
+
 /** An online teammate, optionally annotated with the area of their most
- *  recent decision (server-derived and sanitized). */
-export type Teammate = { name: string; area?: string };
+ *  recent decision and its canonical web URL (both server-derived). */
+export type Teammate = { name: string; area?: string; decisionUrl?: string };
+
+const DECISION_ORIGIN = "https://app.getprimitive.ai";
+
+/** Return a terminal-safe, production Primitive Decision URL, if valid. */
+function validDecisionUrl(value: string | undefined): string | undefined {
+  if (typeof value !== "string" || stripControlChars(value) !== value) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+    if (
+      url.origin !== DECISION_ORIGIN ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      !/^\/decisions\/[^/]+$/u.test(url.pathname)
+    ) {
+      return undefined;
+    }
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function decisionLink(label: string, decisionUrl: string | undefined): string {
+  const url = validDecisionUrl(decisionUrl);
+  return url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
+}
 
 /**
  * The shared truncation skeleton behind the presence formatters.
@@ -47,7 +80,8 @@ export function formatTeammatesWithArea(teammates: Teammate[] | undefined, cap: 
       // Guard against a blank/whitespace area (e.g. from an older server that
       // doesn't drop it): render name-only rather than a dangling "Name - ".
       const area = t.area?.trim();
-      return area ? `${t.name} - ${area}` : t.name;
+      const label = area ? `${t.name} - ${area}` : t.name;
+      return decisionLink(label, t.decisionUrl);
     }),
     cap,
   );

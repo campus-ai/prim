@@ -24,7 +24,7 @@ import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { warmBinCache } from "../lib/bin-cache.js";
-import { formatTeammates, formatTeammatesWithArea } from "../lib/presence.js";
+import { type Teammate, formatTeammates, formatTeammatesWithArea } from "../lib/presence.js";
 
 type StatusSnapshot = {
   pid: number;
@@ -39,7 +39,7 @@ type StatusSnapshot = {
   // last-resort fallback for a server that predates names entirely.
   onlineCount?: number;
   onlineNames?: string[];
-  onlineTeammates?: { name: string; area?: string }[];
+  onlineTeammates?: Teammate[];
   // True when the daemon is alive but its heartbeats have stopped landing, so
   // the cached presence is frozen and not to be trusted.
   presenceStale?: boolean;

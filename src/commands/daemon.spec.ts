@@ -48,6 +48,14 @@ describe("classifyStatus", () => {
       sessionId: "daemon-4242",
       onlineCount: 3,
       onlineNames: ["Alex", "Maya"],
+      onlineTeammates: [
+        {
+          name: "Alex",
+          area: "auth",
+          decisionUrl: "https://app.getprimitive.ai/decisions/alex-decision",
+        },
+        { name: "Maya" },
+      ],
     };
     const { json, exitCode } = classifyStatus(true, true, snapshot, 4242);
     expect(json).toEqual({ running: true, responding: true, ...snapshot });

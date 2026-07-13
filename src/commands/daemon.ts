@@ -34,7 +34,7 @@ import {
   withDaemonLifecycleLock,
 } from "../daemon/launchd.js";
 import { binFile } from "../lib/bin-path.js";
-import { formatTeammates } from "../lib/presence.js";
+import { type Teammate, formatTeammates } from "../lib/presence.js";
 
 const DAEMON_BIN = "prim-daemon-server";
 const CONFIG_DIR = join(homedir(), ".config", "prim");
@@ -80,6 +80,7 @@ interface StatusSnapshot {
   // Online teammates (self excluded), sorted. Surfaced in full here, where
   // there's room; the statusline truncates the same list.
   onlineNames?: string[];
+  onlineTeammates?: Teammate[];
 }
 
 function readPidfile(): RunningPid | null {
