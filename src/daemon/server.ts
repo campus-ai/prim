@@ -21,7 +21,13 @@ import { type Server, type Socket, createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getClient, getSiteUrl, getTokenExpiresAt, refreshToken } from "../client.js";
+import {
+  getClient,
+  getSiteUrl,
+  getTokenExpiresAt,
+  isSessionEnded,
+  refreshToken,
+} from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
 import type { Teammate } from "../lib/presence.js";
@@ -98,6 +104,11 @@ let heartbeatRerunRequested = false;
 let ownership: DaemonOwnership | undefined;
 let socketServer: Server | undefined;
 let shuttingDown = false;
+// Set once the broker terminally ends the session (isSessionEnded()). The
+// heartbeat + ingestion loops halt — replaying a dead token every poll was the
+// server-side 500 flood — while the slower token-check loop keeps running to
+// auto-resume once `prim auth login` rotates in a fresh token.
+let reauthHold = false;
 
 function resolveRuntimeVersion(): string {
   if (process.env.PRIM_RUNTIME_VERSION) {
@@ -134,6 +145,57 @@ function updatePendingHealth(): void {
   daemonHealth.ingestion.pendingSampled = pending.sampled;
   daemonHealth.ingestion.oldestPendingAt = pending.oldestPendingAt;
   daemonHealth.ingestion.strandedCount = pending.strandedCount;
+}
+
+/**
+ * Halt the heartbeat + ingestion loops after the broker has terminally ended
+ * the session. Retrying can't help — only `prim auth login` can — so replaying
+ * the dead token every poll just floods the server with 401s (previously 500s)
+ * and feeds the broker's reuse detection. Captures still accrue to the journal
+ * and drain once the token-check loop detects re-auth. Idempotent.
+ */
+function enterReauthHold(): void {
+  if (reauthHold) {
+    return;
+  }
+  reauthHold = true;
+  daemonHealth.needsReauth = true;
+  if (heartbeatTimer) {
+    clearTimeout(heartbeatTimer);
+    heartbeatTimer = undefined;
+  }
+  if (ingestionTimer) {
+    clearTimeout(ingestionTimer);
+    ingestionTimer = undefined;
+  }
+  persistHealth();
+  // One line, not one per poll: the whole point is to stop the spam.
+  process.stderr.write(
+    "[prim-daemon] authentication ended — halting heartbeat + ingestion until `prim auth login` (captures continue to the journal)\n",
+  );
+}
+
+/**
+ * Resume the loops once a fresh `prim auth login` has rotated in a new refresh
+ * token (isSessionEnded() reverts to false on its own). Clears the failure
+ * counters so backoff restarts clean.
+ */
+function exitReauthHold(): void {
+  if (!reauthHold) {
+    return;
+  }
+  reauthHold = false;
+  daemonHealth.needsReauth = false;
+  daemonHealth.heartbeat.consecutiveFailures = 0;
+  daemonHealth.ingestion.consecutiveFailures = 0;
+  daemonHealth.heartbeat.lastError = undefined;
+  daemonHealth.ingestion.lastError = undefined;
+  persistHealth();
+  process.stderr.write(
+    "[prim-daemon] re-authentication detected — resuming heartbeat + ingestion\n",
+  );
+  void sendHeartbeat();
+  void runIngestionLoop();
 }
 
 async function takeOwnership(): Promise<void> {
@@ -257,6 +319,10 @@ async function performHeartbeat(): Promise<void> {
     daemonHealth.heartbeat.lastError = errorMessage(err);
     daemonHealth.heartbeat.consecutiveFailures += 1;
     persistHealth();
+    if (isSessionEnded()) {
+      enterReauthHold();
+      return;
+    }
     process.stderr.write(`[prim-daemon] heartbeat error: ${errorMessage(err)}\n`);
   }
 }
@@ -285,7 +351,7 @@ function sendHeartbeat(): Promise<void> {
 }
 
 function scheduleHeartbeat(): void {
-  if (shuttingDown) {
+  if (shuttingDown || reauthHold) {
     return;
   }
   const failures = daemonHealth.heartbeat.consecutiveFailures;
@@ -313,7 +379,7 @@ async function ensureTokenFresh(): Promise<void> {
 }
 
 function scheduleIngestion(delayMs: number): void {
-  if (shuttingDown) {
+  if (shuttingDown || reauthHold) {
     return;
   }
   ingestionTimer = setTimeout(() => {
@@ -372,6 +438,10 @@ async function runIngestionLoop(): Promise<void> {
       // The delivery error is already recorded; retry will rescan.
     }
     persistHealth();
+    if (isSessionEnded()) {
+      enterReauthHold();
+      return;
+    }
     process.stderr.write(`[prim-daemon] ingestion error: ${errorMessage(err)}\n`);
     scheduleIngestion(delay);
   }
@@ -429,6 +499,7 @@ function handleStatusSnapshot(params: Record<string, unknown>): unknown {
     lastHeartbeatAt,
     version: runtimeVersion,
     healthy: daemonHealth.healthy,
+    needsReauth: daemonHealth.needsReauth === true,
     heartbeat: { ...daemonHealth.heartbeat },
     ingestion: { ...daemonHealth.ingestion },
   };
@@ -591,7 +662,21 @@ function startTimers(): void {
 }
 
 async function runTokenCheckLoop(): Promise<void> {
-  await ensureTokenFresh();
+  if (reauthHold) {
+    // Held for re-auth: don't refresh a dead token. Watch for a fresh login —
+    // isSessionEnded() flips false once the refresh token rotates — and resume
+    // the halted loops when it does.
+    if (!isSessionEnded()) {
+      exitReauthHold();
+    }
+  } else {
+    await ensureTokenFresh();
+    // A proactive refresh may have hit the terminal rejection; halt promptly
+    // rather than waiting for the next heartbeat/ingest to rediscover it.
+    if (isSessionEnded()) {
+      enterReauthHold();
+    }
+  }
   if (!shuttingDown) {
     tokenCheckTimer = setTimeout(() => {
       tokenCheckTimer = undefined;

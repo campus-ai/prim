@@ -55,6 +55,7 @@ export type DaemonDoctorSnapshot = {
   pid?: number;
   version?: string;
   healthy?: boolean;
+  needsReauth?: boolean;
   heartbeat?: DaemonHeartbeatHealth;
   ingestion?: DaemonIngestionHealth;
 };
@@ -149,6 +150,16 @@ export function classifyDaemonHealth(
       name: "daemon",
       status: "fail",
       detail: `launchd does not own the daemon socket (launchd ${String(options.service.pid ?? "none")} · socket ${String(snapshot.pid ?? "none")})`,
+    };
+  }
+  if (snapshot.needsReauth) {
+    // The daemon is supervised and its socket is up; it has deliberately halted
+    // its loops because the session is terminally dead. Surface the one action
+    // that recovers it instead of the opaque "heartbeat unhealthy — HTTP 500".
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "authentication ended — run `prim auth login`",
     };
   }
   if (!snapshot.heartbeat?.healthy) {

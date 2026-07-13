@@ -145,6 +145,30 @@ export type RequestOptions = {
   quietRefresh?: boolean;
 };
 
+// The refresh-token value the broker TERMINALLY rejected ("invalid_grant" /
+// "Session has already ended"). While the on-disk refresh token still equals
+// this, the session is dead: refresh short-circuits and callers can halt
+// instead of hammering. A fresh `prim auth login` rotates the file to a new
+// value, so isSessionEnded() reverts to false on its own — no manual reset.
+let _endedRefreshToken: string | undefined;
+
+/**
+ * True when the stored session has been terminally ended by the broker and the
+ * on-disk refresh token has not since changed. The daemon uses this to stop
+ * its heartbeat/ingest loops until re-auth, rather than replaying a dead token
+ * on every poll (which only spams the broker and feeds its reuse detection).
+ */
+export function isSessionEnded(): boolean {
+  if (_endedRefreshToken === undefined) {
+    return false;
+  }
+  if (!existsSync(REFRESH_TOKEN_PATH)) {
+    return false;
+  }
+  const current = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
+  return current === _endedRefreshToken;
+}
+
 async function performTokenRefresh(
   options: { signal?: AbortSignal; quiet?: boolean } = {},
 ): Promise<string | undefined> {
@@ -154,6 +178,13 @@ async function performTokenRefresh(
 
   const refreshTokenValue = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
   if (!refreshTokenValue) {
+    return undefined;
+  }
+
+  // Session terminally ended for this exact refresh token — do not replay it.
+  // A fresh `prim auth login` writes a new refresh token, which no longer
+  // matches and lets refresh proceed (success below clears the marker).
+  if (_endedRefreshToken !== undefined && refreshTokenValue === _endedRefreshToken) {
     return undefined;
   }
 
@@ -167,17 +198,27 @@ async function performTokenRefresh(
   });
 
   if (!response.ok) {
-    // Surface why the broker rejected the refresh instead of failing
-    // silently. A swallowed rejection here is what made a daemon that had
-    // lost auth (and CLI 401s) undebuggable — the caller only ever saw
-    // "Authentication expired" with no cause.
-    if (options.quiet) return undefined;
     const detail = (await response.text().catch(() => "")).slice(0, 200);
-    process.stderr.write(
-      `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
-        detail ? ` — ${detail}` : ""
-      }\n`,
-    );
+    // A rotated/duplicated refresh token trips the broker's reuse detection,
+    // which ends the whole session: `invalid_grant` / "Session has already
+    // ended" (the broker sends 400, but key on the grant semantics, not the
+    // status). That is TERMINAL — only `prim auth login` recovers it — so
+    // record the dead token and stop replaying it (short-circuit above). A
+    // transient 5xx/network failure is NOT terminal and stays retryable.
+    if (detail.includes("invalid_grant") || detail.includes("Session has already ended")) {
+      _endedRefreshToken = refreshTokenValue;
+    }
+    // Surface why the broker rejected the refresh instead of failing silently.
+    // A swallowed rejection here is what made a daemon that had lost auth (and
+    // CLI 401s) undebuggable — the caller only ever saw "Authentication
+    // expired" with no cause.
+    if (!options.quiet) {
+      process.stderr.write(
+        `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
+          detail ? ` — ${detail}` : ""
+        }\n`,
+      );
+    }
     return undefined;
   }
 
@@ -190,6 +231,9 @@ async function performTokenRefresh(
   if (!data.access_token) {
     return undefined;
   }
+
+  // A successful rotation re-establishes the session; drop any terminal marker.
+  _endedRefreshToken = undefined;
 
   // Save new tokens
   writeFileSync(TOKEN_FILE_PATH, data.access_token, { mode: 0o600 });

@@ -45,6 +45,11 @@ export interface DaemonHealthState {
   healthy: boolean;
   heartbeat: DaemonHeartbeatHealth;
   ingestion: DaemonIngestionHealth;
+  // Set once the broker terminally ends the session ("invalid_grant"). The
+  // daemon has halted its poll loops and is waiting for `prim auth login`;
+  // doctor renders this as an actionable re-auth prompt rather than an opaque
+  // "heartbeat unhealthy — HTTP 500".
+  needsReauth?: boolean;
 }
 
 export function createDaemonHealthState(
@@ -83,7 +88,7 @@ export function refreshDaemonHealth(state: DaemonHealthState, now: number): void
     (state.ingestion.pendingCount === 0 ||
       (state.ingestion.oldestPendingAt !== undefined &&
         now - state.ingestion.oldestPendingAt <= INGESTION_SLA_MS));
-  state.healthy = state.heartbeat.healthy && state.ingestion.healthy;
+  state.healthy = state.heartbeat.healthy && state.ingestion.healthy && !state.needsReauth;
 }
 
 function retryDelayMs(consecutiveFailures: number, capMs: number, random: () => number): number {
