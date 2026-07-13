@@ -68,7 +68,9 @@ function formatLabeled(labels: string[] | undefined, cap: number): string {
  * Infinity for the full list.
  */
 export function formatTeammates(names: string[] | undefined, cap: number): string {
-  return formatLabeled(names, cap);
+  // Names are server-derived but reach the terminal directly; strip control
+  // bytes so a crafted name can't smuggle an escape sequence into the line.
+  return formatLabeled(names?.map(stripControlChars), cap);
 }
 
 /**
@@ -81,10 +83,14 @@ export function formatTeammates(names: string[] | undefined, cap: number): strin
 export function formatTeammatesWithArea(teammates: Teammate[] | undefined, cap: number): string {
   return formatLabeled(
     teammates?.map((t) => {
-      // Guard against a blank/whitespace area (e.g. from an older server that
-      // doesn't drop it): render name-only rather than a dangling "Name - ".
-      const area = t.area?.trim();
-      const label = area ? `${t.name} - ${area}` : t.name;
+      // Strip control bytes from the server-derived name/area before they
+      // reach the terminal — this is the untrusted-input boundary, so a crafted
+      // value can't smuggle an escape into the styled label. Strip before the
+      // blank guard: a control-only area (e.g. "\x07") must collapse to empty
+      // here, not survive trim() and later strip to a dangling "Name - ".
+      const name = stripControlChars(t.name);
+      const area = stripControlChars(t.area ?? "").trim();
+      const label = area ? `${name} - ${area}` : name;
       return decisionLink(label, t.decisionUrl);
     }),
     cap,

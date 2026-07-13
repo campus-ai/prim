@@ -25,6 +25,10 @@ describe("formatTeammates", () => {
       "Maya, Alex, Sam, Tom",
     );
   });
+
+  it("strips control bytes from names so they can't smuggle an escape", () => {
+    expect(formatTeammates(["Ma\x1b]8;;evil\x07ya", "Al\x07ex"], 3)).toBe("Ma]8;;evilya, Alex");
+  });
 });
 
 describe("formatTeammatesWithArea", () => {
@@ -119,6 +123,36 @@ describe("formatTeammatesWithArea", () => {
     expect(formatTeammatesWithArea([{ name: "Kasey", area: "  " }, { name: "Sam" }], 3)).toBe(
       "Kasey, Sam",
     );
+  });
+
+  it("strips control bytes from name and area before styling the label", () => {
+    expect(formatTeammatesWithArea([{ name: "Ka\x1bsey", area: "au\x07th" }], 3)).toBe(
+      "Kasey - auth",
+    );
+  });
+
+  it("sanitizes the label before it is wrapped in the link + style escapes", () => {
+    // Pins the ordering: the strip runs on the raw name/area, so the injected
+    // bytes are gone while the OSC 8 + SGR escapes decisionLink adds survive.
+    // Moving the strip after decisionLink would eat those escapes and regress.
+    expect(
+      formatTeammatesWithArea(
+        [
+          {
+            name: "Ka\x1bsey",
+            area: "au\x07th",
+            decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+          },
+        ],
+        3,
+      ),
+    ).toBe(
+      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07",
+    );
+  });
+
+  it("renders name-only when the area is control bytes only (no dangling separator)", () => {
+    expect(formatTeammatesWithArea([{ name: "Kasey", area: "\x07" }], 3)).toBe("Kasey");
   });
 
   it("truncates on the teammate count, not the label width", () => {
