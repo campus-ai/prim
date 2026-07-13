@@ -59,7 +59,7 @@ describe("renderStatusline", () => {
     );
     const line = await renderStatusline();
     expect(line).toContain(
-      "team: \x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07Kasey - auth\x1b]8;;\x07",
+      "team: \x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07",
     );
   });
 

@@ -59,8 +59,8 @@ describe("formatTeammatesWithArea", () => {
         3,
       ),
     ).toBe(
-      "\x1b]8;;https://app.getprimitive.ai/decisions/rh75k1djya8f43k99318ef08dx8adhth\x07Kasey - auth\x1b]8;;\x07, " +
-        "\x1b]8;;https://app.getprimitive.ai/decisions/sam-decision\x07Sam\x1b]8;;\x07",
+      "\x1b]8;;https://app.getprimitive.ai/decisions/rh75k1djya8f43k99318ef08dx8adhth\x07\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07, " +
+        "\x1b]8;;https://app.getprimitive.ai/decisions/sam-decision\x07\x1b[34;4mSam\x1b[0m\x1b]8;;\x07",
     );
   });
 
@@ -78,7 +78,7 @@ describe("formatTeammatesWithArea", () => {
         3,
       ),
     ).toBe(
-      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07Kasey - auth\x1b]8;;\x07, Sam - data",
+      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07, Sam - data",
     );
   });
 
@@ -93,7 +93,9 @@ describe("formatTeammatesWithArea", () => {
         ],
         3,
       ),
-    ).toBe("\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07Kasey\x1b]8;;\x07");
+    ).toBe(
+      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07\x1b[34;4mKasey\x1b[0m\x1b]8;;\x07",
+    );
   });
 
   it.each([
@@ -149,7 +151,7 @@ describe("formatTeammatesWithArea", () => {
         3,
       ),
     ).toBe(
-      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07Kasey - auth\x1b]8;;\x07, Sam - data, Alex +1",
+      "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07, Sam - data, Alex +1",
     );
   });
 
