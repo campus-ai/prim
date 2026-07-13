@@ -71,7 +71,8 @@
           "eventId": "notification-id",
           "leaseVersion": 1,
           "shortId": "a1b2c3d4",
-          "intent": "Use the stable API"
+          "intent": "Use the stable API",
+          "webUrl": "https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q"
         }
       ],
       "hasMore": false
@@ -110,5 +111,5 @@
     },
     { "input": "Ship 🚀 café \ud800 now", "expected": "Ship 🚀 café � now" }
   ],
-  "rendered": "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API"
+  "rendered": "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q)"
 }

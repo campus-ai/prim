@@ -22,6 +22,8 @@ function event(overrides: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
+const webUrl = "https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q";
+
 describe("normalizeFeedbackIntent", () => {
   it("collapses whitespace and removes controls and bidi overrides", () => {
     expect(normalizeFeedbackIntent("  use\n\t the\u0000 safe\u202e API  ")).toBe(
@@ -72,6 +74,73 @@ describe("parseFeedbackLease", () => {
         reason: "organization_unbound",
       }),
     ).toEqual({ events: [], hasMore: false });
+  });
+
+  it("accepts a valid web URL and preserves compatibility when it is missing", () => {
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 1,
+        status: "leased",
+        events: [event({ webUrl })],
+        hasMore: false,
+      }),
+    ).toEqual({
+      events: [
+        {
+          eventId: "event-1",
+          leaseVersion: 1,
+          shortId: "a1b2c3d4",
+          intent: "Use the stable API",
+          webUrl,
+        },
+      ],
+      hasMore: false,
+    });
+
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 1,
+        status: "leased",
+        events: [event()],
+        hasMore: false,
+      }),
+    ).toEqual({
+      events: [
+        {
+          eventId: "event-1",
+          leaseVersion: 1,
+          shortId: "a1b2c3d4",
+          intent: "Use the stable API",
+        },
+      ],
+      hasMore: false,
+    });
+  });
+
+  it.each([
+    ["non-string", 42],
+    ["empty", ""],
+    ["oversized", `https://example.com/${"x".repeat(2_048)}`],
+    ["relative", "/decisions/decision-1"],
+    ["non-HTTPS", "http://app.getprimitive.ai/decisions/decision-1"],
+    ["username", "https://user@app.getprimitive.ai/decisions/decision-1"],
+    ["password", "https://user:secret@app.getprimitive.ai/decisions/decision-1"],
+    ["whitespace", "https://app.getprimitive.ai/decisions/decision 1"],
+    ["C0 control", "https://app.getprimitive.ai/decisions/decision\u0000-1"],
+    ["C1 control", "https://app.getprimitive.ai/decisions/decision\u0085-1"],
+    ["bidi control", "https://app.getprimitive.ai/decisions/decision\u202e-1"],
+    ["isolated high surrogate", "https://app.getprimitive.ai/decisions/decision\ud800-1"],
+    ["isolated low surrogate", "https://app.getprimitive.ai/decisions/decision\udfff-1"],
+    ["malformed", "https://[invalid"],
+  ])("rejects a %s web URL and the whole lease", (_label, invalidWebUrl) => {
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 1,
+        status: "leased",
+        events: [event(), event({ eventId: "event-2", webUrl: invalidWebUrl })],
+        hasMore: false,
+      }),
+    ).toBeUndefined();
   });
 
   it("rejects unknown versions/statuses and malformed event tokens", () => {
@@ -131,30 +200,47 @@ describe("parseFeedbackLease", () => {
 });
 
 describe("renderFeedback", () => {
-  it("renders the exact copy and retains only the corresponding ack token", () => {
+  it("renders the exact linked copy and retains only the corresponding ack token", () => {
     const lease = parseFeedbackLease({
       protocolVersion: 1,
       status: "leased",
-      events: [event()],
+      events: [event({ webUrl })],
       hasMore: false,
     });
     expect(renderFeedback(lease as FeedbackLease)).toEqual({
+      systemMessage:
+        "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q)",
+      deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
+    });
+  });
+
+  it("renders the legacy copy when the server omits the web URL", () => {
+    expect(
+      renderFeedback({ events: [event() as FeedbackLease["events"][number]], hasMore: false }),
+    ).toEqual({
       systemMessage: "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API",
       deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
     });
   });
 
-  it("stops before the 8k display budget and leaves overflow unacknowledged", () => {
+  it("includes web URLs in the 8k display budget and leaves overflow unacknowledged", () => {
     const events = Array.from({ length: 40 }, (_, index) => ({
       eventId: `event-${String(index)}`,
       leaseVersion: 1,
       shortId: `id${String(index)}`,
       intent: "x".repeat(MAX_FEEDBACK_INTENT_CODE_POINTS),
+      webUrl: `https://app.getprimitive.ai/decisions/${"x".repeat(300)}`,
     }));
     const rendered = renderFeedback({ events, hasMore: false });
     expect(rendered).toBeDefined();
     expect(Array.from(rendered?.systemMessage ?? "").length).toBeLessThanOrEqual(8_000);
     expect(rendered?.deliveries.length).toBeLessThan(events.length);
+    expect(rendered?.deliveries).toEqual(
+      events.slice(0, rendered?.deliveries.length).map(({ eventId, leaseVersion }) => ({
+        eventId,
+        leaseVersion,
+      })),
+    );
   });
 });
 
