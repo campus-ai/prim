@@ -1,6 +1,6 @@
 ---
 name: prim
-description: Use the prim CLI for Primitive's decision graph — passive decision capture, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
+description: Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
 ---
 
 # Working with the prim CLI
@@ -11,7 +11,7 @@ description: Use the prim CLI for Primitive's decision graph — passive decisio
 
 As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with; with **Enforcement**, prim blocks the edit until you reconcile the decision and retry. Conflict Gates are **not currently enabled** — capture runs regardless. To enable them for your team, contact support@getprimitive.ai.
 
-You never invoke capture. It runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Your job is to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
+Low-level capture runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Deliberately record higher-order forks in the road through `prim decisions create` as described below. Your job is also to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
 
 ## Auth
 
@@ -49,6 +49,8 @@ When enabled, the gate fail-opens on its *own* infrastructure errors (no daemon,
 - `npx --yes @primitive.ai/prim decisions recent` -- the team's recent decisions, each row badged by author and agent (`Your Claude Code` / `Your Codex` / `Your Hermes`); `--limit <n>` and `--since <dur>` narrow it. `--author "<name>"` filters to one teammate (feed name, `"First Last"`, last name, username, email, or email local-part) -- the way to answer "what has X decided?"; an unknown or ambiguous name comes back as `unavailable` with the reason, and `authorHasDecisions` in the JSON distinguishes "no feed-visible decisions" (false) from "has decisions, none in this window" (true). The page defaults to the 10 most recent, so it can hide older ones: on an author query the JSON's `windowTotal` is how many that teammate has in the window. When `windowTotal` exceeds the rows returned, don't present the page as complete -- tell the user you're showing the most recent N of `windowTotal` and offer to pull the rest, which is a re-run with `--limit <windowTotal>` (capped at 100; `windowTotalCapped` means the count is a floor rendered `N+`, and a window past 100 can't be fetched whole).
 - `npx --yes @primitive.ai/prim decisions show <idOrShortId>` and `npx --yes @primitive.ai/prim decisions cascade <idOrShortId>` -- full detail, and the downstream blast radius a change would disturb.
 
+Before presenting decision reads, use the current conversation, task, and available memory to understand what matters to the requester. Do not dump the API's chronological rows unchanged. Group related decisions around goals or workstreams, lead with decisions that affect the requester's current work, and surface conflicts, supersessions, or consequential tradeoffs before background activity. Explain why an item is relevant when the connection is supported; do not invent relevance or rationale. Preserve the response's `unavailable`, truncation, and count semantics when reshaping it.
+
 ## Reconcile and the verdict footer
 
 Reconcile and the verdict footer are part of Conflict Gates **Enforcement**, which is **not currently enabled** (contact support@getprimitive.ai to turn it on); the `reconcile` command stays available regardless. When Enforcement is on:
@@ -71,15 +73,82 @@ npx --yes @primitive.ai/prim decisions confirm <idOrShortId>
 
 Confirmations are author-targeted and rare by design; answering keeps the graph's rationale trustworthy. Don't manufacture rationale — if you don't know why a decision was made, say so.
 
-## Author a decision deliberately
+## Preserve durable user decisions
 
-Capture is automatic for the decisions you *make while coding*. When the user instead asks you to **record a decision explicitly** — one that didn't fall out of an edit (a design call, a convention, a choice settled in discussion) — author it directly:
+Capture is automatic for low-level choices made while coding. Use the deliberate CLI path for higher-order decisions that emerge in conversation: goals, priorities, principles, invariants, constraints, defaults, commitments, durable tradeoffs, and exceptions.
+
+A decision worth deliberately recording is a genuine **fork in the road**: the user or agent encountered multiple plausible paths, selected one, and that selection should inform future work. Record the chosen behavior, direction, constraint, or tradeoff—not routine implementation needed to finish the task or follow an existing convention. A teammate working elsewhere should benefit from knowing it.
+
+### Ground the rationale in available context
+
+Before deliberately recording a decision, use the full context already available to you to identify **why this path was chosen**. Start with the current conversation. When the decision or task points to relevant connected sources, inspect them too—especially Slack, Granola or other meeting notes, Linear, Zoom transcripts, email, and repository docs or skills. Prefer the specific thread, meeting, ticket, or document the user referenced over a broad search.
+
+Record only rationale supported by those sources. Do not mistake the implementation method, the task request, or a restatement of the decision for its rationale. If the rationale remains unclear or the relevant source is unavailable, omit `--rationale` rather than inventing one.
+
+For proactively identified decisions, let confidence in the rationale determine the interaction:
+
+- **Clear and well-supported** — record the decision and rationale silently at the natural task boundary.
+- **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Record after confirmation or correction.
+- **No supported rationale** — at the task boundary, ask one focused question: “What made you choose X over the other path?” Record after the answer.
+
+These questions share the interruption budget below; never ask separate questions for the decision and its rationale. If both are uncertain, combine them into one concise prompt. An explicit request to “add this decision to Primitive” still records immediately with the information supplied—do not delay it to demand rationale.
+
+### Direct requests: record immediately
+
+When the user asks to record a decision—for example, “add this decision to Primitive”—author it directly. Do not ask for another confirmation.
+
+### Clear decisions: record without interrupting
+
+When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
+
+Examples that qualify:
+
+- “We're prioritizing retention this quarter.”
+- “Customer data must remain in the EU.”
+- “Authentication state remains server-authoritative.”
+- “Do not introduce another frontend framework.”
+
+Treat changes to shared agent instructions and standards—such as `AGENTS.md`, `CLAUDE.md`, repository skills, architecture rules, and design-system guidance—as a high-signal opportunity to preserve a decision. Inspect what rule the change establishes or revises. If it represents a genuine fork in the road, record the durable policy itself, not “updated the docs.” If the edit only documents a decision already present in Primitive, do not create a duplicate.
+
+Apply the same attention during non-code deliberation: planning or “grill me” workflows, spec refinement, behavior design, PR planning or review, and conversations imported from Granola or other connected sources. These workflows can settle important forks before any code changes. Accumulate the confirmed decisions and record them at a natural phase or task boundary; do not interrupt or call Primitive after every answer.
+
+### Seed a new user's first decisions from shared repository context
+
+When Primitive reports that the current user has not recorded a decision, inspect checked-in shared sources such as `MEMORY.md`, `AGENTS.md`, `CLAUDE.md`, specs, PRDs, ADRs, and repository skills. Treat Git tracking as the scope boundary: verify a source with `git ls-files --error-unmatch <path>`. Never mine gitignored or untracked memory automatically; use it only when the user explicitly asks to promote it to the team's Primitive graph.
+
+Identify at most three genuine forks in the road that appear to remain in force. Compare them with the team's existing Primitive decisions and omit equivalent positions. Present each proposed decision with its source file and supported rationale, then ask the user to confirm before creating it; do not silently claim that the onboarding user made a historical decision. Do not bulk-import shared documents. If the available graph is incomplete or too large to rule out duplication confidently, avoid proposing uncertain duplicates and explain the limitation.
+
+Before creating a proactively identified decision, read recent decisions to avoid duplicating an existing position:
+
+```
+npx --yes @primitive.ai/prim decisions recent --limit 20
+```
+
+If an equivalent decision is already present, do not create or suggest it again. Otherwise author it directly:
 
 ```
 npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
 ```
 
-Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`. Author on the user's behalf only when they ask for a decision to be recorded; don't narrate your own routine edits into the graph (the hooks already do that).
+Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
+
+### Inferred decisions: finish first, then optionally ask once
+
+When several statements or implementation choices strongly imply a higher-order fork in the road but the user did not state the decision explicitly, do not record it automatically. Complete the requested work first. At the natural stopping point, optionally ask one concise confirmation question that states the synthesized decision:
+
+> A broader direction seemed to emerge: prioritize activation and retention before acquisition work. Should I record that as a team decision?
+
+Record it only after an affirmative response. Consolidate related evidence into one governing decision rather than listing or recording each underlying implementation choice.
+
+### Interruption budget
+
+- Never interrupt active implementation solely to improve Primitive's records.
+- Ask at most one Primitive-related confirmation question per task, only after completing the requested work.
+- Ask nothing when the inference is weak, local, temporary, already recorded, or unlikely to guide another teammate.
+- Do not ask when the user requested a narrow execution task or appears to want a quick result without discussion.
+- Drop a rejected suggestion. Do not raise it again unless the user materially changes the decision.
+- If ambiguity must already be resolved to perform the task, fold the durable-policy distinction into that necessary question instead of adding a separate Primitive question.
+- Do not narrate or record routine edits, syntax, naming, testing, debugging tactics, or branch/commit mechanics; passive hooks already cover coding activity.
 
 ## Relate decisions (link / unlink)
 
@@ -142,9 +211,11 @@ Examples:
 - **An "unavailable" / "not verified" decision check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval — the same holds for Conflict Gates once enabled.
 - **When Enforcement is enabled, a `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
-- **Capture of your coding activity is automatic, never manual.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running — don't try to inject moves by hand. (Deliberately *authoring* a decision the user asks you to record is a separate, supported path — `decisions create`, above.)
+- **Capture of coding activity is automatic; never inject moves by hand.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running. Deliberately authoring a higher-order fork—either at the user's request or under the conservative proactive policy above—is a separate, supported path through `decisions create`.
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 
 ## After each task
+
+If the user clearly made a durable fork-in-the-road decision, check recent decisions and record it now if it is not already present. If a strong higher-order decision was only inferred, decide whether it clears the interruption budget; if so, ask the single concise confirmation question after reporting the completed work. Otherwise say nothing about Primitive.
 
 If Conflict Gates are enabled and one denied or warned you, report which decision(s) it named and whether you reconciled. If you read the graph before a load-bearing change, note what you found so the user can verify in the dashboard.
