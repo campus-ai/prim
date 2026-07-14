@@ -17,11 +17,12 @@
 import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import {
+  type AuthCredential,
   HttpError,
   REFRESH_TOKEN_PATH,
-  getAuthToken,
   getClient,
   getTokenExpiresAt,
+  resolveAuthCredential,
 } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import type { DaemonHeartbeatHealth, DaemonIngestionHealth } from "../daemon/health.js";
@@ -88,12 +89,17 @@ export function classifyDoctor(checks: Check[]): DoctorVerdict {
   };
 }
 
-function checkAuth(): Check {
-  if (!getAuthToken()) {
+export function classifyAuthCredential(
+  credential: AuthCredential | undefined,
+  expiresAt: number | undefined,
+  hasRefresh: boolean,
+): Check {
+  if (!credential) {
     return { name: "auth", status: "fail", detail: "no token — run `prim auth login`" };
   }
-  const expiresAt = getTokenExpiresAt();
-  const hasRefresh = existsSync(REFRESH_TOKEN_PATH);
+  if (credential.source !== "token_file") {
+    return { name: "auth", status: "ok", detail: "valid fixed bearer credential" };
+  }
   if (expiresAt !== undefined && Date.now() >= expiresAt) {
     return hasRefresh
       ? { name: "auth", status: "warn", detail: "access token expired (refresh available)" }
@@ -111,6 +117,16 @@ function checkAuth(): Check {
       ? `valid (${String(Math.round((expiresAt - Date.now()) / MS_PER_SECOND))}s left)`
       : "valid";
   return { name: "auth", status: "ok", detail };
+}
+
+function checkAuth(): Check {
+  const credential = resolveAuthCredential();
+  const storedCredential = credential?.source === "token_file";
+  return classifyAuthCredential(
+    credential,
+    storedCredential ? getTokenExpiresAt() : undefined,
+    storedCredential && existsSync(REFRESH_TOKEN_PATH),
+  );
 }
 
 export function classifyDaemonHealth(

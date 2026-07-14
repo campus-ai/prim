@@ -27,6 +27,7 @@ import {
   getTokenExpiresAt,
   isSessionEnded,
   refreshToken,
+  resolveAuthCredential,
 } from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
@@ -330,6 +331,9 @@ async function performHeartbeat(): Promise<void> {
 /** Collapse concurrent timer/session requests into one heartbeat, then rerun
  * once if the active session changed while that request was in flight. */
 function sendHeartbeat(): Promise<void> {
+  if (shuttingDown || reauthHold) {
+    return Promise.resolve();
+  }
   if (heartbeatInFlight) {
     heartbeatRerunRequested = true;
     return heartbeatInFlight;
@@ -342,7 +346,7 @@ function sendHeartbeat(): Promise<void> {
     do {
       heartbeatRerunRequested = false;
       await performHeartbeat();
-    } while (heartbeatRerunRequested && !shuttingDown);
+    } while (heartbeatRerunRequested && !(shuttingDown || reauthHold));
   })().finally(() => {
     heartbeatInFlight = undefined;
     scheduleHeartbeat();
@@ -365,6 +369,9 @@ function scheduleHeartbeat(): void {
 }
 
 async function ensureTokenFresh(): Promise<void> {
+  if (resolveAuthCredential()?.source !== "token_file") {
+    return;
+  }
   const expiresAt = getTokenExpiresAt();
   if (!expiresAt) {
     return;
@@ -655,9 +662,15 @@ function startSocketServer(): void {
 }
 
 function startTimers(): void {
-  persistHealth();
-  void sendHeartbeat();
-  void runIngestionLoop();
+  // Persisted terminal-auth state must take effect before either network loop
+  // gets its first chance to replay the rejected refresh generation.
+  if (isSessionEnded()) {
+    enterReauthHold();
+  } else {
+    persistHealth();
+    void sendHeartbeat();
+    void runIngestionLoop();
+  }
   void runTokenCheckLoop();
 }
 
@@ -666,7 +679,7 @@ async function runTokenCheckLoop(): Promise<void> {
     // Held for re-auth: don't refresh a dead token. Watch for a fresh login —
     // isSessionEnded() flips false once the refresh token rotates — and resume
     // the halted loops when it does.
-    if (!isSessionEnded()) {
+    if (!isSessionEnded() && resolveAuthCredential()) {
       exitReauthHold();
     }
   } else {

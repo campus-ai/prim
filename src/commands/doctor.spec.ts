@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   type Check,
   type MovesStatus,
+  classifyAuthCredential,
   classifyDaemonHealth,
   classifyDoctor,
   classifyMovesStatus,
@@ -45,6 +46,18 @@ describe("classifyDoctor", () => {
   it("carries the checks through verbatim for machine consumers", () => {
     const checks = [ok("auth"), warn("stranded")];
     expect(classifyDoctor(checks).json.checks).toEqual(checks);
+  });
+});
+
+describe("auth source diagnostics", () => {
+  it("ignores stale browser metadata for selected fixed credentials", () => {
+    for (const source of ["environment", "env_file"] as const) {
+      expect(classifyAuthCredential({ token: "fixed", source }, 0, true)).toEqual({
+        name: "auth",
+        status: "ok",
+        detail: "valid fixed bearer credential",
+      });
+    }
   });
 });
 

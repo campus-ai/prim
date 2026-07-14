@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   classifyLaunchdStatus,
   classifyStatus,
+  daemonDegradedReason,
+  daemonStartHealthFields,
   daemonStartIsHealthy,
   openDaemonLog,
 } from "./daemon.js";
@@ -181,6 +183,91 @@ describe("daemonStartIsHealthy", () => {
     expect(daemonStartIsHealthy(true, { healthy: false, version: "1.2.3" }, "1.2.3")).toBe(false);
     expect(daemonStartIsHealthy(true, { healthy: true, version: "old" }, "1.2.3")).toBe(false);
     expect(daemonStartIsHealthy(true, { healthy: true }, "1.2.3")).toBe(false);
+  });
+});
+
+describe("daemonStartHealthFields", () => {
+  it("keeps healthy start JSON unchanged", () => {
+    expect(
+      daemonStartHealthFields(true, {
+        pid: 1,
+        uptimeMs: 1,
+        sessionId: "daemon-1",
+        healthy: true,
+      }),
+    ).toEqual({});
+    expect(daemonStartHealthFields(false, null)).toEqual({
+      state: "degraded",
+      needsReauth: false,
+      heartbeat: null,
+      ingestion: null,
+    });
+  });
+
+  it("adds the complete degraded snapshot fields to unhealthy start JSON", () => {
+    const heartbeat = { healthy: false, consecutiveFailures: 1, lastError: "HTTP 401" };
+    const ingestion = {
+      healthy: false,
+      consecutiveFailures: 1,
+      pendingCount: 23,
+      pendingSampled: false,
+      strandedCount: 0,
+      lastAcknowledgedCount: 0,
+    };
+    expect(
+      daemonStartHealthFields(false, {
+        pid: 1,
+        uptimeMs: 1,
+        sessionId: "daemon-1",
+        healthy: false,
+        needsReauth: true,
+        heartbeat,
+        ingestion,
+      }),
+    ).toEqual({ state: "degraded", needsReauth: true, heartbeat, ingestion });
+  });
+});
+
+describe("daemonDegradedReason", () => {
+  const base = { pid: 4242, uptimeMs: 1, sessionId: "daemon-4242", healthy: false };
+
+  it("prioritizes reauthentication over downstream health errors", () => {
+    expect(
+      daemonDegradedReason({
+        ...base,
+        needsReauth: true,
+        heartbeat: { healthy: false, consecutiveFailures: 2, lastError: "HTTP 401" },
+        ingestion: {
+          healthy: false,
+          consecutiveFailures: 2,
+          pendingCount: 23,
+          pendingSampled: false,
+          strandedCount: 0,
+          lastAcknowledgedCount: 0,
+          lastError: "poison queue",
+        },
+      }),
+    ).toBe("authentication requires `prim auth login`");
+  });
+
+  it("surfaces a bounded, control-safe ingestion error and pending count", () => {
+    const reason = daemonDegradedReason({
+      ...base,
+      heartbeat: { healthy: true, consecutiveFailures: 0 },
+      ingestion: {
+        healthy: false,
+        consecutiveFailures: 298,
+        pendingCount: 23,
+        pendingSampled: true,
+        strandedCount: 0,
+        lastAcknowledgedCount: 0,
+        lastError: `bad\u001b[2J${"x".repeat(400)}`,
+      },
+    });
+
+    expect(reason).toContain("ingestion unhealthy (at least 23 pending): bad");
+    expect(reason).not.toContain("\u001b");
+    expect(reason?.length).toBeLessThan(300);
   });
 });
 

@@ -8,30 +8,33 @@
 
 import { exec } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { platform } from "node:os";
-import { dirname } from "node:path";
 import type { Command } from "commander";
 import {
   REFRESH_TOKEN_PATH,
-  TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
-  getAuthToken,
+  clearStoredCredentials,
+  commitCredentials,
   getSiteUrl,
   getTokenExpiresAt,
-  saveTokenExpiry,
+  isSessionEnded,
+  refreshToken,
+  resolveAuthCredential,
+  setStoredToken,
 } from "../client.js";
 import { stripControlChars } from "../lib/ansi.js";
 import { printJson } from "../output.js";
 import { FAILURE_HTML, STATE_MISMATCH_HTML, SUCCESS_HTML } from "./auth-pages.js";
 
-const FILE_MODE = 0o600;
 const LOCALHOST = "127.0.0.1";
 const CALLBACK_PORT = 19_876;
 const CALLBACK_TIMEOUT_MS = 120_000; // 2 minutes
 const EXIT_OK = 0;
 const EXIT_FAIL = 1;
+const EXIT_UNREACHABLE = 2;
+const AUTH_PROBE_TIMEOUT_MS = 10_000;
 const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" } as const;
 const BASE64_PLUS_RE = /\+/g;
 const BASE64_SLASH_RE = /\//g;
@@ -56,14 +59,6 @@ function openBrowser(url: string): void {
   const cmd = os === "darwin" ? "open" : os === "win32" ? "start" : "xdg-open";
 
   exec(`${cmd} "${url}"`);
-}
-
-function saveToken(token: string): void {
-  const dir = dirname(TOKEN_FILE_PATH);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(TOKEN_FILE_PATH, token, { mode: FILE_MODE });
 }
 
 export type CallbackResult =
@@ -143,6 +138,162 @@ function reportSuccess(): void {
   console.error(`Authenticated! Token saved to ${TOKEN_FILE_PATH}`);
   console.log(JSON.stringify({ authenticated: true, tokenFile: TOKEN_FILE_PATH }));
   process.exitCode = EXIT_OK;
+}
+
+export type AuthVerificationStatus = "valid" | "invalid" | "unreachable";
+export type AuthVerificationReason =
+  | "verified"
+  | "missing_credentials"
+  | "access_rejected"
+  | "refresh_rejected"
+  | "verification_unavailable";
+
+export type AuthStatusResult = {
+  authenticated: boolean;
+  status: AuthVerificationStatus;
+  reason: AuthVerificationReason;
+  tokenFile: string | null;
+  accessTokenExpiresInMs: number | null;
+  accessTokenExpired: boolean;
+  refreshTokenPresent: boolean;
+  warnings: string[];
+};
+
+function hasStoredRefreshToken(): boolean {
+  if (!existsSync(REFRESH_TOKEN_PATH)) return false;
+  try {
+    return readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function authStatusResult(
+  status: AuthVerificationStatus,
+  reason: AuthVerificationReason,
+  source: "environment" | "token_file" | "env_file" | undefined,
+  refreshTokenPresent: boolean,
+): AuthStatusResult {
+  const expiresAt = source === "token_file" ? getTokenExpiresAt() : undefined;
+  const expiresInMs = expiresAt === undefined ? null : expiresAt - Date.now();
+  return {
+    authenticated: status === "valid",
+    status,
+    reason,
+    tokenFile: source === "token_file" ? TOKEN_FILE_PATH : null,
+    accessTokenExpiresInMs: expiresInMs,
+    accessTokenExpired: expiresInMs !== null && expiresInMs <= 0,
+    refreshTokenPresent,
+    warnings: source === "token_file" && !refreshTokenPresent ? ["no refresh token"] : [],
+  };
+}
+
+/** Verify the selected credential without letting the protected probe rotate it again. */
+export async function verifyAuthStatus(): Promise<AuthStatusResult> {
+  const credential = resolveAuthCredential();
+  if (!credential) {
+    return authStatusResult("invalid", "missing_credentials", undefined, false);
+  }
+
+  const storedCredential = credential.source === "token_file";
+  const refreshPresent = storedCredential && hasStoredRefreshToken();
+  let accessToken = credential.token;
+
+  if (refreshPresent) {
+    try {
+      const refreshed = await refreshToken({
+        force: true,
+        signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+      });
+      if (!refreshed) {
+        const rejected = isSessionEnded();
+        return authStatusResult(
+          rejected ? "invalid" : "unreachable",
+          rejected ? "refresh_rejected" : "verification_unavailable",
+          credential.source,
+          true,
+        );
+      }
+      accessToken = refreshed;
+    } catch {
+      const rejected = isSessionEnded();
+      return authStatusResult(
+        rejected ? "invalid" : "unreachable",
+        rejected ? "refresh_rejected" : "verification_unavailable",
+        credential.source,
+        true,
+      );
+    }
+  }
+
+  try {
+    const response = await fetch(`${getSiteUrl()}/api/cli/auth/status`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      return authStatusResult("valid", "verified", credential.source, refreshPresent);
+    }
+    if (response.status === 401 || response.status === 403) {
+      return authStatusResult("invalid", "access_rejected", credential.source, refreshPresent);
+    }
+    return authStatusResult(
+      "unreachable",
+      "verification_unavailable",
+      credential.source,
+      refreshPresent,
+    );
+  } catch {
+    return authStatusResult(
+      "unreachable",
+      "verification_unavailable",
+      credential.source,
+      refreshPresent,
+    );
+  }
+}
+
+function authStatusExitCode(status: AuthVerificationStatus): number {
+  if (status === "valid") return EXIT_OK;
+  return status === "invalid" ? EXIT_FAIL : EXIT_UNREACHABLE;
+}
+
+function writeHumanAuthStatus(result: AuthStatusResult): void {
+  if (result.status === "invalid") {
+    const detail =
+      result.reason === "refresh_rejected"
+        ? "The saved session was rejected."
+        : result.reason === "access_rejected"
+          ? "The selected access token was rejected."
+          : "No credentials were found.";
+    console.log(`${detail} Run \`prim auth login\` to authenticate.`);
+    return;
+  }
+  if (result.status === "unreachable") {
+    console.log("Authentication could not be verified. Credentials were retained.");
+    return;
+  }
+
+  console.log("Authenticated (verified).");
+  if (result.tokenFile) {
+    console.log(`Token file: ${result.tokenFile}`);
+  } else {
+    console.log("Token source: fixed environment credential");
+  }
+  if (result.accessTokenExpiresInMs === null) {
+    console.log("Access token expiry: unknown (no metadata)");
+  } else if (result.accessTokenExpiresInMs <= 0) {
+    console.log("Access token: expired");
+  } else {
+    const minutes = Math.floor(result.accessTokenExpiresInMs / 60_000);
+    const seconds = Math.floor((result.accessTokenExpiresInMs % 60_000) / 1000);
+    console.log(`Access token expires in: ${minutes}m ${seconds}s`);
+  }
+  console.log(
+    `Refresh token: ${result.tokenFile ? (result.refreshTokenPresent ? "present" : "missing") : "not applicable"}`,
+  );
+  for (const warning of result.warnings) console.log(`Warning: ${warning}`);
 }
 
 export function registerAuthCommands(program: Command) {
@@ -274,8 +425,8 @@ export function registerAuthCommands(program: Command) {
       // The success page is already flushed; exchange the code here so the exit
       // decision lives in exactly one place.
       try {
-        const token = await exchangeCode(siteUrl, result.code, verifier, redirectUri);
-        saveToken(token);
+        const tokens = await exchangeCode(siteUrl, result.code, verifier, redirectUri);
+        await commitCredentials(tokens);
         reportSuccess();
       } catch (err) {
         reportFailure("token_exchange_failed", err instanceof Error ? err.message : String(err));
@@ -285,8 +436,8 @@ export function registerAuthCommands(program: Command) {
   auth
     .command("set-token <token>")
     .description("Save a bearer token for authenticated CLI calls")
-    .action((token: string) => {
-      saveToken(token);
+    .action(async (token: string) => {
+      await setStoredToken(token);
       console.log(`Token saved to ${TOKEN_FILE_PATH}`);
     });
 
@@ -294,16 +445,16 @@ export function registerAuthCommands(program: Command) {
     .command("clear")
     .description("Remove the saved authentication token")
     .action(async () => {
-      // Revoke refresh token server-side before deleting local files
-      if (existsSync(REFRESH_TOKEN_PATH)) {
-        const refreshTokenValue = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
-        if (refreshTokenValue) {
+      const removed = await clearStoredCredentials({
+        beforeClear: async (refreshTokenValue) => {
+          if (!refreshTokenValue) return;
           try {
             const siteUrl = getSiteUrl();
             const res = await fetch(`${siteUrl}/mcp/broker/revoke`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ refresh_token: refreshTokenValue }),
+              signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
             });
             if (res.ok) {
               console.log("Server token revoked.");
@@ -316,16 +467,8 @@ export function registerAuthCommands(program: Command) {
           } catch {
             console.warn("Could not reach server for revocation — clearing local files anyway.");
           }
-        }
-      }
-
-      let removed = false;
-      for (const filePath of [TOKEN_FILE_PATH, REFRESH_TOKEN_PATH, TOKEN_EXPIRES_PATH]) {
-        if (existsSync(filePath)) {
-          rmSync(filePath);
-          removed = true;
-        }
-      }
+        },
+      });
 
       if (removed) {
         console.log("Local tokens removed.");
@@ -338,67 +481,24 @@ export function registerAuthCommands(program: Command) {
     .command("status")
     .description("Check authentication status and token expiry")
     .option("--json", "Output as JSON")
-    .action((opts: { json?: boolean }) => {
-      const token = getAuthToken();
-
-      if (opts.json) {
-        const expiresAt = getTokenExpiresAt();
-        const expiresInMs = expiresAt ? expiresAt - Date.now() : null;
-        const refreshPresent = existsSync(REFRESH_TOKEN_PATH);
-        printJson({
-          authenticated: !!token,
-          tokenFile: token ? TOKEN_FILE_PATH : null,
-          accessTokenExpiresInMs: expiresInMs,
-          accessTokenExpired: expiresInMs !== null && expiresInMs <= 0,
-          refreshTokenPresent: refreshPresent,
-          warnings: !token || refreshPresent ? [] : ["no refresh token"],
-        });
-        process.exit(token ? 0 : 1);
-      }
-
-      if (!token) {
-        console.log("Not authenticated. Run `prim auth login` to authenticate.");
-        process.exit(1);
-      }
-
-      console.log("Authenticated.");
-      console.log(`Token file: ${TOKEN_FILE_PATH}`);
-
-      const expiresAt = getTokenExpiresAt();
-      if (expiresAt) {
-        const remaining = expiresAt - Date.now();
-        if (remaining <= 0) {
-          console.log("Access token: expired");
-        } else {
-          const minutes = Math.floor(remaining / 60_000);
-          const seconds = Math.floor((remaining % 60_000) / 1000);
-          console.log(`Access token expires in: ${minutes}m ${seconds}s`);
-        }
-      } else {
-        console.log("Access token expiry: unknown (no metadata)");
-      }
-
-      const hasRefresh = existsSync(REFRESH_TOKEN_PATH);
-      console.log(`Refresh token: ${hasRefresh ? "present" : "missing"}`);
-
-      if (!hasRefresh) {
-        console.log(
-          "Warning: No refresh token. Re-run `prim auth login` when access token expires.",
-        );
-      }
+    .action(async (opts: { json?: boolean }) => {
+      const result = await verifyAuthStatus();
+      if (opts.json) printJson(result);
+      else writeHumanAuthStatus(result);
+      process.exit(authStatusExitCode(result.status));
     });
 }
 
 /**
  * Exchange authorization code for tokens via the MCP broker.
- * Returns the access token.
+ * Returns the complete credential bundle; the caller commits it atomically.
  */
 async function exchangeCode(
   siteUrl: string,
   code: string,
   codeVerifier: string,
   redirectUri: string,
-): Promise<string> {
+): Promise<{ accessToken: string; refreshToken: string; expiresIn?: number }> {
   const response = await fetch(`${siteUrl}/mcp/broker/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -420,21 +520,12 @@ async function exchangeCode(
     expires_in?: number;
   };
 
-  if (!data.access_token) {
-    throw new Error("No access token in response");
+  if (!data.access_token || !data.refresh_token) {
+    throw new Error("Token exchange did not return a complete credential pair");
   }
-
-  // Store refresh token alongside access token for future rotation
-  if (data.refresh_token) {
-    const refreshPath = TOKEN_FILE_PATH.replace("/token", "/refresh_token");
-    const dir = dirname(refreshPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(refreshPath, data.refresh_token, { mode: FILE_MODE });
-  }
-
-  saveTokenExpiry(data.access_token, data.expires_in);
-
-  return data.access_token;
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresIn: data.expires_in,
+  };
 }

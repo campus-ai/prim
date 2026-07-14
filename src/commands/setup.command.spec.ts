@@ -9,9 +9,10 @@
  */
 
 import { Command } from "commander";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   detectAgent,
+  parseSetupAuthStatus,
   planCleanupUninstalls,
   planSetupSteps,
   registerSetupCommand,
@@ -181,6 +182,22 @@ describe("resolveAgent", () => {
   });
 });
 
+describe("parseSetupAuthStatus", () => {
+  it("uses the explicit tri-state status", () => {
+    expect(parseSetupAuthStatus({ code: 0, stdout: '{"status":"valid"}' })).toBe("valid");
+    expect(parseSetupAuthStatus({ code: 1, stdout: '{"status":"invalid"}' })).toBe("invalid");
+    expect(parseSetupAuthStatus({ code: 2, stdout: '{"status":"unreachable"}' })).toBe(
+      "unreachable",
+    );
+  });
+
+  it("keeps authenticated:true compatibility and treats exit 2 as indeterminate", () => {
+    expect(parseSetupAuthStatus({ code: 0, stdout: '{"authenticated":true}' })).toBe("valid");
+    expect(parseSetupAuthStatus({ code: 2, stdout: "not-json" })).toBe("unreachable");
+    expect(parseSetupAuthStatus({ code: 1, stdout: "" })).toBe("invalid");
+  });
+});
+
 describe("registerSetupCommand", () => {
   it("registers --agent WITHOUT a default, so an omitted flag falls through to detection", () => {
     // Load-bearing: re-adding a default (e.g. `, "claude"`) would make opts.agent
@@ -202,5 +219,121 @@ describe("registerSetupCommand", () => {
     const setup = program.commands.find((c) => c.name() === "setup");
     const scopeOpt = setup?.options.find((o) => o.long === "--scope");
     expect(scopeOpt?.defaultValue).toBe("user");
+  });
+
+  it("aborts an unreachable auth probe before login, preauth, or installation", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        return {
+          code: 2,
+          stdout: JSON.stringify({
+            authenticated: false,
+            status: "unreachable",
+            reason: "verification_unavailable",
+          }),
+        };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(["setup"], { from: "user" });
+
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(exit).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("requires a valid post-login verification before changing integrations", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const responses = [
+      { code: 1, stdout: '{"status":"invalid"}' },
+      { code: 0, stdout: "" },
+      { code: 2, stdout: '{"status":"unreachable"}' },
+    ];
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        return responses.shift() ?? { code: 1, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(["setup"], { from: "user" });
+
+    expect(calls).toEqual([
+      ["auth", "status", "--json"],
+      ["auth", "login"],
+      ["auth", "status", "--json"],
+    ]);
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("exits 1 when the single login attempt fails", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        return args[0] === "auth" && args[1] === "status"
+          ? { code: 1, stdout: '{"status":"invalid"}' }
+          : { code: 1, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(["setup"], { from: "user" });
+
+    expect(calls).toEqual([
+      ["auth", "status", "--json"],
+      ["auth", "login"],
+    ]);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("installs only after invalid credentials are logged in and verified", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    let statusCalls = 0;
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          statusCalls += 1;
+          return statusCalls === 1
+            ? { code: 1, stdout: '{"status":"invalid"}' }
+            : { code: 0, stdout: '{"status":"valid"}' };
+        }
+        return { code: 0, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(["setup", "--agent", "codex", "--scope", "project", "--no-daemon"], {
+      from: "user",
+    });
+
+    expect(calls).toEqual([
+      ["auth", "status", "--json"],
+      ["auth", "login"],
+      ["auth", "status", "--json"],
+      ["codex", "install"],
+      ["daemon", "stop"],
+      ["hooks", "install"],
+      ["skill", "install", "--agent", "codex"],
+      ["welcome"],
+    ]);
+    expect(exit).toHaveBeenCalledWith(0);
   });
 });

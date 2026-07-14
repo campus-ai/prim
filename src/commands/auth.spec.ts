@@ -1,11 +1,16 @@
 import { Command } from "commander";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../client.js", async () => {
   const actual = await vi.importActual<typeof import("../client.js")>("../client.js");
   return {
     ...actual,
-    getAuthToken: vi.fn(),
+    resolveAuthCredential: vi.fn(),
+    refreshToken: vi.fn(),
+    isSessionEnded: vi.fn(() => false),
+    commitCredentials: vi.fn(),
+    setStoredToken: vi.fn(),
+    clearStoredCredentials: vi.fn(),
     getTokenExpiresAt: vi.fn(),
     getSiteUrl: vi.fn(() => "http://127.0.0.1:9"),
   };
@@ -13,7 +18,11 @@ vi.mock("../client.js", async () => {
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-  return { ...actual, existsSync: vi.fn(() => false) };
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(() => "refresh-token"),
+  };
 });
 
 // Login opens a browser via exec — never do that from a test run.
@@ -24,7 +33,14 @@ vi.mock("node:child_process", async () => {
 
 import { existsSync } from "node:fs";
 import { get as httpGet } from "node:http";
-import { getAuthToken, getTokenExpiresAt } from "../client.js";
+import {
+  clearStoredCredentials,
+  getTokenExpiresAt,
+  isSessionEnded,
+  refreshToken,
+  resolveAuthCredential,
+  setStoredToken,
+} from "../client.js";
 import { registerAuthCommands, resolveCallbackPage } from "./auth.js";
 
 describe("registerAuthCommands", () => {
@@ -47,6 +63,47 @@ describe("registerAuthCommands", () => {
     expect(subcommands).toContain("set-token");
     expect(subcommands).toContain("clear");
     expect(subcommands).toContain("status");
+  });
+});
+
+describe("credential mutation commands", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("stores a fixed token through the synchronized credential API", async () => {
+    vi.mocked(setStoredToken).mockResolvedValue();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(["auth", "set-token", "fixed-token"], { from: "user" });
+
+    expect(setStoredToken).toHaveBeenCalledOnce();
+    expect(setStoredToken).toHaveBeenCalledWith("fixed-token");
+  });
+
+  it("revokes and deletes one coherent refresh generation under the clear lock", async () => {
+    vi.mocked(clearStoredCredentials).mockImplementation(async (options) => {
+      await options?.beforeClear?.("refresh-generation");
+      return true;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(["auth", "clear"], { from: "user" });
+
+    expect(clearStoredCredentials).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:9/mcp/broker/revoke",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ refresh_token: "refresh-generation" }),
+      }),
+    );
   });
 });
 
@@ -253,14 +310,25 @@ describe("auth login callback", () => {
 });
 
 describe("auth status --json", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+  beforeEach(() => {
+    vi.mocked(resolveAuthCredential).mockReturnValue(undefined);
+    vi.mocked(refreshToken).mockResolvedValue(undefined);
+    vi.mocked(isSessionEnded).mockReturnValue(false);
+    vi.mocked(getTokenExpiresAt).mockReturnValue(undefined);
+    vi.mocked(existsSync).mockReturnValue(false);
   });
 
-  it("emits a shaped JSON object and exits 0 when authenticated", async () => {
-    vi.mocked(getAuthToken).mockReturnValue("tok");
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("force-rotates stored OAuth credentials, verifies once, and exits 0", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "token_file", token: "old" });
+    vi.mocked(refreshToken).mockResolvedValue("fresh");
     vi.mocked(getTokenExpiresAt).mockReturnValue(Date.now() + 60_000);
     vi.mocked(existsSync).mockReturnValue(true);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -276,17 +344,29 @@ describe("auth status --json", () => {
 
     const out = JSON.parse(String(logSpy.mock.calls[0][0])) as Record<string, unknown>;
     expect(out.authenticated).toBe(true);
+    expect(out.status).toBe("valid");
+    expect(out.reason).toBe("verified");
     expect(out.refreshTokenPresent).toBe(true);
     expect(out.accessTokenExpired).toBe(false);
     expect(typeof out.accessTokenExpiresInMs).toBe("number");
     expect(out.warnings).toEqual([]);
+    expect(refreshToken).toHaveBeenCalledOnce();
+    expect(refreshToken).toHaveBeenCalledWith(
+      expect.objectContaining({ force: true, signal: expect.any(AbortSignal) }),
+    );
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:9/api/cli/auth/status",
+      expect.objectContaining({ headers: { Authorization: "Bearer fresh" } }),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
-  it("emits {authenticated: false} and exits 1 when unauthenticated", async () => {
-    vi.mocked(getAuthToken).mockReturnValue(undefined);
+  it("emits invalid/missing_credentials and exits 1 without probing", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue(undefined);
     vi.mocked(getTokenExpiresAt).mockReturnValue(undefined);
     vi.mocked(existsSync).mockReturnValue(false);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -302,7 +382,215 @@ describe("auth status --json", () => {
 
     const out = JSON.parse(String(logSpy.mock.calls[0][0])) as Record<string, unknown>;
     expect(out.authenticated).toBe(false);
+    expect(out.status).toBe("invalid");
+    expect(out.reason).toBe("missing_credentials");
     expect(out.tokenFile).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("probes a fixed environment credential without touching disk OAuth state", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "fixed" });
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:0");
+
+    const out = JSON.parse(String(logSpy.mock.calls[0][0])) as Record<string, unknown>;
+    expect(out).toMatchObject({
+      authenticated: true,
+      status: "valid",
+      tokenFile: null,
+      accessTokenExpiresInMs: null,
+      refreshTokenPresent: false,
+    });
+    expect(refreshToken).not.toHaveBeenCalled();
+  });
+
+  it("reports a terminal forced refresh as invalid without running the bearer probe", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "token_file", token: "old" });
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(refreshToken).mockResolvedValue(undefined);
+    vi.mocked(isSessionEnded).mockReturnValue(true);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:1");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      authenticated: false,
+      status: "invalid",
+      reason: "refresh_rejected",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected protected probe as invalid/access_rejected and exits 1", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "rejected" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 401 }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:1");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      authenticated: false,
+      status: "invalid",
+      reason: "access_rejected",
+    });
+  });
+
+  it("reports transport failure as unreachable and exits 2", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "fixed" });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new DOMException("The operation timed out", "TimeoutError"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:2");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      authenticated: false,
+      status: "unreachable",
+      reason: "verification_unavailable",
+    });
+  });
+
+  it("reports a 5xx probe as unreachable rather than invalid credentials", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "fixed" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('{"error":"temporarily unavailable"}', { status: 503 }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:2");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      authenticated: false,
+      status: "unreachable",
+      reason: "verification_unavailable",
+    });
+  });
+
+  it("reports a probe outage after a successful forced rotation as unreachable", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "token_file", token: "old" });
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(refreshToken).mockResolvedValue("fresh");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response('{"error":"temporarily unavailable"}', { status: 503 }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(
+      program.parseAsync(["auth", "status", "--json"], { from: "user" }),
+    ).rejects.toThrow("exit:2");
+
+    expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+      authenticated: false,
+      status: "unreachable",
+      reason: "verification_unavailable",
+    });
+    expect(refreshToken).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:9/api/cli/auth/status",
+      expect.objectContaining({ headers: { Authorization: "Bearer fresh" } }),
+    );
+  });
+
+  it("renders actionable human output for invalid credentials", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue(undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(program.parseAsync(["auth", "status"], { from: "user" })).rejects.toThrow(
+      "exit:1",
+    );
+
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toBe(
+      "No credentials were found. Run `prim auth login` to authenticate.",
+    );
+  });
+
+  it("renders non-destructive human output when verification is unreachable", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "fixed" });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(program.parseAsync(["auth", "status"], { from: "user" })).rejects.toThrow(
+      "exit:2",
+    );
+
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toBe(
+      "Authentication could not be verified. Credentials were retained.",
+    );
+  });
+
+  it("renders a concise verified verdict for fixed credentials", async () => {
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "env_file", token: "fixed" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    const program = new Command();
+    registerAuthCommands(program);
+    await expect(program.parseAsync(["auth", "status"], { from: "user" })).rejects.toThrow(
+      "exit:0",
+    );
+
+    const human = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(human).toContain("Authenticated (verified).");
+    expect(human).toContain("Token source: fixed environment credential");
+    expect(human).toContain("Refresh token: not applicable");
   });
 });
