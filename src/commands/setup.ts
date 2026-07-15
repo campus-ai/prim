@@ -2,7 +2,7 @@
  * `prim setup` — the whole install in one command.
  *
  * Runs the same steps an agent would drive from `setup.md`, but as a single
- * command: pre-auth → auth (login only if needed) → session integration (Claude
+ * command: auth verification/login → pre-auth → session integration (Claude
  * Code or Codex) → companion daemon → git hooks → agent skill → welcome. It
  * orchestrates by re-invoking the prim binary's own subcommands, so every step
  * behaves byte-for-byte like running it by hand — including the interactive
@@ -13,8 +13,8 @@
  * each. Running THIS single command instead is one Bash tool call the agent gets
  * approved once; every sub-step is a child process of it, invisible to the
  * harness's per-command permission gate, so the rest of the install proceeds with
- * no further prompts. And because it pre-authorizes prim first (step 0, Claude
- * only) and Claude Code hot-reloads permissions, even the agent's own follow-up
+ * no further prompts. Once auth is verified it pre-authorizes prim (Claude
+ * only), and because Claude Code hot-reloads permissions, the agent's follow-up
  * prim calls in the same session stop prompting — and every future repo onboards
  * prompt-free.
  *
@@ -132,6 +132,12 @@ export function planSetupSteps(opts: {
 
 type RunFn = (args: string[], capture?: boolean) => { code: number; stdout: string };
 
+export type SetupCommandDependencies = {
+  run?: RunFn;
+  note?: (message: string) => void;
+  exit?: (code: number) => void;
+};
+
 /**
  * The project-scope prim artifacts to detect in the current repo before a
  * user-scope install. Order matters only for the trail message; each maps to an
@@ -246,7 +252,28 @@ export function resolveAgent(
 
 type StepResult = "ok" | "failed" | "skipped";
 
-export function registerSetupCommand(program: Command): void {
+export type SetupAuthStatus = "valid" | "invalid" | "unreachable";
+
+/** Interpret the auth command's stable tri-state protocol, with old-client fallback. */
+export function parseSetupAuthStatus(result: { code: number; stdout: string }): SetupAuthStatus {
+  try {
+    const parsed = JSON.parse(result.stdout || "{}") as {
+      status?: unknown;
+      authenticated?: unknown;
+    };
+    if (parsed.status === "valid" || parsed.authenticated === true) return "valid";
+    if (parsed.status === "unreachable") return "unreachable";
+    if (parsed.status === "invalid") return "invalid";
+  } catch {
+    // Fall through to the exit-code contract for malformed/old output.
+  }
+  return result.code === EXIT_USAGE ? "unreachable" : "invalid";
+}
+
+export function registerSetupCommand(
+  program: Command,
+  dependencies: SetupCommandDependencies = {},
+): void {
   program
     .command("setup")
     .description(
@@ -272,39 +299,38 @@ export function registerSetupCommand(program: Command): void {
         process.stderr.write(
           `[prim] unknown --agent "${agentInput}" (expected claude, codex, or hermes)\n`,
         );
-        process.exit(EXIT_USAGE);
+        (dependencies.exit ?? process.exit)(EXIT_USAGE);
+        return;
       }
       if (opts.scope !== "project" && opts.scope !== "user") {
         process.stderr.write(`[prim] unknown --scope "${opts.scope}" (expected project or user)\n`);
-        process.exit(EXIT_USAGE);
+        (dependencies.exit ?? process.exit)(EXIT_USAGE);
+        return;
       }
       const agent: SetupAgent = agentInput;
       const scope: SetupScope = opts.scope;
       const self = process.argv[1];
 
-      const run = (args: string[], capture = false): { code: number; stdout: string } => {
-        // Capturing a step means we only want its machine STDOUT (JSON) — a
-        // status/auth probe. Silence its human STDERR so status-line noise
-        // ("gate ✓ · capture ✗ …") doesn't interleave into the setup trail.
-        const r = spawnSync(process.execPath, [self, ...args], {
-          stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
-          encoding: "utf-8",
+      const run =
+        dependencies.run ??
+        ((args: string[], capture = false): { code: number; stdout: string } => {
+          // Capturing a step means we only want its machine STDOUT (JSON) — a
+          // status/auth probe. Silence its human STDERR so status-line noise
+          // ("gate ✓ · capture ✗ …") doesn't interleave into the setup trail.
+          const r = spawnSync(process.execPath, [self, ...args], {
+            stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
+            encoding: "utf-8",
+          });
+          return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
         });
-        return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
-      };
 
       const results: Record<string, StepResult> = {};
-      const note = (msg: string): void => {
-        process.stderr.write(`[prim] ${msg}\n`);
-      };
-      const isAuthed = (json: string): boolean => {
-        try {
-          return (JSON.parse(json || "{}") as { authenticated?: boolean }).authenticated === true;
-        } catch {
-          return false;
-        }
-      };
-
+      const note =
+        dependencies.note ??
+        ((msg: string): void => {
+          process.stderr.write(`[prim] ${msg}\n`);
+        });
+      const exit = dependencies.exit ?? process.exit;
       // Surface an inferred agent — the install it wires depends on it, and the
       // user can correct a wrong guess with --agent. The claude fallback is the
       // historical default, so it stays silent.
@@ -312,7 +338,39 @@ export function registerSetupCommand(program: Command): void {
         note(`agent · detected ${agent} session (override with --agent <agent>)`);
       }
 
-      // 0 · Pre-authorize prim at USER scope FIRST — before any other prim call.
+      // 0 · Verify auth before changing any integration or permission state.
+      // A transport/backend outage is indeterminate, not invalid credentials:
+      // abort without opening a browser or partially installing setup.
+      let authStatus = parseSetupAuthStatus(run(["auth", "status", "--json"], true));
+      if (authStatus === "unreachable") {
+        note("auth · verification unavailable; no setup changes were made");
+        exit(EXIT_USAGE);
+        return;
+      }
+      if (authStatus === "invalid") {
+        note("auth · opening browser to authenticate…");
+        const login = run(["auth", "login"]);
+        if (login.code !== 0) {
+          note("auth · login failed; no integration changes were made");
+          exit(EXIT_INCOMPLETE);
+          return;
+        }
+        authStatus = parseSetupAuthStatus(run(["auth", "status", "--json"], true));
+        if (authStatus !== "valid") {
+          note(
+            authStatus === "unreachable"
+              ? "auth · login completed but verification is unavailable; no integration changes were made"
+              : "auth · login did not produce valid credentials; no integration changes were made",
+          );
+          exit(authStatus === "unreachable" ? EXIT_USAGE : EXIT_INCOMPLETE);
+          return;
+        }
+      } else {
+        note("auth · already authenticated");
+      }
+      results.auth = "ok";
+
+      // 1 · Pre-authorize prim at USER scope after verified auth.
       // Claude Code hot-reloads permissions, so writing the allow-rule now also
       // covers the agent's own follow-up prim calls in this session, and makes
       // every FUTURE repo's onboarding prompt-free. Claude-only: Codex gates via
@@ -322,16 +380,6 @@ export function registerSetupCommand(program: Command): void {
         note("pre-authorize · writing prim allow-rule (user scope)…");
         results.preauth =
           run(["claude", "preauth", "--scope", "user"]).code === 0 ? "ok" : "skipped";
-      }
-
-      // 1 · Auth — log in only if not already authenticated.
-      if (isAuthed(run(["auth", "status", "--json"], true).stdout)) {
-        note("auth · already authenticated");
-        results.auth = "ok";
-      } else {
-        note("auth · opening browser to authenticate…");
-        run(["auth", "login"]);
-        results.auth = isAuthed(run(["auth", "status", "--json"], true).stdout) ? "ok" : "failed";
       }
 
       // 2..N · the install steps.
@@ -379,6 +427,6 @@ export function registerSetupCommand(program: Command): void {
       note(
         `setup ${failed.length === 0 ? "complete" : `incomplete (failed: ${failed.join(", ")})`} — ${trail}`,
       );
-      process.exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
+      exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
     });
 }

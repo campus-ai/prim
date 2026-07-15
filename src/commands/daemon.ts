@@ -24,6 +24,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
+import type { DaemonHeartbeatHealth, DaemonIngestionHealth } from "../daemon/health.js";
 import {
   type LaunchdService,
   bootoutMacDaemon,
@@ -33,6 +34,7 @@ import {
   setDaemonExplicitlyDisabled,
   withDaemonLifecycleLock,
 } from "../daemon/launchd.js";
+import { stripControlChars } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
 
@@ -75,12 +77,45 @@ interface StatusSnapshot {
   sessionId: string;
   lastHeartbeatAt?: number;
   healthy?: boolean;
+  needsReauth?: boolean;
+  heartbeat?: DaemonHeartbeatHealth;
+  ingestion?: DaemonIngestionHealth;
   version?: string;
   onlineCount?: number;
   // Online teammates (self excluded), sorted. Surfaced in full here, where
   // there's room; the statusline truncates the same list.
   onlineNames?: string[];
   onlineTeammates?: Teammate[];
+}
+
+const MAX_HEALTH_ERROR_LENGTH = 240;
+
+function boundedHealthError(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const clean = stripControlChars(value).replace(/\s+/g, " ").trim();
+  if (!clean) return undefined;
+  return clean.length <= MAX_HEALTH_ERROR_LENGTH
+    ? clean
+    : `${clean.slice(0, MAX_HEALTH_ERROR_LENGTH - 1)}\u2026`;
+}
+
+/** Render the single most actionable cause of a degraded daemon snapshot. */
+export function daemonDegradedReason(snapshot: StatusSnapshot | null): string | undefined {
+  if (!snapshot || snapshot.healthy !== false) return undefined;
+  if (snapshot.needsReauth) {
+    return "authentication requires `prim auth login`";
+  }
+  if (snapshot.heartbeat?.healthy === false) {
+    const detail = boundedHealthError(snapshot.heartbeat.lastError);
+    return `heartbeat unhealthy${detail ? `: ${detail}` : ""}`;
+  }
+  if (snapshot.ingestion?.healthy === false) {
+    const detail = boundedHealthError(snapshot.ingestion.lastError);
+    const pending = snapshot.ingestion.pendingCount;
+    const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
+    return `ingestion unhealthy${typeof pending === "number" ? ` (${qualifier}${String(pending)} pending)` : ""}${detail ? `: ${detail}` : ""}`;
+  }
+  return "health checks have not recovered";
 }
 
 function readPidfile(): RunningPid | null {
@@ -194,6 +229,19 @@ export function daemonStartIsHealthy(
     expectedVersion !== undefined &&
     snapshot.version === expectedVersion
   );
+}
+
+export function daemonStartHealthFields(
+  healthy: boolean,
+  snapshot: StatusSnapshot | null,
+): Record<string, unknown> {
+  if (healthy) return {};
+  return {
+    state: "degraded",
+    needsReauth: snapshot?.needsReauth === true,
+    heartbeat: snapshot?.heartbeat ?? null,
+    ingestion: snapshot?.ingestion ?? null,
+  };
 }
 
 async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void> {
@@ -355,8 +403,9 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
       `[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? result.service.pid ?? "?"})\n`,
     );
   } else {
+    const reason = daemonDegradedReason(snapshot);
     process.stderr.write(
-      `[prim] ✗ launchd daemon did not reach healthy heartbeat + ingestion state (see ${LOG_PATH})\n`,
+      `[prim] ✗ launchd daemon did not reach healthy heartbeat + ingestion state${reason ? ` · ${reason}` : ""} (see ${LOG_PATH})\n`,
     );
     if (!process.exitCode) process.exitCode = EXIT_NOT_RUNNING;
   }
@@ -370,6 +419,7 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
         loaded: result.service.loaded,
         responding: result.responding,
         healthy,
+        ...daemonStartHealthFields(healthy, snapshot),
         version: snapshot?.version,
         expectedVersion,
       },
@@ -568,8 +618,9 @@ function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false):
       ? ` · team: ${formatTeammates(snapshot.onlineNames, Number.POSITIVE_INFINITY)}`
       : "";
   if (snapshot.healthy === false) {
+    const reason = daemonDegradedReason(snapshot);
     process.stderr.write(
-      `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}\n`,
+      `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}${reason ? ` · ${reason}` : ""}\n`,
     );
     return;
   }

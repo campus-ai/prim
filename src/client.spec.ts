@@ -1,348 +1,379 @@
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock fs/os before importing client
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn(() => false),
-  readFileSync: vi.fn(() => ""),
-  writeFileSync: vi.fn(),
-}));
-vi.mock("node:os", () => ({
-  homedir: vi.fn(() => "/home/test"),
-}));
+const mockedHome = vi.hoisted(() => ({ value: "" }));
+const renamedCredentialPaths = vi.hoisted(() => [] as string[]);
 
-describe("client", () => {
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => mockedHome.value };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: (
+      source: Parameters<typeof actual.renameSync>[0],
+      destination: Parameters<typeof actual.renameSync>[1],
+    ) => {
+      renamedCredentialPaths.push(String(destination));
+      actual.renameSync(source, destination);
+    },
+  };
+});
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+async function eventually(assertion: () => void, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+}
+
+describe("client credential store", () => {
   const originalEnv = { ...process.env };
+  let home: string;
+  let config: string;
 
   beforeEach(() => {
     vi.resetModules();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     process.env = { ...originalEnv };
+    process.env.PRIM_TOKEN = undefined;
+    process.env.PRIM_API_URL = undefined;
+    renamedCredentialPaths.length = 0;
+    home = mkdtempSync(join(tmpdir(), "prim-client-test-"));
+    mockedHome.value = home;
+    config = join(home, ".config", "prim");
+    mkdirSync(config, { recursive: true });
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     process.env = originalEnv;
+    rmSync(home, { recursive: true, force: true });
   });
 
-  describe("getAuthToken", () => {
-    it("returns PRIM_TOKEN from environment", async () => {
-      process.env.PRIM_TOKEN = "env-token-123";
-      const { getAuthToken } = await import("./client.js");
-      expect(getAuthToken()).toBe("env-token-123");
-    });
+  it("reports the selected credential source and preserves source priority", async () => {
+    writeFileSync(join(config, "token"), "stored-token\n");
+    const { resolveAuthCredential } = await import("./client.js");
+    expect(resolveAuthCredential()).toEqual({ token: "stored-token", source: "token_file" });
 
-    it("returns undefined when no token source is available", async () => {
-      process.env.PRIM_TOKEN = undefined;
-      const { getAuthToken } = await import("./client.js");
-      expect(getAuthToken()).toBeUndefined();
-    });
-  });
-
-  describe("getSiteUrl", () => {
-    it("returns the production API URL", async () => {
-      const { getSiteUrl } = await import("./client.js");
-      expect(getSiteUrl()).toBe("https://api.getprimitive.ai");
+    process.env.PRIM_TOKEN = "environment-token";
+    expect(resolveAuthCredential()).toEqual({
+      token: "environment-token",
+      source: "environment",
     });
   });
 
-  describe("getClient", () => {
-    it("returns a client with get/post methods", async () => {
-      const { getClient } = await import("./client.js");
-      const client = getClient();
+  it("does not use disk refresh state for an environment credential", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    writeFileSync(join(config, "token"), "browser-access\n");
+    writeFileSync(join(config, "refresh_token"), "browser-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), "0\n");
+    writeFileSync(
+      join(config, "refresh_terminal"),
+      `${createHash("sha256").update("browser-refresh").digest("hex")}\n`,
+    );
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ error: "expired" }, 401)));
+    vi.stubGlobal("fetch", fetchMock);
 
-      expect(client).toHaveProperty("get");
-      expect(client).toHaveProperty("post");
-      expect(typeof client.get).toBe("function");
-      expect(typeof client.post).toBe("function");
+    const { HttpError, getClient, isSessionEnded } = await import("./client.js");
+    expect(isSessionEnded()).toBe(false);
+    await expect(getClient().get("/api/cli/auth/status")).rejects.toBeInstanceOf(HttpError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/mcp/broker/refresh");
+  });
+
+  it("returns undefined when no expiry metadata exists", async () => {
+    const { getTokenExpiresAt } = await import("./client.js");
+    expect(getTokenExpiresAt()).toBeUndefined();
+  });
+
+  it("commits refresh, expiry, then access as mode-0600 files without temp residue", async () => {
+    const { TOKEN_EXPIRES_PATH, TOKEN_FILE_PATH, REFRESH_TOKEN_PATH, commitCredentials } =
+      await import("./client.js");
+    await commitCredentials({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      expiresIn: 120,
     });
 
-    it("uses one caller signal for proactive refresh, request, 401 refresh, and retry", async () => {
-      process.env.PRIM_TOKEN = "initial-token";
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockImplementation((path) => {
-        const value = String(path);
-        return value.endsWith("token_expires_at") || value.endsWith("refresh_token");
-      });
-      vi.mocked(fs.readFileSync).mockImplementation((path) =>
-        String(path).endsWith("token_expires_at") ? "0" : "refresh-token",
-      );
-      let refreshes = 0;
-      let requests = 0;
-      const signal = new AbortController().signal;
-      const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
-        expect(init?.signal).toBe(signal);
-        if (String(url).includes("/mcp/broker/refresh")) {
-          refreshes += 1;
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve({ access_token: `refreshed-${String(refreshes)}` }),
-          });
+    expect(readFileSync(REFRESH_TOKEN_PATH, "utf8").trim()).toBe("new-refresh");
+    expect(readFileSync(TOKEN_FILE_PATH, "utf8").trim()).toBe("new-access");
+    expect(Number(readFileSync(TOKEN_EXPIRES_PATH, "utf8"))).toBeGreaterThan(Date.now());
+    for (const path of [REFRESH_TOKEN_PATH, TOKEN_FILE_PATH, TOKEN_EXPIRES_PATH]) {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
+    expect(renamedCredentialPaths).toEqual([
+      REFRESH_TOKEN_PATH,
+      TOKEN_EXPIRES_PATH,
+      TOKEN_FILE_PATH,
+    ]);
+    expect(readdirSync(config).some((name) => name.includes(".tmp-"))).toBe(false);
+  });
+
+  it("persists only a terminal refresh fingerprint and suppresses replay after reload", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "secret-refresh\n");
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse(
+          { error: "invalid_grant", error_description: "Session has already ended." },
+          400,
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await import("./client.js");
+    await expect(first.refreshToken({ quiet: true })).resolves.toBeUndefined();
+    expect(first.isSessionEnded()).toBe(true);
+    const marker = readFileSync(first.TERMINAL_REFRESH_PATH, "utf8").trim();
+    expect(marker).toMatch(/^[a-f0-9]{64}$/);
+    expect(marker).not.toContain("secret-refresh");
+
+    vi.resetModules();
+    const afterReload = await import("./client.js");
+    expect(afterReload.isSessionEnded()).toBe(true);
+    await expect(afterReload.refreshToken({ quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { access_token: { unexpected: true }, refresh_token: "replacement" },
+    { access_token: "replacement", refresh_token: "   " },
+    { access_token: "replacement", refresh_token: "consumed-refresh" },
+  ])("fails closed for malformed successful broker credentials", async (brokerBody) => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "consumed-refresh\n");
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(brokerBody)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ quiet: true })).resolves.toBeUndefined();
+    expect(client.isSessionEnded()).toBe(true);
+    await expect(client.refreshToken({ quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("trims a complete successful broker generation before committing", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            access_token: "  new-access  ",
+            refresh_token: "  new-refresh  ",
+            expires_in: 300,
+          }),
+        ),
+      ),
+    );
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ quiet: true })).resolves.toBe("new-access");
+    expect(readFileSync(client.TOKEN_FILE_PATH, "utf8").trim()).toBe("new-access");
+    expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("new-refresh");
+  });
+
+  it("does not mark a newer disk generation terminal after a legacy 401 loser", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    let reject!: () => void;
+    const response = new Promise<Response>((resolve) => {
+      reject = () => resolve(jsonResponse({ error: "Invalid or expired refresh token" }, 401));
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => response),
+    );
+
+    const client = await import("./client.js");
+    const refreshing = client.refreshToken({ quiet: true });
+    await eventually(() => expect(fetch).toHaveBeenCalledTimes(1));
+    // Simulate an old, uncoordinated login client replacing the files directly.
+    writeFileSync(client.REFRESH_TOKEN_PATH, "winner-refresh\n");
+    writeFileSync(client.TOKEN_FILE_PATH, "winner-access\n");
+    reject();
+
+    await expect(refreshing).resolves.toBe("winner-access");
+    expect(client.isSessionEnded()).toBe(false);
+  });
+
+  it("keeps a noncanonical intermediary 401 retryable", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ error: "upstream_authentication_required" }, 401)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(client.isSessionEnded()).toBe(false);
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never performs proactive and reactive rotation twice in one request", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), "0\n");
+    let brokerCalls = 0;
+    let apiCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string | URL | Request) => {
+        if (String(url).endsWith("/mcp/broker/refresh")) {
+          brokerCalls += 1;
+          return Promise.resolve(
+            jsonResponse({
+              access_token: "rotated-access",
+              refresh_token: "rotated-refresh",
+              expires_in: 300,
+            }),
+          );
         }
-        requests += 1;
-        return Promise.resolve(
-          requests === 1
-            ? { ok: false, status: 401 }
-            : { ok: true, status: 200, json: () => Promise.resolve({ ok: true }) },
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
+        apiCalls += 1;
+        return Promise.resolve(jsonResponse({ error: "rejected" }, 401));
+      }),
+    );
 
-      const { getClient } = await import("./client.js");
-      await expect(
-        getClient().post("/api/cli/test", {}, { signal, quietRefresh: true }),
-      ).resolves.toEqual({ ok: true });
-      expect(refreshes).toBe(2);
-      expect(requests).toBe(2);
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
-    });
+    const { getClient } = await import("./client.js");
+    await expect(getClient().get("/api/cli/test")).rejects.toMatchObject({ status: 401 });
+    expect(brokerCalls).toBe(1);
+    expect(apiCalls).toBe(1);
   });
 
-  describe("TOKEN_FILE_PATH", () => {
-    it("is in ~/.config/prim/", async () => {
-      const { TOKEN_FILE_PATH } = await import("./client.js");
-      expect(TOKEN_FILE_PATH).toContain(".config/prim/token");
+  it("serializes independent module instances against one real credential directory", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "generation-one\n");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-  });
-
-  describe("REFRESH_TOKEN_PATH", () => {
-    it("is sibling to token file", async () => {
-      const { REFRESH_TOKEN_PATH } = await import("./client.js");
-      expect(REFRESH_TOKEN_PATH).toContain(".config/prim/refresh_token");
-    });
-  });
-
-  describe("TOKEN_EXPIRES_PATH", () => {
-    it("is sibling to token file", async () => {
-      const { TOKEN_EXPIRES_PATH } = await import("./client.js");
-      expect(TOKEN_EXPIRES_PATH).toContain(".config/prim/token_expires_at");
-    });
-  });
-
-  describe("getTokenExpiresAt", () => {
-    it("returns undefined when no expiry file exists", async () => {
-      const { getTokenExpiresAt } = await import("./client.js");
-      expect(getTokenExpiresAt()).toBeUndefined();
-    });
-  });
-
-  describe("refreshToken", () => {
-    it("surfaces the broker rejection reason instead of failing silently", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
-      const fetchMock = vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 401,
-          statusText: "Unauthorized",
-          text: () => Promise.resolve("invalid_grant"),
-        }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-
-      const { refreshToken } = await import("./client.js");
-      const signal = AbortSignal.timeout(10_000);
-      const result = await refreshToken({ signal });
-
-      expect(result).toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://api.getprimitive.ai/mcp/broker/refresh",
-        expect.objectContaining({ signal }),
-      );
-      const msg = stderr.mock.calls.map((c) => String(c[0])).join("");
-      expect(msg).toContain("401");
-      expect(msg).toContain("invalid_grant");
-      // The diagnostic must never leak the refresh token itself.
-      expect(msg).not.toContain("rt-value");
-
-      stderr.mockRestore();
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
-    });
-    it("propagates the shared abort signal and can suppress hook diagnostics", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
-      const fetchMock = vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 401,
-          statusText: "Unauthorized",
-          text: () => Promise.resolve("invalid_grant"),
-        }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      const controller = new AbortController();
-
-      const { refreshToken } = await import("./client.js");
-      await expect(
-        refreshToken({ signal: controller.signal, quiet: true }),
-      ).resolves.toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/mcp/broker/refresh"),
-        expect.objectContaining({ signal: controller.signal }),
-      );
-      expect(stderr).not.toHaveBeenCalled();
-
-      stderr.mockRestore();
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
-    });
-    it("single-flights concurrent rotations and updates the request cache", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
-      let finishRefresh: ((value: unknown) => void) | undefined;
-      const refreshResponse = new Promise((resolve) => {
-        finishRefresh = resolve;
-      });
-      const fetchMock = vi
-        .fn()
-        .mockImplementationOnce(() => refreshResponse)
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({ ok: true }),
+    let brokerCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        brokerCalls += 1;
+        await gate;
+        return jsonResponse({
+          access_token: "winner-access",
+          refresh_token: "generation-two",
+          expires_in: 300,
         });
-      vi.stubGlobal("fetch", fetchMock);
+      }),
+    );
 
-      const { getClient, refreshToken } = await import("./client.js");
-      const first = refreshToken();
-      const second = refreshToken();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      finishRefresh?.({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ access_token: "new-access", refresh_token: "new-refresh" }),
-      });
-      await expect(Promise.all([first, second])).resolves.toEqual(["new-access", "new-access"]);
+    const processOne = await import("./client.js");
+    vi.resetModules();
+    const processTwo = await import("./client.js");
+    // `force` intentionally rotates even though the caller did not consult
+    // expiry metadata; status verification uses this exact path.
+    const first = processOne.refreshToken({ force: true, quiet: true });
+    await eventually(() => expect(brokerCalls).toBe(1));
+    const second = processTwo.refreshToken({ force: true, quiet: true });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(brokerCalls).toBe(1);
+    release();
 
-      await getClient().get("/api/cli/test");
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[1][1]).toMatchObject({
-        headers: expect.objectContaining({ Authorization: "Bearer new-access" }),
-      });
-
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
-    });
-
-    it("reuses a refresh that completed while an old-token request was in flight", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("rt-value");
-      process.env.PRIM_TOKEN = "old-access";
-
-      let rejectOldRequest: ((value: unknown) => void) | undefined;
-      const oldRequest = new Promise((resolve) => {
-        rejectOldRequest = resolve;
-      });
-      const fetchMock = vi.fn((url: string) => {
-        if (url.endsWith("/mcp/broker/refresh")) {
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: () =>
-              Promise.resolve({ access_token: "new-access", refresh_token: "new-refresh" }),
-          });
-        }
-        if (fetchMock.mock.calls.filter(([calledUrl]) => calledUrl === url).length === 1) {
-          return oldRequest;
-        }
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({ ok: true }),
-        });
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const { getClient, refreshToken } = await import("./client.js");
-      const request = getClient().get("/api/cli/test");
-      await refreshToken();
-      rejectOldRequest?.({ ok: false, status: 401 });
-      await expect(request).resolves.toEqual({ ok: true });
-
-      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/refresh"))).toHaveLength(
-        1,
-      );
-      expect(fetchMock.mock.calls.at(-1)?.[1]).toMatchObject({
-        headers: expect.objectContaining({ Authorization: "Bearer new-access" }),
-      });
-
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
-    });
+    await expect(Promise.all([first, second])).resolves.toEqual(["winner-access", "winner-access"]);
+    expect(brokerCalls).toBe(1);
+    expect(readFileSync(join(config, "refresh_token"), "utf8").trim()).toBe("generation-two");
   });
 
-  describe("isSessionEnded", () => {
-    it("marks the session ended on a terminal invalid_grant and stops replaying the dead token", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("dead-rt");
-      const fetchMock = vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 400,
-          statusText: "Bad Request",
-          text: () =>
-            Promise.resolve(
-              '{"error":"invalid_grant","error_description":"Session has already ended."}',
-            ),
-        }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
+  it("set-token and clear remove stale OAuth and terminal state under the lock", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), "0\n");
+    writeFileSync(join(config, "refresh_terminal"), "stale\n");
+    const client = await import("./client.js");
 
-      const { refreshToken, isSessionEnded } = await import("./client.js");
-      expect(isSessionEnded()).toBe(false);
-
-      await expect(refreshToken({ quiet: true })).resolves.toBeUndefined();
-      expect(isSessionEnded()).toBe(true);
-
-      // A second refresh must short-circuit — never replay the dead token.
-      await expect(refreshToken({ quiet: true })).resolves.toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
+    await client.setStoredToken("fixed-access");
+    expect(client.resolveAuthCredential()).toEqual({
+      token: "fixed-access",
+      source: "token_file",
     });
+    expect(readdirSync(config).sort()).toEqual(["token"]);
 
-    it("clears once a fresh login rotates in a new refresh token", async () => {
-      const fs = await import("node:fs");
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue("dead-rt");
-      const fetchMock = vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 400,
-          statusText: "Bad Request",
-          text: () => Promise.resolve('{"error":"invalid_grant"}'),
-        }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const { refreshToken, isSessionEnded } = await import("./client.js");
-      await refreshToken({ quiet: true });
-      expect(isSessionEnded()).toBe(true);
-
-      // `prim auth login` writes a new refresh token; the marker no longer
-      // matches the file, so the session reads as live again.
-      vi.mocked(fs.readFileSync).mockReturnValue("fresh-rt");
-      expect(isSessionEnded()).toBe(false);
-
-      vi.unstubAllGlobals();
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue("");
+    let observed: string | undefined = "not-called";
+    const removed = await client.clearStoredCredentials({
+      beforeClear: (refresh) => {
+        observed = refresh;
+      },
     });
+    expect(removed).toBe(true);
+    expect(observed).toBeUndefined();
+    expect(readdirSync(config)).toEqual([]);
+  });
+
+  it("keeps login, set-token, and clear races in a coherent final generation", async () => {
+    const client = await import("./client.js");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const owner = client.withCredentialLock(() => held);
+    await eventually(() => expect(existsSync(client.CREDENTIAL_LOCK_PATH)).toBe(true));
+
+    const operations = [
+      client.commitCredentials({
+        accessToken: "oauth-access",
+        refreshToken: "oauth-refresh",
+        expiresIn: 300,
+      }),
+      client.setStoredToken("fixed-access"),
+      client.clearStoredCredentials(),
+    ];
+    release();
+    await owner;
+    await Promise.all(operations);
+
+    const access = existsSync(client.TOKEN_FILE_PATH)
+      ? readFileSync(client.TOKEN_FILE_PATH, "utf8").trim()
+      : undefined;
+    if (access === "oauth-access") {
+      expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("oauth-refresh");
+      expect(existsSync(client.TOKEN_EXPIRES_PATH)).toBe(true);
+    } else if (access === "fixed-access") {
+      expect(existsSync(client.REFRESH_TOKEN_PATH)).toBe(false);
+      expect(existsSync(client.TOKEN_EXPIRES_PATH)).toBe(false);
+    } else {
+      expect(access).toBeUndefined();
+      expect(existsSync(client.REFRESH_TOKEN_PATH)).toBe(false);
+      expect(existsSync(client.TOKEN_EXPIRES_PATH)).toBe(false);
+    }
+    expect(existsSync(client.TERMINAL_REFRESH_PATH)).toBe(false);
+    expect(existsSync(client.CREDENTIAL_LOCK_PATH)).toBe(false);
   });
 });

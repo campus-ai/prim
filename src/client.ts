@@ -1,283 +1,401 @@
-/**
- * REST client for the prim CLI.
- *
- * Calls /api/cli/* endpoints on the Primitive API with bearer auth.
- *
- * Auth priority:
- *   1. PRIM_TOKEN env var
- *   2. ~/.config/prim/token file
- *   3. .env.local PRIM_TOKEN
- *   4. Unauthenticated (will fail with 401)
- */
+/** REST client and shared credential store for the prim CLI. */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
+
+const CONFIG_DIR_MODE = 0o700;
+const CREDENTIAL_FILE_MODE = 0o600;
+const REFRESH_THRESHOLD_MS = 60_000;
+const DEFAULT_API_URL = "https://api.getprimitive.ai";
 
 function loadEnvFile(): Record<string, string> {
   const envVars: Record<string, string> = {};
-  const candidates = [".env.local", ".env"];
-
-  for (const file of candidates) {
+  for (const file of [".env.local", ".env"]) {
     const filePath = resolve(process.cwd(), file);
-    if (existsSync(filePath)) {
-      const content = readFileSync(filePath, "utf-8");
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) continue;
-        const eqIdx = trimmed.indexOf("=");
-        if (eqIdx === -1) continue;
-        const key = trimmed.slice(0, eqIdx).trim();
-        const value = trimmed.slice(eqIdx + 1).trim();
-        envVars[key] = value;
-      }
+    if (!existsSync(filePath)) continue;
+    const content = readFileSync(filePath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      envVars[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
     }
   }
-
   return envVars;
 }
 
-/**
- * Path to the stored auth token file.
- */
 export const TOKEN_FILE_PATH = join(homedir(), ".config", "prim", "token");
+export const REFRESH_TOKEN_PATH = join(dirname(TOKEN_FILE_PATH), "refresh_token");
+export const TOKEN_EXPIRES_PATH = join(dirname(TOKEN_FILE_PATH), "token_expires_at");
+export const TERMINAL_REFRESH_PATH = join(dirname(TOKEN_FILE_PATH), "refresh_terminal");
+export const CREDENTIAL_LOCK_PATH = join(dirname(TOKEN_FILE_PATH), "credentials.lock");
 
-export const REFRESH_TOKEN_PATH = TOKEN_FILE_PATH.replace("/token", "/refresh_token");
+export type AuthCredentialSource = "environment" | "token_file" | "env_file";
 
-export const TOKEN_EXPIRES_PATH = join(homedir(), ".config", "prim", "token_expires_at");
-
-const REFRESH_THRESHOLD_MS = 60_000; // refresh 60s before expiry
-
-function isTokenExpiringSoon(): boolean {
-  if (!existsSync(TOKEN_EXPIRES_PATH)) return false;
-  const expiresAt = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
-  return !Number.isNaN(expiresAt) && Date.now() >= expiresAt - REFRESH_THRESHOLD_MS;
+export interface AuthCredential {
+  token: string;
+  source: AuthCredentialSource;
 }
 
-/**
- * Extract the `exp` claim from a JWT without verifying the signature.
- * Returns the expiry as a Unix timestamp in milliseconds, or undefined.
- */
+export interface StoredCredentials {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn?: number;
+}
+
+export type CredentialLockOptions = FileLockOptions;
+
+function readTrimmed(path: string): string | undefined {
+  try {
+    const value = readFileSync(path, "utf8").trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Resolve the selected credential without conflating fixed tokens with browser OAuth. */
+export function resolveAuthCredential(): AuthCredential | undefined {
+  if (process.env.PRIM_TOKEN) {
+    return { token: process.env.PRIM_TOKEN, source: "environment" };
+  }
+
+  const stored = readTrimmed(TOKEN_FILE_PATH);
+  if (stored) {
+    return { token: stored, source: "token_file" };
+  }
+
+  const envToken = loadEnvFile().PRIM_TOKEN;
+  return envToken ? { token: envToken, source: "env_file" } : undefined;
+}
+
+/** Backwards-compatible token-only resolver. */
+export function getAuthToken(): string | undefined {
+  return resolveAuthCredential()?.token;
+}
+
+export function getSiteUrl(): string {
+  if (process.env.PRIM_API_URL) return process.env.PRIM_API_URL;
+  return loadEnvFile().PRIM_API_URL ?? DEFAULT_API_URL;
+}
+
 function getJwtExpiry(token: string): number | undefined {
   const parts = token.split(".");
   if (parts.length !== 3) return undefined;
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
-      exp?: number;
-    };
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as { exp?: number };
     return payload.exp ? payload.exp * 1000 : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function saveTokenExpiry(token: string, expiresIn?: number): void {
-  const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : getJwtExpiry(token);
-  if (expiresAt) {
-    writeFileSync(TOKEN_EXPIRES_PATH, String(expiresAt), { mode: 0o600 });
+function expiresAtFor(token: string, expiresIn?: number): number | undefined {
+  return expiresIn === undefined ? getJwtExpiry(token) : Date.now() + expiresIn * 1000;
+}
+
+function ensureConfigDirectory(): void {
+  const directory = dirname(TOKEN_FILE_PATH);
+  mkdirSync(directory, { recursive: true, mode: CONFIG_DIR_MODE });
+  chmodSync(directory, CONFIG_DIR_MODE);
+}
+
+function atomicWrite(path: string, content: string): void {
+  ensureConfigDirectory();
+  const temp = join(
+    dirname(path),
+    `.${path.slice(dirname(path).length + 1)}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  try {
+    writeFileSync(temp, content, {
+      encoding: "utf8",
+      mode: CREDENTIAL_FILE_MODE,
+      flag: "wx",
+    });
+    renameSync(temp, path);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
   }
+}
+
+function removeCredentialFile(path: string): boolean {
+  if (!existsSync(path)) return false;
+  rmSync(path, { force: true });
+  return true;
 }
 
 export function getTokenExpiresAt(): number | undefined {
-  if (!existsSync(TOKEN_EXPIRES_PATH)) return undefined;
-  const val = Number(readFileSync(TOKEN_EXPIRES_PATH, "utf-8").trim());
-  return Number.isNaN(val) ? undefined : val;
+  const stored = readTrimmed(TOKEN_EXPIRES_PATH);
+  if (stored === undefined) return undefined;
+  const value = Number(stored);
+  return Number.isNaN(value) ? undefined : value;
 }
 
-/**
- * Resolve an auth token from multiple sources.
- *
- * Priority: PRIM_TOKEN env → ~/.config/prim/token → .env.local PRIM_TOKEN
- * Returns undefined if no token is found (unauthenticated mode).
- */
-export function getAuthToken(): string | undefined {
-  // 1. Environment variable
-  if (process.env.PRIM_TOKEN) {
-    return process.env.PRIM_TOKEN;
+function isTokenExpiringSoon(credential: AuthCredential): boolean {
+  if (credential.source !== "token_file") return false;
+  const expiresAt = getTokenExpiresAt();
+  return expiresAt !== undefined && Date.now() >= expiresAt - REFRESH_THRESHOLD_MS;
+}
+
+function refreshFingerprint(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken).digest("hex");
+}
+
+function terminalFingerprint(): string | undefined {
+  return readTrimmed(TERMINAL_REFRESH_PATH);
+}
+
+function writeTerminalFingerprint(refreshToken: string): void {
+  atomicWrite(TERMINAL_REFRESH_PATH, `${refreshFingerprint(refreshToken)}\n`);
+}
+
+function clearTerminalFingerprint(): void {
+  removeCredentialFile(TERMINAL_REFRESH_PATH);
+}
+
+/** True only while the persisted terminal marker matches the current refresh generation. */
+export function isSessionEnded(): boolean {
+  if (resolveAuthCredential()?.source !== "token_file") return false;
+  const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+  const ended = terminalFingerprint();
+  return Boolean(refreshToken && ended && refreshFingerprint(refreshToken) === ended);
+}
+
+export function withCredentialLock<T>(
+  operation: () => Promise<T> | T,
+  options: CredentialLockOptions = {},
+): Promise<T> {
+  return withFileLock(CREDENTIAL_LOCK_PATH, operation, options);
+}
+
+function commitCredentialsUnlocked(credentials: StoredCredentials): void {
+  const accessToken = credentials.accessToken.trim();
+  const refreshToken = credentials.refreshToken.trim();
+  if (!accessToken || !refreshToken) {
+    throw new Error("OAuth credentials require both access and refresh tokens");
   }
 
-  // 2. Token file
-  if (existsSync(TOKEN_FILE_PATH)) {
-    const token = readFileSync(TOKEN_FILE_PATH, "utf-8").trim();
-    if (token) {
-      return token;
+  // Access is the commit marker. Readers cannot observe a new access token
+  // paired with the previous one-use refresh generation.
+  atomicWrite(REFRESH_TOKEN_PATH, `${refreshToken}\n`);
+  const expiresAt = expiresAtFor(accessToken, credentials.expiresIn);
+  if (expiresAt === undefined) removeCredentialFile(TOKEN_EXPIRES_PATH);
+  else atomicWrite(TOKEN_EXPIRES_PATH, `${expiresAt}\n`);
+  atomicWrite(TOKEN_FILE_PATH, `${accessToken}\n`);
+  clearTerminalFingerprint();
+  _cachedCredential = { token: accessToken, source: "token_file" };
+}
+
+/** Atomically commit a browser-OAuth generation under the shared credential lock. */
+export async function commitCredentials(
+  credentials: StoredCredentials,
+  options: CredentialLockOptions = {},
+): Promise<void> {
+  await withCredentialLock(() => commitCredentialsUnlocked(credentials), options);
+}
+
+/** Store a fixed bearer and remove every browser-OAuth artifact it supersedes. */
+export async function setStoredToken(
+  token: string,
+  options: CredentialLockOptions = {},
+): Promise<void> {
+  const value = token.trim();
+  if (!value) throw new Error("Token cannot be empty");
+  await withCredentialLock(() => {
+    removeCredentialFile(REFRESH_TOKEN_PATH);
+    removeCredentialFile(TOKEN_EXPIRES_PATH);
+    clearTerminalFingerprint();
+    atomicWrite(TOKEN_FILE_PATH, `${value}\n`);
+    _cachedCredential = { token: value, source: "token_file" };
+  }, options);
+}
+
+export interface ClearStoredCredentialsOptions extends CredentialLockOptions {
+  beforeClear?: (refreshToken: string | undefined) => Promise<void> | void;
+}
+
+/** Revoke/inspect and delete one coherent credential generation under one lock. */
+export async function clearStoredCredentials(
+  options: ClearStoredCredentialsOptions = {},
+): Promise<boolean> {
+  const { beforeClear, ...lockOptions } = options;
+  return withCredentialLock(async () => {
+    const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+    let callbackError: unknown;
+    try {
+      await beforeClear?.(refreshToken);
+    } catch (error) {
+      callbackError = error;
     }
-  }
 
-  // 3. .env.local / .env files
-  const envVars = loadEnvFile();
-  if (envVars.PRIM_TOKEN) {
-    return envVars.PRIM_TOKEN;
-  }
-
-  return undefined;
+    let removed = false;
+    for (const path of [
+      TOKEN_FILE_PATH,
+      REFRESH_TOKEN_PATH,
+      TOKEN_EXPIRES_PATH,
+      TERMINAL_REFRESH_PATH,
+    ]) {
+      removed = removeCredentialFile(path) || removed;
+    }
+    _cachedCredential = undefined;
+    if (callbackError) throw callbackError;
+    return removed;
+  }, lockOptions);
 }
 
-const DEFAULT_API_URL = "https://api.getprimitive.ai";
-
-/**
- * Resolve the API base URL.
- *
- * Priority mirrors the auth-token resolver: PRIM_API_URL env → .env.local
- * PRIM_API_URL → the default production URL. The env override is the
- * load-bearing knob for local-dev verification — point the cli at a
- * `*.convex.site` URL from `npx convex dev` and the same code paths
- * that talk to production talk to your dev deployment.
- */
-export function getSiteUrl(): string {
-  if (process.env.PRIM_API_URL) {
-    return process.env.PRIM_API_URL;
-  }
-  const envVars = loadEnvFile();
-  if (envVars.PRIM_API_URL) {
-    return envVars.PRIM_API_URL;
-  }
-  return DEFAULT_API_URL;
-}
-
-/**
- * Attempt to refresh the access token using a stored refresh token.
- * Returns the new access token, or undefined if refresh is not possible.
- */
 export type RequestOptions = {
   signal?: AbortSignal;
   /** Suppress broker diagnostics on machine-protocol hook paths. */
   quietRefresh?: boolean;
 };
 
-// The refresh-token value the broker TERMINALLY rejected ("invalid_grant" /
-// "Session has already ended"). While the on-disk refresh token still equals
-// this, the session is dead: refresh short-circuits and callers can halt
-// instead of hammering. A fresh `prim auth login` rotates the file to a new
-// value, so isSessionEnded() reverts to false on its own — no manual reset.
-let _endedRefreshToken: string | undefined;
-
-/**
- * True when the stored session has been terminally ended by the broker and the
- * on-disk refresh token has not since changed. The daemon uses this to stop
- * its heartbeat/ingest loops until re-auth, rather than replaying a dead token
- * on every poll (which only spams the broker and feeds its reuse detection).
- */
-export function isSessionEnded(): boolean {
-  if (_endedRefreshToken === undefined) {
-    return false;
-  }
-  if (!existsSync(REFRESH_TOKEN_PATH)) {
-    return false;
-  }
-  const current = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
-  return current === _endedRefreshToken;
+export interface RefreshOptions {
+  signal?: AbortSignal;
+  quiet?: boolean;
+  /** Documents that the caller intentionally verifies by rotating now. */
+  force?: boolean;
 }
 
-async function performTokenRefresh(
-  options: { signal?: AbortSignal; quiet?: boolean } = {},
-): Promise<string | undefined> {
-  if (!existsSync(REFRESH_TOKEN_PATH)) {
-    return undefined;
+function isTerminalRefreshResponse(response: Response, detail: string): boolean {
+  if (detail.includes("invalid_grant") || detail.includes("Session has already ended")) return true;
+  try {
+    const error = (JSON.parse(detail) as { error?: string }).error;
+    return (
+      error === "invalid_grant" ||
+      (response.status === 401 && error === "Invalid or expired refresh token")
+    );
+  } catch {
+    return response.status === 401 && detail.includes("Invalid or expired refresh token");
   }
+}
 
-  const refreshTokenValue = readFileSync(REFRESH_TOKEN_PATH, "utf-8").trim();
-  if (!refreshTokenValue) {
-    return undefined;
-  }
+function refreshDiagnostic(response: Response, detail: string, quiet: boolean | undefined): void {
+  if (quiet) return;
+  process.stderr.write(
+    `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
+      detail ? ` — ${detail}` : ""
+    }\n`,
+  );
+}
 
-  // Session terminally ended for this exact refresh token — do not replay it.
-  // A fresh `prim auth login` writes a new refresh token, which no longer
-  // matches and lets refresh proceed (success below clears the marker).
-  if (_endedRefreshToken !== undefined && refreshTokenValue === _endedRefreshToken) {
-    return undefined;
-  }
+async function performTokenRefresh(options: RefreshOptions = {}): Promise<string | undefined> {
+  const selected = resolveAuthCredential();
+  if (selected?.source !== "token_file") return undefined;
+  const startingGeneration = readTrimmed(REFRESH_TOKEN_PATH);
+  if (!startingGeneration || isSessionEnded()) return undefined;
 
-  const siteUrl = getSiteUrl();
+  return withCredentialLock(
+    async () => {
+      const currentCredential = resolveAuthCredential();
+      if (currentCredential?.source !== "token_file") return undefined;
+      const currentGeneration = readTrimmed(REFRESH_TOKEN_PATH);
+      if (!currentGeneration) return undefined;
 
-  const response = await fetch(`${siteUrl}/mcp/broker/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshTokenValue }),
-    signal: options.signal,
-  });
+      // A winner rotated while this process waited. Adopt its committed access
+      // token instead of consuming the replacement refresh token again.
+      if (currentGeneration !== startingGeneration) {
+        return currentCredential.token;
+      }
+      if (isSessionEnded()) return undefined;
 
-  if (!response.ok) {
-    const detail = (await response.text().catch(() => "")).slice(0, 200);
-    // A rotated/duplicated refresh token trips the broker's reuse detection,
-    // which ends the whole session: `invalid_grant` / "Session has already
-    // ended" (the broker sends 400, but key on the grant semantics, not the
-    // status). That is TERMINAL — only `prim auth login` recovers it — so
-    // record the dead token and stop replaying it (short-circuit above). A
-    // transient 5xx/network failure is NOT terminal and stays retryable.
-    if (detail.includes("invalid_grant") || detail.includes("Session has already ended")) {
-      _endedRefreshToken = refreshTokenValue;
-    }
-    // Surface why the broker rejected the refresh instead of failing silently.
-    // A swallowed rejection here is what made a daemon that had lost auth (and
-    // CLI 401s) undebuggable — the caller only ever saw "Authentication
-    // expired" with no cause.
-    if (!options.quiet) {
-      process.stderr.write(
-        `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
-          detail ? ` — ${detail}` : ""
-        }\n`,
-      );
-    }
-    return undefined;
-  }
+      const response = await fetch(`${getSiteUrl()}/mcp/broker/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: currentGeneration }),
+        signal: options.signal,
+      });
 
-  const data = (await response.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => "")).slice(0, 200);
+        // An older uncoordinated client could have replaced the files while the
+        // request was in flight. Never poison that newer generation.
+        if (
+          isTerminalRefreshResponse(response, detail) &&
+          readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration
+        ) {
+          writeTerminalFingerprint(currentGeneration);
+        }
+        refreshDiagnostic(response, detail, options.quiet);
+        const winner = resolveAuthCredential();
+        return readTrimmed(REFRESH_TOKEN_PATH) !== currentGeneration &&
+          winner?.source === "token_file"
+          ? winner.token
+          : undefined;
+      }
 
-  if (!data.access_token) {
-    return undefined;
-  }
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        // A 2xx means the one-use generation may have been consumed. Fail
+        // closed rather than replaying it after a malformed response.
+        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+          writeTerminalFingerprint(currentGeneration);
+        }
+        return undefined;
+      }
+      const record =
+        typeof data === "object" && data !== null && !Array.isArray(data)
+          ? (data as Record<string, unknown>)
+          : undefined;
+      const accessToken =
+        typeof record?.access_token === "string" ? record.access_token.trim() : "";
+      const replacementRefreshToken =
+        typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
+      if (
+        !(accessToken && replacementRefreshToken) ||
+        replacementRefreshToken === currentGeneration
+      ) {
+        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+          writeTerminalFingerprint(currentGeneration);
+        }
+        return undefined;
+      }
 
-  // A successful rotation re-establishes the session; drop any terminal marker.
-  _endedRefreshToken = undefined;
-
-  // Save new tokens
-  writeFileSync(TOKEN_FILE_PATH, data.access_token, { mode: 0o600 });
-
-  if (data.refresh_token) {
-    writeFileSync(REFRESH_TOKEN_PATH, data.refresh_token, { mode: 0o600 });
-  }
-
-  saveTokenExpiry(data.access_token, data.expires_in);
-
-  return data.access_token;
+      commitCredentialsUnlocked({
+        accessToken,
+        refreshToken: replacementRefreshToken,
+        expiresIn:
+          typeof record?.expires_in === "number" && Number.isFinite(record.expires_in)
+            ? record.expires_in
+            : undefined,
+      });
+      return accessToken;
+    },
+    { signal: options.signal },
+  );
 }
 
 let _refreshInFlight: Promise<string | undefined> | undefined;
 
-/** One refresh-token rotation at a time; successful rotations update all callers. */
-export function refreshToken(
-  options: { signal?: AbortSignal; quiet?: boolean } = {},
-): Promise<string | undefined> {
-  if (_refreshInFlight) {
-    return _refreshInFlight;
-  }
+/** One refresh-token rotation per process and on-disk credential generation. */
+export function refreshToken(options: RefreshOptions = {}): Promise<string | undefined> {
+  if (_refreshInFlight) return _refreshInFlight;
   const attempt = performTokenRefresh(options)
     .then((token) => {
-      if (token) {
-        _cachedToken = token;
-      }
+      if (token) _cachedCredential = { token, source: "token_file" };
       return token;
     })
     .finally(() => {
-      if (_refreshInFlight === attempt) {
-        _refreshInFlight = undefined;
-      }
+      if (_refreshInFlight === attempt) _refreshInFlight = undefined;
     });
   _refreshInFlight = attempt;
   return attempt;
 }
 
-/**
- * An HTTP error from the API carrying the response status, so callers can
- * distinguish a domain rejection (4xx — actionable) from a transport or
- * server failure (5xx / network) when choosing an exit code. Extends Error,
- * so existing `instanceof Error` / `.message` consumers are unaffected.
- */
 export class HttpError extends Error {
   readonly status: number;
 
@@ -288,15 +406,24 @@ export class HttpError extends Error {
   }
 }
 
-/**
- * Thin REST client wrapping fetch with bearer auth and auto-refresh.
- */
 export interface CliClient {
   get(path: string, options?: RequestOptions): Promise<unknown>;
   post(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
 }
 
-let _cachedToken: string | undefined;
+let _cachedCredential: AuthCredential | undefined;
+
+function selectedCredential(): AuthCredential | undefined {
+  const resolved = resolveAuthCredential();
+  if (
+    !_cachedCredential ||
+    resolved?.token !== _cachedCredential.token ||
+    resolved?.source !== _cachedCredential.source
+  ) {
+    _cachedCredential = resolved;
+  }
+  return _cachedCredential;
+}
 
 async function request(
   method: string,
@@ -304,32 +431,22 @@ async function request(
   body?: unknown,
   options?: RequestOptions,
 ): Promise<unknown> {
-  const siteUrl = getSiteUrl();
-  const url = `${siteUrl}${path}`;
+  const url = `${getSiteUrl()}${path}`;
+  let credential = selectedCredential();
+  let refreshAttempted = false;
 
-  if (!_cachedToken) {
-    _cachedToken = getAuthToken();
-  }
-
-  // Proactive refresh: avoid 401 round-trip by refreshing before expiry
-  if (_cachedToken && isTokenExpiringSoon()) {
-    const newToken = await refreshToken({
+  if (credential && isTokenExpiringSoon(credential)) {
+    refreshAttempted = true;
+    const token = await refreshToken({
       signal: options?.signal,
       quiet: options?.quietRefresh,
     });
-    if (newToken) {
-      _cachedToken = newToken;
-    }
+    if (token) credential = { token, source: "token_file" };
   }
 
-  const doFetch = async (token: string | undefined) => {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
+  const doFetch = (token: string | undefined) => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(url, {
       method,
       headers,
@@ -338,39 +455,32 @@ async function request(
     });
   };
 
-  const tokenUsed = _cachedToken;
-  let res = await doFetch(tokenUsed);
-
-  // Attempt refresh on 401
-  if (res.status === 401) {
-    // Another daemon request (or the proactive token loop) may have completed
-    // a single-flight refresh while this older-token request was in flight.
-    // Reuse that cache entry instead of rotating the one-time refresh token a
-    // second time after the first refresh promise has already settled.
-    const newToken =
-      _cachedToken && _cachedToken !== tokenUsed
-        ? _cachedToken
-        : await refreshToken({
-            signal: options?.signal,
-            quiet: options?.quietRefresh,
-          });
-    if (newToken) {
-      _cachedToken = newToken;
-      res = await doFetch(newToken);
+  const tokenUsed = credential?.token;
+  let response = await doFetch(tokenUsed);
+  if (response.status === 401) {
+    const latest = resolveAuthCredential();
+    let retryToken = latest?.token !== tokenUsed ? latest?.token : undefined;
+    if (!retryToken && latest?.source === "token_file" && !refreshAttempted) {
+      refreshAttempted = true;
+      retryToken = await refreshToken({ signal: options?.signal, quiet: options?.quietRefresh });
+    }
+    if (retryToken) {
+      _cachedCredential = {
+        token: retryToken,
+        source: latest?.source === "token_file" ? "token_file" : (latest?.source ?? "token_file"),
+      };
+      response = await doFetch(retryToken);
     }
   }
 
-  if (!res.ok) {
-    if (res.status === 401) {
+  if (!response.ok) {
+    if (response.status === 401) {
       throw new HttpError(401, "Authentication expired. Run `prim auth login` to re-authenticate.");
     }
-    const errorBody = (await res.json().catch(() => null)) as {
-      error?: string;
-    } | null;
-    throw new HttpError(res.status, errorBody?.error ?? `HTTP ${res.status}`);
+    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new HttpError(response.status, errorBody?.error ?? `HTTP ${response.status}`);
   }
-
-  return res.json();
+  return response.json();
 }
 
 export function getClient(): CliClient {

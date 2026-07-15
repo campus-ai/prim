@@ -1,0 +1,381 @@
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { type Server, createServer } from "node:http";
+import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "tsup";
+import { describe, expect, it } from "vitest";
+
+type ChildResult = { code: number | null; stdout: string; stderr: string };
+type RunningChild = {
+  kill: () => void;
+  exited: Promise<number | null>;
+  stderr: () => string;
+};
+
+function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Promise<ChildResult> {
+  const source = `
+    import { getClient } from ${JSON.stringify(moduleUrl)};
+    const result = await getClient().get("/api/cli/protected");
+    process.stdout.write(JSON.stringify(result));
+  `;
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    PRIM_API_URL: apiUrl,
+  };
+  env.PRIM_TOKEN = undefined;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+      cwd: home,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("client subprocess timed out"));
+    }, 10_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function listen(server: Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("test server did not bind a TCP port"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+async function eventually(
+  predicate: () => boolean,
+  failure: () => string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(failure());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function runDaemonProcess(moduleUrl: string, home: string, apiUrl: string): RunningChild {
+  const source = `
+    const nativeSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (handler, delay, ...args) =>
+      nativeSetTimeout(handler, delay === 60000 ? 20 : delay, ...args);
+    await import(${JSON.stringify(moduleUrl)});
+  `;
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    PRIM_API_URL: apiUrl,
+    PRIM_RUNTIME_VERSION: "test",
+  };
+  env.PRIM_TOKEN = undefined;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+    cwd: home,
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  return {
+    kill: () => child.kill("SIGTERM"),
+    exited,
+    stderr: () => stderr,
+  };
+}
+
+function daemonRequest(
+  socketPath: string,
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let response = "";
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`daemon request timed out: ${method}`));
+    }, 2_000);
+    socket.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ id: 1, method, params })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      response += chunk.toString();
+      const newline = response.indexOf("\n");
+      if (newline === -1) return;
+      clearTimeout(timeout);
+      socket.destroy();
+      const parsed = JSON.parse(response.slice(0, newline)) as {
+        ok: boolean;
+        result?: Record<string, unknown>;
+        error?: string;
+      };
+      if (!(parsed.ok && parsed.result)) {
+        reject(new Error(parsed.error ?? `daemon request failed: ${method}`));
+        return;
+      }
+      resolve(parsed.result);
+    });
+  });
+}
+
+describe("cross-process browser credential rotation", () => {
+  it("lets two real processes share one rotation and both use the winner access token", async () => {
+    const home = mkdtempSync(join(tmpdir(), "prim-client-processes-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "token"), "expired-access\n");
+    writeFileSync(join(config, "refresh_token"), "generation-one\n");
+    writeFileSync(join(config, "token_expires_at"), "0\n");
+
+    let refreshCalls = 0;
+    const protectedAuthorizations: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      if (request.method === "POST" && request.url === "/mcp/broker/refresh") {
+        refreshCalls += 1;
+        request.resume();
+        setTimeout(() => {
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(
+            JSON.stringify({
+              access_token: "winner-access",
+              refresh_token: "generation-two",
+              expires_in: 300,
+            }),
+          );
+        }, 200);
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/cli/protected") {
+        const authorization = request.headers.authorization;
+        protectedAuthorizations.push(authorization);
+        const accepted = authorization === "Bearer winner-access";
+        response.writeHead(accepted ? 200 : 401, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(accepted ? { authenticated: true } : { error: "rejected" }));
+        return;
+      }
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+
+    try {
+      const port = await listen(server);
+      await build({
+        entry: [join(process.cwd(), "src/client.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "client.js")).href;
+      const apiUrl = `http://127.0.0.1:${String(port)}`;
+
+      const results = await Promise.all([
+        runClientProcess(moduleUrl, home, apiUrl),
+        runClientProcess(moduleUrl, home, apiUrl),
+      ]);
+
+      expect(results.map(({ code }) => code)).toEqual([0, 0]);
+      expect(results.map(({ stdout }) => JSON.parse(stdout))).toEqual([
+        { authenticated: true },
+        { authenticated: true },
+      ]);
+      expect(results.map(({ stderr }) => stderr)).toEqual(["", ""]);
+      expect(refreshCalls).toBe(1);
+      expect(protectedAuthorizations).toEqual(["Bearer winner-access", "Bearer winner-access"]);
+      expect(readFileSync(join(config, "token"), "utf8").trim()).toBe("winner-access");
+      expect(readFileSync(join(config, "refresh_token"), "utf8").trim()).toBe("generation-two");
+      expect(Number(readFileSync(join(config, "token_expires_at"), "utf8"))).toBeGreaterThan(
+        Date.now(),
+      );
+    } finally {
+      await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
+describe("daemon terminal-auth lifecycle", () => {
+  it("holds without network replay and automatically resumes after fresh login", async () => {
+    const home = mkdtempSync(join(tmpdir(), "prim-daemon-reauth-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    const socketPath = join(config, "sock");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "token"), "ended-access\n");
+    writeFileSync(join(config, "refresh_token"), "ended-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+    writeFileSync(
+      join(config, "refresh_terminal"),
+      `${createHash("sha256").update("ended-refresh").digest("hex")}\n`,
+    );
+
+    let networkCalls = 0;
+    const authorizations: Array<string | undefined> = [];
+    const requestUrls: string[] = [];
+    const server = createServer((request, response) => {
+      networkCalls += 1;
+      authorizations.push(request.headers.authorization);
+      requestUrls.push(request.url ?? "");
+      if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
+        request.resume();
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({ accepted: true, lastHeartbeatAt: Date.now(), onlineCount: 1 }),
+        );
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/cli/moves/ingest") {
+        request.resume();
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            accepted: 1,
+            acknowledged: 1,
+            disposition: "persisted",
+            verdictFooter: null,
+          }),
+        );
+        return;
+      }
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+    let daemon: RunningChild | undefined;
+
+    try {
+      const port = await listen(server);
+      const pendingDir = join(config, "moves", `127.0.0.1_${String(port)}`, "_unbound");
+      const pendingPath = join(
+        pendingDir,
+        `journal.ndjson.flushing.${String(Date.now())}.99999999`,
+      );
+      mkdirSync(pendingDir, { recursive: true });
+      writeFileSync(
+        pendingPath,
+        `${JSON.stringify({
+          moveId: "held-move",
+          capturedAt: Date.now(),
+          sessionId: "held-session",
+          eventType: "UserPromptSubmit",
+          payload: { prompt: "deliver after login" },
+        })}\n`,
+      );
+      await build({
+        entry: [join(process.cwd(), "src/daemon/server.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
+      daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`);
+      await eventually(
+        () => existsSync(socketPath),
+        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+      );
+
+      const held = await daemonRequest(socketPath, "status_snapshot");
+      expect(held.needsReauth).toBe(true);
+      await daemonRequest(socketPath, "session_start", { sessionId: "held-session" });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(networkCalls).toBe(0);
+      expect(
+        daemon
+          .stderr()
+          .split("\n")
+          .filter((line) => line.includes("authentication ended")),
+      ).toHaveLength(1);
+
+      writeFileSync(join(config, "refresh_token"), "fresh-refresh\n");
+      writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+      writeFileSync(join(config, "token"), "fresh-access\n");
+      unlinkSync(join(config, "refresh_terminal"));
+
+      await eventually(
+        () => requestUrls.includes("/api/cli/moves/ingest") && readdirSync(pendingDir).length === 0,
+        () => `daemon did not resume: ${daemon?.stderr() ?? ""}`,
+      );
+      const resumed = await daemonRequest(socketPath, "status_snapshot");
+      expect(resumed.needsReauth).toBe(false);
+      expect(requestUrls).toContain("/api/cli/presence/heartbeat");
+      expect(requestUrls).toContain("/api/cli/moves/ingest");
+      expect(authorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
+      expect(existsSync(pendingPath)).toBe(false);
+      expect(daemon.stderr()).toContain("re-authentication detected");
+    } finally {
+      if (daemon) {
+        daemon.kill();
+        await daemon.exited;
+      }
+      await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+});

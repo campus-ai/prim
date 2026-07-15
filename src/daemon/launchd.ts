@@ -9,13 +9,13 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { binFile } from "../lib/bin-path.js";
+import { withFileLock } from "../lib/file-lock.js";
 import { daemonIsLive, daemonRequest } from "./client.js";
 
 export const LAUNCHD_LABEL = "ai.getprimitive.prim-daemon";
@@ -28,9 +28,6 @@ const PLIST_FILE_MODE = 0o600;
 const READY_TIMEOUT_MS = 15_000;
 const READY_POLL_MS = 100;
 const READY_PROBE_TIMEOUT_MS = 250;
-const LIFECYCLE_LOCK_TIMEOUT_MS = 30_000;
-const LIFECYCLE_LOCK_POLL_MS = 50;
-const LIFECYCLE_LOCK_INIT_GRACE_MS = 2_000;
 
 export interface RuntimePathOptions {
   env?: NodeJS.ProcessEnv;
@@ -475,124 +472,13 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-interface LifecycleLockOwner {
-  pid: number;
-  nonce: string;
-  createdAt: number;
-}
-
-function lifecycleOwnerPath(lockDir: string): string {
-  return join(lockDir, "owner.json");
-}
-
-function readLifecycleOwner(lockDir: string): LifecycleLockOwner | null {
-  try {
-    const owner = JSON.parse(
-      readFileSync(lifecycleOwnerPath(lockDir), "utf8"),
-    ) as Partial<LifecycleLockOwner>;
-    if (
-      !Number.isInteger(owner.pid) ||
-      (owner.pid as number) <= 0 ||
-      typeof owner.nonce !== "string" ||
-      typeof owner.createdAt !== "number"
-    ) {
-      return null;
-    }
-    return owner as LifecycleLockOwner;
-  } catch {
-    return null;
-  }
-}
-
-function sameLifecycleOwner(a: LifecycleLockOwner | null, b: LifecycleLockOwner): boolean {
-  return a?.pid === b.pid && a.nonce === b.nonce && a.createdAt === b.createdAt;
-}
-
-function tryTakeLifecycleLock(lockDir: string, now: number): LifecycleLockOwner | null {
-  try {
-    mkdirSync(lockDir, { mode: RUNTIME_DIR_MODE });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
-    throw error;
-  }
-  const owner: LifecycleLockOwner = {
-    pid: process.pid,
-    nonce: createHash("sha256").update(`${process.pid}\0${now}\0${Math.random()}`).digest("hex"),
-    createdAt: now,
-  };
-  try {
-    writeFileSync(lifecycleOwnerPath(lockDir), `${JSON.stringify(owner)}\n`, {
-      encoding: "utf8",
-      mode: RUNTIME_FILE_MODE,
-      flag: "wx",
-    });
-    return owner;
-  } catch (error) {
-    rmSync(lockDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-function recoverStaleLifecycleLock(
-  lockDir: string,
-  now: number,
-  alive: (pid: number) => boolean,
-): boolean {
-  const owner = readLifecycleOwner(lockDir);
-  if (owner) {
-    if (alive(owner.pid)) return false;
-    if (!sameLifecycleOwner(readLifecycleOwner(lockDir), owner)) return false;
-    rmSync(lockDir, { recursive: true, force: true });
-    return true;
-  }
-
-  // A process can die between mkdir and owner.json. Give a live acquirer a
-  // generous initialization window, then recover only if the directory stayed
-  // unchanged and still has no valid owner.
-  try {
-    const before = statSync(lockDir).mtimeMs;
-    if (now - before < LIFECYCLE_LOCK_INIT_GRACE_MS) return false;
-    if (readLifecycleOwner(lockDir)) return false;
-    if (statSync(lockDir).mtimeMs !== before) return false;
-    rmSync(lockDir, { recursive: true, force: true });
-    return true;
-  } catch {
-    return true;
-  }
-}
-
 /** Serialize daemon lifecycle mutation across concurrent agent sessions. */
 export async function withDaemonLifecycleLock<T>(
   operation: () => Promise<T>,
   options: RuntimePathOptions & { lifecycleLock?: LifecycleLockControl } = {},
 ): Promise<T> {
   const lockDir = runtimePaths(options).lifecycleLockDir;
-  mkdirSync(dirname(lockDir), { recursive: true, mode: RUNTIME_DIR_MODE });
-  const control = options.lifecycleLock;
-  const nowMs = control?.nowMs ?? Date.now;
-  const sleepFor = control?.sleep ?? defaultSleep;
-  const alive = control?.processAlive ?? processIsAlive;
-  const deadline = nowMs() + (control?.timeoutMs ?? LIFECYCLE_LOCK_TIMEOUT_MS);
-
-  let owner: LifecycleLockOwner | null = null;
-  while (!owner) {
-    const now = nowMs();
-    owner = tryTakeLifecycleLock(lockDir, now);
-    if (owner) break;
-    recoverStaleLifecycleLock(lockDir, now, alive);
-    if (now >= deadline) {
-      throw new Error(`timed out waiting for daemon lifecycle lock ${lockDir}`);
-    }
-    await sleepFor(control?.pollMs ?? LIFECYCLE_LOCK_POLL_MS);
-  }
-
-  try {
-    return await operation();
-  } finally {
-    if (sameLifecycleOwner(readLifecycleOwner(lockDir), owner)) {
-      rmSync(lockDir, { recursive: true, force: true });
-    }
-  }
+  return withFileLock(lockDir, operation, options.lifecycleLock);
 }
 
 /**
