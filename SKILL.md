@@ -1,6 +1,6 @@
 ---
 name: prim
-description: Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
+description: Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when onboarding to or configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
 ---
 
 # Working with the prim CLI
@@ -112,19 +112,33 @@ Treat changes to shared agent instructions and standards—such as `AGENTS.md`, 
 
 Apply the same attention during non-code deliberation: planning or “grill me” workflows, spec refinement, behavior design, PR planning or review, and conversations imported from Granola or other connected sources. These workflows can settle important forks before any code changes. Accumulate the confirmed decisions and record them at a natural phase or task boundary; do not interrupt or call Primitive after every answer.
 
-### Seed a new user's first decisions from shared repository context
+### Onboarding: propose decisions from shared repository memory
 
-When Primitive reports that the current user has not recorded a decision, inspect checked-in shared sources such as `MEMORY.md`, `AGENTS.md`, `CLAUDE.md`, specs, PRDs, ADRs, and repository skills. Treat Git tracking as the scope boundary: verify a source with `git ls-files --error-unmatch <path>`. Never mine gitignored or untracked memory automatically; use it only when the user explicitly asks to promote it to the team's Primitive graph.
+When onboarding or `prim welcome` reports `"org": "seed"`, complete this procedure before falling back to the open goals question. Do not treat memory already loaded into the conversation as a substitute for the repository scan. This is a separate decision-proposal pass: do not present repository rules as the user's stated goals or insert them into `$FOUND_GOALS`.
 
-Identify at most three genuine forks in the road that appear to remain in force. Compare them with the team's existing Primitive decisions and omit equivalent positions. Present each proposed decision with its source file and supported rationale, then ask the user to confirm before creating it; do not silently claim that the onboarding user made a historical decision. Do not bulk-import shared documents. If the available graph is incomplete or too large to rule out duplication confidently, avoid proposing uncertain duplicates and explain the limitation.
+1. From the repository root, discover every Git-tracked shared memory or agent-instruction file with:
 
-Before creating a proactively identified decision, read recent decisions to avoid duplicating an existing position:
+   ```
+   git ls-files -- \
+     'MEMORY.md' ':(glob)**/MEMORY.md' \
+     'AGENTS.md' ':(glob)**/AGENTS.md' \
+     'CLAUDE.md' ':(glob)**/CLAUDE.md'
+   ```
+
+2. Read every path returned before selecting candidates. Never automatically read an untracked or gitignored memory file; use one only when the user explicitly asks to promote it to the team's Primitive graph.
+3. Extract at most three explicit, durable positions that appear to remain in force. A candidate must state a genuine fork in the road—such as a goal, priority, principle, invariant, constraint, default, commitment, tradeoff, or exception. Do not infer decisions from code, repository structure, or unstated implications. Do not bulk-import the documents.
+4. Run `npx --yes @primitive.ai/prim decisions recent --limit 20` and omit candidates equivalent to existing decisions. If the result is unavailable or too incomplete to rule out a duplicate confidently, do not propose the uncertain candidate; explain the limitation.
+5. Present the remaining candidates as proposed decisions. For each one, include the proposed intent, the source path, and only rationale or alternatives explicitly supported by that source. Ask the user to approve or revise the proposals before creating them; do not silently attribute a historical repository decision to the onboarding user.
+
+If the scan returns no matching files or no eligible candidates, say so briefly and continue with the normal open onboarding question. Never invent a proposal to fill the gap.
+
+Outside onboarding, before creating a proactively identified decision, read recent decisions to avoid duplicating an existing position:
 
 ```
 npx --yes @primitive.ai/prim decisions recent --limit 20
 ```
 
-If an equivalent decision is already present, do not create or suggest it again. Otherwise author it directly:
+If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly:
 
 ```
 npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
