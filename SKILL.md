@@ -1,6 +1,6 @@
 ---
 name: prim
-description: Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
+description: Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when onboarding to or configuring Primitive session or git hooks. SKIP when "decision" is unrelated to Primitive, or for unrelated CLIs.
 ---
 
 # Working with the prim CLI
