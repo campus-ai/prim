@@ -355,10 +355,11 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
         typeof record?.access_token === "string" ? record.access_token.trim() : "";
       const replacementRefreshToken =
         typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
-      if (
-        !(accessToken && replacementRefreshToken) ||
-        replacementRefreshToken === currentGeneration
-      ) {
+      // WorkOS rotation is optional: a successful refresh may return the SAME
+      // refresh token (AuthKit: "Refresh tokens may be rotated after use").
+      // Require both fields, but accept an unchanged token — poisoning a
+      // same-value replacement would strand a session the broker still honors.
+      if (!(accessToken && replacementRefreshToken)) {
         if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
           writeTerminalFingerprint(currentGeneration);
         }
