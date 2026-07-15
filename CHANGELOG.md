@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.47](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.46...v0.1.0-alpha.47) (2026-07-15)
+
+
+### Bug Fixes
+
+* **auth:** accept an unchanged refresh token on rotation ([#156](https://github.com/campus-ai/prim/issues/156)) ([04a34ff](https://github.com/campus-ai/prim/commit/04a34ff9e65dd9da666400e45818bdb1e50e6cde))
+
 ## [0.1.0-alpha.46](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.45...v0.1.0-alpha.46) (2026-07-15)
 
 
