@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.46](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.45...v0.1.0-alpha.46) (2026-07-15)
+
+
+### Features
+
+* **skill:** seed decisions from repository memory ([#154](https://github.com/campus-ai/prim/issues/154)) ([bf97b5e](https://github.com/campus-ai/prim/commit/bf97b5ed3b5fad7d44ee67e523aab2b5f8c69441))
+
 ## [0.1.0-alpha.45](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.44...v0.1.0-alpha.45) (2026-07-13)
 
 
