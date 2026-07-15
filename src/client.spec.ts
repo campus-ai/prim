@@ -169,7 +169,6 @@ describe("client credential store", () => {
   it.each([
     { access_token: { unexpected: true }, refresh_token: "replacement" },
     { access_token: "replacement", refresh_token: "   " },
-    { access_token: "replacement", refresh_token: "consumed-refresh" },
   ])("fails closed for malformed successful broker credentials", async (brokerBody) => {
     writeFileSync(join(config, "token"), "old-access\n");
     writeFileSync(join(config, "refresh_token"), "consumed-refresh\n");
@@ -181,6 +180,27 @@ describe("client credential store", () => {
     expect(client.isSessionEnded()).toBe(true);
     await expect(client.refreshToken({ quiet: true })).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts a fresh access token when WorkOS declines to rotate", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "consumed-refresh\n");
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          access_token: "rotated-access",
+          refresh_token: "consumed-refresh",
+          expires_in: 300,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ quiet: true })).resolves.toBe("rotated-access");
+    expect(client.isSessionEnded()).toBe(false);
+    expect(readFileSync(client.TOKEN_FILE_PATH, "utf8").trim()).toBe("rotated-access");
+    expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("consumed-refresh");
   });
 
   it("trims a complete successful broker generation before committing", async () => {
