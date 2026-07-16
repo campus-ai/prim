@@ -79,9 +79,9 @@ Capture is automatic for low-level choices made while coding. Use the deliberate
 
 A decision worth deliberately recording is a genuine **fork in the road**: the user or agent encountered multiple plausible paths, selected one, and that selection should inform future work. Record the chosen behavior, direction, constraint, or tradeoff—not routine implementation needed to finish the task or follow an existing convention. A teammate working elsewhere should benefit from knowing it.
 
-### Ground the rationale in available context
+### Ground the rationale in real sources
 
-Before deliberately recording a decision, use the full context already available to you to identify **why this path was chosen**. Start with the current conversation. When the decision or task points to relevant connected sources, inspect them too—especially Slack, Granola or other meeting notes, Linear, Zoom transcripts, email, and repository docs or skills. Prefer the specific thread, meeting, ticket, or document the user referenced over a broad search.
+Before deliberately recording a decision, actively gather the real context behind **why this path was chosen** — aim to populate the decision with as much genuine, source-grounded rationale as you can find, never a plausible-sounding guess. Start with the current conversation, then reach for every tool, connector, and MCP server available to you to pull from the actual sources the decision or task points to: Slack threads, Granola or other meeting notes, Linear issues, Zoom transcripts, email, and repository docs or skills. Don't limit yourself to that list — use whatever integrations you have. Read the source directly instead of inferring from memory, and target the specific thread, meeting, ticket, or document the user referenced rather than a broad, scattershot search.
 
 Record only rationale supported by those sources. Do not mistake the implementation method, the task request, or a restatement of the decision for its rationale. If the rationale remains unclear or the relevant source is unavailable, omit `--rationale` rather than inventing one.
 
