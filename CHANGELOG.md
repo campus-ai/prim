@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.48](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.47...v0.1.0-alpha.48) (2026-07-16)
+
+
+### Features
+
+* **skill:** direct agents to gather rationale from real sources ([#159](https://github.com/campus-ai/prim/issues/159)) ([21c536f](https://github.com/campus-ai/prim/commit/21c536fe95f4f60b22d3f4c643268d172db190f2))
+* **skill:** tailor decision presentation to the requester ([#158](https://github.com/campus-ai/prim/issues/158)) ([a913d23](https://github.com/campus-ai/prim/commit/a913d23c19e2a9b39f212d7d594d389ea6b6bc8a))
+
 ## [0.1.0-alpha.47](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.46...v0.1.0-alpha.47) (2026-07-15)
 
 
