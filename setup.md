@@ -15,9 +15,10 @@
 
 You are an AI coding agent setting up the Primitive CLI for the user. Drive the
 whole thing yourself via `npx` and surface the output — never hand a command back
-to the user to run. The only action a human takes is clicking "Authorize" in the
-browser during auth; everything else is yours. Every command pins `@latest`, so
-the user never installs or manages a prim version and always runs the newest CLI.
+to the user to run. During installation, the only action a human takes is clicking
+"Authorize" in the browser during auth; everything else is yours. Every command
+pins `@latest`, so the user never installs or manages a prim version and always
+runs the newest CLI.
 
 First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
 **Hermes**. It changes one flag in the install command (Hermes is auto-detected,
@@ -32,6 +33,12 @@ Run the entire install as a single command and surface its output:
 npx --yes @primitive.ai/prim@latest setup
 ```
 
+That first `--yes` belongs to **npm** and only skips npm's package-install
+confirmation; it is not approval for a Primitive action. Prim's own global `--yes`
+would come after the package name (for example,
+`npx --yes @primitive.ai/prim@latest --yes decisions create ...`) and applies only
+to that Prim invocation.
+
 - If you are **OpenAI Codex**, add `--agent codex`.
 - If you are **Hermes**, `setup` auto-detects it; add `--agent hermes` to be explicit.
 - Add `--no-daemon` to explicitly opt out of the supervised companion daemon
@@ -45,12 +52,14 @@ command is the point:** it is a single action for you to get approved once, afte
 which the whole install proceeds — versus running the steps separately, which asks
 for approval once per command. The grant it writes also takes effect immediately
 (settings hot-reload), so any follow-up prim call in this same session runs
-without prompting, and every future repo you set up needs no approval at all.
+without a shell permission prompt, and every future repo can be set up without that
+prompt. This setup approval is not consent to create Decisions while passive capture
+is inactive.
 
 Note: **Conflict Gates** — and their **Enforcement** tier, which blocks an edit that
 conflicts with a load-bearing decision until you reconcile — are **not currently
-enabled**; decision capture runs regardless. To turn them on for a team, contact
-support@getprimitive.ai.
+enabled**; decision capture in active repos runs regardless. To turn them on for a
+team, contact support@getprimitive.ai.
 
 **This is yours to drive — never hand it to the user.** If your harness still
 interrupts a step, keep driving until it goes through (approve it, retry, work
@@ -163,8 +172,16 @@ answer. When the user replies (your next turn), settle the goals first —
 iterate until the list is theirs, not yours. Then break the settled goals into
 **one decision per goal** (infer the best `--kind`; map a goal to `--intent` /
 `--decided`, and what they're *not* focusing on to `--alternatives`), show the
-drafted decisions, **confirm before creating**, then record each:
+drafted decisions, **confirm before creating — each drafted Decision needs its own
+approval**, then record each:
 `npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
+
+That confirmation is also the consent boundary if passive capture is inactive in
+the current repo: obtain approval for each drafted Decision, then pass Prim's own
+`--yes` on each approved invocation:
+`npx --yes @primitive.ai/prim@latest --yes decisions create ...`. An explicit local
+`prim.active=false` remains inactive. The create does not run `prim enable`, and its
+approval does not carry forward to another Decision.
 
 **If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
 question; the setup-specifics line is your close.
@@ -176,7 +193,9 @@ question; the setup-specifics line is your close.
 Prefer the one command above. Run these individually only if `setup` is
 unavailable. They mirror the steps `setup` runs, in order; each is idempotent.
 Note that running them separately means one approval per command — `setup` exists
-precisely to collapse that to a single approval.
+precisely to collapse those shell permission prompts to one. That is separate from
+the per-Decision approval required for each `decisions create` while passive capture
+is inactive.
 
 `setup` defaults to `--scope user` (install once, for every repo) and activates
 the current repo. The commands below show the machine-wide flow: add `--scope

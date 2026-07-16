@@ -11,8 +11,8 @@ presence — from the command line and via session + git hooks.
 > **Conflict Gates** check each edit against the decision graph and surface any
 > load-bearing decision it conflicts with; their **Enforcement** tier blocks or pauses
 > a conflicting edit until you reconcile and retry. Conflict Gates are **not currently
-> enabled** — automatic decision capture runs regardless. To enable them for your team,
-> contact **support@getprimitive.ai**.
+> enabled** — automatic decision capture in active repos runs regardless. To enable them
+> for your team, contact **support@getprimitive.ai**.
 
 ## Installation
 
@@ -27,6 +27,12 @@ Or run directly without installing:
 ```bash
 npx @primitive.ai/prim
 ```
+
+In commands such as `npx --yes @primitive.ai/prim@latest ...`, the first `--yes`
+belongs to **npm**: it skips npm's package-install confirmation. It does not approve a
+Primitive action. Prim's own global `--yes` comes after the package name, for example
+`npx --yes @primitive.ai/prim@latest --yes decisions create ...`, and applies only to
+that Prim invocation.
 
 ## Quick Start
 
@@ -118,6 +124,24 @@ prim codex install                 # Install OpenAI Codex hooks (project scope)
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 
+Passive capture is repo-scoped even when these integrations are installed at user
+scope. `prim enable` marks the current Git repo active; `prim disable` makes it
+inactive. A project-scoped install activates its repo automatically. In an inactive
+repo, session content is not passively captured. Here “inactive” means Prim's normal
+effective capture check is false, including an explicit local `prim.active=false`.
+
+An agent may still deliberately record one Decision from an inactive repo with
+`prim decisions create`, but each invocation needs its own user approval. An explicit
+request such as “record this Decision” supplies that approval for that one create; for
+a proactive suggestion, the agent must show the proposed Decision and ask first. The
+agent then passes Prim's global `--yes` for that invocation. This one-time approval does
+not activate passive capture, and neither npm's `npx --yes`, setup approval, nor an
+earlier create counts as approval for another Decision.
+
+When a person runs `prim decisions create` interactively in an inactive repo, Prim
+asks for that one-time approval itself. In non-interactive use it creates nothing
+unless Prim's global `--yes` is present.
+
 #### Claude decision feedback
 
 Claude Code receives eventual, human-visible feedback when automatic capture
@@ -199,6 +223,15 @@ prim decisions unlink <child> --on <parent>  # Remove that dependency
 `<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
+When passive capture is inactive in the current repo, an approved one-time create is:
+
+```bash
+npx --yes @primitive.ai/prim@latest --yes decisions create --intent "…"
+```
+
+Here npm's first `--yes` only permits package resolution; Prim's second `--yes`
+confirms this create. It does not enable the repo or authorize a later create.
+
 `link` / `unlink` curate the dependency edges the automatic linker would otherwise
 own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that
 would create a cycle (exit 2); an unresolved id exits 4.
@@ -245,8 +278,8 @@ prim welcome           # Brief orientation to the decision graph (shown after se
 ### Session & journal
 
 Lower-level plumbing for the capture pipeline — org binding and the local move
-journal. Capture works automatically once the session hooks are installed; these
-are for inspecting and steering it (e.g. multi-org machines).
+journal. Capture works automatically once the session hooks are installed **and the
+repo is active**; these are for inspecting and steering it (e.g. multi-org machines).
 
 ```bash
 prim session start <id>   # Pin a Claude Code session to an org   (list / drop <id>)

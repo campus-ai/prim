@@ -9,9 +9,9 @@ description: Use the prim CLI for Primitive's decision graph — passive capture
 
 ## Mental model
 
-As your team codes, prim passively captures the **decisions** you make -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with; with **Enforcement**, prim blocks the edit until you reconcile the decision and retry. Conflict Gates are **not currently enabled** — capture runs regardless. To enable them for your team, contact support@getprimitive.ai.
+In an active repo, prim passively captures the **decisions** your team makes -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with; with **Enforcement**, prim blocks the edit until you reconcile the decision and retry. Conflict Gates are **not currently enabled** — capture in active repos runs regardless. To enable them for your team, contact support@getprimitive.ai.
 
-Low-level capture runs automatically through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). Deliberately record higher-order forks in the road through `prim decisions create` as described below. Your job is also to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
+Low-level capture runs automatically in active repos through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). An inactive repo is not passively captured. Deliberately record higher-order forks in the road through `prim decisions create` as described below. Your job is also to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
 
 ## Auth
 
@@ -30,10 +30,11 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 1. Every command accepts `--help`. When unsure of flags, run `npx --yes @primitive.ai/prim <cmd> --help` rather than guessing.
 2. The CLI prints API errors as one-liners to stderr and exits non-zero. Treat any non-zero exit as actionable. If auth-related, re-check `auth status`.
 3. `<idOrShortId>` arguments accept either a full decision ID or the short ID shown in feeds (and gate reasons, when Conflict Gates are enabled).
+4. In `npx --yes @primitive.ai/prim ...`, `npx --yes` is npm's flag and only skips npm's package-install confirmation. It is not user consent for a Primitive action. Prim's global flag appears after the package name: `npx --yes @primitive.ai/prim --yes ...`.
 
 ## Conflict Gates & Enforcement (not currently enabled)
 
-**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. Their **Enforcement** tier goes further -- a conflicting edit is blocked (or paused for confirmation) until you reconcile the decision and retry. **Conflict Gates are not currently enabled** — automatic decision capture (above) runs regardless. To enable Conflict Gates and Enforcement for your team, contact support@getprimitive.ai.
+**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. Their **Enforcement** tier goes further -- a conflicting edit is blocked (or paused for confirmation) until you reconcile the decision and retry. **Conflict Gates are not currently enabled** — automatic decision capture in active repos (above) runs regardless. To enable Conflict Gates and Enforcement for your team, contact support@getprimitive.ai.
 
 When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
 
@@ -77,7 +78,7 @@ Confirmations are author-targeted and rare by design; answering keeps the graph'
 
 ## Preserve durable user decisions
 
-Capture is automatic for low-level choices made while coding. Use the deliberate CLI path for higher-order decisions that emerge in conversation: goals, priorities, principles, invariants, constraints, defaults, commitments, durable tradeoffs, and exceptions.
+Capture is automatic for low-level choices made while coding in an active repo. Use the deliberate CLI path for higher-order decisions that emerge in conversation: goals, priorities, principles, invariants, constraints, defaults, commitments, durable tradeoffs, and exceptions.
 
 A decision worth deliberately recording is a genuine **fork in the road**: the user or agent encountered multiple plausible paths, selected one, and that selection should inform future work. Record the chosen behavior, direction, constraint, or tradeoff—not routine implementation needed to finish the task or follow an existing convention. A teammate working elsewhere should benefit from knowing it.
 
@@ -87,7 +88,7 @@ Before deliberately recording a decision, actively gather the real context behin
 
 Record only rationale supported by those sources. Do not mistake the implementation method, the task request, or a restatement of the decision for its rationale. If the rationale remains unclear or the relevant source is unavailable, omit `--rationale` rather than inventing one.
 
-For proactively identified decisions, let confidence in the rationale determine the interaction:
+For proactively identified decisions in an active repo, let confidence in the rationale determine the interaction:
 
 - **Clear and well-supported** — record the decision and rationale silently at the natural task boundary.
 - **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Record after confirmation or correction.
@@ -95,13 +96,35 @@ For proactively identified decisions, let confidence in the rationale determine 
 
 These questions share the interruption budget below; never ask separate questions for the decision and its rationale. If both are uncertain, combine them into one concise prompt. An explicit request to “add this decision to Primitive” still records immediately with the information supplied—do not delay it to demand rationale.
 
+### Inactive repos: approve each deliberate create
+
+When passive capture is inactive for the current repo, do not silently turn a durable
+decision into a write. “Inactive” means Prim's effective repo-capture check is false;
+an explicit local `prim.active=false` is always inactive. Every
+`prim decisions create` invocation needs fresh user approval:
+
+- An explicit request to record or create that Decision is approval for that one
+  invocation; do not ask redundantly.
+- For a proactively identified Decision, present the proposed intent and supported
+  rationale, then wait for approval before creating it. A previous approval never
+  carries forward to another Decision.
+- After approval, pass Prim's global `--yes` for that invocation:
+  `npx --yes @primitive.ai/prim --yes decisions create ...`. The first `--yes` is
+  npm's package-install flag; the second is Prim's one-time confirmation.
+- Do not run `prim enable` merely to bypass this boundary or infer permission to
+  activate the repo. Activation requires a separate user request (a requested
+  `prim setup` counts because setup explicitly activates its current repo). A
+  one-time create leaves passive capture inactive; auth approval, npm's
+  `npx --yes`, setup's shell-permission grant, and earlier creates do not
+  independently change that state.
+
 ### Direct requests: record immediately
 
-When the user asks to record a decision—for example, “add this decision to Primitive”—author it directly. Do not ask for another confirmation.
+When the user asks to record a decision—for example, “add this decision to Primitive”—author it directly. Do not ask for another confirmation. In an inactive repo, the request is the one-time approval: use Prim's `--yes` for that create as described above.
 
 ### Clear decisions: record without interrupting
 
-When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
+When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question **when passive capture is active**. In an inactive repo, present it and obtain the per-create approval above. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
 
 Examples that qualify:
 
@@ -140,10 +163,16 @@ Outside onboarding, before creating a proactively identified decision, read rece
 npx --yes @primitive.ai/prim decisions recent --limit 20
 ```
 
-If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly:
+If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly. If the repo is inactive, that confirmation authorizes Prim's `--yes` only for the approved create:
 
 ```
 npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+```
+
+Inactive-repo form after approval:
+
+```
+npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
 ```
 
 Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
@@ -227,11 +256,11 @@ Examples:
 - **An "unavailable" / "not verified" decision check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval — the same holds for Conflict Gates once enabled.
 - **When Enforcement is enabled, a `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
-- **Capture of coding activity is automatic; never inject moves by hand.** If decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running. Deliberately authoring a higher-order fork—either at the user's request or under the conservative proactive policy above—is a separate, supported path through `decisions create`.
+- **Capture of coding activity is automatic only in active repos; never inject moves by hand.** If an active repo's decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running. Deliberately authoring a higher-order fork—either at the user's request or under the conservative proactive policy above—is a separate, supported path through `decisions create`; in an inactive repo, honor the per-invocation approval boundary above.
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 
 ## After each task
 
-If the user clearly made a durable fork-in-the-road decision, check recent decisions and record it now if it is not already present. If a strong higher-order decision was only inferred, decide whether it clears the interruption budget; if so, ask the single concise confirmation question after reporting the completed work. Otherwise say nothing about Primitive.
+If the user clearly made a durable fork-in-the-road decision, check recent decisions and record it now if it is not already present when capture is active. When capture is inactive, record it only if the user explicitly requested that create; otherwise present it for the per-invocation approval above. If a strong higher-order decision was only inferred, decide whether it clears the interruption budget; if so, ask the single concise confirmation question after reporting the completed work. Otherwise say nothing about Primitive.
 
 If Conflict Gates are enabled and one denied or warned you, report which decision(s) it named and whether you reconciled. If you read the graph before a load-bearing change, note what you found so the user can verify in the dashboard.

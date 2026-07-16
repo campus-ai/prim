@@ -49,6 +49,8 @@ import {
   formatShowJson,
 } from "../decisions/show.js";
 import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisions-check.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
+import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
@@ -57,6 +59,13 @@ const EXIT_NOT_FOUND = 4;
 // specific rejections (self-loop, cycle, ambiguous) and let an org-unbound 403
 // fall through to the global handler as an auth failure (exit 1).
 const EXIT_USAGE = 2;
+
+const CREATE_INACTIVE_PROMPT =
+  "[prim] Decision ingestion is disabled here. Create this one Decision without enabling passive ingestion?";
+const CREATE_INACTIVE_APPROVED =
+  "[prim] one-time Decision creation approved; passive ingestion remains disabled here";
+const CREATE_INACTIVE_REJECTED =
+  "[prim] decision not created: Decision ingestion is disabled here; rerun with prim's --yes to approve this one Decision, or run `prim enable` in a Git project";
 
 const splitList = (value?: string): string[] =>
   (value ?? "")
@@ -192,7 +201,24 @@ export function registerDecisionsCommands(program: Command): void {
       "--files <paths>",
       "Comma-separated repo-relative paths this decision governs (the files Conflict Gates would check — not currently enabled)",
     )
-    .action(async (opts: CreateOptions) => {
+    .action(async (opts: CreateOptions, command: Command) => {
+      if (!isRepoActiveForCapture(process.cwd())) {
+        const globals = command.optsWithGlobals();
+        const nonInteractive = isNonInteractive(globals);
+        const approved =
+          Boolean(globals.yes) ||
+          (!nonInteractive && (await askConfirmation(CREATE_INACTIVE_PROMPT, process.stderr)));
+
+        if (!approved) {
+          console.error(CREATE_INACTIVE_REJECTED);
+          console.log(JSON.stringify({ ok: false, error: "prim_inactive" }, null, 2));
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
+
+        console.error(CREATE_INACTIVE_APPROVED);
+      }
+
       const request: CreateRequest = {
         intent: opts.intent,
         kind: opts.kind as CreateRequest["kind"],
