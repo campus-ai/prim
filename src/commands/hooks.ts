@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type Command, Option } from "commander";
 import { activateRepoBestEffort } from "../lib/activation.js";
+import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 
 type HookSpec = { hookName: string; binName: string };
@@ -157,20 +158,6 @@ export function detectHusky(gitRoot: string): boolean {
 
 export function containsPrimHook(content: string, binName: string = PRE_COMMIT.binName): boolean {
   return content.includes(binName);
-}
-
-export async function askConfirmation(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
-
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(`${question} [y/N] `);
-    const normalized = answer.trim().toLowerCase();
-    return normalized === "y" || normalized === "yes";
-  } finally {
-    rl.close();
-  }
 }
 
 export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
@@ -475,9 +462,7 @@ export function registerHooksCommands(program: Command) {
           return;
         }
         const globals = command.optsWithGlobals();
-        const nonInteractive = Boolean(
-          globals.nonInteractive || process.env.CI || process.env.PRIM_NON_INTERACTIVE,
-        );
+        const nonInteractive = isNonInteractive(globals);
         const gitRoot = getGitRoot();
 
         if (opts.target === "husky") return installHooks(gitRoot, "husky");

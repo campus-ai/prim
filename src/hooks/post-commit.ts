@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { type CommitInfo, toCommitMove } from "./prim-hook-core.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,19 +74,28 @@ function spawnBackgroundFlush(): void {
   }).unref();
 }
 
-try {
+export function runPostCommit(): void {
+  const cwd = git("rev-parse --show-toplevel") ?? process.cwd();
+  if (!isRepoActiveForCapture(cwd)) {
+    return;
+  }
   const commit = readCommit();
   if (commit) {
-    const cwd = git("rev-parse --show-toplevel") ?? process.cwd();
     const move = toCommitMove(commit, resolveCliVersion(), cwd);
     const { orgId } = resolveOrg({ sessionId: "", cwd });
     appendMove(move, orgId);
     spawnBackgroundFlush();
   }
-} catch (err) {
-  if (process.env.PRIM_HOOK_DEBUG) {
-    const detail = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[prim-post-commit] capture failed: ${detail}\n`);
-  }
 }
-process.exit(0);
+
+if (!process.env.VITEST) {
+  try {
+    runPostCommit();
+  } catch (err) {
+    if (process.env.PRIM_HOOK_DEBUG) {
+      const detail = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[prim-post-commit] capture failed: ${detail}\n`);
+    }
+  }
+  process.exit(0);
+}

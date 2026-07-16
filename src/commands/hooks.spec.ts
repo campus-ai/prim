@@ -19,16 +19,6 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
-const mockQuestion = vi.fn();
-const mockClose = vi.fn();
-
-vi.mock("node:readline/promises", () => ({
-  createInterface: vi.fn(() => ({
-    question: mockQuestion,
-    close: mockClose,
-  })),
-}));
-
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -37,7 +27,6 @@ import {
   PRIM_BLOCK_END,
   PRIM_BLOCK_START,
   PRIM_GIT_HOOKS_DIR,
-  askConfirmation,
   containsPrimHook,
   detectHusky,
   installGlobalHooks,
@@ -157,67 +146,6 @@ describe("containsPrimHook", () => {
 
   it("returns false when prim is not mentioned", () => {
     expect(containsPrimHook("#!/bin/sh\nlint-staged")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// askConfirmation
-// ---------------------------------------------------------------------------
-
-describe("askConfirmation", () => {
-  const originalIsTTY = process.stdin.isTTY;
-
-  beforeEach(() => {
-    Object.defineProperty(process.stdin, "isTTY", {
-      value: true,
-      configurable: true,
-    });
-  });
-
-  afterEach(() => {
-    Object.defineProperty(process.stdin, "isTTY", {
-      value: originalIsTTY,
-      configurable: true,
-    });
-  });
-
-  it("returns false when stdin is not a TTY", async () => {
-    Object.defineProperty(process.stdin, "isTTY", {
-      value: false,
-      configurable: true,
-    });
-    expect(await askConfirmation("test?")).toBe(false);
-  });
-
-  it('returns true for "y"', async () => {
-    mockQuestion.mockResolvedValue("y");
-    expect(await askConfirmation("test?")).toBe(true);
-  });
-
-  it('returns true for "yes"', async () => {
-    mockQuestion.mockResolvedValue("yes");
-    expect(await askConfirmation("test?")).toBe(true);
-  });
-
-  it('returns true for "Y" (case-insensitive)', async () => {
-    mockQuestion.mockResolvedValue("Y");
-    expect(await askConfirmation("test?")).toBe(true);
-  });
-
-  it("returns false for empty input", async () => {
-    mockQuestion.mockResolvedValue("");
-    expect(await askConfirmation("test?")).toBe(false);
-  });
-
-  it('returns false for "n"', async () => {
-    mockQuestion.mockResolvedValue("n");
-    expect(await askConfirmation("test?")).toBe(false);
-  });
-
-  it("closes readline interface after use", async () => {
-    mockQuestion.mockResolvedValue("y");
-    await askConfirmation("test?");
-    expect(mockClose).toHaveBeenCalled();
   });
 });
 
