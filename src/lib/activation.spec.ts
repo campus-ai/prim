@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import {
   PRIM_ACTIVE_KEY,
   activateRepoBestEffort,
+  decisionIngestionStatus,
   hasProjectPrimInstall,
   isRepoActive,
   isRepoActiveForCapture,
@@ -197,5 +198,40 @@ describe("isRepoActiveForCapture (the agent-hook gate)", () => {
     mockedExistsSync.mockImplementation((p) => String(p) === "/home/jth/.claude/settings.json");
     mockedReadFileSync.mockReturnValue("prim-hook");
     expect(isRepoActiveForCapture("/home/jth/repo")).toBe(false);
+  });
+});
+
+describe("decisionIngestionStatus", () => {
+  it("is enabled when the local flag is explicitly true", () => {
+    gitMock({ flag: "true", root: "/repo" });
+    expect(decisionIngestionStatus("/repo")).toBe("enabled");
+  });
+
+  it("remains enabled when merged Git config resolves a global prim.active=true", () => {
+    gitMock({ flag: "true", root: "/repo" });
+    expect(decisionIngestionStatus("/repo")).toBe("enabled");
+  });
+
+  it("is disabled when the local flag is explicitly false", () => {
+    gitMock({ flag: "false", root: "/repo" });
+    expect(decisionIngestionStatus("/repo")).toBe("disabled");
+  });
+
+  it("is enabled by a project-install back-fill when the flag is unset", () => {
+    gitMock({ flag: undefined, root: "/repo" });
+    mockedExistsSync.mockImplementation((p) => String(p) === "/repo/.codex/hooks.json");
+    mockedReadFileSync.mockReturnValue("prim-hook");
+    expect(decisionIngestionStatus("/repo")).toBe("enabled");
+  });
+
+  it("is disabled by default when a repo has no flag or project install", () => {
+    gitMock({ flag: undefined, root: "/repo" });
+    mockedExistsSync.mockReturnValue(false);
+    expect(decisionIngestionStatus("/repo")).toBe("disabled");
+  });
+
+  it("is disabled outside Git", () => {
+    gitMock({ flag: undefined, root: undefined });
+    expect(decisionIngestionStatus("/tmp")).toBe("disabled");
   });
 });

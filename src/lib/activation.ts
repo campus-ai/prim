@@ -128,3 +128,8 @@ export function isRepoActiveForCapture(cwd: string): boolean {
   if (flag === "false") return false;
   return hasProjectPrimInstall(cwd);
 }
+
+/** Human-readable decision-ingestion state for the capture gate at `cwd`. */
+export function decisionIngestionStatus(cwd: string): "enabled" | "disabled" {
+  return isRepoActiveForCapture(cwd) ? "enabled" : "disabled";
+}

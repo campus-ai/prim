@@ -17,6 +17,8 @@ import {
   daemonDegradedReason,
   daemonStartHealthFields,
   daemonStartIsHealthy,
+  formatDaemonLifecycleMessage,
+  formatDaemonSnapshotMessage,
   openDaemonLog,
 } from "./daemon.js";
 
@@ -268,6 +270,76 @@ describe("daemonDegradedReason", () => {
     expect(reason).toContain("ingestion unhealthy (at least 23 pending): bad");
     expect(reason).not.toContain("\u001b");
     expect(reason?.length).toBeLessThan(300);
+  });
+});
+
+describe("formatDaemonSnapshotMessage", () => {
+  const healthy = {
+    pid: 4242,
+    uptimeMs: 12_000,
+    sessionId: "daemon-4242",
+    onlineNames: ["Alex", "Maya"],
+  };
+
+  it("renders an enabled detached snapshot without dropping runtime metadata", () => {
+    expect(formatDaemonSnapshotMessage(healthy, false, "enabled")).toBe(
+      "[prim] ✓ daemon live, Decision ingestion enabled · pid=4242 · uptime=12s · session=daemon-4242 · team: Alex, Maya",
+    );
+  });
+
+  it("renders a disabled supervised snapshot without dropping launchd metadata", () => {
+    expect(formatDaemonSnapshotMessage(healthy, true, "disabled")).toBe(
+      "[prim] ✓ daemon live, Decision ingestion disabled under launchd · pid=4242 · uptime=12s · session=daemon-4242 · team: Alex, Maya",
+    );
+  });
+
+  it("renders both socket-only success variants without a snapshot", () => {
+    expect(formatDaemonSnapshotMessage(null, false, "enabled")).toBe(
+      "[prim] ✓ daemon live, Decision ingestion enabled",
+    );
+    expect(formatDaemonSnapshotMessage(null, true, "disabled")).toBe(
+      "[prim] ✓ daemon live, Decision ingestion disabled under launchd (no snapshot)",
+    );
+  });
+
+  it("leaves degraded output unchanged and omits the location state", () => {
+    const message = formatDaemonSnapshotMessage(
+      { ...healthy, healthy: false, needsReauth: true },
+      true,
+      "enabled",
+    );
+    expect(message).toBe(
+      "[prim] ✗ daemon unhealthy under launchd · pid=4242 · team: Alex, Maya · authentication requires `prim auth login`",
+    );
+    expect(message).not.toContain("Decision ingestion");
+  });
+});
+
+describe("formatDaemonLifecycleMessage", () => {
+  it.each([
+    {
+      message: "[prim] daemon already running (pid=4242)",
+      state: "enabled" as const,
+      expected: "[prim] daemon already running (pid=4242) · Decision ingestion enabled",
+    },
+    {
+      message: "[prim] ✓ daemon started (pid=4242, socket=/tmp/prim.sock)",
+      state: "disabled" as const,
+      expected:
+        "[prim] ✓ daemon started (pid=4242, socket=/tmp/prim.sock) · Decision ingestion disabled",
+    },
+    {
+      message: "[prim] ✓ daemon started under launchd (pid=4242)",
+      state: "enabled" as const,
+      expected: "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled",
+    },
+    {
+      message: "[prim] ✓ daemon ensured under launchd (kickstart)",
+      state: "disabled" as const,
+      expected: "[prim] ✓ daemon ensured under launchd (kickstart) · Decision ingestion disabled",
+    },
+  ])("appends $state without changing lifecycle metadata", ({ message, state, expected }) => {
+    expect(formatDaemonLifecycleMessage(message, state)).toBe(expected);
   });
 });
 

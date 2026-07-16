@@ -33,6 +33,7 @@ import {
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { pendingJournalStats } from "../journal.js";
+import { decisionIngestionStatus } from "../lib/activation.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
@@ -131,7 +132,11 @@ function checkAuth(): Check {
 
 export function classifyDaemonHealth(
   snapshot: DaemonDoctorSnapshot | null,
-  options: { disabled?: boolean; service?: LaunchdService } = {},
+  options: {
+    disabled?: boolean;
+    service?: LaunchdService;
+    ingestionStatus?: "enabled" | "disabled";
+  } = {},
 ): Check {
   if (options.disabled) {
     return {
@@ -199,10 +204,11 @@ export function classifyDaemonHealth(
   if (snapshot.healthy !== true) {
     return { name: "daemon", status: "fail", detail: "health state is not ready" };
   }
+  const ingestionStatus = options.ingestionStatus ?? decisionIngestionStatus(process.cwd());
   return {
     name: "daemon",
     status: "ok",
-    detail: `supervised and healthy${snapshot.version ? ` · v${snapshot.version}` : ""}`,
+    detail: `supervised and healthy${snapshot.version ? ` · v${snapshot.version}` : ""} · Decision ingestion ${ingestionStatus}`,
   };
 }
 
