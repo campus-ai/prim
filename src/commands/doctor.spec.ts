@@ -62,6 +62,36 @@ describe("auth source diagnostics", () => {
 });
 
 describe("daemon health diagnostics", () => {
+  const healthy = {
+    pid: 42,
+    healthy: true,
+    heartbeat: { healthy: true, consecutiveFailures: 0 },
+    ingestion: {
+      healthy: true,
+      consecutiveFailures: 0,
+      pendingCount: 0,
+      pendingSampled: false,
+      strandedCount: 0,
+      lastAcknowledgedCount: 0,
+    },
+  };
+
+  it.each(["enabled", "disabled"] as const)(
+    "adds the %s location ingestion state only to healthy daemon detail",
+    (ingestionStatus) => {
+      expect(
+        classifyDaemonHealth(
+          { ...healthy, version: "1.2.3" },
+          { service: { loaded: true, pid: 42 }, ingestionStatus },
+        ),
+      ).toEqual({
+        name: "daemon",
+        status: "ok",
+        detail: `supervised and healthy · v1.2.3 · Decision ingestion ${ingestionStatus}`,
+      });
+    },
+  );
+
   it("fails a socket-live daemon whose durable health is not green", () => {
     const check = classifyDaemonHealth({
       healthy: false,
@@ -101,19 +131,6 @@ describe("daemon health diagnostics", () => {
   });
 
   it("requires launchd to positively own the socket pid", () => {
-    const healthy = {
-      pid: 42,
-      healthy: true,
-      heartbeat: { healthy: true, consecutiveFailures: 0 },
-      ingestion: {
-        healthy: true,
-        consecutiveFailures: 0,
-        pendingCount: 0,
-        pendingSampled: false,
-        strandedCount: 0,
-        lastAcknowledgedCount: 0,
-      },
-    };
     expect(classifyDaemonHealth(healthy, { service: { loaded: true } }).status).toBe("fail");
     expect(classifyDaemonHealth(healthy, { service: { loaded: true, pid: 99 } }).detail).toContain(
       "does not own",
@@ -144,6 +161,15 @@ describe("daemon health diagnostics", () => {
     expect(check.status).toBe("fail");
     expect(check.detail).toContain("prim auth login");
     expect(check.detail).not.toContain("HTTP 500");
+  });
+
+  it("leaves unhealthy detail unchanged when an ingestion state is supplied", () => {
+    expect(
+      classifyDaemonHealth(
+        { ...healthy, healthy: false },
+        { service: { loaded: true, pid: 42 }, ingestionStatus: "enabled" },
+      ),
+    ).toEqual({ name: "daemon", status: "fail", detail: "health state is not ready" });
   });
 });
 

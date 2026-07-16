@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequest } from "../daemon/client.js";
+import { decisionIngestionStatus } from "../lib/activation.js";
 import type { Teammate } from "../lib/presence.js";
 import { renderStatusline } from "./statusline.js";
 
@@ -7,7 +8,12 @@ vi.mock("../daemon/client.js", () => ({
   daemonRequest: vi.fn(),
 }));
 
+vi.mock("../lib/activation.js", () => ({
+  decisionIngestionStatus: vi.fn(() => "enabled"),
+}));
+
 const mockDaemonRequest = vi.mocked(daemonRequest);
+const mockDecisionIngestionStatus = vi.mocked(decisionIngestionStatus);
 
 function snapshot(onlineCount?: number, onlineNames?: string[], onlineTeammates?: Teammate[]) {
   return {
@@ -24,13 +30,22 @@ function snapshot(onlineCount?: number, onlineNames?: string[], onlineTeammates?
 describe("renderStatusline", () => {
   beforeEach(() => {
     mockDaemonRequest.mockReset();
+    mockDecisionIngestionStatus.mockReset();
+    mockDecisionIngestionStatus.mockReturnValue("enabled");
   });
 
-  it("renders the org-wide online count from the daemon snapshot", async () => {
+  it("renders enabled decision ingestion with the org-wide online count", async () => {
     mockDaemonRequest.mockResolvedValue(snapshot(2));
     const line = await renderStatusline();
-    expect(line).toContain("daemon: live");
+    expect(line).toContain("daemon: live, Decision ingestion enabled");
     expect(line).toContain("team: 2 online");
+    expect(mockDecisionIngestionStatus).toHaveBeenCalledWith(process.cwd());
+  });
+
+  it("renders disabled decision ingestion in a healthy location where capture is inactive", async () => {
+    mockDecisionIngestionStatus.mockReturnValue("disabled");
+    mockDaemonRequest.mockResolvedValue(snapshot(2));
+    expect(await renderStatusline()).toContain("daemon: live, Decision ingestion disabled");
   });
 
   it("renders teammate names when the snapshot carries them", async () => {
@@ -124,6 +139,8 @@ describe("renderStatusline", () => {
     const line = await renderStatusline();
     expect(line).toContain("daemon: down");
     expect(line).not.toContain("team:");
+    expect(line).not.toContain("Decision ingestion");
+    expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
   });
 
   it("surfaces a stalled delivery queue instead of masking it with presence", async () => {
@@ -138,6 +155,8 @@ describe("renderStatusline", () => {
     expect(line).toContain("delivery: stalled");
     expect(line).toContain("4 pending");
     expect(line).not.toContain("team:");
+    expect(line).not.toContain("Decision ingestion");
+    expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
   });
 
   it("labels a sampled pending count as a lower bound", async () => {
@@ -159,6 +178,8 @@ describe("renderStatusline", () => {
     const line = await renderStatusline();
     expect(line).toContain("presence: unavailable");
     expect(line).not.toContain("team:");
+    expect(line).not.toContain("Decision ingestion");
+    expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
   });
 
   it("shows 'presence: other env' (never another deployment's team) on an env mismatch", async () => {
@@ -175,7 +196,7 @@ describe("renderStatusline", () => {
       envMismatch: true,
     });
     const line = await renderStatusline();
-    expect(line).toContain("daemon: live");
+    expect(line).toContain("daemon: live, Decision ingestion enabled");
     expect(line).toContain("presence: other env");
     expect(line).not.toContain("team:");
     expect(line).not.toContain("\x1b]8;;");
@@ -194,7 +215,7 @@ describe("renderStatusline", () => {
       presenceStale: true,
     });
     const line = await renderStatusline();
-    expect(line).toContain("daemon: live");
+    expect(line).toContain("daemon: live, Decision ingestion enabled");
     expect(line).toContain("presence: stale");
     expect(line).not.toContain("team:");
     expect(line).not.toContain("\x1b]8;;");

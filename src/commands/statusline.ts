@@ -4,7 +4,7 @@
  * Spawned by Claude Code on every status refresh (~1Hz idle). Reads
  * the daemon's status snapshot and renders a single-line summary:
  *
- *   primitive 0.4.2 (daemon: live · team: 4 online)
+ *   primitive 0.4.2 (daemon: live, Decision ingestion enabled · team: 4 online)
  *
  * When the daemon's down, falls back to a quieter form:
  *
@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
+import { decisionIngestionStatus } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { type Teammate, formatTeammates, formatTeammatesWithArea } from "../lib/presence.js";
 
@@ -116,16 +117,17 @@ export async function renderStatusline(): Promise<string> {
     }
     return `primitive ${version} (daemon: starting)`;
   }
+  const ingestionStatus = decisionIngestionStatus(process.cwd());
   // The daemon is alive but on another deployment — show that honestly rather
   // than its env's team or a misleading "down".
   if (snapshot.envMismatch) {
-    return `primitive ${version} (daemon: live · presence: other env)`;
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other env)`;
   }
   // A stale snapshot means the daemon is alive but its heartbeats are failing —
   // the cached presence is frozen, so render the degraded state honestly
   // instead of a confident, wrong roster.
   if (snapshot.presenceStale) {
-    return `primitive ${version} (daemon: live · presence: stale)`;
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: stale)`;
   }
   // Prefer teammates-with-area ("Kasey - auth, Sam +3"); fall back to bare
   // names for a server that predates areas ("Maya, Alex +3" / "just you"); then
@@ -142,7 +144,7 @@ export async function renderStatusline(): Promise<string> {
   } else {
     team = "team: —";
   }
-  return `primitive ${version} (daemon: live · ${team})`;
+  return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · ${team})`;
 }
 
 export function registerStatuslineCommands(program: Command): void {

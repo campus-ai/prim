@@ -34,6 +34,7 @@ import {
   setDaemonExplicitlyDisabled,
   withDaemonLifecycleLock,
 } from "../daemon/launchd.js";
+import { decisionIngestionStatus } from "../lib/activation.js";
 import { stripControlChars } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
@@ -65,6 +66,19 @@ const EXIT_NOT_RUNNING = 2;
 // Pidfile alive but the socket isn't answering yet — booting (or wedged),
 // distinct from hard-down so an agent can retry rather than treat it as failed.
 const EXIT_BOOTING = 3;
+
+type DecisionIngestionStatus = ReturnType<typeof decisionIngestionStatus>;
+
+export function formatDaemonLifecycleMessage(
+  message: string,
+  decisionIngestion: DecisionIngestionStatus,
+): string {
+  return `${message} · Decision ingestion ${decisionIngestion}`;
+}
+
+function formatCurrentDaemonLifecycleMessage(message: string): string {
+  return formatDaemonLifecycleMessage(message, decisionIngestionStatus(process.cwd()));
+}
 
 interface RunningPid {
   pid: number;
@@ -249,7 +263,9 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
   if (existing?.alive) {
     const snapshot = await verifiedPid(existing);
     if (snapshot) {
-      process.stderr.write(`[prim] daemon already running (pid=${existing.pid})\n`);
+      process.stderr.write(
+        `${formatCurrentDaemonLifecycleMessage(`[prim] daemon already running (pid=${existing.pid})`)}\n`,
+      );
       console.log(JSON.stringify({ started: false, pid: existing.pid }, null, 2));
       return;
     }
@@ -313,7 +329,7 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
   if (live) {
     const after = readPidfile();
     process.stderr.write(
-      `[prim] ✓ daemon started (pid=${after?.pid ?? "?"}, socket=${SOCK_PATH})\n`,
+      `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon started (pid=${after?.pid ?? "?"}, socket=${SOCK_PATH})`)}\n`,
     );
     console.log(JSON.stringify({ started: true, pid: after?.pid }, null, 2));
     return;
@@ -400,7 +416,7 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
   if (healthy) {
     const verb = result.action === "none" ? "already running" : "started";
     process.stderr.write(
-      `[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? result.service.pid ?? "?"})\n`,
+      `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? result.service.pid ?? "?"})`)}\n`,
     );
   } else {
     const reason = daemonDegradedReason(snapshot);
@@ -606,12 +622,15 @@ export function classifyLaunchdStatus(
   };
 }
 
-function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false): void {
+export function formatDaemonSnapshotMessage(
+  snapshot: StatusSnapshot | null,
+  supervised: boolean,
+  decisionIngestion: DecisionIngestionStatus,
+): string {
   if (!snapshot) {
-    process.stderr.write(
-      supervised ? "[prim] ✓ daemon live under launchd (no snapshot)\n" : "[prim] ✓ daemon live\n",
-    );
-    return;
+    return supervised
+      ? `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion} under launchd (no snapshot)`
+      : `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}`;
   }
   const team =
     snapshot.onlineNames !== undefined
@@ -619,16 +638,17 @@ function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false):
       : "";
   if (snapshot.healthy === false) {
     const reason = daemonDegradedReason(snapshot);
-    process.stderr.write(
-      `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}${reason ? ` · ${reason}` : ""}\n`,
-    );
-    return;
+    return `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}${reason ? ` · ${reason}` : ""}`;
   }
-  process.stderr.write(
-    `[prim] ✓ daemon live${supervised ? " under launchd" : ""} · pid=${snapshot.pid} · uptime=${Math.round(
-      snapshot.uptimeMs / 1000,
-    )}s · session=${snapshot.sessionId}${team}\n`,
-  );
+  return `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}${supervised ? " under launchd" : ""} · pid=${snapshot.pid} · uptime=${Math.round(
+    snapshot.uptimeMs / 1000,
+  )}s · session=${snapshot.sessionId}${team}`;
+}
+
+function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false): void {
+  const decisionIngestion =
+    snapshot?.healthy === false ? "disabled" : decisionIngestionStatus(process.cwd());
+  process.stderr.write(`${formatDaemonSnapshotMessage(snapshot, supervised, decisionIngestion)}\n`);
 }
 
 async function detachedDaemonStatus(): Promise<void> {
@@ -736,7 +756,9 @@ async function daemonEnsure(): Promise<void> {
   if (result.state === "disabled") {
     process.stderr.write("[prim] daemon remains explicitly disabled\n");
   } else if (result.state === "running") {
-    process.stderr.write(`[prim] ✓ daemon ensured under launchd (${result.action})\n`);
+    process.stderr.write(
+      `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon ensured under launchd (${result.action})`)}\n`,
+    );
   } else {
     process.stderr.write(`[prim] ✗ daemon ensure failed; see ${LOG_PATH}\n`);
     if (!process.exitCode) process.exitCode = EXIT_NOT_RUNNING;
