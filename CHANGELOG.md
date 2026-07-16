@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.49](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.48...v0.1.0-alpha.49) (2026-07-16)
+
+
+### Features
+
+* enforce ingestion opt-in for captures and creates ([#163](https://github.com/campus-ai/prim/issues/163)) ([fdfee5b](https://github.com/campus-ai/prim/commit/fdfee5befc974bc23800fc534dbd7ac2141b0db7))
+* show location-aware decision ingestion status ([#161](https://github.com/campus-ai/prim/issues/161)) ([2aaa722](https://github.com/campus-ai/prim/commit/2aaa72203fe47f651152a53b7fb69323d2ae2726))
+
 ## [0.1.0-alpha.48](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.47...v0.1.0-alpha.48) (2026-07-16)
 
 
