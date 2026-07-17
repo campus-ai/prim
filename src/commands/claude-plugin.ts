@@ -64,6 +64,10 @@ function pluginManifest(): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+function renderClaudePlugin(): { manifest: string; skill: string } {
+  return { manifest: pluginManifest(), skill: loadSkill() };
+}
+
 /** Remove `dir` only if it exists and is empty — prunes our scaffolding without
  * touching a dir that still holds unrelated user files. */
 function removeDirIfEmpty(dir: string): void {
@@ -78,6 +82,80 @@ function pluginPaths(dir: string): { manifestPath: string; skillPath: string } {
   };
 }
 
+export interface ClaudePluginRefreshResult {
+  installed: number;
+  refreshed: number;
+}
+
+type RefreshClaudePluginsOptions = {
+  writeFile?: typeof atomicWrite;
+};
+
+/**
+ * Refresh every recognized Claude skills-directory installation without ever
+ * creating a new one. Recognition is intentionally strict: both managed files
+ * must exist, and the manifest must be valid JSON naming the `prim` plugin.
+ * Every scope is fail-soft so a broken user copy cannot strand a healthy
+ * project copy (or vice versa) during SessionStart.
+ *
+ * Freshness is content equality, not version ordering: the running binary owns
+ * the managed files, so an older prim deliberately rewrites newer files to its
+ * own content. `refreshed` counts scopes where at least one managed file was
+ * rewritten — a partial write still counts, and the next session retries.
+ */
+export function refreshClaudePlugins(
+  cwd: string,
+  options: RefreshClaudePluginsOptions = {},
+): ClaudePluginRefreshResult {
+  const result: ClaudePluginRefreshResult = { installed: 0, refreshed: 0 };
+  const dirs = new Set(
+    [resolvePluginDir(cwd, "user"), resolvePluginDir(cwd, "project")].filter(
+      (dir): dir is string => dir !== null,
+    ),
+  );
+
+  let desired: { manifest: string; skill: string } | undefined;
+  const writeFile = options.writeFile ?? atomicWrite;
+
+  for (const dir of dirs) {
+    try {
+      const { manifestPath, skillPath } = pluginPaths(dir);
+      if (!existsSync(manifestPath) || !existsSync(skillPath)) continue;
+
+      const manifestCurrent = readFileSync(manifestPath, "utf-8");
+      const parsed = JSON.parse(manifestCurrent) as { name?: unknown };
+      if (parsed.name !== "prim") continue;
+      const skillCurrent = readFileSync(skillPath, "utf-8");
+      result.installed += 1;
+
+      desired ??= renderClaudePlugin();
+      let changed = false;
+      if (manifestCurrent !== desired.manifest) {
+        try {
+          writeFile(manifestPath, desired.manifest);
+          changed = true;
+        } catch {
+          // This scope remains fail-soft; still attempt its other managed file.
+        }
+      }
+      if (skillCurrent !== desired.skill) {
+        try {
+          writeFile(skillPath, desired.skill);
+          changed = true;
+        } catch {
+          // Continue to the other scope.
+        }
+      }
+      if (changed) result.refreshed += 1;
+    } catch {
+      // Missing permissions, malformed JSON, and transient reads are all
+      // non-fatal at SessionStart. Never repair an unrecognized installation.
+    }
+  }
+
+  return result;
+}
+
 export function installClaudePlugin(
   cwd: string,
   opts: { scope?: string; dryRun?: boolean },
@@ -86,8 +164,7 @@ export function installClaudePlugin(
   if (dir === null) return 1;
 
   const { manifestPath, skillPath } = pluginPaths(dir);
-  const manifest = pluginManifest();
-  const skill = loadSkill();
+  const { manifest, skill } = renderClaudePlugin();
 
   const manifestCurrent = existsSync(manifestPath) ? readFileSync(manifestPath, "utf-8") : null;
   const skillCurrent = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : null;

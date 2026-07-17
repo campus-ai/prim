@@ -6,11 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitToplevel } from "../lib/git.js";
 import {
   installClaudePlugin,
+  refreshClaudePlugins,
   resolvePluginDir,
   statusClaudePlugin,
   uninstallClaudePlugin,
 } from "./claude-plugin.js";
-import { loadSkill } from "./skill.js";
+import { atomicWrite, loadSkill } from "./skill.js";
 
 // homedir → the test's temp dir so "user scope" is sandboxed; gitToplevel is
 // controlled so project-scope resolution is deterministic regardless of where
@@ -109,6 +110,111 @@ describe("installClaudePlugin", () => {
     expect(installClaudePlugin(work, { scope: "bogus" })).toBe(1);
     expect(existsSync(join(work, ".claude"))).toBe(false);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown --scope"));
+  });
+});
+
+describe("refreshClaudePlugins", () => {
+  const manifestPath = (dir: string) => join(dir, ".claude-plugin", "plugin.json");
+  const skillPath = (dir: string) => join(dir, "SKILL.md");
+
+  it("leaves current recognized installs untouched", () => {
+    installClaudePlugin(work, { scope: "user" });
+    const manifest = readFileSync(manifestPath(userDir()));
+    const skill = readFileSync(skillPath(userDir()));
+
+    expect(refreshClaudePlugins(work)).toEqual({ installed: 1, refreshed: 0 });
+    expect(readFileSync(manifestPath(userDir())).equals(manifest)).toBe(true);
+    expect(readFileSync(skillPath(userDir())).equals(skill)).toBe(true);
+  });
+
+  it.each(["user", "project"] as const)("refreshes a stale %s-scope install", (scope) => {
+    const root = join(work, "repo");
+    mkdirSync(root, { recursive: true });
+    mockedGitToplevel.mockReturnValue(root);
+    installClaudePlugin(root, { scope });
+    const dir = scope === "user" ? userDir() : join(root, ".claude", "skills", "prim");
+    writeFileSync(skillPath(dir), `stale ${scope} skill\n`);
+
+    expect(refreshClaudePlugins(root)).toEqual({ installed: 1, refreshed: 1 });
+    expect(readFileSync(skillPath(dir), "utf-8")).toBe(loadSkill());
+  });
+
+  it("refreshes stale user and project installs in the same pass", () => {
+    const root = join(work, "repo");
+    mkdirSync(root, { recursive: true });
+    mockedGitToplevel.mockReturnValue(root);
+    installClaudePlugin(work, { scope: "user" });
+    installClaudePlugin(root, { scope: "project" });
+    const projectDir = join(root, ".claude", "skills", "prim");
+    writeFileSync(manifestPath(userDir()), '{"name":"prim","version":"old"}\n');
+    writeFileSync(skillPath(userDir()), "stale user skill\n");
+    writeFileSync(manifestPath(projectDir), '{"name":"prim","version":"old"}\n');
+    writeFileSync(skillPath(projectDir), "stale project skill\n");
+
+    expect(refreshClaudePlugins(root)).toEqual({ installed: 2, refreshed: 2 });
+    expect(readFileSync(skillPath(userDir()), "utf-8")).toBe(loadSkill());
+    expect(readFileSync(skillPath(projectDir), "utf-8")).toBe(loadSkill());
+    expect(JSON.parse(readFileSync(manifestPath(userDir()), "utf-8"))).toMatchObject({
+      name: "prim",
+      version: expect.not.stringMatching("old"),
+    });
+    expect(JSON.parse(readFileSync(manifestPath(projectDir), "utf-8"))).toMatchObject({
+      name: "prim",
+      version: expect.not.stringMatching("old"),
+    });
+  });
+
+  it("does not create missing installs", () => {
+    expect(refreshClaudePlugins(work)).toEqual({ installed: 0, refreshed: 0 });
+    expect(existsSync(userDir())).toBe(false);
+    expect(existsSync(join(work, ".claude", "skills", "prim"))).toBe(false);
+  });
+
+  it("leaves malformed, partial, and non-Prim plugins untouched", () => {
+    const cases = [
+      { name: "malformed", manifest: "not json", skill: "custom skill" },
+      { name: "partial", manifest: '{"name":"prim"}', skill: undefined },
+      { name: "unrelated", manifest: '{"name":"other"}', skill: "other skill" },
+    ];
+
+    for (const fixture of cases) {
+      const root = join(work, fixture.name);
+      const dir = join(root, ".claude", "skills", "prim");
+      mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+      writeFileSync(manifestPath(dir), fixture.manifest);
+      if (fixture.skill !== undefined) writeFileSync(skillPath(dir), fixture.skill);
+      mockedGitToplevel.mockReturnValue(root);
+
+      expect(refreshClaudePlugins(root)).toEqual({ installed: 0, refreshed: 0 });
+      expect(readFileSync(manifestPath(dir), "utf-8")).toBe(fixture.manifest);
+      if (fixture.skill !== undefined) {
+        expect(readFileSync(skillPath(dir), "utf-8")).toBe(fixture.skill);
+      } else {
+        expect(existsSync(skillPath(dir))).toBe(false);
+      }
+    }
+  });
+
+  it("continues refreshing the project scope when the user scope write fails", () => {
+    const root = join(work, "repo");
+    mkdirSync(root, { recursive: true });
+    mockedGitToplevel.mockReturnValue(root);
+    installClaudePlugin(work, { scope: "user" });
+    installClaudePlugin(root, { scope: "project" });
+    const projectDir = join(root, ".claude", "skills", "prim");
+    writeFileSync(skillPath(userDir()), "stale user skill\n");
+    writeFileSync(skillPath(projectDir), "stale project skill\n");
+
+    expect(
+      refreshClaudePlugins(root, {
+        writeFile: (target, content) => {
+          if (target.startsWith(userDir())) throw new Error("user scope is read-only");
+          atomicWrite(target, content);
+        },
+      }),
+    ).toEqual({ installed: 2, refreshed: 1 });
+    expect(readFileSync(skillPath(userDir()), "utf-8")).toBe("stale user skill\n");
+    expect(readFileSync(skillPath(projectDir), "utf-8")).toBe(loadSkill());
   });
 });
 
