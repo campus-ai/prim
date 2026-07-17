@@ -20,16 +20,19 @@
  */
 
 import { createReadStream, renameSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { type CliClient, getClient } from "./client.js";
 import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
 import {
   type FlushingFile,
+  JOURNAL_DIR,
   type PendingJournalStats,
   listBuckets,
   listFlushing,
   pendingJournalStats,
 } from "./journal.js";
+import { withFileLock } from "./lib/file-lock.js";
 import type { Move } from "./protocol/move.js";
 
 const BATCH_SIZE = 500;
@@ -238,18 +241,50 @@ async function flushOnce(): Promise<{ flushed: number }> {
   return { flushed: total };
 }
 
-let flushInFlight: Promise<{ flushed: number }> | undefined;
+// `skipped` distinguishes a contended bow-out (another process holds the drain
+// lock) from a genuine empty-journal drain, so the daemon does not record a
+// false success and `prim moves flush` does not imply the journal was empty.
+export type FlushResult = { flushed: number; skipped?: boolean };
 
-/** Serialize drains in this process so rotations are never self-stolen. */
-export function flush(): Promise<{ flushed: number }> {
+let flushInFlight: Promise<FlushResult> | undefined;
+
+// Serialize drains ACROSS prim processes, not just within one. The Stop hook
+// spawns a detached `prim moves flush` while the daemon and opportunistic
+// command flushes also run, so multiple processes can otherwise adopt the same
+// crash-stranded `.flushing` orphans and re-POST them concurrently — the
+// amplification behind the incident's duplicate-ingest flood. A contended
+// caller bows out (the lock holder drains its buckets and orphans); the moves
+// stay journaled for the next trigger. The lock sits beside the moves tree so
+// listBuckets never enumerates it as a bucket.
+const FLUSH_LOCK_PATH = join(dirname(JOURNAL_DIR), ".flush.lock");
+const FLUSH_LOCK_TIMEOUT_MS = 250;
+
+function isFlushLockContended(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("timed out waiting for file lock");
+}
+
+/** Serialize drains within AND across processes so rotations are never stolen. */
+export function flush(): Promise<FlushResult> {
   if (flushInFlight) {
     return flushInFlight;
   }
-  const attempt = flushOnce().finally(() => {
-    if (flushInFlight === attempt) {
-      flushInFlight = undefined;
-    }
-  });
+  const attempt = withFileLock(FLUSH_LOCK_PATH, flushOnce, {
+    timeoutMs: FLUSH_LOCK_TIMEOUT_MS,
+  })
+    .catch((error: unknown): FlushResult => {
+      // Another prim process holds the drain lock and will drain these buckets
+      // and orphans; bowing out avoids the concurrent re-drain. Non-contention
+      // failures (a real drain error) still propagate to the caller.
+      if (isFlushLockContended(error)) {
+        return { flushed: 0, skipped: true };
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (flushInFlight === attempt) {
+        flushInFlight = undefined;
+      }
+    });
   flushInFlight = attempt;
   return attempt;
 }

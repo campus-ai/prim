@@ -18,6 +18,7 @@ const CONFIG_DIR_MODE = 0o700;
 const CREDENTIAL_FILE_MODE = 0o600;
 const REFRESH_THRESHOLD_MS = 60_000;
 const DEFAULT_API_URL = "https://api.getprimitive.ai";
+const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
 function loadEnvFile(): Record<string, string> {
   const envVars: Record<string, string> = {};
@@ -296,6 +297,7 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
   if (selected?.source !== "token_file") return undefined;
   const startingGeneration = readTrimmed(REFRESH_TOKEN_PATH);
   if (!startingGeneration || isSessionEnded()) return undefined;
+  const startingAccessToken = selected.token;
 
   return withCredentialLock(
     async () => {
@@ -307,6 +309,13 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
       // A winner rotated while this process waited. Adopt its committed access
       // token instead of consuming the replacement refresh token again.
       if (currentGeneration !== startingGeneration) {
+        return currentCredential.token;
+      }
+      // Non-rotation winner: a concurrent refresh committed a fresh access
+      // token against the SAME refresh generation (WorkOS declined to rotate,
+      // so the generation string never changed). Adopt it rather than firing a
+      // redundant broker round-trip that only re-consumes the live token.
+      if (currentCredential.token !== startingAccessToken) {
         return currentCredential.token;
       }
       if (isSessionEnded()) return undefined;
@@ -445,6 +454,22 @@ async function request(
     if (token) credential = { token, source: "token_file" };
   }
 
+  // Fail closed locally instead of firing a request we already know will 401.
+  // A machine with no stored credential — or a terminal-marked session whose
+  // access token is at/near expiry and can no longer be refreshed — would
+  // otherwise emit a naked 401 on every hook and daemon call, the request storm
+  // this guards against. The second guard also preempts the last ≤60s of a
+  // still-valid access token once its refresh is terminally dead; that session
+  // is finished regardless, so the only thing lost is a burst of doomed calls.
+  // Callers still receive the HttpError(401) they map to a re-auth prompt
+  // (hooks fail open), just without the wasted round-trip.
+  if (!credential) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  if (isTokenExpiringSoon(credential) && isSessionEnded()) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+
   const doFetch = (token: string | undefined) => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -476,7 +501,7 @@ async function request(
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw new HttpError(401, "Authentication expired. Run `prim auth login` to re-authenticate.");
+      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
     }
     const errorBody = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new HttpError(response.status, errorBody?.error ?? `HTTP ${response.status}`);

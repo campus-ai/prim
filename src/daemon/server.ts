@@ -425,6 +425,13 @@ async function runIngestionLoop(): Promise<void> {
   persistHealth();
   try {
     const result = await flush();
+    if (result.skipped) {
+      // Another prim process holds the drain lock and is draining the shared
+      // buckets; reschedule without recording a false success or clearing an
+      // outstanding failure. Queue-age health (not this field) governs alerts.
+      scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
+      return;
+    }
     daemonHealth.ingestion.lastSuccessAt = Date.now();
     daemonHealth.ingestion.lastAcknowledgedCount = result.flushed;
     daemonHealth.ingestion.consecutiveFailures = 0;
