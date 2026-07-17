@@ -14,16 +14,13 @@ export function buildHookOutput(options: {
 }): HookOutput {
   const output: HookOutput = {};
   if (options.systemMessage) output.systemMessage = options.systemMessage;
-  if (options.additionalContext || options.reloadSkills !== undefined) {
-    output.hookSpecificOutput = {
-      hookEventName: "SessionStart",
-    };
-    if (options.additionalContext) {
-      output.hookSpecificOutput.additionalContext = options.additionalContext;
-    }
-    if (options.reloadSkills !== undefined) {
-      output.hookSpecificOutput.reloadSkills = options.reloadSkills;
-    }
+  // Assemble the payload first so each future field is one line here; the
+  // envelope (with its event name) is attached only when a payload exists.
+  const fields: Omit<NonNullable<HookOutput["hookSpecificOutput"]>, "hookEventName"> = {};
+  if (options.additionalContext) fields.additionalContext = options.additionalContext;
+  if (options.reloadSkills) fields.reloadSkills = true;
+  if (Object.keys(fields).length > 0) {
+    output.hookSpecificOutput = { hookEventName: "SessionStart", ...fields };
   }
   return output;
 }

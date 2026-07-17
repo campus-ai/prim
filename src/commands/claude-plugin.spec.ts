@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitToplevel } from "../lib/git.js";
 import {
   installClaudePlugin,
+  pluginPaths,
   refreshClaudePlugins,
   resolvePluginDir,
   statusClaudePlugin,
@@ -15,12 +16,17 @@ import { atomicWrite, loadSkill } from "./skill.js";
 
 // homedir → the test's temp dir so "user scope" is sandboxed; gitToplevel is
 // controlled so project-scope resolution is deterministic regardless of where
-// the suite runs. Real fs otherwise.
+// the suite runs. atomicWrite passes through to the real implementation but is
+// a mock so refresh tests can inject a single write failure. Real fs otherwise.
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:os")>();
   return { ...actual, homedir: vi.fn(() => actual.homedir()) };
 });
 vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn(() => null) }));
+vi.mock("./skill.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./skill.js")>();
+  return { ...actual, atomicWrite: vi.fn(actual.atomicWrite) };
+});
 
 const mockedHomedir = vi.mocked(homedir);
 const mockedGitToplevel = vi.mocked(gitToplevel);
@@ -114,8 +120,8 @@ describe("installClaudePlugin", () => {
 });
 
 describe("refreshClaudePlugins", () => {
-  const manifestPath = (dir: string) => join(dir, ".claude-plugin", "plugin.json");
-  const skillPath = (dir: string) => join(dir, "SKILL.md");
+  const manifestPath = (dir: string) => pluginPaths(dir).manifestPath;
+  const skillPath = (dir: string) => pluginPaths(dir).skillPath;
 
   it("leaves current recognized installs untouched", () => {
     installClaudePlugin(work, { scope: "user" });
@@ -205,14 +211,14 @@ describe("refreshClaudePlugins", () => {
     writeFileSync(skillPath(userDir()), "stale user skill\n");
     writeFileSync(skillPath(projectDir), "stale project skill\n");
 
-    expect(
-      refreshClaudePlugins(root, {
-        writeFile: (target, content) => {
-          if (target.startsWith(userDir())) throw new Error("user scope is read-only");
-          atomicWrite(target, content);
-        },
-      }),
-    ).toEqual({ installed: 2, refreshed: 1 });
+    // The user scope is refreshed first (Set insertion order) and only its
+    // SKILL.md is stale, so a single injected failure lands on that write and
+    // must not strand the project scope behind it.
+    vi.mocked(atomicWrite).mockImplementationOnce(() => {
+      throw new Error("user scope is read-only");
+    });
+
+    expect(refreshClaudePlugins(root)).toEqual({ installed: 2, refreshed: 1 });
     expect(readFileSync(skillPath(userDir()), "utf-8")).toBe("stale user skill\n");
     expect(readFileSync(skillPath(projectDir), "utf-8")).toBe(loadSkill());
   });

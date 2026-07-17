@@ -13,12 +13,12 @@ import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
 import { type HookOutput, buildHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
-import { reauthNoticeOutput } from "./reauth-notice.js";
+import { reauthNoticeFields } from "./reauth-notice.js";
 
 const DAEMON_TIMEOUT_MS = 250;
 
 // Keep this taxonomy in lockstep with the SKILL.md description — the reminder
-// and the skill trigger must name the same forks in the road.
+// and the skill trigger must name the same forks in the road (spec-pinned).
 export const PRIM_SKILL_REMINDER =
   "Primitive is active in this repository. When this task chooses between plausible approaches or establishes or changes a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction, invoke the `prim` skill before finishing.";
 
@@ -33,46 +33,11 @@ export interface SessionStartResult {
   acknowledge?: () => Promise<unknown>;
 }
 
-export interface SessionStartDependencies {
-  acknowledgeDecisionFeedback: typeof acknowledgeDecisionFeedback;
-  daemonRequest: typeof daemonRequest;
-  getOrCreateWorkspaceId: typeof getOrCreateWorkspaceId;
-  getSiteUrl: typeof getSiteUrl;
-  isRepoActiveForCapture: typeof isRepoActiveForCapture;
-  isSessionEnded: typeof isSessionEnded;
-  kickDaemonEnsure: typeof kickDaemonEnsure;
-  leaseDecisionFeedback: typeof leaseDecisionFeedback;
-  normalizeEnvelope: typeof normalizeEnvelope;
-  reauthNoticeOutput: typeof reauthNoticeOutput;
-  refreshClaudePlugins: typeof refreshClaudePlugins;
-  renderFeedback: typeof renderFeedback;
-}
-
-const SESSION_START_DEPENDENCIES: SessionStartDependencies = {
-  acknowledgeDecisionFeedback,
-  daemonRequest,
-  getOrCreateWorkspaceId,
-  getSiteUrl,
-  isRepoActiveForCapture,
-  isSessionEnded,
-  kickDaemonEnsure,
-  leaseDecisionFeedback,
-  normalizeEnvelope,
-  reauthNoticeOutput,
-  refreshClaudePlugins,
-  renderFeedback,
-};
-
 /** Process one already-read SessionStart envelope without owning stdin/stdout. */
-export async function processSessionStart(
-  raw: string,
-  agent: Agent,
-  dependencyOverrides: Partial<SessionStartDependencies> = {},
-): Promise<SessionStartResult> {
-  const dependencies = { ...SESSION_START_DEPENDENCIES, ...dependencyOverrides };
+export async function processSessionStart(raw: string, agent: Agent): Promise<SessionStartResult> {
   let envelope: SessionEnvelope;
   try {
-    envelope = dependencies.normalizeEnvelope(
+    envelope = normalizeEnvelope(
       JSON.parse(raw) as Record<string, unknown>,
       agent,
     ) as SessionEnvelope;
@@ -86,52 +51,48 @@ export async function processSessionStart(
     return { output: buildHookOutput({}) };
   }
 
+  // Repair or start the supervised daemon once per agent session — kicked
+  // first so the detached child runs in parallel with the synchronous skill
+  // refresh below. Intentionally detached: hook latency and output must never
+  // depend on launchctl or network health, and `daemon ensure` honors an
+  // explicit stop.
+  kickDaemonEnsure();
+
   const cwd = envelope.cwd ?? process.cwd();
   let skillState = { installed: 0, refreshed: 0 };
   if (agent === "claude_code") {
     try {
-      skillState = dependencies.refreshClaudePlugins(cwd);
+      skillState = refreshClaudePlugins(cwd);
     } catch {
       // SessionStart must remain fail-soft even if refresh regresses.
     }
   }
 
-  // Repair or start the supervised daemon once per agent session. This is
-  // intentionally detached: hook latency and output must never depend on
-  // launchctl or network health, and `daemon ensure` honors an explicit stop.
-  dependencies.kickDaemonEnsure();
-  await dependencies.daemonRequest(
+  await daemonRequest(
     "session_start",
     { sessionId: envelope.session_id },
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
 
-  // A terminal auth notice remains the only human-facing payload. A silent
-  // reload request may accompany it when the installed skill was refreshed —
-  // grafted onto the notice as-is so no notice field is ever dropped here.
-  if (dependencies.isSessionEnded()) {
-    const notice = dependencies.reauthNoticeOutput(agent);
+  // A terminal auth notice remains the only human-facing payload; a silent
+  // reload request rides the same builder call when the skill was refreshed.
+  if (isSessionEnded()) {
+    const notice = reauthNoticeFields(agent);
     if (notice) {
-      if (skillState.refreshed > 0) {
-        notice.hookSpecificOutput = {
-          hookEventName: "SessionStart",
-          ...notice.hookSpecificOutput,
-          reloadSkills: true,
-        };
-      }
-      return { output: notice };
+      return {
+        output: buildHookOutput({ ...notice, reloadSkills: skillState.refreshed > 0 }),
+      };
     }
   }
 
   // Codex has no statusLine hook, so surface only a fresh live team count. Its
   // SessionStart behavior deliberately does not participate in Claude refresh.
   if (agent === "codex") {
-    const snapshot = await dependencies.daemonRequest<{
-      onlineCount?: number;
-      presenceStale?: boolean;
-    }>(
+    const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
       "status_snapshot",
-      { callerEnv: dependencies.getSiteUrl() },
+      // callerEnv: a cross-env daemon withholds onlineCount, so a prod Codex
+      // session never gets a staging daemon's team count injected.
+      { callerEnv: getSiteUrl() },
       { timeoutMs: DAEMON_TIMEOUT_MS },
     );
     if (snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number") {
@@ -144,19 +105,19 @@ export async function processSessionStart(
   }
 
   if (agent === "claude_code") {
-    const active = dependencies.isRepoActiveForCapture(cwd);
+    const active = isRepoActiveForCapture(cwd);
     const additionalContext = active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined;
-    const reloadSkills = skillState.refreshed > 0 ? true : undefined;
+    const reloadSkills = skillState.refreshed > 0;
     if (active) {
-      const identity = dependencies.getOrCreateWorkspaceId(cwd);
+      const identity = getOrCreateWorkspaceId(cwd);
       if (identity.status === "ready") {
         const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
-        const lease = await dependencies.leaseDecisionFeedback({
+        const lease = await leaseDecisionFeedback({
           workspaceId: identity.workspaceId,
           currentSessionId: envelope.session_id,
           signal: feedbackSignal,
         });
-        const rendered = lease ? dependencies.renderFeedback(lease) : undefined;
+        const rendered = lease ? renderFeedback(lease) : undefined;
         return {
           output: buildHookOutput({
             systemMessage: rendered?.systemMessage,
@@ -165,7 +126,7 @@ export async function processSessionStart(
           }),
           acknowledge: rendered
             ? async () => {
-                await dependencies.acknowledgeDecisionFeedback({
+                await acknowledgeDecisionFeedback({
                   workspaceId: identity.workspaceId,
                   deliveries: rendered.deliveries,
                   signal: feedbackSignal,

@@ -27,21 +27,26 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DESCRIPTION =
   "Primitive decision-graph guidance for the prim CLI — a model-invoked skill installed by prim skill install.";
 
+/** The plugin directory for a validated scope. User scope is machine-global
+ * and cwd-independent; project scope anchors at the git root (so a committed
+ * `.claude/` lives at the repo top), falling back to cwd outside a repo. */
+function pluginDirFor(cwd: string, scope: "user" | "project"): string {
+  const base =
+    scope === "user" ? join(homedir(), ".claude") : join(gitToplevel(cwd) ?? cwd, ".claude");
+  return join(base, "skills", "prim");
+}
+
 /**
  * The plugin directory for (cwd, scope), or null on an unknown scope (already
- * logged). Mirrors resolveTarget's --scope validation. User scope is
- * machine-global and cwd-independent; project scope anchors at the git root (so
- * a committed `.claude/` lives at the repo top), falling back to cwd outside a
- * repo. No "--scope user requires --agent" gate — the agent is already claude.
+ * logged). Mirrors resolveTarget's --scope validation. No "--scope user
+ * requires --agent" gate — the agent is already claude.
  */
 export function resolvePluginDir(cwd: string, scope?: string): string | null {
   if (scope && scope !== "user" && scope !== "project") {
     console.error(`Unknown --scope "${scope}" (expected user or project)`);
     return null;
   }
-  const base =
-    scope === "user" ? join(homedir(), ".claude") : join(gitToplevel(cwd) ?? cwd, ".claude");
-  return join(base, "skills", "prim");
+  return pluginDirFor(cwd, scope === "user" ? "user" : "project");
 }
 
 /**
@@ -74,8 +79,9 @@ function removeDirIfEmpty(dir: string): void {
   if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
 }
 
-/** The plugin's two managed files under `dir`. */
-function pluginPaths(dir: string): { manifestPath: string; skillPath: string } {
+/** The plugin's two managed files under `dir` — the single statement of the
+ * on-disk layout, shared with the spec. */
+export function pluginPaths(dir: string): { manifestPath: string; skillPath: string } {
   return {
     manifestPath: join(dir, ".claude-plugin", "plugin.json"),
     skillPath: join(dir, "SKILL.md"),
@@ -87,10 +93,6 @@ export interface ClaudePluginRefreshResult {
   refreshed: number;
 }
 
-type RefreshClaudePluginsOptions = {
-  writeFile?: typeof atomicWrite;
-};
-
 /**
  * Refresh every recognized Claude skills-directory installation without ever
  * creating a new one. Recognition is intentionally strict: both managed files
@@ -100,22 +102,14 @@ type RefreshClaudePluginsOptions = {
  *
  * Freshness is content equality, not version ordering: the running binary owns
  * the managed files, so an older prim deliberately rewrites newer files to its
- * own content. `refreshed` counts scopes where at least one managed file was
- * rewritten — a partial write still counts, and the next session retries.
+ * own content. A scope that fails mid-refresh is dropped for this session and
+ * retried at the next SessionStart.
  */
-export function refreshClaudePlugins(
-  cwd: string,
-  options: RefreshClaudePluginsOptions = {},
-): ClaudePluginRefreshResult {
+export function refreshClaudePlugins(cwd: string): ClaudePluginRefreshResult {
   const result: ClaudePluginRefreshResult = { installed: 0, refreshed: 0 };
-  const dirs = new Set(
-    [resolvePluginDir(cwd, "user"), resolvePluginDir(cwd, "project")].filter(
-      (dir): dir is string => dir !== null,
-    ),
-  );
+  const dirs = new Set([pluginDirFor(cwd, "user"), pluginDirFor(cwd, "project")]);
 
   let desired: { manifest: string; skill: string } | undefined;
-  const writeFile = options.writeFile ?? atomicWrite;
 
   for (const dir of dirs) {
     try {
@@ -131,20 +125,12 @@ export function refreshClaudePlugins(
       desired ??= renderClaudePlugin();
       let changed = false;
       if (manifestCurrent !== desired.manifest) {
-        try {
-          writeFile(manifestPath, desired.manifest);
-          changed = true;
-        } catch {
-          // This scope remains fail-soft; still attempt its other managed file.
-        }
+        atomicWrite(manifestPath, desired.manifest);
+        changed = true;
       }
       if (skillCurrent !== desired.skill) {
-        try {
-          writeFile(skillPath, desired.skill);
-          changed = true;
-        } catch {
-          // Continue to the other scope.
-        }
+        atomicWrite(skillPath, desired.skill);
+        changed = true;
       }
       if (changed) result.refreshed += 1;
     } catch {
