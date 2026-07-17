@@ -2,21 +2,28 @@ export type HookOutput = {
   systemMessage?: string;
   hookSpecificOutput?: {
     hookEventName: "SessionStart";
-    additionalContext: string;
+    additionalContext?: string;
+    reloadSkills?: boolean;
   };
 };
 
 export function buildHookOutput(options: {
   systemMessage?: string;
   additionalContext?: string;
+  reloadSkills?: boolean;
 }): HookOutput {
   const output: HookOutput = {};
   if (options.systemMessage) output.systemMessage = options.systemMessage;
-  if (options.additionalContext) {
+  if (options.additionalContext || options.reloadSkills !== undefined) {
     output.hookSpecificOutput = {
       hookEventName: "SessionStart",
-      additionalContext: options.additionalContext,
     };
+    if (options.additionalContext) {
+      output.hookSpecificOutput.additionalContext = options.additionalContext;
+    }
+    if (options.reloadSkills !== undefined) {
+      output.hookSpecificOutput.reloadSkills = options.reloadSkills;
+    }
   }
   return output;
 }
