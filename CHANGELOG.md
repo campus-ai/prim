@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.50](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.49...v0.1.0-alpha.50) (2026-07-17)
+
+
+### Features
+
+* **client:** surface terminal-auth so stranded users know to re-auth ([#166](https://github.com/campus-ai/prim/issues/166)) ([df22876](https://github.com/campus-ai/prim/commit/df22876c3709a0fcb42cb4d1b3bf284646ae3784))
+
+
+### Bug Fixes
+
+* **client:** stop naked 401s and cross-process replay at the source ([#164](https://github.com/campus-ai/prim/issues/164)) ([9f0db08](https://github.com/campus-ai/prim/commit/9f0db08f5b76eb282bef4fe6259af19fb00f3851))
+
 ## [0.1.0-alpha.49](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.48...v0.1.0-alpha.49) (2026-07-16)
 
 
