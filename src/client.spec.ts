@@ -294,6 +294,36 @@ describe("client credential store", () => {
     expect(apiCalls).toBe(1);
   });
 
+  it("fails closed locally when no credential is available", async () => {
+    // A machine that never logged in would otherwise POST a naked request per
+    // hook/daemon call; fail fast so callers get the re-auth signal for free.
+    process.env.PRIM_TOKEN = undefined;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getClient } = await import("./client.js");
+    await expect(getClient().get("/api/cli/test")).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed locally on a terminal session with an expired token", async () => {
+    writeFileSync(join(config, "token"), "stale-access\n");
+    writeFileSync(join(config, "refresh_token"), "dead-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), "0\n");
+    writeFileSync(
+      join(config, "refresh_terminal"),
+      `${createHash("sha256").update("dead-refresh").digest("hex")}\n`,
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getClient, isSessionEnded } = await import("./client.js");
+    expect(isSessionEnded()).toBe(true);
+    await expect(getClient().get("/api/cli/test")).rejects.toMatchObject({ status: 401 });
+    // Neither a naked API request nor a doomed broker refresh is fired.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("serializes independent module instances against one real credential directory", async () => {
     writeFileSync(join(config, "token"), "old-access\n");
     writeFileSync(join(config, "refresh_token"), "generation-one\n");
@@ -330,6 +360,45 @@ describe("client credential store", () => {
     await expect(Promise.all([first, second])).resolves.toEqual(["winner-access", "winner-access"]);
     expect(brokerCalls).toBe(1);
     expect(readFileSync(join(config, "refresh_token"), "utf8").trim()).toBe("generation-two");
+  });
+
+  it("adopts a non-rotation winner's access token without a redundant broker call", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "generation-one\n");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let brokerCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        brokerCalls += 1;
+        await gate;
+        // WorkOS declines to rotate: the SAME refresh generation comes back.
+        return jsonResponse({
+          access_token: "winner-access",
+          refresh_token: "generation-one",
+          expires_in: 300,
+        });
+      }),
+    );
+
+    const processOne = await import("./client.js");
+    vi.resetModules();
+    const processTwo = await import("./client.js");
+    const first = processOne.refreshToken({ force: true, quiet: true });
+    await eventually(() => expect(brokerCalls).toBe(1));
+    const second = processTwo.refreshToken({ force: true, quiet: true });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(brokerCalls).toBe(1);
+    release();
+
+    // The loser adopts the committed access token rather than firing a second
+    // broker round-trip that only re-consumes the unchanged refresh generation.
+    await expect(Promise.all([first, second])).resolves.toEqual(["winner-access", "winner-access"]);
+    expect(brokerCalls).toBe(1);
+    expect(readFileSync(join(config, "refresh_token"), "utf8").trim()).toBe("generation-one");
   });
 
   it("set-token and clear remove stale OAuth and terminal state under the lock", async () => {
