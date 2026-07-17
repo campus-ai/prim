@@ -143,6 +143,36 @@ describe("renderStatusline", () => {
     expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
   });
 
+  it("surfaces the one-command re-auth fix when the daemon is in reauth-hold", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Sam"]),
+      healthy: false,
+      needsReauth: true,
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: paused");
+    expect(line).toContain("run `prim auth login`");
+    expect(line).not.toContain("team:");
+    expect(line).not.toContain("Decision ingestion");
+    expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
+  });
+
+  it("prioritizes re-auth over the derived delivery/presence states it halts", async () => {
+    // A reauth-hold stops both loops, so heartbeat/ingestion may also read
+    // unhealthy — the actionable root cause is auth, so it must win.
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Sam"]),
+      healthy: false,
+      needsReauth: true,
+      heartbeat: { healthy: false },
+      ingestion: { healthy: false, pendingCount: 9 },
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("run `prim auth login`");
+    expect(line).not.toContain("delivery: stalled");
+    expect(line).not.toContain("presence: unavailable");
+  });
+
   it("surfaces a stalled delivery queue instead of masking it with presence", async () => {
     mockDaemonRequest.mockResolvedValue({
       ...snapshot(2, ["Sam"]),

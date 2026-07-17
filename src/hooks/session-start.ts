@@ -16,7 +16,7 @@
  * emit `{}` and exit 0. Hooks must never block.
  */
 
-import { getSiteUrl } from "../client.js";
+import { getSiteUrl, isSessionEnded } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
@@ -31,6 +31,7 @@ import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
+import { reauthNoticeOutput } from "./reauth-notice.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
@@ -108,6 +109,19 @@ async function main(): Promise<void> {
     { sessionId: envelope.session_id },
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
+  // A terminal-marked OAuth session captures nothing until the user
+  // re-authenticates. Surface it at the start of the session — the one loud,
+  // in-context moment — ahead of presence/feedback, which are moot while
+  // stranded. Only fires for a genuinely terminal token_file session, and only
+  // on agents whose SessionStart output is consumed (Codex/Claude; Hermes is
+  // observer-only → undefined, falls through to its normal empty output).
+  if (isSessionEnded()) {
+    const notice = reauthNoticeOutput(agent);
+    if (notice) {
+      await emitOutput(notice);
+      return;
+    }
+  }
   // Codex has no statusLine hook, so surface the team count as SessionStart
   // developer context instead — only when the daemon returns a live count.
   // (Hermes session hooks are observer-only — its presence count rides
