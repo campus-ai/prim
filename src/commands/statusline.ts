@@ -52,6 +52,10 @@ type StatusSnapshot = {
   healthy?: boolean;
   heartbeat?: { healthy?: boolean };
   ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
+  // True when the daemon has halted its poll loops awaiting `prim auth login`.
+  // It is the actionable root cause behind the halted heartbeat/ingestion, so
+  // the statusline surfaces it ahead of the derived "delivery/presence" states.
+  needsReauth?: boolean;
 };
 
 const STATUSLINE_TIMEOUT_MS = 200;
@@ -107,6 +111,11 @@ export async function renderStatusline(): Promise<string> {
     return `primitive ${version} (daemon: down)`;
   }
   if (snapshot.healthy === false) {
+    // Auth is the actionable root cause: a reauth-hold halts both loops, so
+    // surface the one-command fix ahead of the derived delivery/presence states.
+    if (snapshot.needsReauth) {
+      return `primitive ${version} (daemon: paused · run \`prim auth login\`)`;
+    }
     if (snapshot.ingestion?.healthy === false) {
       const pending = snapshot.ingestion.pendingCount;
       const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
