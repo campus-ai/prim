@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.52](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.51...v0.1.0-alpha.52) (2026-07-18)
+
+
+### Features
+
+* **hooks:** prompt proactive Prim use in Codex sessions ([#171](https://github.com/campus-ai/prim/issues/171)) ([33c3e79](https://github.com/campus-ai/prim/commit/33c3e7990391374ca1bbcf454668128ca9006445))
+
 ## [0.1.0-alpha.51](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.50...v0.1.0-alpha.51) (2026-07-18)
 
 
