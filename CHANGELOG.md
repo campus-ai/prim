@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.53](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.52...v0.1.0-alpha.53) (2026-07-18)
+
+
+### Bug Fixes
+
+* **skill:** tighten recording policy based on invocation eval results ([#173](https://github.com/campus-ai/prim/issues/173)) ([cd3e35e](https://github.com/campus-ai/prim/commit/cd3e35e24791442e9c2f3b302e54ace3b921ad4d))
+
 ## [0.1.0-alpha.52](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.51...v0.1.0-alpha.52) (2026-07-18)
 
 
