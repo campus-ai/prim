@@ -8,11 +8,15 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  constants,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  lstatSync,
   openSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -22,6 +26,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { createPatch } from "diff";
+import { parse as parseYaml } from "yaml";
 import { printJson } from "../output.js";
 import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
 
@@ -29,6 +34,106 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const SKILL_BEGIN = "<!-- BEGIN PRIM SKILL v1 -->";
 export const SKILL_END = "<!-- END PRIM SKILL v1 -->";
+
+const CODEX_GUIDANCE_LIMIT_BYTES = 1024 * 1024;
+const CODEX_DEFAULT_PROJECT_GUIDANCE_BYTES = 32 * 1024;
+const SKILL_BEGIN_BUFFER = Buffer.from(SKILL_BEGIN);
+const SKILL_END_BUFFER = Buffer.from(SKILL_END);
+
+type GuidanceRead = Buffer | null | undefined;
+
+/** Read one regular file without following a leaf symlink or exceeding the byte cap. */
+function readCodexGuidance(path: string): GuidanceRead {
+  try {
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink() || !entry.isFile()) return null;
+
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const opened = fstatSync(fd);
+      if (!opened.isFile() || opened.size > CODEX_GUIDANCE_LIMIT_BYTES) return null;
+
+      const bytes = Buffer.allocUnsafe(CODEX_GUIDANCE_LIMIT_BYTES + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const read = readSync(fd, bytes, length, bytes.length - length, length);
+        if (read === 0) break;
+        length += read;
+      }
+      return length > CODEX_GUIDANCE_LIMIT_BYTES ? null : bytes.subarray(0, length);
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? undefined : null;
+  }
+}
+
+/** Select the one guidance file Codex uses in this managed scope. */
+function effectiveCodexGuidance(scope: string): Buffer | null {
+  const override = readCodexGuidance(join(scope, "AGENTS.override.md"));
+  if (override === null) return null;
+  if (override !== undefined && override.toString("utf8").trim().length > 0) return override;
+
+  const base = readCodexGuidance(join(scope, "AGENTS.md"));
+  return base ?? null;
+}
+
+function hasUsablePrimBlock(content: Buffer, visibleBytes: number): boolean {
+  // Codex defaults project guidance to a 32 KiB model-visible byte budget. A
+  // larger configured budget may produce a safe false negative here; the hook
+  // protocol does not expose runtime config overrides.
+  const begin = content.indexOf(SKILL_BEGIN_BUFFER);
+  const end = content.indexOf(SKILL_END_BUFFER);
+  if (
+    begin === -1 ||
+    end <= begin + SKILL_BEGIN_BUFFER.length ||
+    end + SKILL_END_BUFFER.length > visibleBytes ||
+    content.indexOf(SKILL_BEGIN_BUFFER, begin + SKILL_BEGIN_BUFFER.length) !== -1 ||
+    content.indexOf(SKILL_END_BUFFER, end + SKILL_END_BUFFER.length) !== -1
+  ) {
+    return false;
+  }
+
+  const block = content
+    .subarray(begin + SKILL_BEGIN_BUFFER.length, end)
+    .toString("utf8")
+    .trim();
+  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)([\s\S]*)$/u.exec(block);
+  if (!match || match[2].trim().length === 0) return false;
+  try {
+    const metadata = parseYaml(match[1]) as unknown;
+    if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return false;
+    const fields = metadata as Record<string, unknown>;
+    return (
+      fields.name === "prim" &&
+      typeof fields.description === "string" &&
+      fields.description.trim().length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Whether Codex's managed user or Git-root guidance contains a usable Prim block. */
+export function hasUsableCodexGuidance(projectRoot: string): boolean {
+  try {
+    const codexHome = process.env.CODEX_HOME?.trim()
+      ? resolve(process.env.CODEX_HOME)
+      : join(homedir(), ".codex");
+    const scopes = [
+      { path: codexHome, visibleBytes: CODEX_GUIDANCE_LIMIT_BYTES },
+      { path: projectRoot, visibleBytes: CODEX_DEFAULT_PROJECT_GUIDANCE_BYTES },
+    ];
+    return scopes.some(({ path, visibleBytes }) => {
+      const guidance = effectiveCodexGuidance(path);
+      return guidance !== null && hasUsablePrimBlock(guidance, visibleBytes);
+    });
+  } catch {
+    return false;
+  }
+}
 
 export const TARGET_CANDIDATES = [
   "CLAUDE.md",
