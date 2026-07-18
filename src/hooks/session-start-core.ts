@@ -1,5 +1,6 @@
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
+import { hasUsableCodexGuidance } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
 import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
@@ -18,10 +19,21 @@ import { reauthNoticeFields } from "./reauth-notice.js";
 
 const DAEMON_TIMEOUT_MS = 250;
 
-// Keep this taxonomy in lockstep with the SKILL.md description — the reminder
-// and the skill trigger must name the same forks in the road (spec-pinned).
-export const PRIM_SKILL_REMINDER =
-  "Primitive is active in this repository. When this task chooses between plausible approaches or establishes or changes a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction, invoke the `prim` skill before finishing. Never invoke `prim` for routine implementation that merely follows an existing decision made before this task or for temporary tactics; they never qualify, including for evaluation. When a direct request replaces one lasting default with another but supplies no rationale, complete the work, invoke the skill, and ask one concise rationale question at the task boundary, even if the user requested only implementation or recording fails.";
+// Keep these shared clauses in lockstep with the SKILL.md description. Claude
+// and Codex differ only in how they invoke the installed Prim workflow.
+const PRIM_TRIGGER =
+  "When this task chooses between plausible approaches or establishes or changes a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction";
+const PRIM_EXCLUSIONS =
+  "Never invoke `prim` for routine implementation that merely follows an existing decision made before this task or for temporary tactics; they never qualify, including for evaluation.";
+
+function primReminder(action: string, rationaleAction: string): string {
+  return `Primitive is active in this repository. ${PRIM_TRIGGER}, ${action} before finishing. ${PRIM_EXCLUSIONS} When a direct request replaces one lasting default with another but supplies no rationale, complete the work, ${rationaleAction}, and ask one concise rationale question at the task boundary, even if the user requested only implementation or recording fails.`;
+}
+
+export const PRIM_SKILL_REMINDER = primReminder("invoke the `prim` skill", "invoke the skill");
+
+const CODEX_PRIM_ACTION = "follow the installed Prim workflow and use the `prim` CLI";
+export const CODEX_PRIM_REMINDER = primReminder(CODEX_PRIM_ACTION, CODEX_PRIM_ACTION);
 
 interface SessionEnvelope {
   session_id?: string;
@@ -99,8 +111,8 @@ export async function processSessionStart(
     }
   }
 
-  // Codex has no statusLine hook, so surface only a fresh live team count. Its
-  // SessionStart behavior deliberately does not participate in Claude refresh.
+  // Codex has no statusLine or live skill-reload field. Supply the proactive
+  // trigger as context only when its already-loaded guidance contains Prim.
   if (agent === "codex") {
     const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
       "status_snapshot",
@@ -109,13 +121,23 @@ export async function processSessionStart(
       { callerEnv: getSiteUrl() },
       { timeoutMs: DAEMON_TIMEOUT_MS },
     );
-    if (snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number") {
-      return {
-        output: buildHookOutput({
-          additionalContext: `[prim] team: ${snapshot.onlineCount} online`,
-        }),
-      };
+    const presence =
+      snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number"
+        ? `[prim] team: ${snapshot.onlineCount} online`
+        : undefined;
+
+    let proactive = false;
+    try {
+      const projectRoot = gitToplevel(cwd);
+      proactive =
+        projectRoot !== null && isRepoActiveForCapture(cwd) && hasUsableCodexGuidance(projectRoot);
+    } catch {
+      // Guidance detection must never suppress otherwise-valid presence.
     }
+    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, presence]
+      .filter((value): value is string => value !== undefined)
+      .join("\n\n");
+    return { output: buildHookOutput({ additionalContext }) };
   }
 
   if (agent === "claude_code") {

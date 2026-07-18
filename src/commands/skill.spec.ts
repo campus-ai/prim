@@ -5,8 +5,12 @@ const TMP_ID = "00000000-0000-4000-8000-000000000001";
 
 vi.mock("node:crypto", () => ({ randomUUID: vi.fn(() => TMP_ID) }));
 vi.mock("node:fs", () => ({
+  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x20000 },
   existsSync: vi.fn(() => false),
+  fstatSync: vi.fn(),
+  lstatSync: vi.fn(),
   readFileSync: vi.fn(() => ""),
+  readSync: vi.fn(() => 0),
   writeFileSync: vi.fn(),
   openSync: vi.fn(() => 1),
   fsyncSync: vi.fn(),
@@ -26,10 +30,15 @@ vi.mock("./claude-plugin.js", () => ({
 
 import { randomUUID } from "node:crypto";
 import {
+  constants,
+  closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  lstatSync,
   openSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -45,6 +54,7 @@ import {
   composeBlock,
   detectNewline,
   detectTargets,
+  hasUsableCodexGuidance,
   registerSkillCommands,
   removeBlock,
   runInstall,
@@ -53,8 +63,12 @@ import {
 } from "./skill.js";
 
 const mockedExistsSync = vi.mocked(existsSync);
+const mockedCloseSync = vi.mocked(closeSync);
+const mockedFstatSync = vi.mocked(fstatSync);
+const mockedLstatSync = vi.mocked(lstatSync);
 const mockedRandomUUID = vi.mocked(randomUUID);
 const mockedReadFileSync = vi.mocked(readFileSync);
+const mockedReadSync = vi.mocked(readSync);
 const mockedWriteFileSync = vi.mocked(writeFileSync);
 const mockedOpenSync = vi.mocked(openSync);
 const mockedFsyncSync = vi.mocked(fsyncSync);
@@ -66,6 +80,68 @@ const mockedStatusPlugin = vi.mocked(statusClaudePlugin);
 
 const SKILL_CONTENT = "---\nname: prim\n---\n\nbody\n";
 const tmpFor = (target: string) => `${target}.${TMP_ID}.tmp`;
+
+type GuidanceEntry = {
+  content?: string | Buffer;
+  kind?: "file" | "symlink" | "special" | "unreadable";
+  size?: number;
+};
+
+function entryBytes(entry: GuidanceEntry): Buffer {
+  return Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content ?? "");
+}
+
+function guidanceFixture(entries: Record<string, GuidanceEntry>): void {
+  let nextFd = 10;
+  const opened = new Map<number, GuidanceEntry>();
+  mockedLstatSync.mockImplementation((path) => {
+    const entry = entries[String(path)];
+    if (!entry) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    const kind = entry.kind ?? "file";
+    return {
+      isFile: () => kind === "file" || kind === "unreadable",
+      isSymbolicLink: () => kind === "symlink",
+      size: entry.size ?? entryBytes(entry).length,
+    } as ReturnType<typeof lstatSync>;
+  });
+  mockedOpenSync.mockImplementation((path, flags) => {
+    if (flags === "wx") return 1;
+    const entry = entries[String(path)];
+    if (!entry || entry.kind === "unreadable") {
+      throw Object.assign(new Error("unreadable"), { code: "EACCES" });
+    }
+    const fd = nextFd++;
+    opened.set(fd, entry);
+    return fd;
+  });
+  mockedFstatSync.mockImplementation((fd) => {
+    const entry = opened.get(fd);
+    if (!entry) throw new Error("bad fd");
+    return {
+      isFile: () => (entry.kind ?? "file") === "file",
+      size: entry.size ?? entryBytes(entry).length,
+    } as ReturnType<typeof fstatSync>;
+  });
+  mockedReadSync.mockImplementation((fd, buffer, offset, length, position) => {
+    const entry = opened.get(fd);
+    if (!entry) throw new Error("bad fd");
+    const source = entryBytes(entry);
+    const start = typeof position === "number" ? position : 0;
+    const chunk = source.subarray(start, start + length);
+    chunk.copy(buffer as Buffer, offset);
+    return chunk.length;
+  });
+}
+
+const LEGACY_DESCRIPTION =
+  "Use the prim CLI for Primitive's decision graph — passive capture of coding decisions, deliberate recording of higher-order forks in the road, the conflict gate, reconcile, rationale confirmations, and team presence. TRIGGER when the user mentions Primitive, prim, decisions / the decision graph / a conflict gate / reconcile; when a durable decision emerges during coding, planning, review, or connected-context work; when an edit is denied or warned by a prior decision; when the repo's package.json depends on @primitive.ai/prim; when onboarding to or configuring Primitive session or git hooks. SKIP when \"decision\" is unrelated to Primitive, or for unrelated CLIs.";
+const CURRENT_DESCRIPTION =
+  "Use the prim CLI for Primitive’s decision graph. MUST INVOKE before finishing any coding, planning, specification, or review task where the user or agent chose between plausible approaches or established or changed a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction—even when Primitive was not mentioned. Also invoke for Primitive setup, reading decisions, conflict gates, reconcile, rationale confirmations, linking, and team presence. SKIP routine implementation that merely follows an existing decision, temporary tactics, and unrelated uses of “decision.”";
+
+function primBlock(overrides: { name?: string; description?: string; body?: string } = {}): string {
+  const description = overrides.description ?? CURRENT_DESCRIPTION;
+  return `${SKILL_BEGIN}\n---\nname: ${overrides.name ?? "prim"}\ndescription: ${description}\n---\n\n${overrides.body ?? "# Working with the prim CLI\n\nUse prim -- don't reach for shell or curl."}\n${SKILL_END}\n`;
+}
 
 /** Configure fs mocks so loadSkill() resolves and an optional target file is readable. */
 function fsFixture(opts: { target?: string; targetContent?: string } = {}) {
@@ -88,6 +164,146 @@ beforeEach(() => {
   mockedRandomUUID.mockReturnValue(TMP_ID);
   mockedExistsSync.mockReturnValue(false);
   mockedOpenSync.mockReturnValue(1);
+  mockedLstatSync.mockImplementation(() => {
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasUsableCodexGuidance
+// ---------------------------------------------------------------------------
+
+describe("hasUsableCodexGuidance", () => {
+  beforeEach(() => vi.stubEnv("CODEX_HOME", "/codex-home"));
+
+  it.each([
+    ["alpha.50 user guidance", "/codex-home/AGENTS.md", LEGACY_DESCRIPTION],
+    ["current user guidance", "/codex-home/AGENTS.md", CURRENT_DESCRIPTION],
+    ["alpha.50 project guidance", "/repo/AGENTS.md", LEGACY_DESCRIPTION],
+    ["current project guidance", "/repo/AGENTS.md", CURRENT_DESCRIPTION],
+  ])("recognizes %s", (_name, path, description) => {
+    guidanceFixture({ [path]: { content: primBlock({ description }) } });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(true);
+  });
+
+  it("uses the default Codex home when CODEX_HOME is absent", () => {
+    vi.stubEnv("CODEX_HOME", "");
+    guidanceFixture({
+      [join(homedir(), ".codex", "AGENTS.md")]: { content: primBlock() },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(true);
+  });
+
+  it.each([
+    ["user", "/codex-home"],
+    ["project", "/repo"],
+  ])("lets a non-empty %s override shadow AGENTS.md", (_name, scope) => {
+    guidanceFixture({
+      [`${scope}/AGENTS.override.md`]: { content: "# Different instructions\n" },
+      [`${scope}/AGENTS.md`]: { content: primBlock() },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+    expect(mockedLstatSync).not.toHaveBeenCalledWith(`${scope}/AGENTS.md`);
+  });
+
+  it.each([
+    ["user", "/codex-home"],
+    ["project", "/repo"],
+  ])("falls back from an empty %s override", (_name, scope) => {
+    guidanceFixture({
+      [`${scope}/AGENTS.override.md`]: { content: " \n" },
+      [`${scope}/AGENTS.md`]: { content: primBlock() },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(true);
+  });
+
+  it.each([
+    ["user malformed", "/codex-home", { content: `${SKILL_BEGIN}\n---\nname: [\n` }],
+    ["project malformed", "/repo", { content: `${SKILL_BEGIN}\n---\nname: [\n` }],
+    ["user unreadable", "/codex-home", { content: primBlock(), kind: "unreadable" as const }],
+    ["project unreadable", "/repo", { content: primBlock(), kind: "unreadable" as const }],
+    ["user symlink", "/codex-home", { content: primBlock(), kind: "symlink" as const }],
+    ["project symlink", "/repo", { content: primBlock(), kind: "symlink" as const }],
+    ["user special", "/codex-home", { content: primBlock(), kind: "special" as const }],
+    ["project special", "/repo", { content: primBlock(), kind: "special" as const }],
+  ])("fails closed for a %s override without reading its base", (_name, scope, override) => {
+    guidanceFixture({
+      [`${scope}/AGENTS.override.md`]: override,
+      [`${scope}/AGENTS.md`]: { content: primBlock() },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+    expect(mockedLstatSync).not.toHaveBeenCalledWith(`${scope}/AGENTS.md`);
+  });
+
+  it.each([
+    ["missing markers", "# Instructions\n"],
+    ["reversed markers", `${SKILL_END}\n${primBlock()}`],
+    ["duplicate markers", `${primBlock()}${primBlock()}`],
+    ["malformed frontmatter", `${SKILL_BEGIN}\n---\nname: [\n---\nbody\n${SKILL_END}`],
+    ["foreign name", primBlock({ name: "other" })],
+    ["empty description", primBlock({ description: "''" })],
+    ["empty body", primBlock({ body: "   " })],
+  ])("rejects %s", (_name, content) => {
+    guidanceFixture({ "/repo/AGENTS.md": { content } });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+  });
+
+  it("rejects a project block outside Codex's default model-visible byte slice", () => {
+    guidanceFixture({
+      "/repo/AGENTS.md": { content: `${"x".repeat(32 * 1024)}${primBlock()}` },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+  });
+
+  it("rejects duplicate markers outside the model-visible project slice", () => {
+    guidanceFixture({
+      "/repo/AGENTS.md": {
+        content: `${primBlock()}${"x".repeat(32 * 1024)}${primBlock()}`,
+      },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+  });
+
+  it.each([
+    ["oversized", { content: primBlock(), size: 1024 * 1024 + 1 }],
+    ["unreadable", { content: primBlock(), kind: "unreadable" as const }],
+    ["symlinked", { content: primBlock(), kind: "symlink" as const }],
+    ["special", { content: primBlock(), kind: "special" as const }],
+  ])("fails closed for a %s guidance file", (_name, entry) => {
+    guidanceFixture({ "/repo/AGENTS.md": entry });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+  });
+
+  it("caps a file that grows after it is opened", () => {
+    guidanceFixture({
+      "/repo/AGENTS.md": { content: "x".repeat(1024 * 1024 + 1), size: 1 },
+    });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(false);
+  });
+
+  it("opens guidance read-only, closes it, and never writes", () => {
+    guidanceFixture({ "/repo/AGENTS.md": { content: primBlock() } });
+
+    expect(hasUsableCodexGuidance("/repo")).toBe(true);
+    expect(mockedOpenSync).toHaveBeenCalledWith(
+      "/repo/AGENTS.md",
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    expect(mockedCloseSync).toHaveBeenCalledOnce();
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedRenameSync).not.toHaveBeenCalled();
+    expect(mockedRmSync).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -586,5 +802,6 @@ describe("runStatus", () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });

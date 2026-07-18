@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
-import { loadSkill } from "../commands/skill.js";
+import { hasUsableCodexGuidance, loadSkill } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
 import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
@@ -13,7 +13,11 @@ import { isRepoActiveForCapture } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { REAUTH_NOTICE } from "./reauth-notice.js";
-import { PRIM_SKILL_REMINDER, processSessionStart } from "./session-start-core.js";
+import {
+  CODEX_PRIM_REMINDER,
+  PRIM_SKILL_REMINDER,
+  processSessionStart,
+} from "./session-start-core.js";
 
 // Impure collaborators (network, daemon socket, fs, git) are module-mocked as
 // in the sibling hook specs; pure shaping (normalizeEnvelope,
@@ -21,6 +25,10 @@ import { PRIM_SKILL_REMINDER, processSessionStart } from "./session-start-core.j
 // what's pinned here.
 vi.mock("../client.js", () => ({ getSiteUrl: vi.fn(), isSessionEnded: vi.fn() }));
 vi.mock("../commands/claude-plugin.js", () => ({ refreshClaudePlugins: vi.fn() }));
+vi.mock("../commands/skill.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../commands/skill.js")>();
+  return { ...actual, hasUsableCodexGuidance: vi.fn() };
+});
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn() }));
 vi.mock("../daemon/self-heal.js", () => ({ kickDaemonEnsure: vi.fn() }));
 vi.mock("../decisions/feedback.js", () => ({
@@ -39,6 +47,11 @@ const ENVELOPE = JSON.stringify({
   cwd: "/repo",
 });
 
+const EXPECTED_CLAUDE_REMINDER =
+  "Primitive is active in this repository. When this task chooses between plausible approaches or establishes or changes a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction, invoke the `prim` skill before finishing. Never invoke `prim` for routine implementation that merely follows an existing decision made before this task or for temporary tactics; they never qualify, including for evaluation. When a direct request replaces one lasting default with another but supplies no rationale, complete the work, invoke the skill, and ask one concise rationale question at the task boundary, even if the user requested only implementation or recording fails.";
+const EXPECTED_CODEX_REMINDER =
+  "Primitive is active in this repository. When this task chooses between plausible approaches or establishes or changes a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction, follow the installed Prim workflow and use the `prim` CLI before finishing. Never invoke `prim` for routine implementation that merely follows an existing decision made before this task or for temporary tactics; they never qualify, including for evaluation. When a direct request replaces one lasting default with another but supplies no rationale, complete the work, follow the installed Prim workflow and use the `prim` CLI, and ask one concise rationale question at the task boundary, even if the user requested only implementation or recording fails.";
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getSiteUrl).mockReturnValue("https://app.getprimitive.ai");
@@ -47,6 +60,7 @@ beforeEach(() => {
   vi.mocked(daemonRequest).mockResolvedValue(null);
   vi.mocked(leaseDecisionFeedback).mockResolvedValue(undefined);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+  vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
 });
@@ -62,19 +76,29 @@ describe("processSessionStart", () => {
       "temporary tactics",
     ];
     for (const phrase of sharedPhrases) {
-      expect(PRIM_SKILL_REMINDER).toContain(phrase);
+      for (const reminder of [PRIM_SKILL_REMINDER, CODEX_PRIM_REMINDER]) {
+        expect(reminder).toContain(phrase);
+      }
       expect(description).toContain(phrase);
     }
   });
 
+  it("pins the complete Claude and Codex reminders independently", () => {
+    expect(PRIM_SKILL_REMINDER).toBe(EXPECTED_CLAUDE_REMINDER);
+    expect(CODEX_PRIM_REMINDER).toBe(EXPECTED_CODEX_REMINDER);
+    expect(CODEX_PRIM_REMINDER).not.toContain("invoke the skill");
+  });
+
   it("pins exclusion precedence and the missing-rationale question boundary", () => {
-    expect(PRIM_SKILL_REMINDER).toContain("Never invoke `prim` for routine implementation");
-    expect(PRIM_SKILL_REMINDER).toContain("they never qualify, including for evaluation");
-    expect(PRIM_SKILL_REMINDER).toContain("replaces one lasting default with another");
-    expect(PRIM_SKILL_REMINDER).toContain("supplies no rationale");
-    expect(PRIM_SKILL_REMINDER).toContain("one concise rationale question");
-    expect(PRIM_SKILL_REMINDER).toContain("at the task boundary");
-    expect(PRIM_SKILL_REMINDER).toContain("requested only implementation or recording fails");
+    for (const reminder of [PRIM_SKILL_REMINDER, CODEX_PRIM_REMINDER]) {
+      expect(reminder).toContain("Never invoke `prim` for routine implementation");
+      expect(reminder).toContain("they never qualify, including for evaluation");
+      expect(reminder).toContain("replaces one lasting default with another");
+      expect(reminder).toContain("supplies no rationale");
+      expect(reminder).toContain("one concise rationale question");
+      expect(reminder).toContain("at the task boundary");
+      expect(reminder).toContain("requested only implementation or recording fails");
+    }
   });
 
   it("injects the proactive reminder in an active repo with a recognized skill", async () => {
@@ -218,7 +242,8 @@ describe("processSessionStart", () => {
     });
   });
 
-  it("leaves Codex presence behavior unchanged and never refreshes Claude skills", async () => {
+  it("preserves Codex presence when active guidance is not recognized", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(daemonRequest).mockImplementation(async (method) =>
       method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
     );
@@ -232,11 +257,101 @@ describe("processSessionStart", () => {
       },
     });
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).toHaveBeenCalledWith("/repo");
     expect(daemonRequest).toHaveBeenCalledWith(
       "status_snapshot",
       { callerEnv: "https://app.getprimitive.ai" },
       { timeoutMs: 250 },
     );
+  });
+
+  it("injects the Codex reminder in an active repo with usable guidance", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: EXPECTED_CODEX_REMINDER,
+      },
+    });
+    expect(gitToplevel).toHaveBeenCalledWith("/repo");
+    expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
+    expect(hasUsableCodexGuidance).toHaveBeenCalledWith("/repo");
+    expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.output)).not.toContain("reloadSkills");
+    const snapshotOrder = vi.mocked(daemonRequest).mock.invocationCallOrder[1];
+    const gitOrder = vi.mocked(gitToplevel).mock.invocationCallOrder[0];
+    expect(snapshotOrder).toBeLessThan(gitOrder);
+  });
+
+  it("composes the Codex reminder before fresh presence", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
+    vi.mocked(daemonRequest).mockImplementation(async (method) =>
+      method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
+    );
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: `${EXPECTED_CODEX_REMINDER}\n\n[prim] team: 3 online`,
+      },
+    });
+  });
+
+  it("keeps presence only when the repository is inactive", async () => {
+    vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
+    vi.mocked(daemonRequest).mockImplementation(async (method) =>
+      method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
+    );
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output.hookSpecificOutput?.additionalContext).toBe("[prim] team: 3 online");
+    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
+  });
+
+  it("keeps presence only outside a Git repository", async () => {
+    vi.mocked(gitToplevel).mockReturnValue(null);
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
+    vi.mocked(daemonRequest).mockImplementation(async (method) =>
+      method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
+    );
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output.hookSpecificOutput?.additionalContext).toBe("[prim] team: 3 online");
+    expect(isRepoActiveForCapture).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
+  });
+
+  it("preserves presence when guidance detection throws", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(hasUsableCodexGuidance).mockImplementation(() => {
+      throw new Error("detector failure");
+    });
+    vi.mocked(daemonRequest).mockImplementation(async (method) =>
+      method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
+    );
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output.hookSpecificOutput?.additionalContext).toBe("[prim] team: 3 online");
+  });
+
+  it("emits nothing in an active repo when guidance is not recognized and presence is absent", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output).toEqual({});
+    expect(hasUsableCodexGuidance).toHaveBeenCalledWith("/repo");
   });
 
   it.each([
@@ -252,6 +367,7 @@ describe("processSessionStart", () => {
 
     expect(result.output).toEqual({});
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
   });
 
   it("routes Codex terminal auth ahead of presence without a reload field", async () => {
@@ -269,6 +385,7 @@ describe("processSessionStart", () => {
       },
     });
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
     expect(daemonRequest).toHaveBeenCalledOnce();
   });
 
