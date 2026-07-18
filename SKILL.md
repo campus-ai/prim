@@ -1,6 +1,6 @@
 ---
 name: prim
-description: Use the prim CLI for Primitive’s decision graph. MUST INVOKE before finishing any coding, planning, specification, or review task where the user or agent chose between plausible approaches or established or changed a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction—even when Primitive was not mentioned. Also invoke for Primitive setup, reading decisions, conflict gates, reconcile, rationale confirmations, linking, and team presence. SKIP routine implementation that merely follows an existing decision, temporary tactics, and unrelated uses of “decision.”
+description: Use the prim CLI for Primitive’s decision graph. MUST INVOKE before finishing any coding, planning, specification, or review task where the user or agent chose between plausible approaches or established or changed a lasting goal, priority, constraint, invariant, default, commitment, tradeoff, exception, or shared instruction—even when Primitive was not mentioned. Also invoke for Primitive setup, reading decisions, conflict gates, reconcile, rationale confirmations, linking, and team presence. SKIP — do not invoke even to check — when the task shows no fork that should guide future work, for example temporary tactics (a change that is explicitly temporary or to-be-reverted); routine implementation that merely follows an existing decision or a convention already visible in the code or repo instructions; or the word “decision” merely naming code, data, or UI. Such signals need no graph lookup to rule out.
 ---
 
 # Working with the prim CLI
@@ -80,7 +80,7 @@ Confirmations are author-targeted and rare by design; answering keeps the graph'
 
 Capture is automatic for low-level choices made while coding in an active repo. Use the deliberate CLI path for higher-order decisions that emerge in conversation: goals, priorities, principles, invariants, constraints, defaults, commitments, durable tradeoffs, and exceptions.
 
-A decision worth deliberately recording is a genuine **fork in the road**: the user or agent encountered multiple plausible paths, selected one, and that selection should inform future work. Record the chosen behavior, direction, constraint, or tradeoff—not routine implementation needed to finish the task or follow an existing convention. A teammate working elsewhere should benefit from knowing it.
+A decision worth deliberately recording is a genuine **fork in the road**: the user or agent encountered multiple plausible paths, selected one, and that selection should inform future work. Record the chosen behavior, direction, constraint, or tradeoff—not routine implementation needed to finish the task or follow an existing convention. Small design choices made in-flight while implementing—such as edge-case handling, parameter defaults, retry or timeout values, log levels, naming, or the shape of an internal data structure—are implementation details even when you chose between alternatives: never deliberately record them or spend a rationale question on them; passive capture already covers coding activity. A teammate working elsewhere should benefit from knowing it.
 
 ### Ground the rationale in real sources
 
@@ -91,8 +91,10 @@ Record only rationale supported by those sources. Do not mistake the implementat
 For proactively identified decisions in an active repo, let confidence in the rationale determine the interaction:
 
 - **Clear and well-supported** — record the decision and rationale silently at the natural task boundary.
-- **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Record after confirmation or correction.
-- **No supported rationale** — at the task boundary, ask one focused question: “What made you choose X over the other path?” Record after the answer.
+- **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Record in the same turn with the rationale omitted; add it once confirmed or corrected.
+- **No supported rationale** — at the task boundary, ask one focused question: “What made you choose X over the other path?” Record in the same turn with the rationale omitted; add it when the answer arrives.
+
+In both cases the question is a courtesy, not a gate: never make the record wait on an answer, and never fabricate a rationale to fill the gap. An unanswered question with no record is the only wrong outcome.
 
 These questions share the interruption budget below; never ask separate questions for the decision and its rationale. If both are uncertain, combine them into one concise prompt. An explicit request to “add this decision to Primitive” still records immediately with the information supplied—do not delay it to demand rationale.
 
@@ -124,7 +126,7 @@ When the user asks to record a decision—for example, “add this decision to P
 
 ### Clear decisions: record without interrupting
 
-When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question **when passive capture is active**. In an inactive repo, present it and obtain the per-create approval above. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
+When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question **when passive capture is active**. An explicit ratification of a direction—“agreed,” “ship it that way,” or any equivalent affirmation—is such a decision even when the ratified option was your own proposal: the ratification is the approval, so record it and do not ask whether to record. That rule is general: in an active repository, never ask permission to record — the only question the budget permits is the single rationale question, and only when no rationale was stated. In an inactive repo, present it and obtain the per-create approval above. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
 
 Examples that qualify:
 
