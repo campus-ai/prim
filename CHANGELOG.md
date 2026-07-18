@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.51](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.50...v0.1.0-alpha.51) (2026-07-18)
+
+
+### Features
+
+* **hooks:** refresh Claude skill installs and prompt prim invocation at SessionStart ([bb4bbfa](https://github.com/campus-ai/prim/commit/bb4bbfaa8fb227b2e034c83260c1ba9d73a5c1be))
+
 ## [0.1.0-alpha.50](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.49...v0.1.0-alpha.50) (2026-07-17)
 
 
