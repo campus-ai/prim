@@ -1,6 +1,9 @@
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const TMP_ID = "00000000-0000-4000-8000-000000000001";
+
+vi.mock("node:crypto", () => ({ randomUUID: vi.fn(() => TMP_ID) }));
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ""),
@@ -9,6 +12,7 @@ vi.mock("node:fs", () => ({
   fsyncSync: vi.fn(),
   closeSync: vi.fn(),
   renameSync: vi.fn(),
+  rmSync: vi.fn(),
 }));
 
 // The Claude branch delegates to the skills-directory plugin module; mock it so
@@ -20,7 +24,16 @@ vi.mock("./claude-plugin.js", () => ({
   statusClaudePlugin: vi.fn(),
 }));
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
@@ -28,6 +41,7 @@ import {
   SKILL_BEGIN,
   SKILL_END,
   applyBlock,
+  atomicWrite,
   composeBlock,
   detectNewline,
   detectTargets,
@@ -39,14 +53,19 @@ import {
 } from "./skill.js";
 
 const mockedExistsSync = vi.mocked(existsSync);
+const mockedRandomUUID = vi.mocked(randomUUID);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedWriteFileSync = vi.mocked(writeFileSync);
+const mockedOpenSync = vi.mocked(openSync);
+const mockedFsyncSync = vi.mocked(fsyncSync);
 const mockedRenameSync = vi.mocked(renameSync);
+const mockedRmSync = vi.mocked(rmSync);
 const mockedInstallPlugin = vi.mocked(installClaudePlugin);
 const mockedUninstallPlugin = vi.mocked(uninstallClaudePlugin);
 const mockedStatusPlugin = vi.mocked(statusClaudePlugin);
 
 const SKILL_CONTENT = "---\nname: prim\n---\n\nbody\n";
+const tmpFor = (target: string) => `${target}.${TMP_ID}.tmp`;
 
 /** Configure fs mocks so loadSkill() resolves and an optional target file is readable. */
 function fsFixture(opts: { target?: string; targetContent?: string } = {}) {
@@ -66,7 +85,9 @@ function fsFixture(opts: { target?: string; targetContent?: string } = {}) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mockedRandomUUID.mockReturnValue(TMP_ID);
   mockedExistsSync.mockReturnValue(false);
+  mockedOpenSync.mockReturnValue(1);
 });
 
 // ---------------------------------------------------------------------------
@@ -193,6 +214,53 @@ describe("removeBlock", () => {
 });
 
 // ---------------------------------------------------------------------------
+// atomicWrite
+// ---------------------------------------------------------------------------
+
+describe("atomicWrite", () => {
+  it("uses an exclusive per-write temporary path", () => {
+    atomicWrite("/repo/CLAUDE.md", "next");
+
+    expect(mockedRandomUUID).toHaveBeenCalledOnce();
+    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "wx");
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(1, "next");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "/repo/CLAUDE.md");
+  });
+
+  it("removes its temporary file when a later step fails", () => {
+    mockedFsyncSync.mockImplementationOnce(() => {
+      throw new Error("disk failure");
+    });
+
+    expect(() => atomicWrite("/repo/CLAUDE.md", "next")).toThrow("disk failure");
+    expect(mockedRmSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), { force: true });
+    expect(mockedRenameSync).not.toHaveBeenCalled();
+  });
+
+  it("does not remove a pre-existing temporary path after an exclusive-create collision", () => {
+    const collision = Object.assign(new Error("already exists"), { code: "EEXIST" });
+    mockedOpenSync.mockImplementationOnce(() => {
+      throw collision;
+    });
+
+    expect(() => atomicWrite("/repo/CLAUDE.md", "next")).toThrow(collision);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedRmSync).not.toHaveBeenCalled();
+    expect(mockedRenameSync).not.toHaveBeenCalled();
+  });
+
+  it("removes its owned temporary file when writing through the descriptor fails", () => {
+    mockedWriteFileSync.mockImplementationOnce(() => {
+      throw new Error("partial write");
+    });
+
+    expect(() => atomicWrite("/repo/CLAUDE.md", "next")).toThrow("partial write");
+    expect(mockedRmSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), { force: true });
+    expect(mockedRenameSync).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runInstall
 // ---------------------------------------------------------------------------
 
@@ -212,11 +280,11 @@ describe("runInstall", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", {})).toBe(0);
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    const [path, content] = mockedWriteFileSync.mock.calls[0];
-    expect(String(path)).toBe("/repo/CLAUDE.md.tmp");
+    const [, content] = mockedWriteFileSync.mock.calls[0];
+    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "wx");
     expect(String(content)).toContain(SKILL_BEGIN);
     expect(String(content)).toContain(SKILL_END);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/CLAUDE.md.tmp", "/repo/CLAUDE.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "/repo/CLAUDE.md");
     logSpy.mockRestore();
   });
 
@@ -254,10 +322,9 @@ describe("runInstall", () => {
     fsFixture({ target: "/repo/custom/rules.md", targetContent: "" });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { target: "custom/rules.md" })).toBe(0);
-    const [path] = mockedWriteFileSync.mock.calls[0];
-    expect(String(path)).toBe("/repo/custom/rules.md.tmp");
+    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/custom/rules.md"), "wx");
     expect(mockedRenameSync).toHaveBeenCalledWith(
-      "/repo/custom/rules.md.tmp",
+      tmpFor("/repo/custom/rules.md"),
       "/repo/custom/rules.md",
     );
   });
@@ -292,8 +359,8 @@ describe("runInstall --agent routing", () => {
     );
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { agent: "hermes" })).toBe(0);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/.hermes.md.tmp", "/repo/.hermes.md");
-    for (const [path] of mockedWriteFileSync.mock.calls) {
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/.hermes.md"), "/repo/.hermes.md");
+    for (const [path] of mockedOpenSync.mock.calls) {
       expect(String(path)).not.toContain("CLAUDE.md");
     }
   });
@@ -310,8 +377,8 @@ describe("runInstall --agent routing", () => {
     );
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { agent: "codex" })).toBe(0);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/AGENTS.md.tmp", "/repo/AGENTS.md");
-    for (const [path] of mockedWriteFileSync.mock.calls) {
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/AGENTS.md"), "/repo/AGENTS.md");
+    for (const [path] of mockedOpenSync.mock.calls) {
       expect(String(path)).not.toContain("CLAUDE.md");
     }
   });
@@ -329,7 +396,7 @@ describe("runInstall --agent routing", () => {
     fsFixture({ target: "/repo/custom.md", targetContent: "" });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { target: "custom.md", agent: "hermes" })).toBe(0);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/custom.md"), "/repo/custom.md");
   });
 
   it("aborts on an unknown --agent without writing (no CLAUDE.md fallthrough)", () => {
@@ -377,7 +444,7 @@ describe("runInstall --scope user routing", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { agent: "codex", scope: "user" })).toBe(0);
     const target = join(homedir(), ".codex", "AGENTS.md");
-    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor(target), target);
   });
 
   it("routes --scope user --agent hermes to the hermes home .hermes.md", () => {
@@ -385,7 +452,7 @@ describe("runInstall --scope user routing", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { agent: "hermes", scope: "user" })).toBe(0);
     const target = join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), ".hermes.md");
-    expect(mockedRenameSync).toHaveBeenCalledWith(`${target}.tmp`, target);
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor(target), target);
   });
 
   it("aborts --scope user without --agent (can't pick a global rules file)", () => {
@@ -399,7 +466,7 @@ describe("runInstall --scope user routing", () => {
     fsFixture({ target: "/repo/custom.md", targetContent: "" });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { target: "custom.md", agent: "claude", scope: "user" })).toBe(0);
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/custom.md"), "/repo/custom.md");
   });
 
   it("aborts on an unknown --scope without writing", () => {
@@ -441,7 +508,7 @@ describe("runUninstall", () => {
     expect(runUninstall("/repo", {})).toBe(0);
     const written = String(mockedWriteFileSync.mock.calls[0][1]);
     expect(written).toBe("# CLAUDE.md\n");
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/CLAUDE.md.tmp", "/repo/CLAUDE.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "/repo/CLAUDE.md");
   });
 
   it("routes --agent claude to the plugin module, never a rules-file write", () => {
@@ -457,7 +524,7 @@ describe("runUninstall", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runUninstall("/repo", { agent: "claude", target: "custom.md" })).toBe(0);
     expect(mockedUninstallPlugin).not.toHaveBeenCalled();
-    expect(mockedRenameSync).toHaveBeenCalledWith("/repo/custom.md.tmp", "/repo/custom.md");
+    expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/custom.md"), "/repo/custom.md");
   });
 });
 

@@ -32,6 +32,20 @@ describe("buildHookOutput", () => {
         additionalContext: "presence",
       },
     });
+    expect(buildHookOutput({ reloadSkills: true })).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        reloadSkills: true,
+      },
+    });
+    expect(buildHookOutput({ reloadSkills: false })).toEqual({});
+    expect(buildHookOutput({ additionalContext: "presence", reloadSkills: true })).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: "presence",
+        reloadSkills: true,
+      },
+    });
     expect(buildHookOutput({})).toEqual({});
   });
 });

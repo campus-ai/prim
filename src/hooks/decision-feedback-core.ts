@@ -2,21 +2,25 @@ export type HookOutput = {
   systemMessage?: string;
   hookSpecificOutput?: {
     hookEventName: "SessionStart";
-    additionalContext: string;
+    additionalContext?: string;
+    reloadSkills?: boolean;
   };
 };
 
 export function buildHookOutput(options: {
   systemMessage?: string;
   additionalContext?: string;
+  reloadSkills?: boolean;
 }): HookOutput {
   const output: HookOutput = {};
   if (options.systemMessage) output.systemMessage = options.systemMessage;
-  if (options.additionalContext) {
-    output.hookSpecificOutput = {
-      hookEventName: "SessionStart",
-      additionalContext: options.additionalContext,
-    };
+  // Assemble the payload first so each future field is one line here; the
+  // envelope (with its event name) is attached only when a payload exists.
+  const fields: Omit<NonNullable<HookOutput["hookSpecificOutput"]>, "hookEventName"> = {};
+  if (options.additionalContext) fields.additionalContext = options.additionalContext;
+  if (options.reloadSkills) fields.reloadSkills = true;
+  if (Object.keys(fields).length > 0) {
+    output.hookSpecificOutput = { hookEventName: "SessionStart", ...fields };
   }
   return output;
 }

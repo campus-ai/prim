@@ -6,6 +6,7 @@
  * prim skill status    — Report whether the skill block is installed
  */
 
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -13,6 +14,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -107,15 +109,31 @@ export function removeBlock(existing: string): string | null {
 }
 
 export function atomicWrite(target: string, content: string): void {
-  const tmp = `${target}.tmp`;
-  writeFileSync(tmp, content);
-  const fd = openSync(tmp, "r+");
+  const tmp = `${target}.${randomUUID()}.tmp`;
+  let temporaryCreated = false;
   try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
+    // O_EXCL prevents a pre-planted link from turning an automatic refresh
+    // into a write through an attacker-chosen path. A unique name also keeps
+    // concurrent SessionStart refreshes from sharing one temporary file.
+    const fd = openSync(tmp, "wx");
+    temporaryCreated = true;
+    try {
+      writeFileSync(fd, content);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, target);
+  } catch (error) {
+    if (temporaryCreated) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // Preserve the write failure; cleanup is best-effort.
+      }
+    }
+    throw error;
   }
-  renameSync(tmp, target);
 }
 
 function resolveTarget(
