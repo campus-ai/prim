@@ -109,8 +109,10 @@ an explicit local `prim.active=false` is always inactive. Every
   rationale, then wait for approval before creating it. A previous approval never
   carries forward to another Decision.
 - After approval, pass Prim's global `--yes` for that invocation:
-  `npx --yes @primitive.ai/prim --yes decisions create ...`. The first `--yes` is
-  npm's package-install flag; the second is Prim's one-time confirmation.
+  `npx --yes @primitive.ai/prim --yes decisions create ... --attribution user`.
+  The person's approval of the exact proposed choice is user ratification. The
+  first `--yes` is npm's package-install flag; the second is Prim's one-time
+  confirmation.
 - Do not run `prim enable` merely to bypass this boundary or infer permission to
   activate the repo. Activation requires a separate user request (a requested
   `prim setup` counts because setup explicitly activates its current repo). A
@@ -166,16 +168,18 @@ npx --yes @primitive.ai/prim decisions recent --limit 20
 If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly. If the repo is inactive, that confirmation authorizes Prim's `--yes` only for the approved create:
 
 ```
-npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
 ```
 
 Inactive-repo form after approval:
 
 ```
-npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
 ```
 
-Only `--intent` is required. Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
+Both `--intent` and `--attribution` are required. Set `--attribution user` only when the person directly stated, selected, or confirmed the exact recorded choice. Set `--attribution agent` when you introduced that exact choice while pursuing a broader request. A broad task prompt, implementation permission, or assignment of responsibility does not turn your implementation choice into a user Decision. If the origin is ambiguous, ask the person to confirm the exact choice before creating it; after confirmation, use `user`. Never guess attribution.
+
+Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
 
 ### Inferred decisions: finish first, then optionally ask once
 

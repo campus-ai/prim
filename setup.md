@@ -36,8 +36,8 @@ npx --yes @primitive.ai/prim@latest setup
 That first `--yes` belongs to **npm** and only skips npm's package-install
 confirmation; it is not approval for a Primitive action. Prim's own global `--yes`
 would come after the package name (for example,
-`npx --yes @primitive.ai/prim@latest --yes decisions create ...`) and applies only
-to that Prim invocation.
+`npx --yes @primitive.ai/prim@latest --yes decisions create ... --attribution user`)
+and applies only to that Prim invocation.
 
 - If you are **OpenAI Codex**, add `--agent codex`.
 - If you are **Hermes**, `setup` auto-detects it; add `--agent hermes` to be explicit.
@@ -174,14 +174,21 @@ iterate until the list is theirs, not yours. Then break the settled goals into
 `--decided`, and what they're *not* focusing on to `--alternatives`), show the
 drafted decisions, **confirm before creating — each drafted Decision needs its own
 approval**, then record each:
-`npx --yes @primitive.ai/prim@latest decisions create --intent "…" [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
+`npx --yes @primitive.ai/prim@latest decisions create --intent "…" --attribution user [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
+
+Use `--attribution user` here because the person confirmed each exact drafted
+choice. In general, use `user` only when the person directly stated, selected, or
+confirmed the exact recorded choice; use `agent` when the agent introduced it while
+pursuing a broader request. A broad task prompt or permission to implement is not
+user attribution. If the origin is ambiguous, ask the person to confirm the exact
+choice before creating it rather than guessing.
 
 That confirmation is also the consent boundary if passive capture is inactive in
 the current repo: obtain approval for each drafted Decision, then pass Prim's own
 `--yes` on each approved invocation:
-`npx --yes @primitive.ai/prim@latest --yes decisions create ...`. An explicit local
-`prim.active=false` remains inactive. The create does not run `prim enable`, and its
-approval does not carry forward to another Decision.
+`npx --yes @primitive.ai/prim@latest --yes decisions create ... --attribution user`.
+An explicit local `prim.active=false` remains inactive. The create does not run
+`prim enable`, and its approval does not carry forward to another Decision.
 
 **If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
 question; the setup-specifics line is your close.
