@@ -55,6 +55,7 @@ describe("fetchCreate", () => {
     await fetchCreate(
       {
         intent: "Adopt prosemirror-collab over Yjs",
+        attribution: "agent",
         decided: [],
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
@@ -66,6 +67,7 @@ describe("fetchCreate", () => {
       "/api/cli/decisions/create",
       {
         intent: "Adopt prosemirror-collab over Yjs",
+        attribution: "agent",
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
         files: ["src/editor.ts"],
@@ -74,22 +76,25 @@ describe("fetchCreate", () => {
     );
   });
 
-  it("posts just the intent when nothing else is set", async () => {
+  it("always posts intent and attribution when nothing else is set", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     await fetchCreate(
-      { intent: "Use X", decided: [], alternatives: [] },
+      { intent: "Use X", attribution: "user", decided: [], alternatives: [] },
       { getClient: () => clientWith(post) },
     );
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/create",
-      { intent: "Use X" },
+      { intent: "Use X", attribution: "user" },
       expect.anything(),
     );
   });
 
   it("returns the created identity from the server", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
-    const result = await fetchCreate({ intent: "Use X" }, { getClient: () => clientWith(post) });
+    const result = await fetchCreate(
+      { intent: "Use X", attribution: "user" },
+      { getClient: () => clientWith(post) },
+    );
     expect(result).toEqual(OUTCOME);
   });
 
@@ -98,7 +103,7 @@ describe("fetchCreate", () => {
       .fn()
       .mockRejectedValue(new HttpError(403, "CLI token is not bound to an organization"));
     await expect(
-      fetchCreate({ intent: "Use X" }, { getClient: () => clientWith(post) }),
+      fetchCreate({ intent: "Use X", attribution: "agent" }, { getClient: () => clientWith(post) }),
     ).rejects.toThrow("not bound to an organization");
   });
 });

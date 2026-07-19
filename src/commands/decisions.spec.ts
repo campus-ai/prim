@@ -49,9 +49,11 @@ function buildProgram(): Command {
 }
 
 async function runCreate(...args: string[]): Promise<void> {
-  await buildProgram().parseAsync(["decisions", "create", "--intent", "Use X", ...args], {
-    from: "user",
-  });
+  const attribution = args.includes("--attribution") ? [] : ["--attribution", "user"];
+  await buildProgram().parseAsync(
+    ["decisions", "create", "--intent", "Use X", ...attribution, ...args],
+    { from: "user" },
+  );
 }
 
 describe("decisions create activation consent", () => {
@@ -82,9 +84,40 @@ describe("decisions create activation consent", () => {
     expect(mocks.isRepoActiveForCapture).toHaveBeenCalledWith(process.cwd());
     expect(mocks.askConfirmation).not.toHaveBeenCalled();
     expect(mocks.fetchCreate).toHaveBeenCalledOnce();
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ attribution: "user" }),
+    );
     expect(errorSpy).toHaveBeenCalledWith("[prim] created dec_abc12345.");
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(OUTCOME, null, 2));
     expect(process.exitCode).toBe(0);
+  });
+
+  it("passes agent attribution through to the create request", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--attribution", "agent");
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ attribution: "agent" }),
+    );
+  });
+
+  it("requires an explicit attribution", async () => {
+    await expect(
+      buildProgram().parseAsync(["decisions", "create", "--intent", "Use X"], {
+        from: "user",
+      }),
+    ).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects attribution outside user or agent", async () => {
+    await expect(runCreate("--attribution", "unknown")).rejects.toMatchObject({
+      code: "commander.invalidArgument",
+    });
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
   });
 
   it("allows one inactive creation with Prim's global --yes", async () => {

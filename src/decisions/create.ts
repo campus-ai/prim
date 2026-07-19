@@ -1,14 +1,14 @@
 /**
- * `prim decisions create` — author a decision directly: the deliberate
- * manual path around automatic capture (session hooks → classifier).
+ * `prim decisions create` — record a decision directly: the deliberate
+ * path around automatic capture (session hooks → classifier).
  *
  * POSTs to /api/cli/decisions/create and echoes the new decision's
  * identity so the caller can immediately `show` / `cascade` / `confirm`
  * it in the same turn. Org and author are derived server-side from the
- * bearer token, never sent in the body — the request carries only the
- * human-meaningful decision content, with empty/undefined fields pruned
- * so the server applies its defaults (kind change, confidence and
- * reversibility high).
+ * bearer token, never sent in the body. Attribution separately records
+ * whether the exact choice originated with the user or the agent. Empty
+ * and undefined optional fields are pruned so the server applies its
+ * defaults (kind change, confidence and reversibility high).
  *
  * AX contract: STDOUT is machine-readable JSON (the created identity),
  * STDERR is the verdict-first human line. Exit 0 on success; the command
@@ -21,6 +21,7 @@ import { renderIdentifier } from "./recent.js";
 
 export interface CreateRequest {
   intent: string;
+  attribution: "user" | "agent";
   kind?: "change" | "exploration" | "task_execution" | "unclear";
   rationale?: string;
   area?: string;
@@ -56,6 +57,7 @@ const defaultDeps: CreateDeps = { getClient };
 function toRequestBody(request: CreateRequest): Record<string, unknown> {
   const candidate: Record<string, unknown> = {
     intent: request.intent,
+    attribution: request.attribution,
     kind: request.kind,
     rationale: request.rationale,
     area: request.area,

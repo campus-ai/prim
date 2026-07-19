@@ -31,8 +31,8 @@ npx @primitive.ai/prim
 In commands such as `npx --yes @primitive.ai/prim@latest ...`, the first `--yes`
 belongs to **npm**: it skips npm's package-install confirmation. It does not approve a
 Primitive action. Prim's own global `--yes` comes after the package name, for example
-`npx --yes @primitive.ai/prim@latest --yes decisions create ...`, and applies only to
-that Prim invocation.
+`npx --yes @primitive.ai/prim@latest --yes decisions create ... --attribution user`,
+and applies only to that Prim invocation.
 
 ## Quick Start
 
@@ -215,7 +215,7 @@ prim decisions show <id>                 # Drill into one decision
 prim decisions cascade <id>              # Blast radius of a decision
 prim decisions check --files <…>         # Active decisions referencing files (warn-only)
 prim decisions confirm <id>              # Answer a rationale-confirmation prompt
-prim decisions create --intent <…>       # Author a decision directly (flags-only)
+prim decisions create --intent <…> --attribution <user|agent>  # Record with explicit origin
 prim decisions link <child> --on <parent>    # Relate: <child> depends on <parent>
 prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
@@ -226,11 +226,18 @@ JSON; human-readable status goes to STDERR.
 When passive capture is inactive in the current repo, an approved one-time create is:
 
 ```bash
-npx --yes @primitive.ai/prim@latest --yes decisions create --intent "…"
+npx --yes @primitive.ai/prim@latest --yes decisions create --intent "…" --attribution user
 ```
 
 Here npm's first `--yes` only permits package resolution; Prim's second `--yes`
 confirms this create. It does not enable the repo or authorize a later create.
+
+Every create requires `--attribution user|agent`. Use `user` only when the person
+directly stated, selected, or confirmed the exact recorded choice. Use `agent` when
+the agent introduced that exact choice while pursuing a broader request. A broad task
+prompt or permission to implement does not make the resulting agent choice a user
+Decision. If the origin is ambiguous, confirm the exact choice with the person before
+creating it; do not guess.
 
 `link` / `unlink` curate the dependency edges the automatic linker would otherwise
 own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that

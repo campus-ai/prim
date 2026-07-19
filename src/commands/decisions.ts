@@ -6,8 +6,9 @@
  *   prim decisions show <idOrShortId>
  *   prim decisions cascade <idOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
- *   prim decisions create --intent=<text> [--kind|--rationale|--area|--decided|
- *                         --alternatives|--confidence|--reversibility|--files]
+ *   prim decisions create --intent=<text> --attribution=<user|agent>
+ *                         [--kind|--rationale|--area|--decided|--alternatives|
+ *                          --confidence|--reversibility|--files]
  *
  * The `decisions` command group is created once here; every subcommand
  * attaches to this same group. AX contract throughout: STDOUT is always
@@ -17,7 +18,7 @@
  * confirm. The `checkAffectedDecisions` helper backs both `check` and the
  * pre-commit hook (src/hooks/pre-commit.ts).
  */
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { HttpError } from "../client.js";
 import { renderCascade } from "../decisions/cascade-renderer.js";
 import { CascadeNotFoundError, fetchCascade, formatCascadeJson } from "../decisions/cascade.js";
@@ -75,6 +76,7 @@ const splitList = (value?: string): string[] =>
 
 interface CreateOptions {
   intent: string;
+  attribution: CreateRequest["attribution"];
   kind?: string;
   rationale?: string;
   area?: string;
@@ -185,8 +187,16 @@ export function registerDecisionsCommands(program: Command): void {
 
   decisions
     .command("create")
-    .description("Author a decision directly — the deliberate manual path around automatic capture")
+    .description("Record a decision directly with its explicit user or agent origin")
     .requiredOption("--intent <text>", "What was decided (required)")
+    .addOption(
+      new Option(
+        "--attribution <origin>",
+        "Who originated the exact choice: user | agent (required)",
+      )
+        .choices(["user", "agent"])
+        .makeOptionMandatory(),
+    )
     .option("--kind <kind>", "change | exploration | task_execution | unclear (default change)")
     .option("--rationale <text>", "Why the decision was made")
     .option(
@@ -221,6 +231,7 @@ export function registerDecisionsCommands(program: Command): void {
 
       const request: CreateRequest = {
         intent: opts.intent,
+        attribution: opts.attribution,
         kind: opts.kind as CreateRequest["kind"],
         rationale: opts.rationale,
         area: opts.area,
