@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.54](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.53...v0.1.0-alpha.54) (2026-07-19)
+
+
+### Features
+
+* require decision origin attribution ([#175](https://github.com/campus-ai/prim/issues/175)) ([8ddc412](https://github.com/campus-ai/prim/commit/8ddc412637a76ed01e8af35503c82068b3362a02))
+
 ## [0.1.0-alpha.53](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.52...v0.1.0-alpha.53) (2026-07-18)
 
 
