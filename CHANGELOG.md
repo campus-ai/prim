@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.55](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.54...v0.1.0-alpha.55) (2026-07-20)
+
+
+### Bug Fixes
+
+* **skill:** release normative-intent admission policy ([#178](https://github.com/campus-ai/prim/issues/178)) ([59f4dee](https://github.com/campus-ai/prim/commit/59f4deee0ed15cf18b925a0da556bb964810824a))
+
 ## [0.1.0-alpha.54](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.53...v0.1.0-alpha.54) (2026-07-19)
 
 
