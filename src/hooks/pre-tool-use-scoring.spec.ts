@@ -20,6 +20,7 @@ import {
   failOpenOutput,
   parseApplyPatchPaths,
   readHookMode,
+  settledCheckResults,
   toRepoRelative,
   unverifiedNote,
 } from "./pre-tool-use-scoring.js";
@@ -88,6 +89,25 @@ describe("aggregateCheckResults", () => {
         resultFixture({ verdict: "deny" }),
       ]),
     ).toBe("deny");
+  });
+});
+
+describe("settledCheckResults", () => {
+  it("preserves a successful ask when a sibling file request fails", () => {
+    const ask = resultFixture({ verdict: "ask", reason: "contradiction" });
+    const unavailable = resultFixture({
+      verdict: "unavailable",
+      unavailable: "service unavailable",
+    });
+    const results = settledCheckResults(
+      [
+        { status: "fulfilled", value: ask },
+        { status: "rejected", reason: new Error("network") },
+      ],
+      () => unavailable,
+    );
+    expect(aggregateCheckResults(results)).toBe("ask");
+    expect(anyUnverified(results)).toBe(true);
   });
 });
 
@@ -240,8 +260,26 @@ describe("extractFilePaths", () => {
     ).toEqual(["src/multi.ts"]);
   });
 
+  it("returns the notebook_path from a NotebookEdit input", () => {
+    expect(
+      extractFilePaths("NotebookEdit", {
+        notebook_path: "notebooks/model.ipynb",
+        cell_id: "cell-1",
+        new_source: "print('new')",
+      }),
+    ).toEqual(["notebooks/model.ipynb"]);
+  });
+
   it("returns empty for an unsupported tool", () => {
     expect(extractFilePaths("Bash", { command: "ls" })).toEqual([]);
+  });
+
+  it("extracts only literal Claude Bash write targets", () => {
+    expect(extractFilePaths("Bash", { command: "printf x > src/a.ts; touch src/b.ts" })).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+    expect(extractFilePaths("Bash", { command: "printf x > $OUTPUT" })).toEqual([]);
   });
 
   it("returns empty for malformed input", () => {
@@ -350,6 +388,12 @@ describe("parseApplyPatchPaths", () => {
       "src/old.ts",
       "src/new.ts",
     ]);
+  });
+
+  it("captures both paths of a Codex Update File + Move to rename", () => {
+    expect(
+      parseApplyPatchPaths("*** Update File: src/old.ts\n*** Move to: src/new.ts\n@@\n-old\n+new"),
+    ).toEqual(["src/old.ts", "src/new.ts"]);
   });
 });
 

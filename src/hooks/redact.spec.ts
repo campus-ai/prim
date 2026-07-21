@@ -40,6 +40,13 @@ describe("scrub", () => {
     expect(scrub(`pat=ghp_${"X".repeat(40)}`)).toBe("pat=<REDACTED:github-pat>");
   });
 
+  it("redacts Primitive PATs and Convex deploy keys", () => {
+    expect(scrub(`token=prim_pat_${"a".repeat(64)}`)).toBe("token=<REDACTED:primitive-pat>");
+    expect(
+      scrub("CONVEX_DEPLOY_KEY=prod:example-deployment-123|eyJ2MiI6ImFiY2RlZmdoaWprbG1ub3AifQ"),
+    ).toBe("CONVEX_DEPLOY_KEY=<REDACTED:convex-deploy-key>");
+  });
+
   it("walks arrays and objects recursively", () => {
     const out = scrub({
       tool: "Read",
@@ -63,7 +70,9 @@ describe("scrub", () => {
   it("exposes a stable default rule set", () => {
     expect(DEFAULT_RULES.map((r) => r.reason).sort()).toEqual([
       "bearer-token",
+      "convex-deploy-key",
       "github-pat",
+      "primitive-pat",
       "private-key",
       "sk-api-key",
       "slack-token",
@@ -123,5 +132,12 @@ describe("scrubFromCwd workspace overrides", () => {
 
   it("uses only the defaults when no workspace config exists", () => {
     expect(scrubFromCwd("Bearer abc.def", scratch)).toBe("<REDACTED:bearer-token>");
+  });
+
+  it("loads the repository-root override from a nested session cwd", () => {
+    writeConfig(JSON.stringify({ rules: [{ pattern: "ROOT-[0-9]+", reason: "root-id" }] }));
+    const nested = join(scratch, "src", "nested");
+    mkdirSync(nested, { recursive: true });
+    expect(scrubFromCwd("ROOT-7", nested, scratch)).toBe("<REDACTED:root-id>");
   });
 });

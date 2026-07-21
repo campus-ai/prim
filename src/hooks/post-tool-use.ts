@@ -2,7 +2,7 @@
 /**
  * prim PostToolUse hook for Claude Code and Codex.
  *
- * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit or Codex
+ * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit/NotebookEdit or Codex
  * apply_patch (selected by `--agent`) — as `moves` rows by POSTing them to the
  * server's ingest endpoint, where the extractor / classifier /
  * linker pipeline turns them into decisions. It writes the Move to the same
@@ -28,9 +28,11 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
+import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
 import { toMove } from "./prim-hook-core.js";
@@ -38,7 +40,7 @@ import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
-const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"]);
 // Codex routes file edits through apply_patch (its single edit tool).
 const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
 // Hermes routes file edits through write_file and patch.
@@ -71,6 +73,7 @@ interface PostToolUseEnvelope {
   session_id?: string;
   hook_event_name?: string;
   tool_name?: string;
+  tool_input?: unknown;
   cwd?: string;
 }
 
@@ -142,12 +145,38 @@ async function main(): Promise<void> {
     emit();
     return;
   }
+  const repository = resolveRepositoryContext(cwd);
+  if (!repository) {
+    emit();
+    return;
+  }
+
+  const enrichment = enrichHookPayloadWithFileRefs({
+    parsed,
+    agent,
+    cwd,
+    repository,
+  });
+  const { resolution } = enrichment;
+  if (resolution.shellMutation === "none") {
+    emit();
+    return;
+  }
+  if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
+    emit();
+    return;
+  }
+  const enriched = enrichment.parsed;
   // Stamp the same worktree provenance as passive prim-hook. The classifier
   // may collapse these duplicate PostToolUse observations and keep either one.
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
-  const base = toMove(parsed, resolveCliVersion(), agent, workspaceId);
-  const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
+  const base = toMove(enriched, resolveCliVersion(), agent, workspaceId, repository);
+  const scrubbed = scrubFromCwd(enriched, cwd, repository.repoRoot);
+  const move: Move = {
+    ...base,
+    payload: preserveHookFileMetadata(scrubbed, resolution),
+  };
   // Write-ahead before the synchronous fast path. The direct POST and every
   // later replay carry this exact moveId, so a timeout/crash cannot create an
   // ingestion gap and a successful direct delivery deduplicates safely when

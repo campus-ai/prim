@@ -33,6 +33,11 @@ export const DEFAULT_RULES: ReadonlyArray<RedactionRule> = [
   },
   { pattern: /xox[abprs]-[A-Za-z0-9-]{10,}/g, reason: "slack-token" },
   { pattern: /ghp_[A-Za-z0-9]{36,}/g, reason: "github-pat" },
+  { pattern: /prim_pat_[A-Fa-f0-9]{64}/g, reason: "primitive-pat" },
+  {
+    pattern: /(?:prod|dev):[a-z0-9-]+\|[A-Za-z0-9_-]{20,}/g,
+    reason: "convex-deploy-key",
+  },
 ];
 
 // Bound the work on the per-tool-call cold path: strings larger than this
@@ -123,10 +128,10 @@ export function scrub(
 }
 
 /**
- * One-shot helper used by `prim-hook.ts`. Resolves workspace overrides from
- * `cwd` and applies them in addition to the defaults.
+ * One-shot helper used by hook entry points. Resolves workspace overrides
+ * from the repository root and applies them in addition to the defaults.
  */
-export function scrubFromCwd(value: unknown, cwd: string): unknown {
-  const rules = [...DEFAULT_RULES, ...loadWorkspaceRules(cwd)];
+export function scrubFromCwd(value: unknown, cwd: string, repoRoot: string = cwd): unknown {
+  const rules = [...DEFAULT_RULES, ...loadWorkspaceRules(repoRoot)];
   return scrub(value, rules);
 }

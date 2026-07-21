@@ -13,9 +13,9 @@
  *      code 2, but is otherwise informational).
  *   2. Exit code is 0 on every happy / fail-open path. Non-zero exits cause
  *      Claude Code to treat the hook as broken, which is louder than we want.
- *   3. INFRASTRUCTURE failures NEVER block the user. Network outage,
- *      malformed stdin, expired bearer token — all silently emit
- *      `permissionDecision: "allow"`. Hooks fail open on their own breakage.
+ *   3. INFRASTRUCTURE failures NEVER block the user. Malformed input emits a
+ *      bare allow; a network/auth failure emits allow plus an explicit
+ *      "not verified" note when the agent has a context channel.
  *      This is distinct from a server verdict of "unavailable" or a
  *      truncated conflict set: those mean the constraints are UNKNOWN and are
  *      surfaced as an honest "not verified" note, never a clean allow.
@@ -30,11 +30,19 @@
  * verdict it gets back.
  */
 
-import { getClient, getSiteUrl } from "../client.js";
-import { daemonRequest } from "../daemon/client.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { getClient } from "../client.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
+import {
+  MAX_PREFLIGHT_FILE_TARGETS,
+  rejectedTargetWarning,
+  resolveHookFileRefs,
+} from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
   type ConflictCheckResult,
@@ -45,16 +53,22 @@ import {
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
-  extractFilePaths,
   failOpenHermes,
   failOpenOutput,
   readHookMode,
-  toRepoRelative,
+  settledCheckResults,
 } from "./pre-tool-use-scoring.js";
+import {
+  type ProposedChangePreview,
+  conflictCheckV2Request,
+  proposedChangePreview,
+  shellMutationUnverifiedObservation,
+} from "./proposed-change.js";
 
 const HOOK_TIMEOUT_MS = 4_500;
+const OBSERVATION_TIMEOUT_MS = 1_500;
 const STDIN_TIMEOUT_MS = 1_000;
-const DAEMON_TIMEOUT_MS = 250;
+const here = dirname(fileURLToPath(import.meta.url));
 
 type PreToolUseInput = {
   session_id?: string;
@@ -65,6 +79,17 @@ type PreToolUseInput = {
   // we relativize absolute tool file paths against it before the lookup.
   cwd?: string;
 };
+
+function resolveCliVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf-8")) as {
+      version?: string;
+    };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 async function readStdin(): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -98,28 +123,59 @@ function failOpen(): HookOutput | HermesHookOutput {
   return agent === "hermes" ? failOpenHermes() : failOpenOutput();
 }
 
-async function checkOneFile(file: string): Promise<ConflictCheckResult> {
-  // Try the daemon first: it holds an open keep-alive connection and
-  // amortizes token refresh, so a hit returns in ~20-30ms instead of the
-  // ~200ms cold HTTP path. A null result falls through to direct HTTP, so a
-  // user without a running daemon is unaffected. The wire body is `{ file }`
-  // on both paths — scoring policy is server-owned.
-  const fromDaemon = await daemonRequest<ConflictCheckResult>(
-    "conflict_check",
-    // callerEnv lets a staging-bound daemon refuse a prod-context gate check
-    // (and vice versa) so we fall through to a direct call against our own env.
-    { file, callerEnv: getSiteUrl() },
-    { timeoutMs: DAEMON_TIMEOUT_MS },
-  );
-  if (fromDaemon) {
-    return fromDaemon;
-  }
+async function checkOneFile(
+  file: string,
+  repoKey: string | undefined,
+  proposedChange: ProposedChangePreview,
+  cliVersion: string,
+): Promise<ConflictCheckResult> {
+  // V2 deliberately bypasses the daemon: an older long-lived daemon would
+  // otherwise strip the semantic preview/repository identity and silently
+  // downgrade this request to the v1 file-only policy.
   const client = getClient();
   return (await client.post(
     "/api/cli/decisions/conflict-check",
-    { file },
-    { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
+    conflictCheckV2Request(file, repoKey, proposedChange),
+    {
+      signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
+      quietRefresh: true,
+      headers: {
+        "x-primitive-agent": agent,
+        "x-primitive-cli-version": cliVersion,
+      },
+    },
   )) as ConflictCheckResult;
+}
+
+async function observeUnverifiedShell(
+  repoKey: string | undefined,
+  cliVersion: string,
+): Promise<void> {
+  // This payload is deliberately metadata-only: the command and its content
+  // are neither sent nor persisted when no deterministic target exists.
+  await getClient().post(
+    "/api/cli/decisions/preflight-observation",
+    shellMutationUnverifiedObservation(repoKey),
+    {
+      signal: AbortSignal.timeout(OBSERVATION_TIMEOUT_MS),
+      quietRefresh: true,
+      headers: {
+        "x-primitive-agent": agent,
+        "x-primitive-cli-version": cliVersion,
+      },
+    },
+  );
+}
+
+function unverifiedResult(detail: string): ConflictCheckResult {
+  return {
+    verdict: "unavailable",
+    conflicts: [],
+    reason: "",
+    additionalContext: "",
+    truncated: false,
+    unavailable: detail,
+  };
 }
 
 async function main(): Promise<void> {
@@ -154,27 +210,87 @@ async function main(): Promise<void> {
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
-  const files = extractFilePaths(toolName, envelope.tool_input, agent).map((f) =>
-    toRepoRelative(f, cwd),
-  );
-  if (files.length === 0) {
-    emit(failOpen());
-    return;
-  }
   // Opt-in gate: only run the conflict check in repos where prim is activated
-  // (prim.active). Checked after the file filter so inactive repos and non-edit
-  // calls pay nothing; fail open (allow) when inactive.
+  // (prim.active); fail open (allow) when inactive.
   if (!isRepoActiveForCapture(cwd)) {
     emit(failOpen());
     return;
   }
-  let results: ConflictCheckResult[];
-  try {
-    results = await Promise.all(files.map((f) => checkOneFile(f)));
-  } catch {
-    emit(failOpen());
+  const repository = resolveRepositoryContext(cwd);
+  if (!repository) {
+    emit(
+      agent === "hermes"
+        ? failOpenHermes()
+        : buildHookOutput("allow", [unverifiedResult("not in a Git repository")], agent),
+    );
     return;
   }
+
+  const resolution = resolveHookFileRefs({
+    toolName,
+    toolInput: envelope.tool_input,
+    agent,
+    cwd,
+    repository,
+  });
+  const localUnverified: ConflictCheckResult[] = [];
+  for (const rejected of resolution.rejected) {
+    localUnverified.push(unverifiedResult(rejectedTargetWarning(rejected.reason)));
+  }
+  if (resolution.targetsTruncated) {
+    localUnverified.push(
+      unverifiedResult(
+        `file target list was truncated after ${String(MAX_PREFLIGHT_FILE_TARGETS)} paths; remaining mutations were not verified`,
+      ),
+    );
+  }
+  if (resolution.shellMutation === "unresolved" && !resolution.targetsTruncated) {
+    localUnverified.push(
+      unverifiedResult("shell mutation target could not be determined; enforcement not verified"),
+    );
+  }
+  const cliVersion = resolveCliVersion();
+  // Emit the metadata-only reason for every unresolved shell mutation,
+  // including mixed commands where other literal targets can still be
+  // checked normally. Start it alongside semantic preflights so diagnostics
+  // never extend the hook's critical path.
+  const observation =
+    resolution.shellMutation === "unresolved"
+      ? observeUnverifiedShell(repository.repoKey, cliVersion).catch(() => {
+          // The local warning remains authoritative; telemetry is best effort.
+        })
+      : Promise.resolve();
+  const files = resolution.fileRefs;
+  if (files.length === 0) {
+    if (resolution.shellMutation === "unresolved") {
+      // The warning below is authoritative. Observation is best-effort and
+      // must never turn telemetry availability into a shell block.
+      await observation;
+    }
+    if (localUnverified.length === 0) emit(failOpen());
+    else {
+      emit(
+        agent === "hermes" ? failOpenHermes() : buildHookOutput("allow", localUnverified, agent),
+      );
+    }
+    return;
+  }
+
+  const change = proposedChangePreview(
+    toolName,
+    envelope.tool_input,
+    cwd,
+    agent,
+    repository.repoRoot,
+  );
+  const [settled] = await Promise.all([
+    Promise.allSettled(files.map((f) => checkOneFile(f, repository.repoKey, change, cliVersion))),
+    observation,
+  ]);
+  const results = settledCheckResults(settled, () =>
+    unverifiedResult("enforcement service unavailable; change was not verified"),
+  );
+  results.push(...localUnverified);
   const rawAggregate = aggregateCheckResults(results);
   const aggregate = demoteForMode(rawAggregate, mode);
   emit(

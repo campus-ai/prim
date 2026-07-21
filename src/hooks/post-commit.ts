@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture } from "../lib/activation.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { type CommitInfo, toCommitMove } from "./prim-hook-core.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -81,7 +82,10 @@ export function runPostCommit(): void {
   }
   const commit = readCommit();
   if (commit) {
-    const move = toCommitMove(commit, resolveCliVersion(), cwd);
+    const repository = resolveRepositoryContext(cwd);
+    const move = repository
+      ? toCommitMove(commit, resolveCliVersion(), cwd, repository)
+      : toCommitMove(commit, resolveCliVersion(), cwd);
     const { orgId } = resolveOrg({ sessionId: "", cwd });
     appendMove(move, orgId);
     spawnBackgroundFlush();

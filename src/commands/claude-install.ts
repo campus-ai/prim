@@ -7,7 +7,8 @@
  *     decision journal sees the full session.
  *   - prim-pre-tool-use (the conflict gate) on PreToolUse, and
  *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse,
- *     both at matcher "Edit|Write|MultiEdit".
+ *     both at matcher "Edit|Write|MultiEdit|NotebookEdit|Bash". Bash coverage is
+ *     conservative: only literal write targets are checked.
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live sessions. SessionEnd entries use the
  *     detached shim: Claude Code cancels hooks still running at teardown.
@@ -160,8 +161,8 @@ const REGISTRATIONS: Registration[] = [
       ? makeDetachedRegistration(event, "*", CAPTURE_BIN)
       : makeRegistration(event, "*", CAPTURE_BIN),
   ),
-  makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
-  makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
+  makeRegistration("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", GATE_BIN),
+  makeRegistration("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", POST_TOOL_USE_BIN),
   // Bare ladder (no branch-0): SessionStart must re-resolve @latest each session
   // to refresh the bin cache the other hooks read. See lib/bin-cache.ts.
   makeRegistration("SessionStart", "*", SESSION_START_BIN, "", { cacheRead: false }),
@@ -553,6 +554,18 @@ export function isGateInstalled(settings: ClaudeSettings): boolean {
   return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_BIN));
 }
 
+/** True only when both synchronous surfaces include all v2 Claude edit shapes. */
+export function isV2GateInstalled(settings: ClaudeSettings): boolean {
+  const requiredTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"];
+  const has = (event: "PreToolUse" | "PostToolUse", bin: string): boolean =>
+    (settings.hooks?.[event] ?? []).some(
+      (entry) =>
+        requiredTools.every((tool) => entry.matcher?.split("|").includes(tool)) &&
+        entryHasCommand(entry, bin),
+    );
+  return has("PreToolUse", GATE_BIN) && has("PostToolUse", POST_TOOL_USE_BIN);
+}
+
 export function atomicWrite(path: string, content: ClaudeSettings): void {
   const dir = dirname(path);
   if (!existsSync(dir)) {
@@ -574,6 +587,7 @@ export function atomicWrite(path: string, content: ClaudeSettings): void {
 export type ScopeStatus = {
   path: string;
   gate: boolean;
+  gateV2: boolean;
   capture: boolean;
   feedback: boolean;
   statusline: boolean;
@@ -719,6 +733,7 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
     return {
       path,
       gate: isGateInstalled(settings),
+      gateV2: isV2GateInstalled(settings),
       capture: captureInstalled(settings),
       feedback: feedbackInstalled(settings),
       statusline: statuslineInstalled(settings),
@@ -838,7 +853,7 @@ export function registerClaudeCommands(program: Command): void {
       const result = performStatus();
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
-        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${s.statuslineState} (${s.path})`;
+        `[prim] ${label}: gate ${mark(s.gate)} · v2 ${mark(s.gateV2)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${s.statuslineState} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });

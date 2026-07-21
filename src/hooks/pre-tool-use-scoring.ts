@@ -17,6 +17,7 @@
 
 import { isAbsolute, relative, sep } from "node:path";
 import type { Agent } from "./agent.js";
+import { analyzeShellMutation } from "./shell-targets.js";
 
 export type ConflictVerdict = "allow" | "warn" | "ask" | "deny";
 
@@ -83,6 +84,14 @@ export function aggregateCheckResults(results: ConflictCheckResult[]): ConflictV
  */
 export function anyUnverified(results: ConflictCheckResult[]): boolean {
   return results.some((r) => r.verdict === "unavailable" || r.truncated);
+}
+
+/** Preserve successful per-file blockers when a sibling request fails. */
+export function settledCheckResults(
+  settled: PromiseSettledResult<ConflictCheckResult>[],
+  unavailable: () => ConflictCheckResult,
+): ConflictCheckResult[] {
+  return settled.map((result) => (result.status === "fulfilled" ? result.value : unavailable()));
 }
 
 /**
@@ -280,7 +289,10 @@ export function failOpenHermes(): HermesHookOutput {
   return {};
 }
 
-const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+// Read is capture-only: the Claude enforcement matcher remains edit/Bash-only,
+// but Decision linking intentionally uses read provenance and therefore needs
+// the same canonical-root/symlink treatment as mutations.
+const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "Read"]);
 
 // Codex routes file edits through `apply_patch`, naming each touched file on
 // its own envelope line (`*** Update File: path`).
@@ -290,18 +302,28 @@ const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
 // so without this both paths would be dropped and a rename of a decision-bearing
 // file would slip the gate. Capture BOTH the source (the existing path that may
 // carry prior decisions) and the destination. (Codex's distinct `*** Move to:`
-// destination still isn't captured — its source rides an Update File line.)
+// destination is represented separately as `*** Move to:` and is paired with
+// its preceding Update header below.
 const MOVE_FILE_RE = /^\*\*\* Move File:\s*(?<src>.+?)\s*->\s*(?<dst>.+?)\s*$/;
+const MOVE_TO_RE = /^\*\*\* Move to:\s*(?<dst>.+?)\s*$/;
 // Split on either line ending: a CRLF patch would otherwise leave a trailing
 // \r that the `$`-anchored regex can't match, dropping every file silently.
 const LINE_SPLIT_RE = /\r?\n/;
 
 export function parseApplyPatchPaths(command: string): string[] {
   const paths = new Set<string>();
+  let activeUpdate: string | undefined;
   for (const line of command.split(LINE_SPLIT_RE)) {
     const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
     if (path) {
       paths.add(path);
+      activeUpdate = line.startsWith("*** Update File:") ? path : undefined;
+      continue;
+    }
+    const moveTo = MOVE_TO_RE.exec(line)?.groups?.dst?.trim();
+    if (moveTo && activeUpdate) {
+      paths.add(moveTo);
+      activeUpdate = undefined;
       continue;
     }
     const move = MOVE_FILE_RE.exec(line)?.groups;
@@ -310,6 +332,7 @@ export function parseApplyPatchPaths(command: string): string[] {
       if (move.dst) {
         paths.add(move.dst.trim());
       }
+      activeUpdate = undefined;
     }
   }
   return Array.from(paths);
@@ -350,8 +373,9 @@ function extractHermesFilePaths(toolName: string, toolInput: unknown): string[] 
 
 /**
  * Extracts the file paths a tool call would touch, dispatched by `agent`.
- * Claude Code exposes a single `file_path` on Edit/Write/MultiEdit; Codex
- * routes edits through `apply_patch` with the paths embedded in the patch text.
+ * Claude Code exposes `file_path` on Edit/Write/MultiEdit and `notebook_path`
+ * on NotebookEdit; Codex routes edits through `apply_patch` with paths embedded
+ * in the patch text.
  * Returns the unique paths to check, empty when the input shape exposes none
  * (fail-open).
  */
@@ -366,6 +390,11 @@ export function extractFilePaths(
   if (agent === "hermes") {
     return extractHermesFilePaths(toolName, toolInput);
   }
+  if (toolName === "Bash") {
+    if (!toolInput || typeof toolInput !== "object") return [];
+    const command = (toolInput as Record<string, unknown>).command;
+    return typeof command === "string" ? analyzeShellMutation(command).paths : [];
+  }
   if (!SUPPORTED_TOOLS.has(toolName)) {
     return [];
   }
@@ -373,6 +402,11 @@ export function extractFilePaths(
     return [];
   }
   const input = toolInput as Record<string, unknown>;
+  if (toolName === "NotebookEdit") {
+    return typeof input.notebook_path === "string" && input.notebook_path.length > 0
+      ? [input.notebook_path]
+      : [];
+  }
   if (typeof input.file_path === "string" && input.file_path.length > 0) {
     return [input.file_path];
   }

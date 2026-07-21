@@ -20,6 +20,7 @@ import {
   applyUninstall,
   feedbackInstalled,
   isGateInstalled,
+  isV2GateInstalled,
   resolveScope,
   statuslineState,
   userStatuslineBlocksProjectInstall,
@@ -133,7 +134,7 @@ describe("applyInstall", () => {
     const gateEntry = out.hooks?.PreToolUse?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-pre-tool-use")),
     );
-    expect(gateEntry?.matcher).toBe("Edit|Write|MultiEdit");
+    expect(gateEntry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
     expect(gateEntry?.hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use"));
     expect(gateEntry?.hooks?.[0].command).not.toBe("prim-pre-tool-use");
   });
@@ -166,6 +167,7 @@ describe("applyInstall", () => {
     // Upgraded, not duplicated: exactly one gate entry, now the shim form.
     expect(gateEntries).toHaveLength(1);
     expect(gateEntries[0].hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use"));
+    expect(gateEntries[0].matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
     expect(hasBin(out, "PreToolUse", "prim-hook")).toBe(true);
   });
 
@@ -182,7 +184,7 @@ describe("applyInstall", () => {
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-pre-tool-use")),
     );
     expect(gateEntries).toHaveLength(1);
-    expect(gateEntries[0].matcher).toBe("Edit|Write|MultiEdit");
+    expect(gateEntries[0].matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
   });
 
   it("leaves top-level non-hooks keys untouched", () => {
@@ -417,6 +419,33 @@ describe("isGateInstalled", () => {
   });
 });
 
+describe("isV2GateInstalled", () => {
+  it("requires Bash and NotebookEdit on both synchronous matchers", () => {
+    expect(isV2GateInstalled(applyInstall(EMPTY))).toBe(true);
+    expect(
+      isV2GateInstalled({
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Edit|Write|MultiEdit",
+              hooks: [{ type: "command", command: "prim-pre-tool-use" }],
+            },
+          ],
+        },
+      }),
+    ).toBe(false);
+    const bashOnly = applyInstall(EMPTY);
+    for (const event of ["PreToolUse", "PostToolUse"]) {
+      for (const entry of bashOnly.hooks?.[event] ?? []) {
+        if (entry.matcher?.includes("NotebookEdit")) {
+          entry.matcher = entry.matcher.replace("NotebookEdit|", "");
+        }
+      }
+    }
+    expect(isV2GateInstalled(bashOnly)).toBe(false);
+  });
+});
+
 describe("feedbackInstalled", () => {
   it("requires both existing synchronous feedback handlers", () => {
     const installed = applyInstall(EMPTY);
@@ -449,7 +478,7 @@ describe("post-tool-use, session hooks, statusline install", () => {
     const entry = out.hooks?.PostToolUse?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-post-tool-use")),
     );
-    expect(entry?.matcher).toBe("Edit|Write|MultiEdit");
+    expect(entry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
   });
 
   it("registers the session hooks on SessionStart / SessionEnd", () => {

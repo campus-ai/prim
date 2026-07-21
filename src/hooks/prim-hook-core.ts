@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
+import type { RepositoryContext } from "../lib/git.js";
 import { ENVELOPE_VERSION, type Move, type MoveV1, withAgentProvenance } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
 
@@ -17,6 +18,7 @@ export function toMove(
   cliVersion: string,
   agent: Agent = "claude_code",
   workspaceId?: string,
+  repository?: RepositoryContext | null,
 ): Move {
   const move: MoveV1 = {
     moveId: randomUUID(),
@@ -28,6 +30,7 @@ export function toMove(
       cwd: (parsed.cwd as string | undefined) ?? process.cwd(),
       cliVersion,
       osPlatform: platform(),
+      ...(repository ? { repoRoot: repository.repoRoot, repoKey: repository.repoKey } : {}),
     },
     envelopeVersion: ENVELOPE_VERSION,
     // Stamp the producer for non-Claude agents (codex, hermes); Claude Code
@@ -55,7 +58,12 @@ export type CommitInfo = {
  * running, and the decision's agent attribution comes from the session's
  * own moves, not the commit envelope.
  */
-export function toCommitMove(commit: CommitInfo, cliVersion: string, cwd: string): Move {
+export function toCommitMove(
+  commit: CommitInfo,
+  cliVersion: string,
+  cwd: string,
+  repository?: RepositoryContext | null,
+): Move {
   return {
     moveId: `commit:${commit.sha}`,
     capturedAt: Date.now(),
@@ -72,6 +80,7 @@ export function toCommitMove(commit: CommitInfo, cliVersion: string, cwd: string
       cwd,
       cliVersion,
       osPlatform: platform(),
+      ...(repository ? { repoRoot: repository.repoRoot, repoKey: repository.repoKey } : {}),
     },
     envelopeVersion: ENVELOPE_VERSION,
   };

@@ -61,6 +61,15 @@ describe("toMove", () => {
     expect(move.producer).toBe("codex");
     expect(move.env).toMatchObject({ workspaceId });
   });
+
+  it("stamps canonical repository metadata when resolution succeeded", () => {
+    const move = toMove({ session_id: "s", cwd: "/repo/subdir" }, "x", "claude_code", undefined, {
+      repoRoot: "/repo",
+      repoKey: "repo_v1_key",
+      identitySource: "origin",
+    });
+    expect(move.env).toMatchObject({ repoRoot: "/repo", repoKey: "repo_v1_key" });
+  });
 });
 
 describe("shouldFlushAfter", () => {
@@ -117,5 +126,13 @@ describe("toCommitMove", () => {
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(move.envelopeVersion).toBe(1);
     expect("producer" in move).toBe(false);
+  });
+
+  it("stamps repository metadata on commit boundaries", () => {
+    const move = toCommitMove(commit, "1.2.3", "/repo", {
+      repoRoot: "/repo",
+      repoKey: "repo_v1_key",
+    });
+    expect(move.env).toMatchObject({ repoRoot: "/repo", repoKey: "repo_v1_key" });
   });
 });
