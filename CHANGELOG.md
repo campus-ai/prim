@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.56](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.55...v0.1.0-alpha.56) (2026-07-21)
+
+
+### Features
+
+* **enforcement:** add canonical repository scope ([923397e](https://github.com/campus-ai/prim/commit/923397e04c23b433ea8ba026774b2426702ed75d))
+* **enforcement:** add scope repair and diagnostics ([d95ae5a](https://github.com/campus-ai/prim/commit/d95ae5af71286450c0ca17f09e403d6c6bf4ab96))
+* **enforcement:** check native and shell mutations ([8bca7c8](https://github.com/campus-ai/prim/commit/8bca7c8607c1cc8c473b33b1e1dddc7c16fa2bc6))
+
 ## [0.1.0-alpha.55](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.54...v0.1.0-alpha.55) (2026-07-20)
 
 
