@@ -14,7 +14,9 @@ import {
   classifyAuthCredential,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyEnforcementReadiness,
   classifyMovesStatus,
+  enforcementReadinessPath,
 } from "./doctor.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
@@ -46,6 +48,79 @@ describe("classifyDoctor", () => {
   it("carries the checks through verbatim for machine consumers", () => {
     const checks = [ok("auth"), warn("stranded")];
     expect(classifyDoctor(checks).json.checks).toEqual(checks);
+  });
+});
+
+describe("enforcement readiness diagnostics", () => {
+  it("scopes readiness to the active opaque repository identity", () => {
+    const repoKey = `repo_v1_${"a".repeat(64)}`;
+    expect(enforcementReadinessPath(repoKey)).toBe(
+      `/api/cli/decisions/readiness?repoKey=${repoKey}`,
+    );
+  });
+
+  it("surfaces missing file scope and a never-run gate when enforcement is enabled", () => {
+    const checks = classifyEnforcementReadiness({
+      captureEnabled: true,
+      enforcementEnabled: true,
+      entitlementSource: "live",
+      fileScopedDecisionCount: 0,
+      lastPreflightAt: null,
+      protocolVersion: 2,
+    });
+    expect(checks[0]).toMatchObject({ name: "capture-entitlement", status: "ok" });
+    expect(checks[1]).toMatchObject({ name: "enforcement", status: "ok" });
+    expect(checks[2]).toMatchObject({ name: "decision-scope", status: "warn" });
+    expect(checks[3]).toMatchObject({ name: "preflight", status: "warn" });
+  });
+
+  it("reports the latest successful v2 preflight", () => {
+    const checks = classifyEnforcementReadiness({
+      captureEnabled: true,
+      enforcementEnabled: true,
+      fileScopedDecisionCount: 4,
+      lastPreflightAt: 1_700_000_000_000,
+      lastPreflightVerdict: "ask",
+      protocolVersion: 2,
+    });
+    expect(checks[2].detail).toContain("4 file-scoped");
+    expect(checks[3]).toMatchObject({ status: "ok" });
+    expect(checks[3].detail).toContain("ask");
+  });
+
+  it("surfaces capture entitlement source, truncated counts, and an active bypass", () => {
+    const checks = classifyEnforcementReadiness({
+      captureEnabled: false,
+      captureEntitlementState: "disabled",
+      captureEntitlementSource: "jwt",
+      enforcementEnabled: false,
+      fileScopedDecisionCount: 100,
+      fileScopedDecisionCountTruncated: true,
+      lastPreflightAt: null,
+      protocolVersion: 2,
+      bypassActive: true,
+    });
+    expect(checks[0]).toMatchObject({ status: "fail" });
+    expect(checks[0].detail).toContain("jwt");
+    expect(checks[2].detail).toContain("100+");
+    expect(checks[4]).toMatchObject({ name: "bypass", status: "warn" });
+  });
+
+  it("warns when live enforcement entitlement could not be determined", () => {
+    const checks = classifyEnforcementReadiness({
+      captureEnabled: true,
+      enforcementEnabled: false,
+      enforcementEntitlementState: "unavailable",
+      entitlementSource: "live",
+      fileScopedDecisionCount: 2,
+      lastPreflightAt: null,
+      protocolVersion: 2,
+    });
+    expect(checks[1]).toMatchObject({
+      name: "enforcement",
+      status: "warn",
+      detail: "unavailable · live",
+    });
   });
 });
 
@@ -191,8 +266,11 @@ describe("moves status diagnostics", () => {
   });
 
   it("surfaces classifier backlog without treating in-flight work as lost", () => {
-    const [, classification] = classifyMovesStatus(status({ pendingSessionCount: 2 }));
+    const [, classification] = classifyMovesStatus(
+      status({ pendingSessionCount: 2, oldestPendingAgeMs: 65_000 }),
+    );
     expect(classification.status).toBe("warn");
     expect(classification.detail).toContain("2 session");
+    expect(classification.detail).toContain("oldest 65s");
   });
 });

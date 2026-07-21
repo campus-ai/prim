@@ -157,6 +157,11 @@ describe("formatShowHuman", () => {
     expect(out).toContain("convex/auth-strategy.ts");
   });
 
+  it("labels a fileless Decision as not edit-enforceable", () => {
+    const out = formatShowHuman({ ...DETAIL, files: [] });
+    expect(out).toContain("scope: not code-scoped / not edit-enforceable");
+  });
+
   it("renders contexts by name, not id", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("auth.spec");

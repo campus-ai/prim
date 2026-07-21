@@ -20,6 +20,7 @@
  */
 import { type Command, Option } from "commander";
 import { HttpError } from "../client.js";
+import { fetchAttachFiles, formatAttachFilesHuman } from "../decisions/attach-files.js";
 import { renderCascade } from "../decisions/cascade-renderer.js";
 import { CascadeNotFoundError, fetchCascade, formatCascadeJson } from "../decisions/cascade.js";
 import {
@@ -34,6 +35,7 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
+import { DecisionFileScopeError, resolveDecisionFileScope } from "../decisions/file-scope.js";
 import {
   LinkNotFoundError,
   fetchLink,
@@ -209,7 +211,7 @@ export function registerDecisionsCommands(program: Command): void {
     .option("--reversibility <level>", "high | low (default high)")
     .option(
       "--files <paths>",
-      "Comma-separated repo-relative paths this decision governs (the files Conflict Gates would check — not currently enabled)",
+      "Comma-separated git-root-relative paths this decision governs and enforcement checks",
     )
     .action(async (opts: CreateOptions, command: Command) => {
       if (!isRepoActiveForCapture(process.cwd())) {
@@ -229,6 +231,19 @@ export function registerDecisionsCommands(program: Command): void {
         console.error(CREATE_INACTIVE_APPROVED);
       }
 
+      const requestedFiles = splitList(opts.files);
+      let scope: ReturnType<typeof resolveDecisionFileScope> | undefined;
+      try {
+        scope = requestedFiles.length > 0 ? resolveDecisionFileScope(requestedFiles) : undefined;
+      } catch (err) {
+        if (err instanceof DecisionFileScopeError) {
+          console.error(`[prim] create rejected: ${err.message}`);
+          console.log(JSON.stringify({ ok: false, error: "invalid_file_scope" }, null, 2));
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
+        throw err;
+      }
       const request: CreateRequest = {
         intent: opts.intent,
         attribution: opts.attribution,
@@ -239,15 +254,56 @@ export function registerDecisionsCommands(program: Command): void {
         alternatives: splitList(opts.alternatives),
         confidence: opts.confidence as CreateRequest["confidence"],
         reversibility: opts.reversibility as CreateRequest["reversibility"],
-        files: splitList(opts.files),
+        files: scope?.files,
+        repoKey: scope?.repoKey,
       };
       try {
         const outcome = await fetchCreate(request);
-        console.error(formatCreateHuman(outcome));
+        console.error(formatCreateHuman(outcome, requestedFiles.length > 0));
         console.log(formatCreateJson(outcome));
       } catch (err) {
         if (err instanceof HttpError && err.status >= 400 && err.status < 500) {
           console.error(`[prim] create rejected: ${err.message}`);
+          console.log(
+            JSON.stringify({ ok: false, status: err.status, error: err.message }, null, 2),
+          );
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
+        throw err;
+      }
+    });
+
+  decisions
+    .command("attach-files <idOrShortId>")
+    .description("Attach canonical repository files to an existing Decision")
+    .requiredOption("--files <paths>", "Comma-separated git-root-relative paths to attach")
+    .action(async (idOrShortId: string, opts: { files: string }) => {
+      let scope: ReturnType<typeof resolveDecisionFileScope>;
+      try {
+        scope = resolveDecisionFileScope(splitList(opts.files));
+      } catch (err) {
+        if (err instanceof DecisionFileScopeError) {
+          console.error(`[prim] attach-files rejected: ${err.message}`);
+          console.log(JSON.stringify({ ok: false, error: "invalid_file_scope" }, null, 2));
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
+        throw err;
+      }
+      try {
+        const outcome = await fetchAttachFiles({ idOrShortId, ...scope });
+        console.error(formatAttachFilesHuman(outcome));
+        console.log(JSON.stringify(outcome, null, 2));
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 404) {
+          console.error(`[prim] decision not found: ${idOrShortId}`);
+          console.log(JSON.stringify({ ok: false, error: "not_found" }, null, 2));
+          process.exitCode = EXIT_NOT_FOUND;
+          return;
+        }
+        if (err instanceof HttpError && err.status >= 400 && err.status < 500) {
+          console.error(`[prim] attach-files rejected: ${err.message}`);
           console.log(
             JSON.stringify({ ok: false, status: err.status, error: err.message }, null, 2),
           );

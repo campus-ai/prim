@@ -41,6 +41,11 @@ describe("formatCreateHuman", () => {
       `[prim] created ${FULL_ID}.`,
     );
   });
+
+  it("labels a fileless Decision as not edit-enforceable", () => {
+    expect(formatCreateHuman(OUTCOME, false)).toContain("not code-scoped");
+    expect(formatCreateHuman(OUTCOME, false)).toContain("cannot enforce");
+  });
 });
 
 describe("formatCreateJson", () => {
@@ -60,6 +65,7 @@ describe("fetchCreate", () => {
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
         files: ["src/editor.ts"],
+        repoKey: "repo_v1_key",
       },
       { getClient: () => clientWith(post) },
     );
@@ -71,6 +77,7 @@ describe("fetchCreate", () => {
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
         files: ["src/editor.ts"],
+        repoKey: "repo_v1_key",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

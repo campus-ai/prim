@@ -146,6 +146,7 @@ function describeNode(node: DecisionNode): string {
 
 function pushFiles(lines: string[], files: string[]): void {
   if (files.length === 0) {
+    lines.push("  scope: not code-scoped / not edit-enforceable");
     return;
   }
   lines.push(`  files (${String(files.length)}):`);

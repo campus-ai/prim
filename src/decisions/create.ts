@@ -31,6 +31,8 @@ export interface CreateRequest {
   reversibility?: "high" | "low";
   /** Repo-relative paths this decision governs (gates edits to them). */
   files?: string[];
+  /** Opaque repository identity paired with files. */
+  repoKey?: string;
 }
 
 /** The created decision's identity, as returned by the server (201). */
@@ -66,6 +68,7 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
     confidence: request.confidence,
     reversibility: request.reversibility,
     files: request.files,
+    repoKey: request.repoKey,
   };
   const body: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(candidate)) {
@@ -87,9 +90,11 @@ export async function fetchCreate(
   })) as CreateOutcome;
 }
 
-export function formatCreateHuman(outcome: CreateOutcome): string {
+export function formatCreateHuman(outcome: CreateOutcome, codeScoped = true): string {
   const id = renderIdentifier({ shortId: outcome.shortId, id: outcome.decisionId });
-  return `[prim] created ${id}.`;
+  return codeScoped
+    ? `[prim] created ${id}.`
+    : `[prim] created ${id} · not code-scoped; edits cannot enforce it until files are attached.`;
 }
 
 export function formatCreateJson(outcome: CreateOutcome): string {

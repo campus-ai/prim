@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   askConfirmation: vi.fn(),
+  fetchAttachFiles: vi.fn(),
   fetchCreate: vi.fn(),
   isRepoActiveForCapture: vi.fn(),
   setRepoActive: vi.fn(),
@@ -23,6 +24,13 @@ vi.mock("../decisions/create.js", async () => {
   const actual =
     await vi.importActual<typeof import("../decisions/create.js")>("../decisions/create.js");
   return { ...actual, fetchCreate: mocks.fetchCreate };
+});
+
+vi.mock("../decisions/attach-files.js", async () => {
+  const actual = await vi.importActual<typeof import("../decisions/attach-files.js")>(
+    "../decisions/attach-files.js",
+  );
+  return { ...actual, fetchAttachFiles: mocks.fetchAttachFiles };
 });
 
 import { registerDecisionsCommands } from "./decisions.js";
@@ -66,6 +74,12 @@ describe("decisions create activation consent", () => {
     vi.stubEnv("PRIM_NON_INTERACTIVE", "");
     process.exitCode = 0;
     mocks.fetchCreate.mockResolvedValue(OUTCOME);
+    mocks.fetchAttachFiles.mockResolvedValue({
+      ...OUTCOME,
+      files: ["src/client.ts"],
+      attachedCount: 1,
+      alreadyAttachedCount: 0,
+    });
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -87,7 +101,9 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({ attribution: "user" }),
     );
-    expect(errorSpy).toHaveBeenCalledWith("[prim] created dec_abc12345.");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[prim] created dec_abc12345 · not code-scoped; edits cannot enforce it until files are attached.",
+    );
     expect(logSpy).toHaveBeenCalledWith(JSON.stringify(OUTCOME, null, 2));
     expect(process.exitCode).toBe(0);
   });
@@ -100,6 +116,20 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({ attribution: "agent" }),
     );
+  });
+
+  it("adds canonical repository scope when --files is supplied", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--files", "src/client.ts,src/../src/client.ts");
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: ["src/client.ts"],
+        repoKey: expect.stringMatching(/^repo_v1_[a-f0-9]{64}$/),
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalledWith("[prim] created dec_abc12345.");
   });
 
   it("requires an explicit attribution", async () => {
@@ -196,5 +226,18 @@ describe("decisions create activation consent", () => {
     expect(errorSpy).toHaveBeenNthCalledWith(1, APPROVED);
     expect(mocks.fetchCreate).toHaveBeenCalledOnce();
     expect(mocks.setRepoActive).not.toHaveBeenCalled();
+  });
+
+  it("attaches canonical files with current repository identity", async () => {
+    await buildProgram().parseAsync(
+      ["decisions", "attach-files", "dec_abc12345", "--files", "src/client.ts"],
+      { from: "user" },
+    );
+
+    expect(mocks.fetchAttachFiles).toHaveBeenCalledWith({
+      idOrShortId: "dec_abc12345",
+      files: ["src/client.ts"],
+      repoKey: expect.stringMatching(/^repo_v1_[a-f0-9]{64}$/),
+    });
   });
 });

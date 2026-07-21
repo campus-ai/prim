@@ -32,10 +32,14 @@ import {
   getLaunchdService,
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
+import { readHookMode } from "../hooks/pre-tool-use-scoring.js";
 import { pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
+import { performStatus as codexStatus } from "./codex-install.js";
+import { performStatus as hermesStatus } from "./hermes-install.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -69,6 +73,24 @@ export type MovesStatus = {
   highWaterMark: number | null;
   pendingSessionCount: number;
   sampled: boolean;
+  oldestPendingAt?: number | null;
+  oldestPendingAgeMs?: number | null;
+};
+
+export type EnforcementReadiness = {
+  captureEnabled: boolean;
+  captureEntitlementState?: string;
+  captureEntitlementSource?: "jwt" | "live" | "service_token";
+  enforcementEnabled: boolean;
+  enforcementEntitlementState?: string;
+  entitlementSource?: "jwt" | "live" | "service_token";
+  fileScopedDecisionCount: number;
+  fileScopedDecisionCountTruncated?: boolean;
+  lastPreflightAt: number | null;
+  lastPreflightVerdict?: "allow" | "warn" | "ask" | "unavailable";
+  lastPreflightReasonCode?: string;
+  protocolVersion?: number;
+  bypassActive?: boolean;
 };
 
 /**
@@ -317,6 +339,78 @@ function checkWorkspaceIdentity(): Check {
   }
 }
 
+function checkRepositoryIdentity(): Check {
+  const repository = resolveRepositoryContext();
+  if (!repository) {
+    return { name: "repo-scope", status: "warn", detail: "not in a Git repository" };
+  }
+  if (!repository.repoKey) {
+    return {
+      name: "repo-scope",
+      status: "warn",
+      detail: "identity unavailable — configure origin or create the first commit",
+    };
+  }
+  return {
+    name: "repo-scope",
+    status: "ok",
+    detail: `canonical git-root paths · root ${repository.repoRoot} · key ${repository.repoKey.slice(0, 20)}… · ${repository.identitySource === "origin" ? "origin" : "root-commit"} identity`,
+  };
+}
+
+function checkHookMode(): Check {
+  const mode = readHookMode(process.env);
+  return mode === "off"
+    ? {
+        name: "gate-mode",
+        status: "warn",
+        detail: process.env.PRIM_BYPASS ? "off (PRIM_BYPASS is set)" : "off (PRIM_HOOK_MODE=off)",
+      }
+    : {
+        name: "gate-mode",
+        status: mode === "warn" ? "warn" : "ok",
+        detail: `${mode} · repository ${decisionIngestionStatus(process.cwd())}`,
+      };
+}
+
+function checkEnforcementHooks(): Check {
+  try {
+    const claude = claudeStatus();
+    const codex = codexStatus();
+    const hermes = hermesStatus();
+    const ready: string[] = [];
+    if (claude.project.gateV2 || claude.user.gateV2) {
+      ready.push("Claude: Edit, Write, MultiEdit, NotebookEdit, literal Bash");
+    }
+    if (codex.project.gate || codex.user.gate) ready.push("Codex: apply_patch");
+    if (hermes.gate) ready.push("Hermes: write_file, patch");
+    const claudeLegacy =
+      (claude.project.gate || claude.user.gate) && !(claude.project.gateV2 || claude.user.gateV2);
+    if (claudeLegacy) {
+      return {
+        name: "gate-hooks",
+        status: "warn",
+        detail: `Claude legacy/incomplete matcher — rerun \`prim claude install\`${ready.length > 0 ? ` · also ready: ${ready.join("; ")}` : ""}`,
+      };
+    }
+    if (ready.length > 0) {
+      return {
+        name: "gate-hooks",
+        status: "ok",
+        detail: `v2 handlers · ${ready.join("; ")}`,
+      };
+    }
+    return {
+      name: "gate-hooks",
+      status: "warn",
+      detail: "not installed — run `prim claude install`",
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { name: "gate-hooks", status: "warn", detail: detail.slice(0, 80) };
+  }
+}
+
 function checkFeedbackHooks(): Check {
   try {
     const status = claudeStatus();
@@ -357,6 +451,13 @@ function parseMovesStatus(value: unknown): MovesStatus {
   ) {
     throw new Error("moves status returned an invalid response");
   }
+  if (
+    (status.oldestPendingAt !== undefined && !nullableNumber(status.oldestPendingAt)) ||
+    (status.oldestPendingAgeMs !== undefined && !nullableNumber(status.oldestPendingAgeMs)) ||
+    (typeof status.oldestPendingAgeMs === "number" && status.oldestPendingAgeMs < 0)
+  ) {
+    throw new Error("moves status returned invalid pending-age fields");
+  }
   return status as MovesStatus;
 }
 
@@ -371,10 +472,16 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
         };
   let classification: Check;
   if (status.pendingSessionCount > 0) {
+    const oldest =
+      typeof status.oldestPendingAgeMs === "number"
+        ? ` · oldest ${String(Math.round(status.oldestPendingAgeMs / MS_PER_SECOND))}s`
+        : typeof status.oldestPendingAt === "number"
+          ? ` · oldest ${String(Math.max(0, Math.round((Date.now() - status.oldestPendingAt) / MS_PER_SECOND)))}s`
+          : "";
     classification = {
       name: "classification",
       status: "warn",
-      detail: `${String(status.pendingSessionCount)} session(s) pending${status.sampled ? " in a bounded sample" : ""}`,
+      detail: `${String(status.pendingSessionCount)} session(s) pending${oldest}${status.sampled ? " in a bounded sample" : ""}`,
     };
   } else if (status.sampled) {
     classification = {
@@ -413,6 +520,119 @@ async function checkBackend(): Promise<Check[]> {
   }
 }
 
+function parseEnforcementReadiness(value: unknown): EnforcementReadiness {
+  if (!value || typeof value !== "object") {
+    throw new Error("readiness returned a non-object response");
+  }
+  const result = value as Partial<EnforcementReadiness>;
+  if (
+    typeof result.captureEnabled !== "boolean" ||
+    typeof result.enforcementEnabled !== "boolean" ||
+    typeof result.fileScopedDecisionCount !== "number" ||
+    !Number.isInteger(result.fileScopedDecisionCount) ||
+    result.fileScopedDecisionCount < 0 ||
+    (result.lastPreflightAt !== null && typeof result.lastPreflightAt !== "number")
+  ) {
+    throw new Error("readiness returned an invalid response");
+  }
+  return result as EnforcementReadiness;
+}
+
+export function enforcementReadinessPath(repoKey: string | undefined): string {
+  const params = new URLSearchParams();
+  if (repoKey) params.set("repoKey", repoKey);
+  return `/api/cli/decisions/readiness${params.size > 0 ? `?${params.toString()}` : ""}`;
+}
+
+export function classifyEnforcementReadiness(readiness: EnforcementReadiness): Check[] {
+  const captureSource = readiness.captureEntitlementSource
+    ? ` · ${readiness.captureEntitlementSource}`
+    : "";
+  const capture: Check = readiness.captureEnabled
+    ? {
+        name: "capture-entitlement",
+        status: "ok",
+        detail: `${readiness.captureEntitlementState ?? "enabled"}${captureSource}`,
+      }
+    : {
+        name: "capture-entitlement",
+        status: "fail",
+        detail: `${readiness.captureEntitlementState ?? "disabled"}${captureSource}`,
+      };
+  const source = readiness.entitlementSource ? ` · ${readiness.entitlementSource}` : "";
+  const entitlementUnavailable =
+    !readiness.enforcementEnabled && readiness.enforcementEntitlementState === "unavailable";
+  const entitlement: Check = readiness.enforcementEnabled
+    ? {
+        name: "enforcement",
+        status: "ok",
+        detail: `${readiness.enforcementEntitlementState ?? "enabled"}${source}`,
+      }
+    : {
+        name: "enforcement",
+        status: entitlementUnavailable ? "warn" : "ok",
+        detail: `${readiness.enforcementEntitlementState ?? "not enabled"}${source}`,
+      };
+  const count = `${String(readiness.fileScopedDecisionCount)}${readiness.fileScopedDecisionCountTruncated ? "+" : ""}`;
+  const scope: Check =
+    readiness.enforcementEnabled && readiness.fileScopedDecisionCount === 0
+      ? {
+          name: "decision-scope",
+          status: "warn",
+          detail: "0 file-scoped Decisions — edits have no enforcement candidates",
+        }
+      : {
+          name: "decision-scope",
+          status: "ok",
+          detail: `${count} file-scoped Decision(s)`,
+        };
+  const preflight: Check =
+    readiness.enforcementEnabled && readiness.lastPreflightAt === null
+      ? {
+          name: "preflight",
+          status: "warn",
+          detail: "no successful v2 preflight recorded",
+        }
+      : {
+          name: "preflight",
+          status: "ok",
+          detail:
+            readiness.lastPreflightAt === null
+              ? "none expected"
+              : `${new Date(readiness.lastPreflightAt).toISOString()}${readiness.lastPreflightVerdict ? ` · ${readiness.lastPreflightVerdict}` : ""}${readiness.lastPreflightReasonCode ? ` · ${readiness.lastPreflightReasonCode}` : ""}`,
+        };
+  if (readiness.enforcementEnabled && (readiness.protocolVersion ?? 0) < 2) {
+    preflight.status = "warn";
+    preflight.detail = "server does not report v2 semantic preflight support";
+  }
+  const bypass: Check = readiness.bypassActive
+    ? { name: "bypass", status: "warn", detail: "single-use reconcile bypass is active" }
+    : { name: "bypass", status: "ok", detail: "none" };
+  return [capture, entitlement, scope, preflight, bypass];
+}
+
+async function checkEnforcementReadiness(): Promise<Check[]> {
+  try {
+    const repoKey = resolveRepositoryContext()?.repoKey;
+    const value = await getClient().get(enforcementReadinessPath(repoKey), {
+      signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
+    });
+    return classifyEnforcementReadiness(parseEnforcementReadiness(value));
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      return [
+        {
+          name: "enforcement",
+          status: "warn",
+          detail: "server does not expose enforcement readiness yet",
+        },
+      ];
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    return [{ name: "enforcement", status: "warn", detail: detail.slice(0, 100) }];
+  }
+}
+
 async function checkFeedbackCapability(): Promise<Check> {
   try {
     const capability = await fetchFeedbackCapability(AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS));
@@ -448,7 +668,11 @@ async function collectChecks(): Promise<Check[]> {
     checkStranded(),
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
+    checkRepositoryIdentity(),
+    checkHookMode(),
+    checkEnforcementHooks(),
     ...backend,
+    ...(await checkEnforcementReadiness()),
     await checkFeedbackCapability(),
   ];
 }

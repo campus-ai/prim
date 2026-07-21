@@ -9,7 +9,7 @@ description: Use the prim CLI for Primitive’s decision graph. MUST INVOKE befo
 
 ## Mental model
 
-In an active repo, prim passively captures the **decisions** your team makes -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with; with **Enforcement**, prim blocks the edit until you reconcile the decision and retry. Conflict Gates are **not currently enabled** — capture in active repos runs regardless. To enable them for your team, contact support@getprimitive.ai.
+In an active repo, prim passively captures the **decisions** your team makes -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** check a later change against file-scoped Decisions; when organization-level **Enforcement** is enabled, a high-confidence semantic contradiction pauses the edit for confirmation. Capture in active repos runs independently. Use `prim doctor` to verify the effective entitlement, v2 hooks, repository identity, Decision scope, and last preflight.
 
 Low-level capture runs automatically in active repos through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). An inactive repo is not passively captured. Deliberately record higher-order forks in the road through `prim decisions create` as described below. Your job is also to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
 
@@ -32,15 +32,15 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 3. `<idOrShortId>` arguments accept either a full decision ID or the short ID shown in feeds (and gate reasons, when Conflict Gates are enabled).
 4. In `npx --yes @primitive.ai/prim ...`, `npx --yes` is npm's flag and only skips npm's package-install confirmation. It is not user consent for a Primitive action. Prim's global flag appears after the package name: `npx --yes @primitive.ai/prim --yes ...`.
 
-## Conflict Gates & Enforcement (not currently enabled)
+## Conflict Gates & Enforcement
 
-**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. Their **Enforcement** tier goes further -- a conflicting edit is blocked (or paused for confirmation) until you reconcile the decision and retry. **Conflict Gates are not currently enabled** — automatic decision capture in active repos (above) runs regardless. To enable Conflict Gates and Enforcement for your team, contact support@getprimitive.ai.
+**Conflict Gates** check each edit against the decision graph before it lands. File overlap alone is advisory; when Enforcement is enabled, only a high-confidence semantic contradiction pauses for confirmation. Enforcement is organization-configured, while automatic capture in active repos runs independently.
 
-When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
+When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit/NotebookEdit and literal-target Bash writes; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook checks the canonical repository/file scope and proposed change against the graph:
 
-- **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
+- **ask** -- the proposed change is a high-confidence contradiction. Read the reason; if you genuinely intend to override the Decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry once. Otherwise choose an approach that respects it.
 - **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. On Codex a would-be `ask` is delivered as allow-plus-context (Codex can't pause mid-tool), so that context is your only signal -- read it before continuing. Hermes has no soft-confirm tier, so a would-be `ask` arrives as a **deny** carrying the same reconcile directive: reconcile and retry, or set `PRIM_HOOK_MODE=warn` to downgrade it to context-only.
-- **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
+- **"decision check skipped / not verified", "shell mutation target could not be determined", or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval. Prim never expands variables, globs, or command substitutions to guess shell targets.
 
 When enabled, the gate fail-opens on its *own* infrastructure errors (no daemon, network blip, org-unbound token) -- a setup problem would not block your edit. That is why an "unavailable" note would matter: it is the honest signal that the check, not your edit, is what failed.
 
@@ -56,7 +56,7 @@ Then tailor the delivery to this requester, not a generic reader. Take your cues
 
 ## Reconcile and the verdict footer
 
-Reconcile and the verdict footer are part of Conflict Gates **Enforcement**, which is **not currently enabled** (contact support@getprimitive.ai to turn it on); the `reconcile` command stays available regardless. When Enforcement is on:
+Reconcile and the verdict footer are part of Conflict Gates **Enforcement**; the `reconcile` command stays available regardless. When Enforcement is on:
 
 `npx --yes @primitive.ai/prim reconcile <idOrShortId>` mints a single-use bypass for the named decision -- it prints `[prim] reconcile bypass issued for dec_<short> (expires in ...)` to STDERR, with the bypass JSON on STDOUT. Your *next* edit to the governed file then goes through, and on that edit prim prints a verdict footer to STDERR -- confirmation the override was recorded, not silently dropped:
 
@@ -170,20 +170,20 @@ npx --yes @primitive.ai/prim decisions recent --limit 20
 If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly. If the repo is inactive, that confirmation authorizes Prim's `--yes` only for the approved create:
 
 ```
-npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge" --files "src/editor.ts"
 ```
 
 Inactive-repo form after approval:
 
 ```
-npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge" --files "src/editor.ts"
 ```
 
 Both `--intent` and `--attribution` are required. Set `--attribution user` only when the person directly stated, selected, or confirmed the exact recorded choice. Set `--attribution agent` when you introduced that exact choice while pursuing a broader request. A broad task prompt, implementation permission, or assignment of responsibility does not turn your implementation choice into a user Decision. If the origin is ambiguous, ask the person to confirm the exact choice before creating it; after confirmation, use `user`. Never guess attribution.
 
 Word `--intent` normatively — the standing constraint future work must follow, not a report of the action taken: "Consume AADT and safety data from street_export, not gps_probes_osm", never "Migrate AADT and safety data managers off gps_probes_osm". A one-time-action verb (Migrate, Backfill, Publish) headlines a task execution: restate the ongoing constraint the action implies, and when none exists, do not record a decision at all. Make the intent self-contained for a reader who wasn't in the session — name the release, artifact, or system explicitly, and state what a referenced change does rather than citing a PR or ticket number, which is itself session context; "limit this release" and "keep the GitHub surface (PR 1102)" are failures. Carry one governing decision per intent and put component or schema specifics in `--decided`.
 
-Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
+Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated git-root-relative paths the Decision governs). Include `--files` for every code-governing Decision so later edits can enforce it. Omit it only for genuinely broad directions; the CLI labels those **not code-scoped / not edit-enforceable**. Add verified scope later with `prim decisions attach-files <id> --files "src/a.ts,src/b.ts"`. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints the created id and scope state — pass `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
 
 ### Inferred decisions: finish first, then optionally ask once
 
@@ -262,7 +262,7 @@ Examples:
 ## Pitfalls
 
 - **An "unavailable" / "not verified" decision check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval — the same holds for Conflict Gates once enabled.
-- **When Enforcement is enabled, a `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
+- **When Enforcement asks (or an agent without an ask tier blocks), a high-confidence semantic contradiction was found.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
 - **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
 - **Capture of coding activity is automatic only in active repos; never inject moves by hand.** If an active repo's decisions aren't showing up, check that the session hooks are installed (`claude status` / `codex status` / `hermes status`) and the daemon is running. Deliberately authoring a higher-order fork—either at the user's request or under the conservative proactive policy above—is a separate, supported path through `decisions create`; in an inactive repo, honor the per-invocation approval boundary above.
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.

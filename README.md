@@ -9,10 +9,9 @@ presence — from the command line and via session + git hooks.
 
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
-> load-bearing decision it conflicts with; their **Enforcement** tier blocks or pauses
-> a conflicting edit until you reconcile and retry. Conflict Gates are **not currently
-> enabled** — automatic decision capture in active repos runs regardless. To enable them
-> for your team, contact **support@getprimitive.ai**.
+> load-bearing decision it conflicts with; their **Enforcement** tier pauses a
+> high-confidence contradiction until you confirm, reconcile, and retry. Enforcement is
+> enabled per organization; automatic decision capture in active repos runs independently.
 
 ## Installation
 
@@ -216,6 +215,7 @@ prim decisions cascade <id>              # Blast radius of a decision
 prim decisions check --files <…>         # Active decisions referencing files (warn-only)
 prim decisions confirm <id>              # Answer a rationale-confirmation prompt
 prim decisions create --intent <…> --attribution <user|agent>  # Record with explicit origin
+prim decisions attach-files <id> --files <…>  # Add canonical code scope to a Decision
 prim decisions link <child> --on <parent>    # Relate: <child> depends on <parent>
 prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
@@ -239,6 +239,10 @@ prompt or permission to implement does not make the resulting agent choice a use
 Decision. If the origin is ambiguous, confirm the exact choice with the person before
 creating it; do not guess.
 
+For a code-governing Decision, pass git-root-relative `--files` so enforcement can
+match later edits. A create without files is valid but is labeled not code-scoped /
+not edit-enforceable; use `decisions attach-files` to add verified scope later.
+
 `link` / `unlink` curate the dependency edges the automatic linker would otherwise
 own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that
 would create a cycle (exit 2); an unresolved id exits 4.
@@ -249,8 +253,8 @@ would create a cycle (exit 2); an unresolved id exits 4.
 prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
 ```
 
-Part of Conflict Gates **Enforcement**, which is not currently enabled (see the note
-at the top). Contact support@getprimitive.ai to enable it.
+Part of organization-configured Conflict Gates **Enforcement**. Run `prim doctor`
+to inspect the effective entitlement and the last v2 preflight.
 
 ### Hooks
 
