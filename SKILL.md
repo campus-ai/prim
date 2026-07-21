@@ -84,19 +84,19 @@ A decision worth deliberately recording is a genuine **fork in the road**: the u
 
 ### Ground the rationale in real sources
 
-Before deliberately recording a decision, actively gather the real context behind **why this path was chosen** — aim to populate the decision with as much genuine, source-grounded rationale as you can find, never a plausible-sounding guess. Start with the current conversation, then reach for every tool, connector, and MCP server available to you to pull from the actual sources the decision or task points to: Slack threads, Granola or other meeting notes, Linear issues, Zoom transcripts, email, and repository docs or skills. Don't limit yourself to that list — use whatever integrations you have. Read the source directly instead of inferring from memory, and target the specific thread, meeting, ticket, or document the user referenced rather than a broad, scattershot search.
+Before deliberately recording a decision, actively gather the real context behind **why this path was chosen** — aim to populate the decision with as much genuine, source-grounded rationale as you can find, never a plausible-sounding guess. Start with the current conversation — it is itself a primary source: when the why was stated or is visible in this session, capture it in `--rationale` at create time rather than omitting it. Then reach for every tool, connector, and MCP server available to you to pull from the actual sources the decision or task points to: Slack threads, Granola or other meeting notes, Linear issues, Zoom transcripts, email, and repository docs or skills. Don't limit yourself to that list — use whatever integrations you have. Read the source directly instead of inferring from memory, and target the specific thread, meeting, ticket, or document the user referenced rather than a broad, scattershot search.
 
-Record only rationale supported by those sources. Do not mistake the implementation method, the task request, or a restatement of the decision for its rationale. If the rationale remains unclear or the relevant source is unavailable, omit `--rationale` rather than inventing one.
+Record only rationale supported by those sources. Do not mistake the implementation method, the task request, or a restatement of the decision for its rationale. Write it as plain, impersonal engineering explanation — the reasons, evidence, and tradeoffs behind the choice, in a sentence or three. Rationale is explanatory, never normative: a constraint future work must obey belongs in `--decided` even when the rationale explains why, and reasoning belongs in `--rationale`, never inlined into the intent while `--rationale` sits empty. `--rationale` is not optional: never invent one, but never silently drop it either — when the why cannot be deduced from all available context, ask the user for it with the one focused question below and record their answer.
 
 For proactively identified decisions in an active repo, let confidence in the rationale determine the interaction:
 
 - **Clear and well-supported** — record the decision and rationale silently at the natural task boundary.
-- **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Record in the same turn with the rationale omitted; add it once confirmed or corrected.
-- **No supported rationale** — at the task boundary, ask one focused question: “What made you choose X over the other path?” Record in the same turn with the rationale omitted; add it when the answer arrives.
+- **Plausible but uncertain** — at the task boundary, state the proposed rationale and ask for lightweight confirmation: “I understand the reason for choosing X to be Y. Is that right?” Create the record once they answer, carrying the confirmed or corrected rationale.
+- **No supported rationale** — at the task boundary, ask one focused question: “What made you choose X over the other path?” Create the record once they answer, carrying their stated rationale.
 
-In both cases the question is a courtesy, not a gate: never make the record wait on an answer, and never fabricate a rationale to fill the gap. An unanswered question with no record is the only wrong outcome.
+The question gates the rationale, not the decision's survival: never fabricate a rationale to fill the gap, and never skip the question to record silently without one. If the user declines to answer, or their next message moves on without answering, record then with `--rationale` absent rather than re-asking or dropping the decision — the only outcome worse than a missing rationale is losing the record entirely.
 
-These questions share the interruption budget below; never ask separate questions for the decision and its rationale. If both are uncertain, combine them into one concise prompt. An explicit request to “add this decision to Primitive” still records immediately with the information supplied—do not delay it to demand rationale.
+These questions share the interruption budget below; never ask separate questions for the decision and its rationale. If both are uncertain, combine them into one concise prompt. An explicit request to “add this decision to Primitive” that supplies or implies its rationale records immediately; when it supplies none and none is deducible, ask the one rationale question and create the record with the answer — the request is approval to record, not a substitute for the why.
 
 ### Inactive repos: approve each deliberate create
 
@@ -108,7 +108,8 @@ an explicit local `prim.active=false` is always inactive. Every
 - An explicit request to record or create that Decision is approval for that one
   invocation; do not ask redundantly.
 - For a proactively identified Decision, present the proposed intent and supported
-  rationale, then wait for approval before creating it. A previous approval never
+  rationale — folding the single rationale question into the same prompt when none
+  was found — then wait for approval before creating it. A previous approval never
   carries forward to another Decision.
 - After approval, pass Prim's global `--yes` for that invocation:
   `npx --yes @primitive.ai/prim --yes decisions create ... --attribution user`.
@@ -122,13 +123,13 @@ an explicit local `prim.active=false` is always inactive. Every
   `npx --yes`, setup's shell-permission grant, and earlier creates do not
   independently change that state.
 
-### Direct requests: record immediately
+### Direct requests: record without asking permission
 
-When the user asks to record a decision—for example, “add this decision to Primitive”—author it directly. Do not ask for another confirmation. In an inactive repo, the request is the one-time approval: use Prim's `--yes` for that create as described above.
+When the user asks to record a decision—for example, “add this decision to Primitive”—author it directly. Do not ask whether to record; the only question that may accompany a direct request is the single rationale question above, when the request supplies no rationale and none is deducible. In an inactive repo, the request is the one-time approval: use Prim's `--yes` for that create as described above.
 
 ### Clear decisions: record without interrupting
 
-When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question **when passive capture is active**. An explicit ratification of a direction—“agreed,” “ship it that way,” or any equivalent affirmation—is such a decision even when the ratified option was your own proposal: the ratification is the approval, so record it and do not ask whether to record. That rule is general: in an active repository, never ask permission to record — the only question the budget permits is the single rationale question, and only when no rationale was stated. In an inactive repo, present it and obtain the per-create approval above. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
+When the user clearly makes a durable fork-in-the-road decision without explicitly asking to record it, record it at the next natural task boundary without asking a redundant confirmation question **when passive capture is active**. An explicit ratification of a direction—“agreed,” “ship it that way,” or any equivalent affirmation—is such a decision even when the ratified option was your own proposal: the ratification is the approval, so record it and do not ask whether to record. That rule is general: in an active repository, never ask permission to record — the only question the budget permits is the single rationale question, which is required, not optional, when no rationale was stated or found. In an inactive repo, present it and obtain the per-create approval above. Preserve the user's meaning and stated rationale; do not strengthen, broaden, or embellish it. Prefer the governing position over the implementation activity that revealed it.
 
 Examples that qualify:
 
@@ -157,7 +158,7 @@ When onboarding or `prim welcome` reports `"org": "seed"`, complete this procedu
 2. Read every path returned before selecting candidates. Never automatically read an untracked or gitignored memory file; use one only when the user explicitly asks to promote it to the team's Primitive graph.
 3. Extract at most three explicit, durable positions that appear to remain in force. A candidate must state a genuine fork in the road—such as a goal, priority, principle, invariant, constraint, default, commitment, tradeoff, or exception. Do not infer decisions from code, repository structure, or unstated implications. Do not bulk-import the documents.
 4. Run `npx --yes @primitive.ai/prim decisions recent --limit 20` and omit candidates equivalent to existing decisions. If the result is unavailable or too incomplete to rule out a duplicate confidently, do not propose the uncertain candidate; explain the limitation.
-5. Present the remaining candidates as proposed decisions. For each one, include the proposed intent, the source path, and only rationale or alternatives explicitly supported by that source. Ask the user to approve or revise the proposals before creating them; do not silently attribute a historical repository decision to the onboarding user.
+5. Present the remaining candidates as proposed decisions. For each one, include the proposed intent, the source path, and only rationale or alternatives explicitly supported by that source; when a source yields no rationale, ask for the why in the same approval prompt. Ask the user to approve or revise the proposals before creating them; do not silently attribute a historical repository decision to the onboarding user.
 
 If the scan returns no matching files or no eligible candidates, say so briefly and continue with the normal open onboarding question. Never invent a proposal to fill the gap.
 
@@ -170,20 +171,22 @@ npx --yes @primitive.ai/prim decisions recent --limit 20
 If an equivalent decision is already present, do not create or suggest it again. After this duplicate check—or after the user confirms an onboarding proposal—author the decision directly. If the repo is inactive, that confirmation authorizes Prim's `--yes` only for the approved create:
 
 ```
-npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge" --decided "Collaborative editing state syncs through prosemirror-collab","The server is the single authority for step ordering"
 ```
 
 Inactive-repo form after approval:
 
 ```
-npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge"
+npx --yes @primitive.ai/prim --yes decisions create --intent "Adopt prosemirror-collab over Yjs" --attribution user --area data --rationale "Server-authoritative ordering" --alternatives "Yjs,Automerge" --decided "Collaborative editing state syncs through prosemirror-collab","The server is the single authority for step ordering"
 ```
 
 Both `--intent` and `--attribution` are required. Set `--attribution user` only when the person directly stated, selected, or confirmed the exact recorded choice. Set `--attribution agent` when you introduced that exact choice while pursuing a broader request. A broad task prompt, implementation permission, or assignment of responsibility does not turn your implementation choice into a user Decision. If the origin is ambiguous, ask the person to confirm the exact choice before creating it; after confirmation, use `user`. Never guess attribution.
 
-Word `--intent` normatively — the standing constraint future work must follow, not a report of the action taken: "Consume AADT and safety data from street_export, not gps_probes_osm", never "Migrate AADT and safety data managers off gps_probes_osm". A one-time-action verb (Migrate, Backfill, Publish) headlines a task execution: restate the ongoing constraint the action implies, and when none exists, do not record a decision at all. Make the intent self-contained for a reader who wasn't in the session — name the release, artifact, or system explicitly, and state what a referenced change does rather than citing a PR or ticket number, which is itself session context; "limit this release" and "keep the GitHub surface (PR 1102)" are failures. Carry one governing decision per intent and put component or schema specifics in `--decided`.
+Word `--intent` as a short sentence-case normative headline — ideally 4–12 words, no terminal period — stating the standing constraint future work must follow, not a report of the action taken: "Consume AADT and safety data from street_export, not gps_probes_osm", never "Migrate AADT and safety data managers off gps_probes_osm". A one-time-action verb (Migrate, Backfill, Publish) headlines a task execution: restate the ongoing constraint the action implies, and when none exists, do not record a decision at all. Make the intent self-contained for a reader who wasn't in the session — name the release, artifact, or system explicitly, and state what a referenced change does rather than citing a PR or ticket number, which is itself session context; "limit this release" and "keep the GitHub surface (PR 1102)" are failures. Carry one governing decision per intent — a reader of the intent alone must see which option is now in force. Expand every binding specific the choice adopts — scope boundaries, defaults, invariants, schema or API shapes, exceptions, required mechanisms — into `--decided`, and move non-binding reasoning into `--rationale`; a paragraph-length intent that inlines its constraints and reasons is a failure.
 
-Optional: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale`, `--area`, `--decided`, `--alternatives` (comma-separated), `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
+Other flags: `--kind` (change|exploration|task_execution|unclear, default change), `--rationale` (required by the recording policy above — the CLI accepts its absence, but only for the declined/unanswered fallback), `--area` (a single short lowercase noun — `auth`, `billing`, `infra`), `--decided`, `--alternatives`, `--confidence` (high|medium|low, default high), `--reversibility` (high|low, default high), and `--files` (comma-separated repo-relative paths the decision governs — these are the files Conflict Gates would check on later edits, same path form as `decisions check`; Conflict Gates are not currently enabled). Omit `--files` for broad directions that should not immediately participate in file-based Conflict Gates. STDOUT is the created identity `{ decisionId, shortId, createdAt }`; STDERR prints `[prim] created dec_<short>.` — pass that `dec_<short>` straight into `decisions show` / `cascade` / `confirm`.
+
+`--decided` carries the enforceable detail as standalone bullets — one per independently adopted constraint, the core choice first, with exact names and values. Each bullet states what must remain true and makes sense by itself: never narrate the session ("Chose to document the behavior" is a failure) and never pack independent rules into one semicolon-delimited entry. `--alternatives` takes one concise entry per option actually considered and rejected; omitting it when none were named is normal. Both flags split their value on commas with no escape, so keep each entry comma-free — rephrase around colons, dashes, or "and".
 
 ### Inferred decisions: finish first, then optionally ask once
 
@@ -198,7 +201,7 @@ Record it only after an affirmative response. Consolidate related evidence into 
 - Never interrupt active implementation solely to improve Primitive's records.
 - Ask at most one Primitive-related confirmation question per task, only after completing the requested work.
 - Ask nothing when the inference is weak, local, temporary, already recorded, or unlikely to guide another teammate.
-- Do not ask when the user requested a narrow execution task or appears to want a quick result without discussion.
+- Do not ask the optional inferred-decision question when the user requested a narrow execution task or appears to want a quick result without discussion; the required rationale question for a clearly made decision still applies at the task boundary.
 - Drop a rejected suggestion. Do not raise it again unless the user materially changes the decision.
 - If ambiguity must already be resolved to perform the task, fold the durable-policy distinction into that necessary question instead of adding a separate Primitive question.
 - Do not narrate or record routine edits, syntax, naming, testing, debugging tactics, or branch/commit mechanics; passive hooks already cover coding activity.
@@ -269,6 +272,6 @@ Examples:
 
 ## After each task
 
-If the user clearly made a durable fork-in-the-road decision, check recent decisions and record it now if it is not already present when capture is active. When capture is inactive, record it only if the user explicitly requested that create; otherwise present it for the per-invocation approval above. If a strong higher-order decision was only inferred, decide whether it clears the interruption budget; if so, ask the single concise confirmation question after reporting the completed work. Otherwise say nothing about Primitive.
+If the user clearly made a durable fork-in-the-road decision, check recent decisions and record it now if it is not already present when capture is active — asking the single rationale question first when the why is not deducible from available context. When capture is inactive, record it only if the user explicitly requested that create; otherwise present it for the per-invocation approval above. If a strong higher-order decision was only inferred, decide whether it clears the interruption budget; if so, ask the single concise confirmation question after reporting the completed work. Otherwise say nothing about Primitive.
 
 If Conflict Gates are enabled and one denied or warned you, report which decision(s) it named and whether you reconciled. If you read the graph before a load-bearing change, note what you found so the user can verify in the dashboard.
