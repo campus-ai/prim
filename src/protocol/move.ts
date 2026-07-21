@@ -29,6 +29,10 @@ export type MoveEnvironment = {
   cwd: string;
   cliVersion: string;
   osPlatform: NodeJS.Platform;
+  /** Canonical git worktree root used to derive every file reference. */
+  repoRoot?: string;
+  /** Opaque, credential-free repository identity shared across clones/worktrees. */
+  repoKey?: string;
 };
 
 type MoveFields = {

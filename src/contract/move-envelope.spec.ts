@@ -135,4 +135,18 @@ describe("Move envelope contract", () => {
     expect(wire).not.toHaveProperty("workspaceId");
     expect(wire).toHaveProperty("env.workspaceId", "123e4567-e89b-42d3-a456-426614174000");
   });
+
+  it("carries optional repository metadata under env", () => {
+    const move: MoveV1 = {
+      ...sample(),
+      env: {
+        ...sample().env,
+        repoRoot: "/Users/jth/repo",
+        repoKey: `repo_v1_${"a".repeat(64)}`,
+      },
+    };
+    const wire = JSON.parse(JSON.stringify(move)) as Record<string, unknown>;
+    expect(wire).toHaveProperty("env.repoRoot", "/Users/jth/repo");
+    expect(wire).toHaveProperty("env.repoKey", `repo_v1_${"a".repeat(64)}`);
+  });
 });

@@ -92,6 +92,29 @@ describe("client credential store", () => {
     });
   });
 
+  it("forwards non-sensitive hook metadata headers without replacing auth", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getClient } = await import("./client.js");
+    await getClient().post(
+      "/api/cli/decisions/conflict-check",
+      { protocolVersion: 2 },
+      {
+        headers: {
+          "x-primitive-agent": "claude_code",
+          "x-primitive-cli-version": "1.2.3",
+        },
+      },
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer fixed-token",
+      "x-primitive-agent": "claude_code",
+      "x-primitive-cli-version": "1.2.3",
+    });
+  });
+
   it("does not use disk refresh state for an environment credential", async () => {
     process.env.PRIM_TOKEN = "fixed-token";
     writeFileSync(join(config, "token"), "browser-access\n");

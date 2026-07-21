@@ -261,6 +261,8 @@ export type RequestOptions = {
   signal?: AbortSignal;
   /** Suppress broker diagnostics on machine-protocol hook paths. */
   quietRefresh?: boolean;
+  /** Additional non-sensitive request metadata (for example hook producer/version). */
+  headers?: Readonly<Record<string, string>>;
 };
 
 export interface RefreshOptions {
@@ -471,7 +473,10 @@ async function request(
   }
 
   const doFetch = (token: string | undefined) => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    };
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(url, {
       method,
