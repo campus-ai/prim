@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.56](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.55...v0.1.0-alpha.56) (2026-07-21)
+
+
+### Bug Fixes
+
+* **skill:** exclude personal-environment decisions from the team graph ([#183](https://github.com/campus-ai/prim/issues/183)) ([5453f27](https://github.com/campus-ai/prim/commit/5453f27a50ade987613a0f5779782a0239c7a9b9))
+* **skill:** match create formatting to classifier contract and require rationale ([#182](https://github.com/campus-ai/prim/issues/182)) ([5e2f388](https://github.com/campus-ai/prim/commit/5e2f388bbad068c9da6b15172d125f38c5b62beb))
+
 ## [0.1.0-alpha.55](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.54...v0.1.0-alpha.55) (2026-07-20)
 
 
