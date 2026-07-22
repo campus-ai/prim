@@ -31,6 +31,8 @@ export interface CreateRequest {
   reversibility?: "high" | "low";
   /** Repo-relative paths this decision governs (gates edits to them). */
   files?: string[];
+  protocolVersion?: 3;
+  repoSyncId?: string;
 }
 
 /** The created decision's identity, as returned by the server (201). */
@@ -66,6 +68,8 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
     confidence: request.confidence,
     reversibility: request.reversibility,
     files: request.files,
+    protocolVersion: request.protocolVersion,
+    repoSyncId: request.repoSyncId,
   };
   const body: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(candidate)) {

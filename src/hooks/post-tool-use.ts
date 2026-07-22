@@ -26,19 +26,20 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
+import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
+import { resolvePreflightTargets } from "./preflight-v3.js";
 import { toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
-const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"]);
 // Codex routes file edits through apply_patch (its single edit tool).
 const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
 // Hermes routes file edits through write_file and patch.
@@ -71,6 +72,8 @@ interface PostToolUseEnvelope {
   session_id?: string;
   hook_event_name?: string;
   tool_name?: string;
+  tool_input?: unknown;
+  tool_use_id?: string;
   cwd?: string;
 }
 
@@ -138,15 +141,31 @@ async function main(): Promise<void> {
   // payload that persists — exactly as the capture hook does.
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
-  if (!isRepoActiveForCapture(cwd)) {
+  if (!isRepoActive(cwd) || !repoSyncId(cwd)) {
     emit();
     return;
+  }
+  if (agent === "claude_code") {
+    const targets = resolvePreflightTargets({
+      toolName,
+      toolInput: envelope.tool_input,
+      agent,
+      cwd,
+    });
+    if (targets.mutation === "none") {
+      emit();
+      return;
+    }
   }
   // Stamp the same worktree provenance as passive prim-hook. The classifier
   // may collapse these duplicate PostToolUse observations and keep either one.
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
-  const base = toMove(parsed, resolveCliVersion(), agent, workspaceId);
+  const invocationId =
+    agent === "claude_code" && typeof envelope.tool_use_id === "string"
+      ? envelope.tool_use_id
+      : undefined;
+  const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   // Write-ahead before the synchronous fast path. The direct POST and every
   // later replay carry this exact moveId, so a timeout/crash cannot create an

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseDocument } from "yaml";
+import { packageVersion } from "../lib/bin-path.js";
 import {
   type HooksMap,
+  SHIM_SCRIPT,
   applyInstall,
   applyUninstall,
   isCaptureInstalled,
@@ -15,6 +17,21 @@ import {
 const userHook = { command: "/home/u/.hermes/agent-hooks/format.sh" };
 
 describe("applyInstall", () => {
+  it("pins every hook entrypoint to this package and an exact-version fallback", () => {
+    for (const path of [
+      "prim-hook.js",
+      "pre-tool-use.js",
+      "post-tool-use.js",
+      "session-start.js",
+      "session-end.js",
+    ]) {
+      expect(SHIM_SCRIPT).toContain(path);
+    }
+    expect(SHIM_SCRIPT).toContain(`@primitive.ai/prim@${packageVersion()}`);
+    expect(SHIM_SCRIPT).toMatch(/\[ -x '.+node' \] && \[ -f '.+prim-hook\.js' \]/);
+    expect(SHIM_SCRIPT).not.toMatch(/@latest|command -v|node_modules\/\.bin/);
+  });
+
   it("registers the gate, ingest, capture, and session hooks under --agent hermes", () => {
     const hooks = applyInstall({}, false);
     expect(isGateInstalled(hooks)).toBe(true);

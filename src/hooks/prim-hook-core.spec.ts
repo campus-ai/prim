@@ -13,7 +13,8 @@ describe("toMove", () => {
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(typeof move.moveId).toBe("string");
     expect(typeof move.capturedAt).toBe("number");
-    expect(move.envelopeVersion).toBe(1);
+    expect(move.envelopeVersion).toBe(3);
+    expect(move.producer).toBe("claude_code");
   });
 
   it("stores the raw hook event verbatim as payload", () => {
@@ -33,10 +34,10 @@ describe("toMove", () => {
     expect(move.env.cwd).toBe(process.cwd());
   });
 
-  it("omits producer for Claude Code (byte-identical wire)", () => {
+  it("always stamps an explicit Claude producer for classifier sequencing", () => {
     const move = toMove({ session_id: "s" }, "x");
-    expect(move.producer).toBeUndefined();
-    expect("producer" in move).toBe(false);
+    expect(move.producer).toBe("claude_code");
+    expect(move.envelopeVersion).toBe(3);
   });
 
   it("stamps producer codex under --agent codex", () => {
@@ -44,22 +45,29 @@ describe("toMove", () => {
     expect(move.producer).toBe("codex");
   });
 
-  it("stamps explicit V2 Claude provenance only when worktree identity is ready", () => {
+  it("stamps optional worktree provenance on the V3 Claude envelope", () => {
     const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
     const move = toMove({ session_id: "s", cwd: "/repo" }, "x", "claude_code", workspaceId);
     expect(move).toMatchObject({
-      envelopeVersion: 2,
+      envelopeVersion: 3,
       producer: "claude_code",
       env: { cwd: "/repo", workspaceId },
     });
   });
 
-  it("uses the same V2 provenance shape for other agents", () => {
+  it("uses the same V3 provenance shape for other agents", () => {
     const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
     const move = toMove({ session_id: "s" }, "x", "codex", workspaceId);
-    expect(move.envelopeVersion).toBe(2);
+    expect(move.envelopeVersion).toBe(3);
     expect(move.producer).toBe("codex");
     expect(move.env).toMatchObject({ workspaceId });
+  });
+
+  it("carries the preflight invocation id only when supplied by successful post capture", () => {
+    expect(toMove({ session_id: "s" }, "x", "claude_code", undefined, "tool-1")).toMatchObject({
+      invocationId: "tool-1",
+    });
+    expect(toMove({ session_id: "s" }, "x")).not.toHaveProperty("invocationId");
   });
 });
 

@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
+import {
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookShimCommand,
+  pinnedHookCommand,
+} from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
   PRIM_AUTOMODE_TRUST,
@@ -126,6 +131,11 @@ describe("applyInstall", () => {
       );
       expect(captureEntry?.matcher).toBe("*");
     }
+    const commands = [
+      ...CAPTURE_EVENTS.flatMap((event) => commandsFor(out, event)),
+      out.statusLine?.command ?? "",
+    ];
+    expect(commands.join("\n")).not.toMatch(/@latest|command -v|node_modules\/\.bin/);
   });
 
   it("writes the gate as a resolution shim (PATH -> local -> npx), not a bare name", () => {
@@ -133,8 +143,8 @@ describe("applyInstall", () => {
     const gateEntry = out.hooks?.PreToolUse?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-pre-tool-use")),
     );
-    expect(gateEntry?.matcher).toBe("Edit|Write|MultiEdit");
-    expect(gateEntry?.hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use"));
+    expect(gateEntry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
+    expect(gateEntry?.hooks?.[0].command).toBe(pinnedHookCommand("prim-pre-tool-use"));
     expect(gateEntry?.hooks?.[0].command).not.toBe("prim-pre-tool-use");
   });
 
@@ -165,7 +175,7 @@ describe("applyInstall", () => {
     );
     // Upgraded, not duplicated: exactly one gate entry, now the shim form.
     expect(gateEntries).toHaveLength(1);
-    expect(gateEntries[0].hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use"));
+    expect(gateEntries[0].hooks?.[0].command).toBe(pinnedHookCommand("prim-pre-tool-use"));
     expect(hasBin(out, "PreToolUse", "prim-hook")).toBe(true);
   });
 
@@ -182,7 +192,7 @@ describe("applyInstall", () => {
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-pre-tool-use")),
     );
     expect(gateEntries).toHaveLength(1);
-    expect(gateEntries[0].matcher).toBe("Edit|Write|MultiEdit");
+    expect(gateEntries[0].matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
   });
 
   it("leaves top-level non-hooks keys untouched", () => {
@@ -449,7 +459,7 @@ describe("post-tool-use, session hooks, statusline install", () => {
     const entry = out.hooks?.PostToolUse?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-post-tool-use")),
     );
-    expect(entry?.matcher).toBe("Edit|Write|MultiEdit");
+    expect(entry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
   });
 
   it("registers the session hooks on SessionStart / SessionEnd", () => {
@@ -458,24 +468,19 @@ describe("post-tool-use, session hooks, statusline install", () => {
     expect(hasBin(out, "SessionEnd", "prim-session-end")).toBe(true);
   });
 
-  it("pins SessionStart to the bare ladder (cacheRead:false) so it re-resolves @latest each session", () => {
-    // commandMatchesBin matches BOTH shim forms, so an exact-equality assertion
-    // is what catches a flip to the cache-reading shim — which would freeze the
-    // per-session refresh the whole bin cache depends on.
+  it("pins SessionStart to this package and an exact-version fallback", () => {
     const out = applyInstall(EMPTY);
     const entry = out.hooks?.SessionStart?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-session-start")),
     );
-    expect(entry?.hooks?.[0].command).toBe(
-      hookShimCommand("prim-session-start", "", { cacheRead: false }),
-    );
+    expect(entry?.hooks?.[0].command).toBe(pinnedHookCommand("prim-session-start"));
   });
 
   it("installs the prim statusLine (shim) with a refresh interval when the slot is empty", () => {
     const out = applyInstall(EMPTY);
     expect(out.statusLine?.type).toBe("command");
     expect(out.statusLine?.refreshInterval).toBe(5);
-    expect(out.statusLine?.command).toBe(hookShimCommand("prim", "statusline"));
+    expect(out.statusLine?.command).toBe(pinnedHookCommand("prim", "statusline"));
     expect(out.statusLine?.command).toContain("@primitive.ai/prim");
   });
 
@@ -504,7 +509,7 @@ describe("post-tool-use, session hooks, statusline install", () => {
     };
     const out = applyInstall(old);
     expect(out.statusLine?.refreshInterval).toBe(5);
-    expect(out.statusLine?.command).toBe(hookShimCommand("prim", "statusline"));
+    expect(out.statusLine?.command).toBe(pinnedHookCommand("prim", "statusline"));
   });
 
   it("never clobbers a user-defined statusLine", () => {
@@ -577,12 +582,12 @@ describe("SessionEnd detached registrations", () => {
     expect(sessionEnd?.hooks?.[0].command).toBe(detachedHookShimCommand("prim-session-end"));
   });
 
-  it("keeps every non-SessionEnd capture event on the synchronous shim", () => {
+  it("keeps every non-SessionEnd capture event synchronous and pinned", () => {
     // Pins the SessionEnd-only scope: see TODO(detach-all-passive-capture).
     const out = applyInstall(EMPTY);
     for (const event of CAPTURE_EVENTS.filter((e) => e !== "SessionEnd")) {
       const commands = commandsFor(out, event).filter((c) => commandMatchesBin(c, "prim-hook"));
-      expect(commands).toEqual([hookShimCommand("prim-hook")]);
+      expect(commands).toEqual([pinnedHookCommand("prim-hook")]);
       expect(commands[0]).not.toMatch(/^payload=/);
     }
   });
@@ -611,7 +616,7 @@ describe("SessionEnd detached registrations", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0].hooks?.[0].command).toBe(detachedHookShimCommand(bin));
     }
-    expect(JSON.stringify(out.hooks?.Stop)).toBe(JSON.stringify(preDetach.hooks?.Stop));
+    expect(commandsFor(out, "Stop")).toEqual([pinnedHookCommand("prim-hook")]);
   });
 
   it("heals a mixed canonical+stale SessionEnd state on a plain re-install", () => {

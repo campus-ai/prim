@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
-import { ENVELOPE_VERSION, type Move, type MoveV1, withAgentProvenance } from "../protocol/move.js";
+import { AGENT_ENVELOPE_VERSION, ENVELOPE_VERSION, type Move } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
 
 export function toMove(
@@ -17,8 +17,9 @@ export function toMove(
   cliVersion: string,
   agent: Agent = "claude_code",
   workspaceId?: string,
+  invocationId?: string,
 ): Move {
-  const move: MoveV1 = {
+  return {
     moveId: randomUUID(),
     capturedAt: Date.now(),
     sessionId: (parsed.session_id as string | undefined) ?? "",
@@ -28,14 +29,12 @@ export function toMove(
       cwd: (parsed.cwd as string | undefined) ?? process.cwd(),
       cliVersion,
       osPlatform: platform(),
+      ...(workspaceId ? { workspaceId } : {}),
     },
-    envelopeVersion: ENVELOPE_VERSION,
-    // Stamp the producer for non-Claude agents (codex, hermes); Claude Code
-    // moves omit it (the backend defaults an absent value to "claude_code"),
-    // keeping the Claude wire shape byte-identical.
-    ...(agent === "claude_code" ? {} : { producer: agent }),
+    envelopeVersion: AGENT_ENVELOPE_VERSION,
+    producer: agent,
+    ...(invocationId ? { invocationId } : {}),
   };
-  return workspaceId ? withAgentProvenance(move, agent, workspaceId) : move;
 }
 
 export type CommitInfo = {

@@ -19,6 +19,13 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
+vi.mock("../lib/bin-path.js", () => ({
+  pinnedHookCommand: vi.fn(
+    (bin: string) =>
+      `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/${bin}.js' ]; then '/opt/prim/node' '/opt/prim/${bin}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
+  ),
+}));
+
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -313,15 +320,15 @@ describe("hooks install action", () => {
     expect(paths).toContain("/fake/root/.git/hooks/post-commit");
   });
 
-  it("marks the repo prim-active after a project install (a per-repo install opts it in)", async () => {
+  it("does not activate an unbound repo after a project install", async () => {
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
       from: "user",
     });
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
-      "git",
-      ["config", "--local", "prim.active", "true"],
-      expect.objectContaining({ cwd: "/fake/root" }),
-    );
+    expect(
+      mockedExecFileSync.mock.calls.some(
+        (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -370,7 +377,12 @@ describe("installGlobalHooks (user scope)", () => {
     expect(pre).toContain("git rev-parse --git-common-dir");
     expect(pre).not.toContain("--git-path");
     expect(pre).toContain('"$repo_hook" "$@" || exit $?'); // a repo pre-commit can still block
-    expect(pre).toContain("prim-pre-commit || true"); // prim never breaks a commit
+    expect(pre).toContain("} || true"); // prim never breaks a commit
+    expect(pre).toContain("[ -x '/opt/prim/node' ]");
+    expect(pre).toContain("@primitive.ai/prim@0.1.0-alpha.55 prim-pre-commit");
+    expect(pre).not.toContain("command -v");
+    expect(pre).not.toContain("./node_modules");
+    expect(pre).not.toMatch(/@latest|@primitive\.ai\/prim\s/);
     expect(post).toContain('"$repo_hook" "$@" || true'); // post-commit cannot block
     // STRUCTURAL: the prim invocation must be NESTED inside the gate — between
     // the `prim.active` check and the chain — not merely present somewhere.

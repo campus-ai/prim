@@ -39,14 +39,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
-import { activateRepoBestEffort } from "../lib/activation.js";
-import { commandMatchesBin, detachedHookShimCommand, hookShimCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, detachedHookShimCommand, pinnedHookCommand } from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
 
-// Stable bin identities (npm `bin` names). The command actually written into
-// settings.json is the resolution shim from hookShimCommand() (PATH → local →
-// npx@latest); these names are what we match on to recognize and upgrade older
-// bare-name installs.
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
@@ -55,7 +50,7 @@ const SESSION_END_BIN = "prim-session-end";
 // The statusline rides the `prim` bin, invoked as `… statusline`.
 const STATUSLINE_BIN = "prim";
 const STATUSLINE_ARGS = "statusline";
-const STATUSLINE_COMMAND = hookShimCommand(STATUSLINE_BIN, STATUSLINE_ARGS);
+const STATUSLINE_COMMAND = pinnedHookCommand(STATUSLINE_BIN, STATUSLINE_ARGS);
 // Claude Code re-renders the statusLine only on conversation events by
 // default, so a "team: N online" count goes stale between prompts. The idle
 // refresh poll keeps presence live without the user submitting anything; 5s ≈
@@ -115,9 +110,13 @@ export function makeRegistration(
   matcher: string,
   bin: string,
   args = "",
-  opts: { cacheRead?: boolean } = {},
 ): Registration {
-  return { event, matcher, bin, command: hookShimCommand(bin, args, opts) };
+  return {
+    event,
+    matcher,
+    bin,
+    command: pinnedHookCommand(bin, args),
+  };
 }
 
 function makeDetachedRegistration(
@@ -160,11 +159,9 @@ const REGISTRATIONS: Registration[] = [
       ? makeDetachedRegistration(event, "*", CAPTURE_BIN)
       : makeRegistration(event, "*", CAPTURE_BIN),
   ),
-  makeRegistration("PreToolUse", "Edit|Write|MultiEdit", GATE_BIN),
-  makeRegistration("PostToolUse", "Edit|Write|MultiEdit", POST_TOOL_USE_BIN),
-  // Bare ladder (no branch-0): SessionStart must re-resolve @latest each session
-  // to refresh the bin cache the other hooks read. See lib/bin-cache.ts.
-  makeRegistration("SessionStart", "*", SESSION_START_BIN, "", { cacheRead: false }),
+  makeRegistration("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", GATE_BIN),
+  makeRegistration("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", POST_TOOL_USE_BIN),
+  makeRegistration("SessionStart", "*", SESSION_START_BIN),
   makeDetachedRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
 
@@ -638,14 +635,6 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
-  }
-  // A project-scope install targets this repo specifically, so it doubles as
-  // `prim enable` — mark the repo prim-active so the (repo-gated) capture/gate/
-  // ingest hooks run here. cwd (not projectRoot()) avoids a second git subprocess
-  // — `git config --local` finds the repo from any subdir. User scope is
-  // machine-global; activation stays opt-in.
-  if (scope === "project") {
-    activateRepoBestEffort(process.cwd());
   }
   return {
     scope,

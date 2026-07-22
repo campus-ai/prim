@@ -5,12 +5,20 @@ const mocks = vi.hoisted(() => ({
   askConfirmation: vi.fn(),
   fetchCreate: vi.fn(),
   isRepoActiveForCapture: vi.fn(),
+  repoSyncId: vi.fn(),
   setRepoActive: vi.fn(),
+  canonicalRepositoryPath: vi.fn(),
 }));
 
 vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: mocks.isRepoActiveForCapture,
+  repoSyncId: mocks.repoSyncId,
   setRepoActive: mocks.setRepoActive,
+}));
+
+vi.mock("../lib/git.js", () => ({
+  canonicalGitRoot: vi.fn(() => "/repo"),
+  canonicalRepositoryPath: mocks.canonicalRepositoryPath,
 }));
 
 vi.mock("../lib/confirmation.js", async () => {
@@ -66,6 +74,8 @@ describe("decisions create activation consent", () => {
     vi.stubEnv("PRIM_NON_INTERACTIVE", "");
     process.exitCode = 0;
     mocks.fetchCreate.mockResolvedValue(OUTCOME);
+    mocks.repoSyncId.mockReturnValue("sync-1");
+    mocks.canonicalRepositoryPath.mockImplementation((path: string) => path);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -100,6 +110,32 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({ attribution: "agent" }),
     );
+  });
+
+  it("resolves repo-relative --files from the Git root before sending v3 scope", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--files", "src/a.ts,src/b.ts");
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocolVersion: 3,
+        repoSyncId: "sync-1",
+        files: ["src/a.ts", "src/b.ts"],
+      }),
+    );
+    expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");
+  });
+
+  it("rejects --files locally when the repository is unbound", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--files", "src/a.ts");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("run `prim enable`"));
   });
 
   it("requires an explicit attribution", async () => {

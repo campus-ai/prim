@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type Command, Option } from "commander";
-import { activateRepoBestEffort } from "../lib/activation.js";
+import { pinnedHookCommand } from "../lib/bin-path.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 
@@ -59,17 +59,8 @@ const PRIM_MANAGED_MARK = "prim-managed-hook";
 // merely appended to.
 const PRIM_CREATED_MARK = "prim-created-hook";
 
-// The shell that resolves and runs a prim hook bin — PATH, local node_modules,
-// then npx. Fail-soft on EVERY branch (`|| true`): these run on the commit path
-// (and, at user scope, in every repo), so prim must never break a commit.
 function hookShim(binName: string): string {
-  return `if command -v ${binName} >/dev/null 2>&1; then
-  ${binName} || true
-elif [ -f "./node_modules/.bin/${binName}" ]; then
-  ./node_modules/.bin/${binName} || true
-else
-  npx --yes -p @primitive.ai/prim ${binName} 2>/dev/null || true
-fi`;
+  return `{ ${pinnedHookCommand(binName)}; } || true`;
 }
 
 // hookShim, gated on the per-repo opt-in flag. Shared by the user-scope owned
@@ -420,9 +411,6 @@ function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
       installToDotGit(gitRoot, spec);
     }
   }
-  // A per-repo install is itself an opt-in: mark the repo prim-active so the
-  // agent capture/gate/ingest hooks (which gate on prim.active) also run here.
-  activateRepoBestEffort(gitRoot);
 }
 
 export function registerHooksCommands(program: Command) {

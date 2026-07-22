@@ -463,6 +463,13 @@ async function runIngestionLoop(): Promise<void> {
 
 async function handleConflictCheck(params: Record<string, unknown>): Promise<unknown> {
   assertCallerEnvMatches(params.callerEnv, getSiteUrl());
+  if (params.protocolVersion === 3) {
+    const { callerEnv: _callerEnv, ...body } = params;
+    return await client.post("/api/cli/decisions/conflict-check", body, {
+      signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
+      quietRefresh: true,
+    });
+  }
   if (typeof params.file !== "string") {
     throw new Error("conflict_check requires `file: string`");
   }

@@ -3,7 +3,7 @@
  * prim PreToolUse hook for Claude Code.
  *
  * Reads the PreToolUse JSON envelope from stdin, calls the server-side
- * conflict-check endpoint for each file path the proposed tool would touch,
+ * conflict-check endpoint once for the proposed tool invocation,
  * and emits a Claude-Code-contract JSON document on stdout that either
  * allows, asks, or denies the tool call.
  *
@@ -32,7 +32,7 @@
 
 import { getClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
+import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -41,16 +41,22 @@ import {
   type HermesHookOutput,
   type HookEnv,
   type HookOutput,
-  aggregateCheckResults,
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
-  extractFilePaths,
   failOpenHermes,
   failOpenOutput,
   readHookMode,
-  toRepoRelative,
 } from "./pre-tool-use-scoring.js";
+import {
+  PREFLIGHT_PROTOCOL_VERSION,
+  type PreflightRequest,
+  parsePreflightResponse,
+  proposalFor,
+  resolvePreflightTargets,
+  resultForPreflight,
+  unverifiedResult,
+} from "./preflight-v3.js";
 
 const HOOK_TIMEOUT_MS = 4_500;
 const STDIN_TIMEOUT_MS = 1_000;
@@ -61,8 +67,8 @@ type PreToolUseInput = {
   hook_event_name?: string;
   tool_name?: string;
   tool_input?: unknown;
-  // Claude Code stamps the session working directory on every hook envelope;
-  // we relativize absolute tool file paths against it before the lookup.
+  tool_use_id?: string;
+  extra?: { tool_call_id?: unknown };
   cwd?: string;
 };
 
@@ -98,28 +104,19 @@ function failOpen(): HookOutput | HermesHookOutput {
   return agent === "hermes" ? failOpenHermes() : failOpenOutput();
 }
 
-async function checkOneFile(file: string): Promise<ConflictCheckResult> {
-  // Try the daemon first: it holds an open keep-alive connection and
-  // amortizes token refresh, so a hit returns in ~20-30ms instead of the
-  // ~200ms cold HTTP path. A null result falls through to direct HTTP, so a
-  // user without a running daemon is unaffected. The wire body is `{ file }`
-  // on both paths — scoring policy is server-owned.
-  const fromDaemon = await daemonRequest<ConflictCheckResult>(
-    "conflict_check",
-    // callerEnv lets a staging-bound daemon refuse a prod-context gate check
-    // (and vice versa) so we fall through to a direct call against our own env.
-    { file, callerEnv: getSiteUrl() },
-    { timeoutMs: DAEMON_TIMEOUT_MS },
-  );
-  if (fromDaemon) {
-    return fromDaemon;
+function invocationId(envelope: PreToolUseInput): string | undefined {
+  const value = agent === "hermes" ? envelope.extra?.tool_call_id : envelope.tool_use_id;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function emitUnverified(message: string): void {
+  const result = unverifiedResult(message);
+  if (agent === "hermes") {
+    process.stderr.write(`[primitive] ${message}\n`);
+    emit(failOpenHermes());
+  } else {
+    emit(buildHookOutput("allow", [result], agent));
   }
-  const client = getClient();
-  return (await client.post(
-    "/api/cli/decisions/conflict-check",
-    { file },
-    { signal: AbortSignal.timeout(HOOK_TIMEOUT_MS) },
-  )) as ConflictCheckResult;
 }
 
 async function main(): Promise<void> {
@@ -154,33 +151,76 @@ async function main(): Promise<void> {
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
-  const files = extractFilePaths(toolName, envelope.tool_input, agent).map((f) =>
-    toRepoRelative(f, cwd),
-  );
-  if (files.length === 0) {
+  const targets = resolvePreflightTargets({
+    toolName,
+    toolInput: envelope.tool_input,
+    agent,
+    cwd,
+  });
+  if (targets.mutation === "none") {
     emit(failOpen());
     return;
   }
-  // Opt-in gate: only run the conflict check in repos where prim is activated
-  // (prim.active). Checked after the file filter so inactive repos and non-edit
-  // calls pay nothing; fail open (allow) when inactive.
-  if (!isRepoActiveForCapture(cwd)) {
+  if (!isRepoActive(cwd)) {
     emit(failOpen());
     return;
   }
-  let results: ConflictCheckResult[];
+  if (targets.paths.length === 0) {
+    emitUnverified("mutation targets could not be determined; enforcement not verified");
+    return;
+  }
+  const binding = repoSyncId(cwd);
+  const sessionId = envelope.session_id;
+  const callId = invocationId(envelope);
+  if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
+    emitUnverified("repository binding or tool invocation identity is unavailable");
+    return;
+  }
+  const request: PreflightRequest = {
+    protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
+    agent,
+    sessionId,
+    invocationId: callId,
+    repoSyncId: binding,
+    paths: targets.paths,
+    coverage: targets.coverage,
+    proposal: proposalFor(envelope.tool_input),
+  };
+  let result: ConflictCheckResult;
   try {
-    results = await Promise.all(files.map((f) => checkOneFile(f)));
+    const fromDaemon = await daemonRequest<unknown>(
+      "conflict_check",
+      { ...request, callerEnv: getSiteUrl() },
+      { timeoutMs: DAEMON_TIMEOUT_MS },
+    );
+    let response = parsePreflightResponse(fromDaemon);
+    if (!response) {
+      const direct = await getClient().post("/api/cli/decisions/conflict-check", request, {
+        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
+        quietRefresh: true,
+      });
+      response = parsePreflightResponse(direct);
+    }
+    if (!response) {
+      emitUnverified("enforcement service returned an incompatible response");
+      return;
+    }
+    result = resultForPreflight(response);
   } catch {
-    emit(failOpen());
+    emitUnverified("enforcement service unavailable; change was not verified");
     return;
   }
-  const rawAggregate = aggregateCheckResults(results);
-  const aggregate = demoteForMode(rawAggregate, mode);
+  const aggregate = demoteForMode(
+    result.verdict === "unavailable" ? "allow" : result.verdict,
+    mode,
+  );
+  if (agent === "hermes" && (aggregate === "warn" || result.verdict === "unavailable")) {
+    process.stderr.write(`[primitive] ${result.reason || result.unavailable}\n`);
+  }
   emit(
     agent === "hermes"
-      ? buildHermesOutput(aggregate, results)
-      : buildHookOutput(aggregate, results, agent),
+      ? buildHermesOutput(aggregate, [result])
+      : buildHookOutput(aggregate, [result], agent),
   );
 }
 

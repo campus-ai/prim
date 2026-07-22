@@ -34,7 +34,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
-import { activateRepoBestEffort } from "../lib/activation.js";
 import {
   type ClaudeSettings,
   type HookEntry,
@@ -49,9 +48,6 @@ import {
   stripCommand,
 } from "./claude-install.js";
 
-// Stable bin identities, driven under `--agent codex`. The command written
-// into hooks.json is the resolution shim (built by makeRegistration); these
-// names are what install/uninstall match on.
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
@@ -81,9 +77,7 @@ const CODEX_REGISTRATIONS: Registration[] = [
   ...CODEX_CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN, CODEX_ARGS)),
   makeRegistration("PreToolUse", "apply_patch", GATE_BIN, CODEX_ARGS),
   makeRegistration("PostToolUse", "apply_patch", POST_TOOL_USE_BIN, CODEX_ARGS),
-  // Bare ladder (no branch-0): SessionStart re-resolves @latest each session to
-  // refresh the bin cache the other hooks read. See lib/bin-cache.ts.
-  makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS, { cacheRead: false }),
+  makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS),
 ];
 
 const USER_SCOPE_PATH = join(homedir(), ".codex", "hooks.json");
@@ -169,13 +163,6 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
-  }
-  // A project-scope install targets this repo, so it doubles as `prim enable` —
-  // mark the repo prim-active so the (repo-gated) capture/gate/ingest hooks run
-  // here. cwd (not projectRoot()) avoids a second git subprocess. User scope is
-  // machine-global; activation stays opt-in.
-  if (scope === "project") {
-    activateRepoBestEffort(process.cwd());
   }
   return resultFor(scope, path, after, changed);
 }

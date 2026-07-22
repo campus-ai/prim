@@ -50,8 +50,9 @@ import {
   formatShowJson,
 } from "../decisions/show.js";
 import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisions-check.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
+import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
+import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
@@ -207,11 +208,30 @@ export function registerDecisionsCommands(program: Command): void {
     .option("--alternatives <items>", "Comma-separated options considered but rejected")
     .option("--confidence <level>", "high | medium | low (default high)")
     .option("--reversibility <level>", "high | low (default high)")
-    .option(
-      "--files <paths>",
-      "Comma-separated repo-relative paths this decision governs (the files Conflict Gates would check — not currently enabled)",
-    )
+    .option("--files <paths>", "Comma-separated exact repo-relative paths this decision governs")
     .action(async (opts: CreateOptions, command: Command) => {
+      const requestedFiles = splitList(opts.files);
+      let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
+      if (requestedFiles.length > 0) {
+        const binding = repoSyncId(process.cwd());
+        const root = canonicalGitRoot(process.cwd());
+        const canonical = requestedFiles.map((path) =>
+          canonicalRepositoryPath(path, root ?? process.cwd(), root),
+        );
+        if (!binding || canonical.some((path) => !path)) {
+          console.error(
+            "[prim] scoped decision rejected: run `prim enable` and provide exact in-repository file paths",
+          );
+          console.log(JSON.stringify({ ok: false, error: "invalid_repository_scope" }, null, 2));
+          process.exitCode = EXIT_USAGE;
+          return;
+        }
+        explicitScope = {
+          protocolVersion: 3,
+          repoSyncId: binding,
+          files: canonical as string[],
+        };
+      }
       if (!isRepoActiveForCapture(process.cwd())) {
         const globals = command.optsWithGlobals();
         const nonInteractive = isNonInteractive(globals);
@@ -239,7 +259,7 @@ export function registerDecisionsCommands(program: Command): void {
         alternatives: splitList(opts.alternatives),
         confidence: opts.confidence as CreateRequest["confidence"],
         reversibility: opts.reversibility as CreateRequest["reversibility"],
-        files: splitList(opts.files),
+        ...explicitScope,
       };
       try {
         const outcome = await fetchCreate(request);
