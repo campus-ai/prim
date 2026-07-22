@@ -16,6 +16,7 @@ import {
 } from "./pre-tool-use-scoring.js";
 import {
   MAX_PROPOSAL_BYTES,
+  PREFLIGHT_TIMEOUT_MS,
   parsePreflightResponse,
   proposalFor,
   requestPreflight,
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -90,7 +92,7 @@ describe("resolvePreflightTargets", () => {
 });
 
 describe("v3 wire helpers", () => {
-  it("sends one direct request and accepts a response after three seconds", async () => {
+  it("sends one direct request and accepts a response after six seconds", async () => {
     vi.useFakeTimers();
     mockPost.mockImplementationOnce(
       () =>
@@ -105,7 +107,7 @@ describe("v3 wire helpers", () => {
                 conflicts: [],
                 bypassed: [],
               }),
-            3_000,
+            6_000,
           );
         }),
     );
@@ -120,7 +122,7 @@ describe("v3 wire helpers", () => {
       proposal: "compatible edit",
     });
 
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(6_000);
 
     await expect(pending).resolves.toMatchObject({ verdict: "allow" });
     expect(mockPost).toHaveBeenCalledOnce();
@@ -129,6 +131,48 @@ describe("v3 wire helpers", () => {
       expect.objectContaining({ invocationId: "invocation-1", paths: ["src/a.ts"] }),
       { signal: expect.any(AbortSignal), quietRefresh: true },
     );
+  });
+
+  it("fails open visibly for every host when the direct request reaches its hard deadline", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementationOnce((milliseconds) => {
+      expect(milliseconds).toBe(PREFLIGHT_TIMEOUT_MS);
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error("deadline reached")), milliseconds);
+      return controller.signal;
+    });
+    mockPost.mockImplementationOnce(
+      (_path, _request, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const pending = requestPreflight({
+      protocolVersion: 3,
+      agent: "claude_code",
+      sessionId: "session-1",
+      invocationId: "invocation-1",
+      repoSyncId: "repo-1",
+      paths: ["src/a.ts"],
+      coverage: "complete",
+      proposal: "compatible edit",
+    });
+    const rejection = expect(pending).rejects.toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(PREFLIGHT_TIMEOUT_MS);
+    await rejection;
+    expect(mockPost).toHaveBeenCalledOnce();
+
+    const result = unverifiedResult("enforcement service unavailable; change was not verified");
+    const claude = buildHookOutput("allow", [result]);
+    const codex = buildCodexOutput("allow", [result]);
+
+    expect(claude.systemMessage).toContain("change was not verified");
+    expect(claude.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(codex.systemMessage).toContain("change was not verified");
+    expect(codex.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+    expect(buildHermesOutput("allow", [result])).toEqual({});
+    expect(`[primitive] ${result.unavailable}`).toContain("change was not verified");
   });
 
   it("redacts secrets and bounds the proposal by UTF-8 bytes", () => {
