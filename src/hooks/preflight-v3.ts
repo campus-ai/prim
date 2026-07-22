@@ -6,7 +6,7 @@ import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-sco
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
-export const PREFLIGHT_TIMEOUT_MS = 6_500;
+export const PREFLIGHT_TIMEOUT_MS = 4_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export type Coverage = "complete" | "unverified";
