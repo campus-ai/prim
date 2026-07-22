@@ -138,13 +138,13 @@ describe("decisions create activation consent", () => {
   it("resolves repo-relative --files from the Git root before sending v3 scope", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(true);
 
-    await runCreate("--files", "src/a.ts,src/b.ts");
+    await runCreate("--files", "src/a.ts,src/b.ts", "--files", "src/c.ts");
 
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         protocolVersion: 3,
         repoSyncId: "sync-1",
-        files: ["src/a.ts", "src/b.ts"],
+        files: ["src/a.ts", "src/b.ts", "src/c.ts"],
       }),
     );
     expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");

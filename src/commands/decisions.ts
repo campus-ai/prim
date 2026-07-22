@@ -77,11 +77,12 @@ const splitList = (value?: string): string[] =>
 
 // `--decided`/`--alternatives` entries are prose clauses, so commas are part
 // of the payload, not a delimiter: each flag occurrence contributes one entry
-// verbatim. Only `--files` stays comma-separated — exact repository paths.
-const collectItem = (value: string, previous: string[]): string[] => {
-  const item = value.trim();
-  return item ? previous.concat(item) : previous;
-};
+// verbatim. `--files` keeps the comma form — exact repository paths — and
+// accepts repeats too, so every list flag shares one repeat semantics.
+const collectItem = (value: string, previous: string[]): string[] => previous.concat(value);
+
+const collectPaths = (value: string, previous: string[] = []): string[] =>
+  previous.concat(splitList(value));
 
 interface CreateOptions {
   intent: string;
@@ -93,7 +94,7 @@ interface CreateOptions {
   alternatives: string[];
   confidence?: string;
   reversibility?: string;
-  files?: string;
+  files?: string[];
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -104,11 +105,11 @@ export function registerDecisionsCommands(program: Command): void {
     .description("Look up active decisions that reference one or more file paths")
     .requiredOption(
       "--files <files>",
-      "Comma-separated file paths to check against the Decision Graph",
+      "Comma-separated file paths to check against the Decision Graph (repeatable)",
+      collectPaths,
     )
-    .action(async (opts: { files: string }) => {
-      const filePaths = splitList(opts.files);
-      const result = await checkAffectedDecisions(filePaths);
+    .action(async (opts: { files: string[] }) => {
+      const result = await checkAffectedDecisions(opts.files);
       const warning = formatDecisionsWarning(result);
       if (warning) {
         console.error(warning);
@@ -216,19 +217,23 @@ export function registerDecisionsCommands(program: Command): void {
       "--decided <item>",
       "One adopted constraint, verbatim; repeat the flag for each bullet",
       collectItem,
-      [] as string[],
+      [],
     )
     .option(
       "--alternatives <item>",
       "One rejected option, verbatim; repeat the flag for each",
       collectItem,
-      [] as string[],
+      [],
     )
     .option("--confidence <level>", "high | medium | low (default high)")
     .option("--reversibility <level>", "high | low (default high)")
-    .option("--files <paths>", "Comma-separated exact repo-relative paths this decision governs")
+    .option(
+      "--files <paths>",
+      "Comma-separated exact repo-relative paths this decision governs (repeatable)",
+      collectPaths,
+    )
     .action(async (opts: CreateOptions, command: Command) => {
-      const requestedFiles = splitList(opts.files);
+      const requestedFiles = opts.files ?? [];
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
       if (requestedFiles.length > 0) {
         const binding = repoSyncId(process.cwd());
