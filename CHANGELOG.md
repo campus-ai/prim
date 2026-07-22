@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.59](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.58...v0.1.0-alpha.59) (2026-07-22)
+
+
+### Bug Fixes
+
+* extend the preflight client deadline ([f1b8b08](https://github.com/campus-ai/prim/commit/f1b8b08a07790dd04c7421daaa80eb76a7958e9e))
+
 ## [0.1.0-alpha.58](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.57...v0.1.0-alpha.58) (2026-07-22)
 
 
