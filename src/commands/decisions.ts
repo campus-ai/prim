@@ -75,17 +75,26 @@ const splitList = (value?: string): string[] =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+// `--decided`/`--alternatives` entries are prose clauses, so commas are part
+// of the payload, not a delimiter: each flag occurrence contributes one entry
+// verbatim. `--files` keeps the comma form — exact repository paths — and
+// accepts repeats too, so every list flag shares one repeat semantics.
+const collectItem = (value: string, previous: string[]): string[] => previous.concat(value);
+
+const collectPaths = (value: string, previous: string[] = []): string[] =>
+  previous.concat(splitList(value));
+
 interface CreateOptions {
   intent: string;
   attribution: CreateRequest["attribution"];
   kind?: string;
   rationale?: string;
   area?: string;
-  decided?: string;
-  alternatives?: string;
+  decided: string[];
+  alternatives: string[];
   confidence?: string;
   reversibility?: string;
-  files?: string;
+  files?: string[];
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -96,11 +105,11 @@ export function registerDecisionsCommands(program: Command): void {
     .description("Look up active decisions that reference one or more file paths")
     .requiredOption(
       "--files <files>",
-      "Comma-separated file paths to check against the Decision Graph",
+      "Comma-separated file paths to check against the Decision Graph (repeatable)",
+      collectPaths,
     )
-    .action(async (opts: { files: string }) => {
-      const filePaths = splitList(opts.files);
-      const result = await checkAffectedDecisions(filePaths);
+    .action(async (opts: { files: string[] }) => {
+      const result = await checkAffectedDecisions(opts.files);
       const warning = formatDecisionsWarning(result);
       if (warning) {
         console.error(warning);
@@ -204,13 +213,27 @@ export function registerDecisionsCommands(program: Command): void {
       "--area <area>",
       "Functional area (auth, data, infra, ui, api, billing, mobile, docs, testing)",
     )
-    .option("--decided <items>", "Comma-separated option(s) chosen")
-    .option("--alternatives <items>", "Comma-separated options considered but rejected")
+    .option(
+      "--decided <item>",
+      "One adopted constraint, verbatim; repeat the flag for each bullet",
+      collectItem,
+      [],
+    )
+    .option(
+      "--alternatives <item>",
+      "One rejected option, verbatim; repeat the flag for each",
+      collectItem,
+      [],
+    )
     .option("--confidence <level>", "high | medium | low (default high)")
     .option("--reversibility <level>", "high | low (default high)")
-    .option("--files <paths>", "Comma-separated exact repo-relative paths this decision governs")
+    .option(
+      "--files <paths>",
+      "Comma-separated exact repo-relative paths this decision governs (repeatable)",
+      collectPaths,
+    )
     .action(async (opts: CreateOptions, command: Command) => {
-      const requestedFiles = splitList(opts.files);
+      const requestedFiles = opts.files ?? [];
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
       if (requestedFiles.length > 0) {
         const binding = repoSyncId(process.cwd());
@@ -255,8 +278,8 @@ export function registerDecisionsCommands(program: Command): void {
         kind: opts.kind as CreateRequest["kind"],
         rationale: opts.rationale,
         area: opts.area,
-        decided: splitList(opts.decided),
-        alternatives: splitList(opts.alternatives),
+        decided: opts.decided,
+        alternatives: opts.alternatives,
         confidence: opts.confidence as CreateRequest["confidence"],
         reversibility: opts.reversibility as CreateRequest["reversibility"],
         ...explicitScope,

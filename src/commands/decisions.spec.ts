@@ -112,16 +112,39 @@ describe("decisions create activation consent", () => {
     );
   });
 
+  it("collects repeated --decided and --alternatives entries verbatim, commas intact", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--decided",
+      "Consume AADT, safety, and speed data from street_export",
+      "--decided",
+      "gps_probes_osm is no longer a data source",
+      "--alternatives",
+      "Keep gps_probes_osm, patched",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decided: [
+          "Consume AADT, safety, and speed data from street_export",
+          "gps_probes_osm is no longer a data source",
+        ],
+        alternatives: ["Keep gps_probes_osm, patched"],
+      }),
+    );
+  });
+
   it("resolves repo-relative --files from the Git root before sending v3 scope", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(true);
 
-    await runCreate("--files", "src/a.ts,src/b.ts");
+    await runCreate("--files", "src/a.ts,src/b.ts", "--files", "src/c.ts");
 
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         protocolVersion: 3,
         repoSyncId: "sync-1",
-        files: ["src/a.ts", "src/b.ts"],
+        files: ["src/a.ts", "src/b.ts", "src/c.ts"],
       }),
     );
     expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");
