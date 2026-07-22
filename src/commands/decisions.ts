@@ -75,14 +75,22 @@ const splitList = (value?: string): string[] =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+// `--decided`/`--alternatives` entries are prose clauses, so commas are part
+// of the payload, not a delimiter: each flag occurrence contributes one entry
+// verbatim. Only `--files` stays comma-separated — exact repository paths.
+const collectItem = (value: string, previous: string[]): string[] => {
+  const item = value.trim();
+  return item ? previous.concat(item) : previous;
+};
+
 interface CreateOptions {
   intent: string;
   attribution: CreateRequest["attribution"];
   kind?: string;
   rationale?: string;
   area?: string;
-  decided?: string;
-  alternatives?: string;
+  decided: string[];
+  alternatives: string[];
   confidence?: string;
   reversibility?: string;
   files?: string;
@@ -204,8 +212,18 @@ export function registerDecisionsCommands(program: Command): void {
       "--area <area>",
       "Functional area (auth, data, infra, ui, api, billing, mobile, docs, testing)",
     )
-    .option("--decided <items>", "Comma-separated option(s) chosen")
-    .option("--alternatives <items>", "Comma-separated options considered but rejected")
+    .option(
+      "--decided <item>",
+      "One adopted constraint, verbatim; repeat the flag for each bullet",
+      collectItem,
+      [] as string[],
+    )
+    .option(
+      "--alternatives <item>",
+      "One rejected option, verbatim; repeat the flag for each",
+      collectItem,
+      [] as string[],
+    )
     .option("--confidence <level>", "high | medium | low (default high)")
     .option("--reversibility <level>", "high | low (default high)")
     .option("--files <paths>", "Comma-separated exact repo-relative paths this decision governs")
@@ -255,8 +273,8 @@ export function registerDecisionsCommands(program: Command): void {
         kind: opts.kind as CreateRequest["kind"],
         rationale: opts.rationale,
         area: opts.area,
-        decided: splitList(opts.decided),
-        alternatives: splitList(opts.alternatives),
+        decided: opts.decided,
+        alternatives: opts.alternatives,
         confidence: opts.confidence as CreateRequest["confidence"],
         reversibility: opts.reversibility as CreateRequest["reversibility"],
         ...explicitScope,

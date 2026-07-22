@@ -112,6 +112,29 @@ describe("decisions create activation consent", () => {
     );
   });
 
+  it("collects repeated --decided and --alternatives entries verbatim, commas intact", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--decided",
+      "Consume AADT, safety, and speed data from street_export",
+      "--decided",
+      "gps_probes_osm is no longer a data source",
+      "--alternatives",
+      "Keep gps_probes_osm, patched",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decided: [
+          "Consume AADT, safety, and speed data from street_export",
+          "gps_probes_osm is no longer a data source",
+        ],
+        alternatives: ["Keep gps_probes_osm, patched"],
+      }),
+    );
+  });
+
   it("resolves repo-relative --files from the Git root before sending v3 scope", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(true);
 
