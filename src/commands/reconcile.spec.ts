@@ -1,3 +1,4 @@
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPost } = vi.hoisted(() => ({ mockPost: vi.fn() }));
@@ -13,7 +14,7 @@ vi.mock("../client.js", async (importActual) => {
 });
 
 import { HttpError } from "../client.js";
-import { performReconcile } from "./reconcile.js";
+import { performReconcile, registerReconcileCommands } from "./reconcile.js";
 
 const ORIGINAL_EXIT_CODE = process.exitCode;
 
@@ -164,5 +165,17 @@ describe("performReconcile", () => {
       expect.stringContaining("[prim] reconcile: malformed server response"),
     );
     expect(process.exitCode).toBe(3);
+  });
+});
+
+describe("reconcile help", () => {
+  it("describes the capability without asserting an organization feature state", () => {
+    const program = new Command();
+    registerReconcileCommands(program);
+    const description = program.commands
+      .find((command) => command.name() === "reconcile")
+      ?.description();
+    expect(description).toContain("Conflict Gates Enforcement");
+    expect(description).not.toContain("not currently enabled");
   });
 });

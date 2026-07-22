@@ -91,8 +91,9 @@ describe("formatWelcome", () => {
     expect(plain).toContain("Welcome to Primitive");
     expect(plain).toContain("Capture is automatic");
     expect(plain).toContain("Conflict Gates");
-    expect(plain).toContain("not currently enabled");
-    expect(plain).toContain("support@getprimitive.ai");
+    expect(plain).toContain("when Enforcement is enabled");
+    expect(plain).not.toContain("not currently enabled");
+    expect(plain).not.toContain("support@getprimitive.ai");
     expect(plain).toContain("App: https://app.getprimitive.ai");
     expect(plain).toContain("Recent team decisions");
     expect(plain).toContain("Restrict PII storage to EU region");

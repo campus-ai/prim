@@ -34,7 +34,7 @@ import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
-import { shouldFlushAfter, toMove } from "./prim-hook-core.js";
+import { postToolInvocationId, shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -114,13 +114,7 @@ async function main(): Promise<void> {
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
     // to the journal, transits to the server, and lands in the moves table.
-    const successfulPost = parsed.hook_event_name === "PostToolUse";
-    const rawInvocationId =
-      agent === "hermes"
-        ? (parsed.extra as { tool_call_id?: unknown } | undefined)?.tool_call_id
-        : parsed.tool_use_id;
-    const invocationId =
-      successfulPost && typeof rawInvocationId === "string" ? rawInvocationId : undefined;
+    const invocationId = postToolInvocationId(parsed, agent);
     const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
     const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });

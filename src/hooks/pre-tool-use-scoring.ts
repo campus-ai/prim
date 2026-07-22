@@ -8,7 +8,7 @@
  * testable without a live network or stdin.
  *
  * The server is the sole owner of conflict policy: it scores each file and
- * returns a final verdict plus two fail-closed signals the hook MUST honor —
+ * returns a final verdict plus two uncertainty signals the hook MUST honor —
  * `verdict: "unavailable"` (the lookup did not run, e.g. an org-unbound
  * token) and `truncated: true` (the conflict set was capped, so it is
  * partial). Either one means constraints are UNKNOWN, and the hook must
@@ -107,6 +107,7 @@ export function unverifiedNote(results: ConflictCheckResult[]): string {
 }
 
 export type HookOutput = {
+  systemMessage?: string;
   hookSpecificOutput: {
     hookEventName: "PreToolUse";
     permissionDecision: ClaudePermissionDecision;
@@ -115,94 +116,59 @@ export type HookOutput = {
   };
 };
 
+export type CodexHookOutput = {
+  systemMessage?: string;
+  hookSpecificOutput?: {
+    hookEventName: "PreToolUse";
+    permissionDecision?: "deny";
+    permissionDecisionReason?: string;
+    additionalContext?: string;
+  };
+};
+
+function blockingReason(results: ConflictCheckResult[]): string {
+  const parts = results
+    .filter((result) => result.verdict === "ask" || result.verdict === "deny")
+    .flatMap((result) => [result.reason, result.additionalContext])
+    .filter((value) => value.length > 0);
+  return [...new Set(parts)].join("\n\n") || "[primitive] conflict detected (no detail available)";
+}
+
+function advisoryNote(aggregate: ConflictVerdict, results: ConflictCheckResult[]): string {
+  const details = results.flatMap((result) => [
+    ...(aggregate === "warn" ? [result.reason] : []),
+    result.additionalContext,
+  ]);
+  if (anyUnverified(results)) details.push(unverifiedNote(results));
+  return [...new Set(details.filter((value) => value.length > 0))].join("\n\n");
+}
+
 /**
  * Maps the aggregate conflict verdict + per-file results into the Claude
  * Code hook output JSON:
  *   - `deny` → permissionDecision: "deny" + reason (hard block)
  *   - `ask`  → permissionDecision: "ask"  + reason (native dialog)
- *   - `warn`/`allow` → permissionDecision: "allow", with additionalContext
- *     set when there is warn context OR the check was unverified. An
- *     unverified result NEVER yields a bare allow — the additionalContext
- *     carries the "not verified / partial" note so Claude sees it.
+ *   - `warn`/`allow` → permissionDecision: "allow". Warnings include both
+ *     model context and a user-visible systemMessage. An unverified result
+ *     never yields a bare allow.
  */
 export function buildHookOutput(
   aggregate: ConflictVerdict,
   results: ConflictCheckResult[],
-  agent: Agent = "claude_code",
 ): HookOutput {
-  if (aggregate === "deny") {
-    const reason =
-      results
-        .filter((r) => r.verdict === "deny")
-        .map((r) => r.reason)
-        .filter((s) => s.length > 0)
-        .join("\n\n") || "[primitive] conflict detected (no detail available)";
+  if (aggregate === "deny" || aggregate === "ask") {
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: reason,
+        permissionDecision: aggregate,
+        permissionDecisionReason: blockingReason(results),
       },
     };
   }
-  // Codex parses but does not honor PreToolUse `ask`; demote it to a
-  // non-blocking allow that still surfaces the conflict (reason + the reconcile
-  // directive) as additionalContext — the warn shape Codex does honor. `deny`
-  // above is left intact (Codex honors deny).
-  if (agent === "codex" && aggregate === "ask") {
-    const reason = results
-      .filter((r) => r.verdict === "ask" || r.verdict === "deny")
-      .map((r) => r.reason)
-      .filter((s) => s.length > 0)
-      .join("\n\n");
-    const context = results
-      .map((r) => r.additionalContext)
-      .filter((s) => s.length > 0 && s !== reason)
-      .join("\n");
-    const merged = [reason, context].filter((s) => s.length > 0).join("\n\n");
-    const out: HookOutput = {
-      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
-    };
-    if (merged.length > 0) {
-      out.hookSpecificOutput.additionalContext = merged;
-    }
-    return out;
-  }
-  if (aggregate === "ask") {
-    const reason =
-      results
-        .filter((r) => r.verdict === "ask" || r.verdict === "deny")
-        .map((r) => r.reason)
-        .filter((s) => s.length > 0)
-        .join("\n\n") || "[primitive] please confirm this edit";
-    // The server-side `additionalContext` carries the
-    // `To reconcile, run: prim reconcile dec_<short>` directive that Claude
-    // pattern-matches to drive the cooperative reconcile loop. Relay it on
-    // `ask` so the directive isn't dropped before the user picks a path.
-    const additionalContext = results
-      .map((r) => r.additionalContext)
-      .filter((s) => s.length > 0 && s !== reason)
-      .join("\n");
-    const out: HookOutput = {
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "ask",
-        permissionDecisionReason: reason,
-      },
-    };
-    if (additionalContext.length > 0) {
-      out.hookSpecificOutput.additionalContext = additionalContext;
-    }
-    return out;
-  }
-  const notes = [
-    ...results.map((r) => r.additionalContext).filter((s) => s.length > 0),
-    anyUnverified(results) ? unverifiedNote(results) : "",
-  ]
-    .filter((s) => s.length > 0)
-    .join("\n");
+  const notes = advisoryNote(aggregate, results);
   if (notes.length > 0) {
     return {
+      systemMessage: notes,
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
@@ -216,6 +182,29 @@ export function buildHookOutput(
       permissionDecision: "allow",
     },
   };
+}
+
+/** Render only fields Codex supports for the current outcome. */
+export function buildCodexOutput(
+  aggregate: ConflictVerdict,
+  results: ConflictCheckResult[],
+): CodexHookOutput {
+  if (aggregate === "deny" || aggregate === "ask") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: blockingReason(results),
+      },
+    };
+  }
+  const notes = advisoryNote(aggregate, results);
+  return notes
+    ? {
+        systemMessage: notes,
+        hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: notes },
+      }
+    : {};
 }
 
 /**
@@ -232,6 +221,10 @@ export function failOpenOutput(): HookOutput {
       permissionDecision: "allow",
     },
   };
+}
+
+export function failOpenCodex(): CodexHookOutput {
+  return {};
 }
 
 /**

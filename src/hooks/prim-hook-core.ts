@@ -7,10 +7,22 @@
  * Claude Code field (e.g. hook_event_name) would otherwise zero the
  * pipeline invisibly.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { platform } from "node:os";
 import { AGENT_ENVELOPE_VERSION, ENVELOPE_VERSION, type Move } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
+
+export function postToolInvocationId(
+  parsed: Record<string, unknown>,
+  agent: Agent,
+): string | undefined {
+  if (parsed.hook_event_name !== "PostToolUse") return undefined;
+  const raw =
+    agent === "hermes"
+      ? (parsed.extra as { tool_call_id?: unknown } | undefined)?.tool_call_id
+      : parsed.tool_use_id;
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
 
 export function toMove(
   parsed: Record<string, unknown>,
@@ -19,11 +31,19 @@ export function toMove(
   workspaceId?: string,
   invocationId?: string,
 ): Move {
+  const sessionId = (parsed.session_id as string | undefined) ?? "";
+  const eventType = (parsed.hook_event_name as string | undefined) ?? "unknown";
+  const moveId =
+    eventType === "PostToolUse" && sessionId && invocationId
+      ? `posttool:v1:${createHash("sha256")
+          .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
+          .digest("hex")}`
+      : randomUUID();
   return {
-    moveId: randomUUID(),
+    moveId,
     capturedAt: Date.now(),
-    sessionId: (parsed.session_id as string | undefined) ?? "",
-    eventType: (parsed.hook_event_name as string | undefined) ?? "unknown",
+    sessionId,
+    eventType,
     payload: parsed,
     env: {
       cwd: (parsed.cwd as string | undefined) ?? process.cwd(),

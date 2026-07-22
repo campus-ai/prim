@@ -2,26 +2,42 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildHermesOutput, buildHookOutput, demoteForMode } from "./pre-tool-use-scoring.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockPost } = vi.hoisted(() => ({ mockPost: vi.fn() }));
+
+vi.mock("../client.js", () => ({ getClient: () => ({ post: mockPost }) }));
+
+import {
+  buildCodexOutput,
+  buildHermesOutput,
+  buildHookOutput,
+  demoteForMode,
+} from "./pre-tool-use-scoring.js";
 import {
   MAX_PROPOSAL_BYTES,
   parsePreflightResponse,
   proposalFor,
+  requestPreflight,
   resolvePreflightTargets,
   resultForPreflight,
+  unverifiedResult,
 } from "./preflight-v3.js";
 
 let root: string;
 
 beforeEach(() => {
+  mockPost.mockReset();
   root = mkdtempSync(join(tmpdir(), "prim-preflight-v3-"));
   execFileSync("git", ["init", "-q", root]);
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "a.ts"), "a");
 });
 
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.useRealTimers();
+  rmSync(root, { recursive: true, force: true });
+});
 
 describe("resolvePreflightTargets", () => {
   it("uses the existing native extractors and exact canonical paths", () => {
@@ -74,6 +90,47 @@ describe("resolvePreflightTargets", () => {
 });
 
 describe("v3 wire helpers", () => {
+  it("sends one direct request and accepts a response after three seconds", async () => {
+    vi.useFakeTimers();
+    mockPost.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                protocolVersion: 3,
+                verdict: "allow",
+                reasonCode: "semantically_compatible",
+                message: "compatible",
+                conflicts: [],
+                bypassed: [],
+              }),
+            3_000,
+          );
+        }),
+    );
+    const pending = requestPreflight({
+      protocolVersion: 3,
+      agent: "claude_code",
+      sessionId: "session-1",
+      invocationId: "invocation-1",
+      repoSyncId: "repo-1",
+      paths: ["src/a.ts"],
+      coverage: "complete",
+      proposal: "compatible edit",
+    });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await expect(pending).resolves.toMatchObject({ verdict: "allow" });
+    expect(mockPost).toHaveBeenCalledOnce();
+    expect(mockPost).toHaveBeenCalledWith(
+      "/api/cli/decisions/conflict-check",
+      expect.objectContaining({ invocationId: "invocation-1", paths: ["src/a.ts"] }),
+      { signal: expect.any(AbortSignal), quietRefresh: true },
+    );
+  });
+
   it("redacts secrets and bounds the proposal by UTF-8 bytes", () => {
     const proposal = proposalFor({ token: "Bearer abc.def", content: "😀".repeat(5_000) });
     expect(proposal).toContain("<REDACTED:bearer-token>");
@@ -101,7 +158,7 @@ describe("v3 wire helpers", () => {
     });
     expect(result.reason).not.toContain("injected");
     expect(
-      buildHookOutput("deny", [result], "codex").hookSpecificOutput.permissionDecisionReason,
+      buildCodexOutput("deny", [result]).hookSpecificOutput?.permissionDecisionReason,
     ).toContain("prim reconcile dec_ab12cd34");
     expect(buildHookOutput("ask", [result]).hookSpecificOutput.permissionDecisionReason).toContain(
       "prim reconcile dec_ab12cd34",
@@ -111,5 +168,18 @@ describe("v3 wire helpers", () => {
       buildHookOutput(demoteForMode("deny", "warn"), [result]).hookSpecificOutput,
     ).toMatchObject({ permissionDecision: "allow", additionalContext: result.reason });
     expect(parsePreflightResponse({ protocolVersion: 2, verdict: "allow" })).toBeNull();
+  });
+
+  it("renders unsupported dynamic mutations as directly visible warnings", () => {
+    const result = unverifiedResult(
+      "mutation targets could not be determined; enforcement not verified",
+    );
+    const claude = buildHookOutput("allow", [result]);
+    const codex = buildCodexOutput("allow", [result]);
+
+    expect(claude.systemMessage).toContain("enforcement not verified");
+    expect(claude.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(codex.systemMessage).toContain("enforcement not verified");
+    expect(codex.hookSpecificOutput).not.toHaveProperty("permissionDecision");
   });
 });
