@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.58](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.57...v0.1.0-alpha.58) (2026-07-22)
+
+
+### Features
+
+* replace the onboarding goals question with one-at-a-time memory proposals ([#187](https://github.com/campus-ai/prim/issues/187)) ([d1fcccd](https://github.com/campus-ai/prim/commit/d1fcccde6c0dcac7d130820baefd4c5bd0ec4882))
+
+
+### Bug Fixes
+
+* **cli:** make --decided and --alternatives repeatable, never comma-split ([#189](https://github.com/campus-ai/prim/issues/189)) ([724fca8](https://github.com/campus-ai/prim/commit/724fca85847cd0d9d6a7bff1c23e606fedae9407))
+* make enforcement hooks reliable across agents ([#190](https://github.com/campus-ai/prim/issues/190)) ([30c99f9](https://github.com/campus-ai/prim/commit/30c99f926a4da1336a07f1728f49dfd486ecfa0e))
+
 ## [0.1.0-alpha.57](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.56...v0.1.0-alpha.57) (2026-07-22)
 
 
