@@ -2,7 +2,7 @@
  * `prim welcome` — orientation + state coverage. Asserts the formatted block
  * (ANSI-stripped) carries the load-bearing content for each branch: the shared
  * orientation is always present; a viewer with decisions inlines recent ones; a
- * viewer with none gets the reverse-prompt (with team decisions above it when the
+ * viewer with none gets the seeding block (with team decisions above it when the
  * org has any); and an unverifiable feed degrades to the static starter commands.
  * Color is gated on a stderr TTY, so under vitest the helpers already return plain
  * text — stripAnsi keeps the assertions robust either way.
@@ -12,8 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { DecisionFeedRow } from "../decisions/recent.js";
 import { stripAnsi } from "../lib/ansi.js";
 import {
-  REVERSE_PROMPT,
-  REVERSE_PROMPT_TEMPLATE,
+  SEED_GUIDANCE,
   type WelcomeState,
   formatWelcome,
   welcomeJson,
@@ -100,26 +99,34 @@ describe("formatWelcome", () => {
     expect(plain).not.toContain("…");
   });
 
-  it("seed (empty org): ruled question callout is the terminal call-to-action, no team block, no footer after", () => {
+  it("seed (empty org): seeding block explains the proposal pass and the standing guidance, no team block", () => {
     const plain = plainOf({ org: "seed", recent: [] });
     expect(plain).toContain("Welcome to Primitive");
     expect(plain).toContain("seed your decision graph");
     expect(plain).toContain("You haven't recorded a decision yet");
-    expect(plain).toContain("Your turn");
-    expect(plain).toContain("most important goals");
-    expect(plain).toContain("not focusing on");
+    // Source transparency + no overpromise: the copy names where candidates
+    // come from (stated context + shared repo memory) and never guarantees
+    // proposals will materialize — a cold-start agent may find none.
+    expect(plain).toContain("what you've told it");
+    expect(plain).toContain("shared memory files");
+    expect(plain).toContain("any decisions it finds");
+    // Team-visibility disclosure: the user must hear, before approving
+    // anything, that seeded decisions land in the team's shared graph.
+    expect(plain).toContain("team's shared graph");
+    expect(plain).toContain("From here on");
+    expect(plain).toContain("add any decision to Primitive");
+    expect(plain).toContain("captures decisions passively");
+    expect(plain).toContain("prim enable");
+    expect(plain).toContain("App: https://app.getprimitive.ai");
     expect(plain).not.toContain("Recent team decisions");
     expect(plain).not.toContain("prim decisions recent");
-    // The question is the LAST thing the user sees: the callout's bottom rule
-    // ends the block, and the App footer is suppressed so nothing follows it.
-    expect(plain).not.toContain("App: https://app.getprimitive.ai");
-    expect(plain.trimEnd().endsWith("┘")).toBe(true);
-    // The review template is agent-only (JSON): the human render never carries
-    // its unfilled $FOUND_GOALS slot.
-    expect(plain).not.toContain("$FOUND_GOALS");
+    // The open goals question is gone: seeding is proposal-driven, one at a
+    // time, per the prim skill — no interview rendered here.
+    expect(plain).not.toContain("most important goals");
+    expect(plain).not.toContain("Your turn");
   });
 
-  it("seed (active org): team decisions inlined above the ruled question callout, question still terminal", () => {
+  it("seed (active org): team decisions inlined above the seeding block", () => {
     const plain = plainOf({
       org: "seed",
       recent: [row({ intent: "Restrict PII storage to EU region" })],
@@ -127,13 +134,12 @@ describe("formatWelcome", () => {
     expect(plain).toContain("Recent team decisions");
     expect(plain).toContain("Restrict PII storage to EU region");
     expect(plain).toContain("Maya");
-    expect(plain).toContain("Your turn");
     expect(plain).toContain("You haven't recorded a decision yet");
-    expect(plain).toContain("most important goals");
+    expect(plain).toContain("From here on");
     expect(plain).not.toContain("prim decisions recent");
-    // Team context sits ABOVE the question; the question is still terminal.
-    expect(plain.indexOf("Recent team decisions")).toBeLessThan(plain.indexOf("Your turn"));
-    expect(plain.trimEnd().endsWith("┘")).toBe(true);
+    expect(plain.indexOf("Recent team decisions")).toBeLessThan(
+      plain.indexOf("seed your decision graph"),
+    );
   });
 
   it("unknown feed: shared orientation + static starter-command fallback", () => {
@@ -155,13 +161,12 @@ describe("welcomeJson", () => {
     });
   });
 
-  it("seed carries org + the flat reverse-prompt + the review template + team context", () => {
+  it("seed carries org + the standing guidance + team context", () => {
     const recent = [row()];
     expect(welcomeJson({ org: "seed", recent })).toEqual({
       welcomed: true,
       org: "seed",
-      reversePrompt: REVERSE_PROMPT,
-      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
+      seedGuidance: SEED_GUIDANCE,
       recent,
     });
   });
@@ -170,8 +175,7 @@ describe("welcomeJson", () => {
     expect(welcomeJson({ org: "seed", recent: [] })).toEqual({
       welcomed: true,
       org: "seed",
-      reversePrompt: REVERSE_PROMPT,
-      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
+      seedGuidance: SEED_GUIDANCE,
       recent: [],
     });
   });
@@ -180,15 +184,9 @@ describe("welcomeJson", () => {
     expect(welcomeJson({ org: "unknown" })).toEqual({ welcomed: true, org: "unknown" });
   });
 
-  it("REVERSE_PROMPT is the verbatim onboarding question", () => {
-    expect(REVERSE_PROMPT).toBe(
-      "What are the most important goals in your organization that you're responsible for, right now? What are you not focusing on, in order to focus on those goals?",
-    );
-  });
-
-  it("REVERSE_PROMPT_TEMPLATE is the verbatim review framing with the $FOUND_GOALS slot", () => {
-    expect(REVERSE_PROMPT_TEMPLATE).toBe(
-      "We're interested in learning your current goals, as well as what you're not focusing on to achieve those goals. We found the following:\n\n$FOUND_GOALS\n\nHow do these look to you? Would you like to change these goals?",
+  it("SEED_GUIDANCE is the verbatim standing guidance the agent surfaces after its final proposal", () => {
+    expect(SEED_GUIDANCE).toBe(
+      "You can tell your agent to add any decision to your Primitive decision graph at any time. Otherwise, Primitive passively captures decisions in the background while you work. To capture decisions in other repositories, enable Primitive there too: run `prim enable` in each one.",
     );
   });
 });

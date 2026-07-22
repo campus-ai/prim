@@ -411,8 +411,8 @@ export function registerSetupCommand(
         }
       }
 
-      // Final · welcome — its output (orientation + any "Your turn" seeding
-      // prompt) streams through inherited stdio BEFORE we read the exit code, so
+      // Final · welcome — its output (orientation + any seeding guidance)
+      // streams through inherited stdio BEFORE we read the exit code, so
       // the required final deliverable is always shown. A non-zero (it normally
       // exits 0) is surfaced as `failed` — which, like any required step, flips
       // the overall exit to incomplete — rather than silently reported as ok.
