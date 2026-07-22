@@ -62,6 +62,7 @@
   "dependencies": {
     "commander": "^12.1.0",
     "diff": "^5.2.0",
+    "unbash": "4.0.3",
     "update-notifier": "^7.3.1",
     "yaml": "^2.9.0"
   },

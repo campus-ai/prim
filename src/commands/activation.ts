@@ -7,11 +7,14 @@
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
  */
 import type { Command } from "commander";
-import { setRepoActive } from "../lib/activation.js";
-import { gitToplevel } from "../lib/git.js";
+import { getClient } from "../client.js";
+import { setRepoActive, setRepoSyncId } from "../lib/activation.js";
+import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { printJson } from "../output.js";
 
-function applyActivation(active: boolean): void {
+type BindResponse = { repoSyncId?: unknown };
+
+async function applyActivation(active: boolean): Promise<void> {
   const root = gitToplevel();
   if (!root) {
     process.stderr.write(
@@ -20,14 +23,31 @@ function applyActivation(active: boolean): void {
     process.exit(1);
   }
   try {
-    setRepoActive(process.cwd(), active);
+    let bound: { repoSyncId: string; repositoryFullName: string } | undefined;
+    if (active) {
+      const repositoryFullName = githubRepositoryFullName(root);
+      if (!repositoryFullName) {
+        throw new Error("origin must be a GitHub HTTPS/SSH remote in owner/name form");
+      }
+      const response = (await getClient().post("/api/cli/repositories/bind", {
+        repositoryFullName,
+      })) as BindResponse;
+      if (typeof response.repoSyncId !== "string" || response.repoSyncId.length === 0) {
+        throw new Error("server returned no repository binding");
+      }
+      setRepoSyncId(root, response.repoSyncId);
+      bound = { repoSyncId: response.repoSyncId, repositoryFullName };
+    }
+    setRepoActive(root, active);
+    process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
+    printJson({ active, repo: root, ...bound });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[prim] failed to set prim.active: ${detail}\n`);
+    process.stderr.write(
+      `[prim] failed to ${active ? "bind and enable" : "disable"} prim: ${detail}\n`,
+    );
     process.exit(1);
   }
-  process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
-  printJson({ active, repo: root });
 }
 
 export function registerActivationCommands(program: Command): void {

@@ -114,7 +114,14 @@ async function main(): Promise<void> {
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
     // to the journal, transits to the server, and lands in the moves table.
-    const base = toMove(parsed, resolveCliVersion(), agent, workspaceId);
+    const successfulPost = parsed.hook_event_name === "PostToolUse";
+    const rawInvocationId =
+      agent === "hermes"
+        ? (parsed.extra as { tool_call_id?: unknown } | undefined)?.tool_call_id
+        : parsed.tool_use_id;
+    const invocationId =
+      successfulPost && typeof rawInvocationId === "string" ? rawInvocationId : undefined;
+    const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
     const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
     appendMove(move, orgId);

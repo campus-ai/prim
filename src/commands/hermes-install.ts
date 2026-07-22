@@ -16,16 +16,10 @@
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live Hermes sessions.
  *
- * Two divergences from the Claude/Codex installers shape this module:
- *   1. The target is YAML, not JSON, and a file the user hand-maintains. We
+ * The target is YAML, not JSON, and a file the user hand-maintains. We
  *      rewrite ONLY the text of its top-level `hooks:` block (a byte-level
  *      splice, not a document re-serialize), so the user's providers, models,
  *      comments, and formatting everywhere else survive byte-for-byte.
- *   2. Hermes executes hook commands with `shell=False` (shlex.split), so the
- *      shell-string resolution shim the Claude/Codex installs write would be
- *      exec'd as a literal program. Instead we install one small executable
- *      shim script (`~/.hermes/agent-hooks/prim-shim.sh`) that does the
- *      PATH → local → npx@latest resolution, and point each hook command at it.
  *
  * Writes atomically (tmp + fsync + rename). AX contract (matches `prim claude`
  * / `prim codex`): STDOUT is the JSON result; STDERR is the human verdict.
@@ -46,6 +40,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { Document, parseDocument, stringify } from "yaml";
+import { binFile, packageVersion } from "../lib/bin-path.js";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
@@ -56,14 +51,19 @@ const HERMES_ARGS = "--agent hermes";
 const EDIT_MATCHER = "write_file|patch";
 const JSON_INDENT = 2;
 const SHIM_MODE = 0o755;
-
-const PRIM_BINS: readonly string[] = [
-  CAPTURE_BIN,
-  GATE_BIN,
-  POST_TOOL_USE_BIN,
-  SESSION_START_BIN,
-  SESSION_END_BIN,
-];
+const PRIM_BINS = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, SESSION_START_BIN, SESSION_END_BIN];
+const PINNED_VERSION = packageVersion();
+if (!PINNED_VERSION) throw new Error("cannot determine Primitive package version");
+const sh = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
+const PINNED_NODE = sh(process.execPath);
+const PINNED_CASES = PRIM_BINS.map((bin) => {
+  const file = binFile(bin);
+  if (!file) throw new Error(`cannot locate Primitive hook binary: ${bin}`);
+  return `  ${bin})
+    if [ -x ${PINNED_NODE} ] && [ -f ${sh(file)} ]; then exec ${PINNED_NODE} ${sh(file)} "$@"; fi
+    exec npx --yes -p @primitive.ai/prim@${PINNED_VERSION} "$bin" "$@"
+    ;;`;
+}).join("\n");
 
 // HERMES_HOME defaults to ~/.hermes; honor it so a relocated Hermes is found.
 function hermesHome(): string {
@@ -76,22 +76,17 @@ function shimPath(): string {
   return join(hermesHome(), "agent-hooks", "prim-shim.sh");
 }
 
-// The executable that stands in for the shell resolution Hermes' shell=False
-// model can't do inline: resolve the prim bin in $1 (PATH → local → npx@latest)
-// and exec it with the rest of the args, passing stdin/stdout/exit through.
-const SHIM_SCRIPT = `#!/bin/sh
+// Hermes cannot run an inline shell command, so every registration enters this
+// pinned launcher script and retains stdin/stdout/exit semantics.
+export const SHIM_SCRIPT = `#!/bin/sh
 # prim Hermes hook shim — managed by \`prim hermes install\`. Hermes runs hooks
-# with shell=False, so the PATH → local node_modules → npx @latest resolution a
-# shell does for the Claude Code / Codex installs lives here instead.
+# with shell=False, so exact package entrypoints are selected here.
 bin="$1"
 shift
-if command -v "$bin" >/dev/null 2>&1; then
-  exec "$bin" "$@"
-fi
-if [ -x "./node_modules/.bin/$bin" ]; then
-  exec "./node_modules/.bin/$bin" "$@"
-fi
-exec npx --yes -p @primitive.ai/prim@latest "$bin" "$@"
+case "$bin" in
+${PINNED_CASES}
+esac
+exit 64
 `;
 
 // Hermes execs hook commands with shell=False (shlex.split), so the absolute

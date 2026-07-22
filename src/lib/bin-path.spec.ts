@@ -25,6 +25,8 @@ import {
   commandMatchesBin,
   detachedHookShimCommand,
   hookShimCommand,
+  packageVersion,
+  pinnedHookCommand,
 } from "./bin-path.js";
 
 describe("binFile", () => {
@@ -95,12 +97,24 @@ describe("hookShimCommand", () => {
   });
 });
 
+describe("pinnedHookCommand", () => {
+  it("uses this package entrypoint with an exact-version npx fallback", () => {
+    const command = pinnedHookCommand("prim-pre-tool-use", "--agent codex");
+    expect(command).toContain("dist/hooks/pre-tool-use.js");
+    expect(command).toContain(`@primitive.ai/prim@${packageVersion()}`);
+    expect(command).not.toContain("@latest");
+    expect(command).not.toContain("command -v prim-pre-tool-use");
+    expect(command).toMatch(/\[ -x '.+node' \] && \[ -f '.+pre-tool-use\.js' \]/);
+    expect(command).toContain("--agent codex");
+    expect(commandMatchesBin(command, "prim-pre-tool-use")).toBe(true);
+  });
+});
+
 describe("detachedHookShimCommand", () => {
-  it("embeds the bare-ladder shim verbatim inside the detached template", () => {
-    // Detached uses cacheRead:false — branch-0's `exec` is for the sync hooks,
-    // and this keeps the delicate wrapper byte-identical to its pre-cache form.
+  it("embeds the pinned launcher inside the detached template", () => {
     const cmd = detachedHookShimCommand("prim-hook");
-    expect(cmd).toContain(`| { ${hookShimCommand("prim-hook", "", { cacheRead: false })}; }`);
+    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook")}; }`);
+    expect(cmd).not.toContain("@latest");
   });
 
   it("captures stdin before backgrounding and pipes it back", () => {
@@ -146,9 +160,7 @@ describe("detachedHookShimCommand", () => {
 
   it("threads args through the embedded shim", () => {
     const cmd = detachedHookShimCommand("prim-hook", "--agent codex");
-    expect(cmd).toContain(
-      `| { ${hookShimCommand("prim-hook", "--agent codex", { cacheRead: false })}; }`,
-    );
+    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook", "--agent codex")}; }`);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -157,20 +169,20 @@ describe("detachedHookShimCommand", () => {
       const dir = mkdtempSync(join(tmpdir(), "prim-detach-"));
       const outFile = join(dir, "out.json");
       try {
-        // Stub prim-hook: sleep past the timing budget, then persist stdin.
+        // Stub the exact-version npx fallback: sleep, then persist stdin.
         // Write-then-rename so the exists-poll below never observes the file
         // in its exists-but-empty window between open() and cat's write.
         writeFileSync(
-          join(dir, "prim-hook"),
+          join(dir, "npx"),
           `#!/bin/sh\nsleep 1\ncat > "$STUB_OUT.tmp" && mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
         );
-        chmodSync(join(dir, "prim-hook"), 0o755);
+        chmodSync(join(dir, "npx"), 0o755);
         const payload = '{"hook_event_name":"SessionEnd","session_id":"s-1","cwd":"/tmp"}';
         const started = performance.now();
         // spawnSync blocks on pipe EOF as well as exit, so the elapsed budget
         // alone regression-guards the redirect placement: without the
         // outermost /dev/null redirects it blocks for the stub's full sleep.
-        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-hook")], {
+        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-nonesuch")], {
           input: payload,
           env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, STUB_OUT: outFile },
           timeout: 5000,
@@ -225,14 +237,7 @@ describe("canonical command strings (golden)", () => {
 
   it("pins the detached wrapper byte-for-byte", () => {
     expect(detachedHookShimCommand("prim-hook")).toBe(
-      "payload=$(cat); { trap '' HUP; " +
-        "export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 " +
-        "npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; " +
-        `printf '%s' "$payload" | { ` +
-        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
-        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
-        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi" +
-        "; }; } </dev/null >/dev/null 2>&1 &",
+      `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand("prim-hook")}; }; } </dev/null >/dev/null 2>&1 &`,
     );
   });
 });

@@ -24,7 +24,14 @@ const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts
 describe("planSetupSteps", () => {
   it("claude, with daemon: session → daemon → health → hooks → skill, in order", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
-    expect(steps.map((s) => s.key)).toEqual(["session", "daemon", "health", "hooks", "skill"]);
+    expect(steps.map((s) => s.key)).toEqual([
+      "session",
+      "daemon",
+      "health",
+      "hooks",
+      "skill",
+      "enable",
+    ]);
     expect(steps[0].args).toEqual(["claude", "install"]);
     // A requested daemon is required: --no-daemon is the explicit opt-out.
     expect(steps.filter((s) => !s.required).map((s) => s.key)).toEqual([]);
@@ -48,6 +55,7 @@ describe("planSetupSteps", () => {
       "daemon-opt-out",
       "hooks",
       "skill",
+      "enable",
     ]);
     const optOut = planSetupSteps({ agent: "claude", daemon: false, scope: "project" }).find(
       (step) => step.key === "daemon-opt-out",
@@ -107,16 +115,19 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("user scope: appends an 'enable' step to activate this repo (tolerated skip)", () => {
+  it("user scope: appends a required repository bind/enable step", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     const enable = steps.find((s) => s.key === "enable");
     expect(enable?.args).toEqual(["enable"]);
-    expect(enable?.required).toBe(false); // setup may run outside a git repo
+    expect(enable?.required).toBe(true);
   });
 
-  it("project scope: no 'enable' step — a project install is itself the activation", () => {
+  it("project scope: also requires bind/enable after installing hooks", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
-    expect(steps.find((s) => s.key === "enable")).toBeUndefined();
+    expect(steps.find((s) => s.key === "enable")).toMatchObject({
+      args: ["enable"],
+      required: true,
+    });
   });
 });
 
@@ -332,6 +343,7 @@ describe("registerSetupCommand", () => {
       ["daemon", "stop"],
       ["hooks", "install"],
       ["skill", "install", "--agent", "codex"],
+      ["enable"],
       ["welcome"],
     ]);
     expect(exit).toHaveBeenCalledWith(0);

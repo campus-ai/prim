@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, hookShimCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, pinnedHookCommand } from "../lib/bin-path.js";
 import type { ClaudeSettings } from "./claude-install.js";
 import { applyInstall, applyUninstall, isGateInstalled, resolveScope } from "./codex-install.js";
 
@@ -38,15 +38,18 @@ describe("codex applyInstall", () => {
     ]) {
       expect(hasBin(out, event, "prim-hook")).toBe(true);
     }
+    expect(JSON.stringify(out.hooks)).not.toMatch(/@latest|command -v|node_modules\/\.bin/);
   });
 
   it("matches apply_patch and writes shim commands that keep --agent codex", () => {
     const out = applyInstall(EMPTY);
     const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch");
     const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch");
-    expect(preGate?.hooks?.[0].command).toBe(hookShimCommand("prim-pre-tool-use", "--agent codex"));
+    expect(preGate?.hooks?.[0].command).toBe(
+      pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
+    );
     expect(postIngest?.hooks?.[0].command).toBe(
-      hookShimCommand("prim-post-tool-use", "--agent codex"),
+      pinnedHookCommand("prim-post-tool-use", "--agent codex"),
     );
     // The shim, not the old bare form.
     expect(preGate?.hooks?.[0].command).not.toBe("prim-pre-tool-use --agent codex");
@@ -68,12 +71,7 @@ describe("codex applyInstall", () => {
     expect(cmds).toHaveLength(2);
     expect(commandMatchesBin(cmds[0], "prim-hook")).toBe(true);
     expect(commandMatchesBin(cmds[1], "prim-session-start")).toBe(true);
-    // Exact-equality (not commandMatchesBin, which matches both forms) pins the
-    // bare ladder so a flip to the cache-reading shim — which would freeze the
-    // per-session @latest refresh — is caught.
-    expect(cmds[1]).toBe(
-      hookShimCommand("prim-session-start", "--agent codex", { cacheRead: false }),
-    );
+    expect(cmds[1]).toBe(pinnedHookCommand("prim-session-start", "--agent codex"));
   });
 
   it("does NOT register SessionEnd (Codex has no such event) or a statusLine", () => {
@@ -116,7 +114,7 @@ describe("codex applyInstall", () => {
     const gateEntries = (out.hooks?.PreToolUse ?? []).filter((e) => e.matcher === "apply_patch");
     expect(gateEntries).toHaveLength(1);
     expect(gateEntries[0].hooks?.[0].command).toBe(
-      hookShimCommand("prim-pre-tool-use", "--agent codex"),
+      pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
     );
   });
 });

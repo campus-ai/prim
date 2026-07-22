@@ -14,12 +14,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   PRIM_ACTIVE_KEY,
-  activateRepoBestEffort,
+  PRIM_REPO_SYNC_ID_KEY,
   decisionIngestionStatus,
   hasProjectPrimInstall,
   isRepoActive,
   isRepoActiveForCapture,
+  repoSyncId,
   setRepoActive,
+  setRepoSyncId,
 } from "./activation.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
@@ -96,21 +98,20 @@ describe("setRepoActive", () => {
   });
 });
 
-describe("activateRepoBestEffort", () => {
-  it("sets the flag true (a project install doubles as `prim enable`)", () => {
-    activateRepoBestEffort("/repo");
+describe("repository binding", () => {
+  it("reads the worktree-local opaque id", () => {
+    stubGit(() => "sync-1\n");
+    expect(repoSyncId("/repo")).toBe("sync-1");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
-      ["config", "--local", PRIM_ACTIVE_KEY, "true"],
+      ["config", "--local", "--get", PRIM_REPO_SYNC_ID_KEY],
       expect.objectContaining({ cwd: "/repo" }),
     );
   });
 
-  it("never throws when git fails (non-repo / git missing) — the install already succeeded", () => {
-    stubGit(() => {
-      throw new Error("not a git repository");
-    });
-    expect(() => activateRepoBestEffort("/tmp")).not.toThrow();
+  it("validates before persisting the id", () => {
+    expect(() => setRepoSyncId("/repo", "sync-1")).not.toThrow();
+    expect(() => setRepoSyncId("/repo", "bad\nid")).toThrow(/invalid repository binding/);
   });
 });
 

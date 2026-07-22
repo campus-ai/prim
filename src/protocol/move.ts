@@ -14,8 +14,8 @@
 /** The byte-compatible envelope emitted before worktree provenance existed. */
 export const LEGACY_ENVELOPE_VERSION = 1 as const;
 
-/** The first envelope that carries explicit agent and worktree provenance. */
-export const AGENT_ENVELOPE_VERSION = 2 as const;
+/** Sequenced agent envelope with an explicit producer and optional correlation. */
+export const AGENT_ENVELOPE_VERSION = 3 as const;
 
 /**
  * Legacy alias retained for callers that intentionally emit V1, notably the
@@ -59,13 +59,14 @@ export type MoveV1 = MoveFields & {
  * under env so an older server whose top-level validator is closed can still
  * accept the additive envelope during a server-first rollout.
  */
-export type AgentMoveV2 = MoveFields & {
-  env: MoveEnvironment & { workspaceId: string };
+export type AgentMoveV3 = MoveFields & {
+  env: MoveEnvironment & { workspaceId?: string };
   envelopeVersion: typeof AGENT_ENVELOPE_VERSION;
   producer: AgentProducer;
+  invocationId?: string;
 };
 
-export type Move = MoveV1 | AgentMoveV2;
+export type Move = MoveV1 | AgentMoveV3;
 
 /**
  * Upgrade a V1 agent move without mutating it. Callers must only invoke this
@@ -76,7 +77,7 @@ export function withAgentProvenance(
   move: MoveV1,
   producer: AgentProducer,
   workspaceId: string,
-): AgentMoveV2 {
+): AgentMoveV3 {
   return {
     ...move,
     env: { ...move.env, workspaceId },

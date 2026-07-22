@@ -60,6 +60,8 @@ describe("fetchCreate", () => {
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
         files: ["src/editor.ts"],
+        protocolVersion: 3,
+        repoSyncId: "sync-1",
       },
       { getClient: () => clientWith(post) },
     );
@@ -71,6 +73,8 @@ describe("fetchCreate", () => {
         alternatives: ["Yjs", "Automerge"],
         confidence: "high",
         files: ["src/editor.ts"],
+        protocolVersion: 3,
+        repoSyncId: "sync-1",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

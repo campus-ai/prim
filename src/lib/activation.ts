@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { gitToplevel } from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
+export const PRIM_REPO_SYNC_ID_KEY = "prim.repoSyncId";
 
 // Project-scope agent config files, relative to the REPO ROOT (where a
 // project-scope install writes them). Never the user-scope files under $HOME —
@@ -67,18 +68,28 @@ export function setRepoActive(cwd: string, active: boolean): void {
   });
 }
 
-/**
- * Best-effort activate `cwd` — a project-scope install (git hooks or agent
- * hooks written into this repo) implies the user wants prim here, so it doubles
- * as `prim enable`. Never throws: a non-repo cwd or missing git is non-fatal,
- * the install itself already succeeded.
- */
-export function activateRepoBestEffort(cwd: string): void {
+export function repoSyncId(cwd: string): string | undefined {
   try {
-    setRepoActive(cwd, true);
+    return (
+      execFileSync("git", ["config", "--local", "--get", PRIM_REPO_SYNC_ID_KEY], {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || undefined
+    );
   } catch {
-    // Not a git work tree / git unavailable — activation is a convenience here.
+    return undefined;
   }
+}
+
+export function setRepoSyncId(cwd: string, value: string): void {
+  if (!value || value.includes("\0") || value.includes("\n")) {
+    throw new Error("invalid repository binding returned by server");
+  }
+  execFileSync("git", ["config", "--local", PRIM_REPO_SYNC_ID_KEY, value], {
+    cwd,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
 }
 
 /**

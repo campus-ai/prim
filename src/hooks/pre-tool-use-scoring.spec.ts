@@ -16,9 +16,11 @@ import {
   buildHookOutput,
   demoteForMode,
   extractFilePaths,
+  extractFileTargets,
   failOpenHermes,
   failOpenOutput,
   parseApplyPatchPaths,
+  parseApplyPatchTargets,
   readHookMode,
   toRepoRelative,
   unverifiedNote,
@@ -240,6 +242,12 @@ describe("extractFilePaths", () => {
     ).toEqual(["src/multi.ts"]);
   });
 
+  it("returns notebook_path from NotebookEdit", () => {
+    expect(extractFilePaths("NotebookEdit", { notebook_path: "notes/book.ipynb" })).toEqual([
+      "notes/book.ipynb",
+    ]);
+  });
+
   it("returns empty for an unsupported tool", () => {
     expect(extractFilePaths("Bash", { command: "ls" })).toEqual([]);
   });
@@ -279,6 +287,17 @@ describe("extractFilePaths", () => {
   it("returns empty for a malformed Codex apply_patch input", () => {
     expect(extractFilePaths("apply_patch", null, "codex")).toEqual([]);
     expect(extractFilePaths("apply_patch", { command: 42 }, "codex")).toEqual([]);
+  });
+
+  it("keeps known Codex paths but marks unknown or orphan directives incomplete", () => {
+    expect(
+      extractFileTargets(
+        "apply_patch",
+        { command: "*** Update File: src/a.ts\n*** Rename File: src/a.ts" },
+        "codex",
+      ),
+    ).toEqual({ paths: ["src/a.ts"], complete: false });
+    expect(parseApplyPatchTargets("*** Move to: src/new.ts").complete).toBe(false);
   });
 
   it("reads the write_file path for Hermes", () => {
@@ -325,12 +344,26 @@ describe("extractFilePaths", () => {
     expect(extractFilePaths("write_file", { content: "no path" }, "hermes")).toEqual([]);
     expect(extractFilePaths("patch", { mode: "patch", patch: 42 }, "hermes")).toEqual([]);
   });
+
+  it("keeps an exposed Hermes path but rejects an unknown patch mode", () => {
+    expect(extractFileTargets("patch", { mode: "mystery", path: "src/h.ts" }, "hermes")).toEqual({
+      paths: ["src/h.ts"],
+      complete: false,
+    });
+  });
 });
 
 describe("parseApplyPatchPaths", () => {
-  it("dedupes repeated paths and trims surrounding whitespace", () => {
+  it("dedupes repeated paths without changing legal path whitespace", () => {
     const patch = "*** Update File: a.ts\n*** Update File: a.ts\n*** Add File:  b.ts ";
-    expect(parseApplyPatchPaths(patch)).toEqual(["a.ts", "b.ts"]);
+    expect(parseApplyPatchPaths(patch)).toEqual(["a.ts", " b.ts "]);
+  });
+
+  it("captures the destination of Codex's Move to directive", () => {
+    expect(parseApplyPatchPaths("*** Update File: src/old.ts\n*** Move to: src/new.ts")).toEqual([
+      "src/old.ts",
+      "src/new.ts",
+    ]);
   });
 
   it("returns empty for patch text with no file headers", () => {

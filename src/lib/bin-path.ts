@@ -1,24 +1,11 @@
 /**
  * Resolve and invoke prim bins without depending on a global install.
  *
- * Two consumers, two needs:
- *
- *   - The daemon: `prim daemon start` must spawn the long-lived
+ * `prim daemon start` must spawn the long-lived
  *     `prim-daemon-server`. binFile() self-locates it by absolute path from the
  *     running code (import.meta.url), so the spawn works whether `daemon start`
  *     ran via `npx` (resolves into the npx cache for the daemon's lifetime) or a
  *     real install — PATH-independent, no second npx resolution.
- *
- *   - The session hooks: `prim claude|codex install` writes a per-event command
- *     into settings.json. There is no global install to point at, so it writes a
- *     resolution SHIM — PATH → local node_modules → `npx --yes @latest` — the
- *     same ladder the git hooks already use (hooks.ts:hookShim). It resolves
- *     with zero package management and always reaches `@latest` on the npx path.
- *
- * commandMatchesBin() recognizes a written command — legacy bare name, the
- * synchronous shim, or the detached wrapper (both shim forms carry the
- * `command -v <bin>` token) — so install/uninstall can identify, upgrade, and
- * strip prim's own entries across all three forms.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -35,9 +22,9 @@ const NPX_FALLBACK = `npx --yes -p ${PKG_NAME}@latest`;
 const BIN_CACHE_DIR_SH = "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";
 const BIN_CACHE_TTL_MIN_DEFAULT = 1440;
 
-type PackageManifest = { name?: string; bin?: Record<string, string> };
+type PackageManifest = { name?: string; version?: string; bin?: Record<string, string> };
 
-let resolvedRoot: { dir: string; bin: Record<string, string> } | null | undefined;
+let resolvedRoot: { dir: string; version?: string; bin: Record<string, string> } | null | undefined;
 
 /**
  * Walk up from this module's location to the prim package root — the nearest
@@ -45,7 +32,7 @@ let resolvedRoot: { dir: string; bin: Record<string, string> } | null | undefine
  * bundled `dist/` layout, an npx cache, AND the `src/` layout under vitest.
  * Cached after the first resolution.
  */
-function locateRoot(): { dir: string; bin: Record<string, string> } | null {
+function locateRoot(): { dir: string; version?: string; bin: Record<string, string> } | null {
   if (resolvedRoot !== undefined) {
     return resolvedRoot;
   }
@@ -56,7 +43,7 @@ function locateRoot(): { dir: string; bin: Record<string, string> } | null {
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PackageManifest;
         if (manifest.name === PKG_NAME && manifest.bin) {
-          resolvedRoot = { dir, bin: manifest.bin };
+          resolvedRoot = { dir, version: manifest.version, bin: manifest.bin };
           return resolvedRoot;
         }
       } catch {
@@ -83,6 +70,24 @@ export function binFile(bin: string): string | null {
   return isAbsolute(rel) ? rel : join(root.dir, rel);
 }
 
+export function packageVersion(): string | null {
+  return locateRoot()?.version ?? null;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function pinnedHookCommand(bin: string, args = ""): string {
+  const version = packageVersion();
+  if (!version) throw new Error("cannot determine Primitive package version");
+  const suffix = args ? ` ${args}` : "";
+  const fallback = `npx --yes -p ${PKG_NAME}@${version} ${bin}${suffix}`;
+  const file = binFile(bin);
+  if (!file) return fallback;
+  return `if [ -x ${shellQuote(process.execPath)} ] && [ -f ${shellQuote(file)} ]; then ${shellQuote(process.execPath)} ${shellQuote(file)}${suffix}; else ${fallback}; fi`;
+}
+
 /**
  * A self-resolving shell command for a settings.json hook: try the bin on PATH,
  * then a local `node_modules/.bin`, then `npx --yes @latest`. Mirrors the
@@ -92,8 +97,6 @@ export function binFile(bin: string): string | null {
  * That holds for the gate and statusline (stdout), post-tool-use (its stderr
  * verdict footer is a deliberate human signal), and session-start (its stdout
  * injects additionalContext under codex) — which is why they stay synchronous;
- * a hook whose output nothing consumes can use detachedHookShimCommand()
- * below instead.
  *   hookShimCommand("prim-hook")                 // capture
  *   hookShimCommand("prim-hook", "--agent codex")// codex capture
  *   hookShimCommand("prim", "statusline")        // statusline
@@ -128,94 +131,8 @@ export function hookShimCommand(
   return cacheBranch + ladder;
 }
 
-/**
- * A fire-and-forget variant of hookShimCommand() for hooks whose output
- * nothing consumes: capture stdin, then run the shim in a detached background
- * job so the hook process exits in milliseconds. Claude Code cancels hooks
- * still running at session teardown ("SessionEnd hook … failed: Hook
- * cancelled" — older versions killed them near-immediately regardless of the
- * configured timeout (anthropics/claude-code#41577), and interrupt-style
- * exits cancel outright (#32712)), and the shim's npx fallback alone takes
- * seconds on an un-installed host. Detached, the hook completes before
- * teardown has anything to cancel, and the capture still lands.
- *
- * Why not Claude Code's native `async: true` hook field (shipped Jan 2026):
- * async hooks still enforce the configured timeout, so a slow npx resolution
- * can still be killed mid-capture — the exact loss this wrapper removes;
- * whether an in-flight async hook survives session teardown at all is
- * undocumented; the field requires a Claude Code new enough to know it,
- * while this template works on every version back to the kill-on-teardown
- * era; and
- * Codex/Hermes have no equivalent, so the shell shape is needed for parity
- * anyway (see TODO(codex-hermes-parity)). Revisit if async hooks gain a
- * documented teardown-survival guarantee.
- *
- * Every piece of the template is load-bearing:
- *   - `payload=$(cat)` drains stdin BEFORE backgrounding — POSIX gives a
- *     backgrounded job /dev/null stdin, which would silently drop the
- *     envelope — and `printf '%s'` (a builtin: no exec, no ARG_MAX) re-feeds
- *     it without interpreting `%` or `\`.
- *   - The redirections and `&` sit on the OUTERMOST brace group so the whole
- *     detached tree inherits /dev/null stdio at fork. If any process in it
- *     inherited the hook's stdout/stderr pipes, Claude Code would keep
- *     waiting for pipe EOF and the detach would silently not detach. The
- *     `</dev/null` must never move onto the inner group — there it would
- *     override the payload pipe.
- *   - `trap '' HUP` shields the PATH and node_modules branches from
- *     terminal-close SIGHUP: sh fork+execs the bin directly there, and
- *     SIG_IGN inherits through exec (nohup would cover only one simple
- *     command and force an inner `sh -c` re-quoting layer). It does NOT
- *     shield the npx branch: npx is a Node process, and Node/libuv resets
- *     every spawned child's signal dispositions to SIG_DFL, so on an
- *     un-installed host the resolved bin runs with DEFAULT signal handling
- *     for the whole seconds-wide resolution window — and macOS ships no
- *     setsid(1) to re-session it. Accepted: the artifact at risk is one
- *     telemetry move (anything already journaled re-drains via flushIfNeeded
- *     and server-side moveId dedup), and prim-hook re-detaches the flush via
- *     Node's `detached: true` (a real new session), which is immune.
- *   - The `npm_config_fetch_*` exports bound the npx branch's runtime: on
- *     npm's defaults a hung registry connection holds the (invisible)
- *     detached job open for ~15 minutes (300s fetch-timeout × 3 attempts +
- *     backoff); 60s × 3 attempts + a 10s-capped backoff keeps it under ~4.
- *     The tuple must stay SELF-COHERENT: env overrides npmrc per-key, so
- *     shipping a maxtimeout without pinning mintimeout would let a host
- *     npmrc with fetch-retry-mintimeout > 10s produce min > max — npm's
- *     retry module then throws before any network attempt, and the capture
- *     silently never lands on exactly the flaky-network hosts this bound
- *     protects. They ride the environment, so they are inert on the PATH and
- *     node_modules branches. The bound is per-job: nothing serializes across
- *     invocations, so scripted session-cycling against a degraded registry
- *     can stack concurrent detached npm jobs (arrival rate × ~200s each) —
- *     accepted for interactive use; add a single-flight guard before
- *     pointing batch workloads at un-installed hosts. A sleep-and-kill
- *     watchdog was rejected: `kill $!` reaches only the inner subshell,
- *     orphaning the very npm/node grandchildren it means to reap.
- *   - The embedded shim keeps its `command -v <bin> ` token, so
- *     commandMatchesBin() recognizes the detached form unchanged.
- *
- * Detached stderr is discarded, so PRIM_HOOK_DEBUG cannot surface failures
- * here — debug by piping an envelope into the inner shim by hand.
- */
-// TODO(codex-hermes-parity): only the Claude Code SessionEnd registrations use
-// this wrapper today.
-//   - Codex (commands/codex-install.ts): same hooks.json shape and shell
-//     execution, so its registrations could adopt this wrapper verbatim via a
-//     detached sibling of makeRegistration. Codex fires no SessionEnd —
-//     Stop/SubagentStop are its terminal capture events — and its gate/
-//     post-tool-use entries must stay synchronous (stdout/exit code are the
-//     answer).
-//   - Hermes (commands/hermes-install.ts): hooks are exec'd with shell=False
-//     (shlex.split), so an inline sh string would be treated as a literal
-//     program name. The detach must live inside the installed shim script
-//     instead: teach ~/.hermes/agent-hooks/prim-shim.sh a mode flag (e.g.
-//     `prim-shim.sh --detach <bin> …`) doing the payload=$(cat) capture +
-//     trap '' HUP + background + /dev/null redirect around its existing
-//     PATH → local → npx resolution, then point the on_session_end
-//     registrations at it. Its gate's `timeout: 10` stays.
 export function detachedHookShimCommand(bin: string, args = ""): string {
-  // cacheRead:false: the detached wrapper stays byte-identical to its
-  // pre-cache form; branch-0's `exec` semantics are for the synchronous hooks.
-  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${hookShimCommand(bin, args, { cacheRead: false })}; }; } </dev/null >/dev/null 2>&1 &`;
+  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**
@@ -236,5 +153,6 @@ export function commandMatchesBin(command: string | undefined, bin: string): boo
     return true;
   }
   // Resolution shim — keyed on its `command -v <bin> ` probe.
-  return c.includes(`command -v ${bin} `);
+  const exactBin = new RegExp(`(?:^|\\s)${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|;|$)`);
+  return c.includes(`command -v ${bin} `) || (c.includes(`-p ${PKG_NAME}@`) && exactBin.test(c));
 }

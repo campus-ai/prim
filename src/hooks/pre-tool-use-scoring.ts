@@ -157,7 +157,7 @@ export function buildHookOutput(
       .join("\n\n");
     const context = results
       .map((r) => r.additionalContext)
-      .filter((s) => s.length > 0)
+      .filter((s) => s.length > 0 && s !== reason)
       .join("\n");
     const merged = [reason, context].filter((s) => s.length > 0).join("\n\n");
     const out: HookOutput = {
@@ -181,7 +181,7 @@ export function buildHookOutput(
     // `ask` so the directive isn't dropped before the user picks a path.
     const additionalContext = results
       .map((r) => r.additionalContext)
-      .filter((s) => s.length > 0)
+      .filter((s) => s.length > 0 && s !== reason)
       .join("\n");
     const out: HookOutput = {
       hookSpecificOutput: {
@@ -264,7 +264,7 @@ export function buildHermesOutput(
     .join("\n\n");
   const directive = results
     .map((r) => r.additionalContext)
-    .filter((s) => s.length > 0)
+    .filter((s) => s.length > 0 && s !== reason)
     .join("\n");
   const message =
     [reason, directive].filter((s) => s.length > 0).join("\n\n") ||
@@ -280,7 +280,7 @@ export function failOpenHermes(): HermesHookOutput {
   return {};
 }
 
-const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+const SUPPORTED_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 // Codex routes file edits through `apply_patch`, naming each touched file on
 // its own envelope line (`*** Update File: path`).
@@ -289,65 +289,83 @@ const APPLY_PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (?<path>.+)$/;
 // directive — no accompanying Update line (see Hermes tools/patch_parser.py),
 // so without this both paths would be dropped and a rename of a decision-bearing
 // file would slip the gate. Capture BOTH the source (the existing path that may
-// carry prior decisions) and the destination. (Codex's distinct `*** Move to:`
-// destination still isn't captured — its source rides an Update File line.)
+// carry prior decisions) and the destination.
 const MOVE_FILE_RE = /^\*\*\* Move File:\s*(?<src>.+?)\s*->\s*(?<dst>.+?)\s*$/;
+const MOVE_TO_RE = /^\*\*\* Move to: (?<dst>.+)$/;
 // Split on either line ending: a CRLF patch would otherwise leave a trailing
 // \r that the `$`-anchored regex can't match, dropping every file silently.
 const LINE_SPLIT_RE = /\r?\n/;
-
-export function parseApplyPatchPaths(command: string): string[] {
+export type FileTargets = { paths: string[]; complete: boolean };
+export function parseApplyPatchTargets(command: string): FileTargets {
   const paths = new Set<string>();
+  let activeUpdate = false;
+  let complete = true;
   for (const line of command.split(LINE_SPLIT_RE)) {
-    const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path?.trim();
+    const path = APPLY_PATCH_FILE_RE.exec(line)?.groups?.path;
     if (path) {
       paths.add(path);
+      activeUpdate = line.startsWith("*** Update File:");
+      continue;
+    }
+    const moveTo = MOVE_TO_RE.exec(line)?.groups?.dst;
+    if (moveTo) {
+      if (activeUpdate) paths.add(moveTo);
+      else complete = false;
+      activeUpdate = false;
       continue;
     }
     const move = MOVE_FILE_RE.exec(line)?.groups;
     if (move?.src) {
-      paths.add(move.src.trim());
+      paths.add(move.src);
       if (move.dst) {
-        paths.add(move.dst.trim());
+        paths.add(move.dst);
       }
+      activeUpdate = false;
+      continue;
     }
+    if (line === "*** Begin Patch" || line === "*** End Patch") activeUpdate = false;
+    else if (line.startsWith("*** ")) complete = false;
   }
-  return Array.from(paths);
+  return { paths: [...paths], complete: complete && paths.size > 0 };
 }
-
-function extractCodexFilePaths(toolName: string, toolInput: unknown): string[] {
+export const parseApplyPatchPaths = (command: string): string[] =>
+  parseApplyPatchTargets(command).paths;
+function extractCodexFileTargets(toolName: string, toolInput: unknown): FileTargets | null {
   // Only `apply_patch` exposes files the conflict-check can key on; Bash and
   // other tools pass through unchecked (fail-open).
   if (toolName !== "apply_patch") {
-    return [];
+    return null;
   }
   if (!toolInput || typeof toolInput !== "object") {
-    return [];
+    return { paths: [], complete: false };
   }
   const command = (toolInput as Record<string, unknown>).command;
-  return typeof command === "string" ? parseApplyPatchPaths(command) : [];
+  return typeof command === "string"
+    ? parseApplyPatchTargets(command)
+    : { paths: [], complete: false };
 }
-
 // Hermes routes file edits through write_file and patch; terminal and other
 // tools pass through unchecked (fail-open). write_file and a `replace` patch
 // name a top-level `path`; a `patch`-mode patch embeds a V4A body under
 // `patch`, the same grammar Codex's apply_patch uses.
 const HERMES_EDITING_TOOLS = new Set(["write_file", "patch"]);
-
-function extractHermesFilePaths(toolName: string, toolInput: unknown): string[] {
+function extractHermesFileTargets(toolName: string, toolInput: unknown): FileTargets | null {
   if (!HERMES_EDITING_TOOLS.has(toolName)) {
-    return [];
+    return null;
   }
   if (!toolInput || typeof toolInput !== "object") {
-    return [];
+    return { paths: [], complete: false };
   }
   const input = toolInput as Record<string, unknown>;
   if (toolName === "patch" && input.mode === "patch") {
-    return typeof input.patch === "string" ? parseApplyPatchPaths(input.patch) : [];
+    return typeof input.patch === "string"
+      ? parseApplyPatchTargets(input.patch)
+      : { paths: [], complete: false };
   }
-  return typeof input.path === "string" && input.path.length > 0 ? [input.path] : [];
+  const paths = typeof input.path === "string" && input.path.length > 0 ? [input.path] : [];
+  const mode = input.mode;
+  return { paths, complete: paths.length > 0 && (mode === undefined || mode === "replace") };
 }
-
 /**
  * Extracts the file paths a tool call would touch, dispatched by `agent`.
  * Claude Code exposes a single `file_path` on Edit/Write/MultiEdit; Codex
@@ -360,25 +378,37 @@ export function extractFilePaths(
   toolInput: unknown,
   agent: Agent = "claude_code",
 ): string[] {
+  return extractFileTargets(toolName, toolInput, agent)?.paths ?? [];
+}
+export function extractFileTargets(
+  toolName: string,
+  toolInput: unknown,
+  agent: Agent = "claude_code",
+): FileTargets | null {
   if (agent === "codex") {
-    return extractCodexFilePaths(toolName, toolInput);
+    return extractCodexFileTargets(toolName, toolInput);
   }
   if (agent === "hermes") {
-    return extractHermesFilePaths(toolName, toolInput);
+    return extractHermesFileTargets(toolName, toolInput);
   }
   if (!SUPPORTED_TOOLS.has(toolName)) {
-    return [];
+    return null;
   }
   if (!toolInput || typeof toolInput !== "object") {
-    return [];
+    return { paths: [], complete: false };
   }
   const input = toolInput as Record<string, unknown>;
-  if (typeof input.file_path === "string" && input.file_path.length > 0) {
-    return [input.file_path];
+  if (toolName === "NotebookEdit") {
+    const paths =
+      typeof input.notebook_path === "string" && input.notebook_path.length > 0
+        ? [input.notebook_path]
+        : [];
+    return { paths, complete: paths.length > 0 };
   }
-  return [];
+  const paths =
+    typeof input.file_path === "string" && input.file_path.length > 0 ? [input.file_path] : [];
+  return { paths, complete: paths.length > 0 };
 }
-
 /**
  * Bypass / mode flags read from process.env. Centralized here so the hook
  * entry-point reads them through one helper and tests can drive them via

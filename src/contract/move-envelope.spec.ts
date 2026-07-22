@@ -106,7 +106,7 @@ describe("Move envelope contract", () => {
     });
   });
 
-  it("upgrades agent moves to V2 with explicit nested provenance", () => {
+  it("upgrades agent moves to V3 with explicit nested provenance", () => {
     const original = sample();
     const upgraded = withAgentProvenance(
       original,
@@ -122,7 +122,7 @@ describe("Move envelope contract", () => {
     expect("workspaceId" in original.env).toBe(false);
   });
 
-  it("round-trips V2 without moving workspaceId to the closed top level", () => {
+  it("round-trips V3 without moving workspaceId to the closed top level", () => {
     const upgraded = withAgentProvenance(
       sample(),
       "hermes",
@@ -130,7 +130,7 @@ describe("Move envelope contract", () => {
     );
     const wire = JSON.parse(JSON.stringify(upgraded)) as Record<string, unknown>;
 
-    expect(wire.envelopeVersion).toBe(2);
+    expect(wire.envelopeVersion).toBe(3);
     expect(wire.producer).toBe("hermes");
     expect(wire).not.toHaveProperty("workspaceId");
     expect(wire).toHaveProperty("env.workspaceId", "123e4567-e89b-42d3-a456-426614174000");
