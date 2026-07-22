@@ -13,37 +13,35 @@
  *      code 2, but is otherwise informational).
  *   2. Exit code is 0 on every happy / fail-open path. Non-zero exits cause
  *      Claude Code to treat the hook as broken, which is louder than we want.
- *   3. INFRASTRUCTURE failures NEVER block the user. Network outage,
- *      malformed stdin, expired bearer token — all silently emit
- *      `permissionDecision: "allow"`. Hooks fail open on their own breakage.
- *      This is distinct from a server verdict of "unavailable" or a
- *      truncated conflict set: those mean the constraints are UNKNOWN and are
- *      surfaced as an honest "not verified" note, never a clean allow.
+ *   3. INFRASTRUCTURE failures NEVER block the user. Before a mutation can be
+ *      identified, malformed or irrelevant input fails open silently. Once a
+ *      mutation is identified, service failure or an unverified target fails
+ *      open with a visible "not verified" warning, never a clean allow.
  *
  * Config knobs (env vars):
  *   PRIM_BYPASS=1                 — skip the check entirely
  *   PRIM_HOOK_MODE=block|warn|off — default `block`; `warn` demotes
  *                                   ask/deny to warn (telemetry only)
  *
- * Conflict-scoring policy (fan-out / reversibility thresholds) is owned
- * entirely by the server; the hook sends only the file path and consumes the
- * verdict it gets back.
+ * Conflict policy is owned entirely by the server; the hook sends one bounded
+ * request for the complete invocation and consumes the returned verdict.
  */
 
-import { getClient, getSiteUrl } from "../client.js";
-import { daemonRequest } from "../daemon/client.js";
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
+  type CodexHookOutput,
   type ConflictCheckResult,
   type HermesHookOutput,
   type HookEnv,
   type HookOutput,
+  buildCodexOutput,
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
+  failOpenCodex,
   failOpenHermes,
   failOpenOutput,
   readHookMode,
@@ -51,16 +49,14 @@ import {
 import {
   PREFLIGHT_PROTOCOL_VERSION,
   type PreflightRequest,
-  parsePreflightResponse,
   proposalFor,
+  requestPreflight,
   resolvePreflightTargets,
   resultForPreflight,
   unverifiedResult,
 } from "./preflight-v3.js";
 
-const HOOK_TIMEOUT_MS = 4_500;
 const STDIN_TIMEOUT_MS = 1_000;
-const DAEMON_TIMEOUT_MS = 250;
 
 type PreToolUseInput = {
   session_id?: string;
@@ -94,14 +90,15 @@ async function readStdin(): Promise<string> {
 // resolve it once — both main() and its catch handler emit through it.
 const agent = parseAgent(process.argv);
 
-function emit(output: HookOutput | HermesHookOutput): void {
+function emit(output: HookOutput | CodexHookOutput | HermesHookOutput): void {
   process.stdout.write(`${JSON.stringify(output)}\n`);
 }
 
-// The silent fail-open shaped for the active agent: Claude/Codex speak the
-// `hookSpecificOutput` allow; Hermes speaks an empty object (no block).
-function failOpen(): HookOutput | HermesHookOutput {
-  return agent === "hermes" ? failOpenHermes() : failOpenOutput();
+// The silent fail-open shaped for the active agent: Claude explicitly allows;
+// Codex and Hermes use an empty object (no block).
+function failOpen(): HookOutput | CodexHookOutput | HermesHookOutput {
+  if (agent === "hermes") return failOpenHermes();
+  return agent === "codex" ? failOpenCodex() : failOpenOutput();
 }
 
 function invocationId(envelope: PreToolUseInput): string | undefined {
@@ -115,7 +112,9 @@ function emitUnverified(message: string): void {
     process.stderr.write(`[primitive] ${message}\n`);
     emit(failOpenHermes());
   } else {
-    emit(buildHookOutput("allow", [result], agent));
+    emit(
+      agent === "codex" ? buildCodexOutput("allow", [result]) : buildHookOutput("allow", [result]),
+    );
   }
 }
 
@@ -188,19 +187,7 @@ async function main(): Promise<void> {
   };
   let result: ConflictCheckResult;
   try {
-    const fromDaemon = await daemonRequest<unknown>(
-      "conflict_check",
-      { ...request, callerEnv: getSiteUrl() },
-      { timeoutMs: DAEMON_TIMEOUT_MS },
-    );
-    let response = parsePreflightResponse(fromDaemon);
-    if (!response) {
-      const direct = await getClient().post("/api/cli/decisions/conflict-check", request, {
-        signal: AbortSignal.timeout(HOOK_TIMEOUT_MS),
-        quietRefresh: true,
-      });
-      response = parsePreflightResponse(direct);
-    }
+    const response = await requestPreflight(request);
     if (!response) {
       emitUnverified("enforcement service returned an incompatible response");
       return;
@@ -220,7 +207,9 @@ async function main(): Promise<void> {
   emit(
     agent === "hermes"
       ? buildHermesOutput(aggregate, [result])
-      : buildHookOutput(aggregate, [result], agent),
+      : agent === "codex"
+        ? buildCodexOutput(aggregate, [result])
+        : buildHookOutput(aggregate, [result]),
   );
 }
 

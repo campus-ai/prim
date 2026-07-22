@@ -99,6 +99,13 @@ describe("setup.md onboarding flow", () => {
     expect(SETUP.toLowerCase()).not.toContain("next session");
   });
 
+  it("describes Enforcement as an organization capability without claiming its current state", () => {
+    expect(SETUP).toContain(
+      "Conflict Gates** can warn, ask, or block when **Enforcement** is enabled",
+    );
+    expect(SETUP.toLowerCase()).not.toContain("not currently enabled");
+  });
+
   it("delivers the welcome BEFORE the status confirmations (a non-zero confirm can't suppress it)", () => {
     const section = welcomeSection();
     const welcome = section.indexOf("@latest welcome");

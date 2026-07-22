@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
+import { getClient } from "../client.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
+export const PREFLIGHT_TIMEOUT_MS = 4_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export type Coverage = "complete" | "unverified";
@@ -77,6 +79,16 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
     return null;
   }
   return response as PreflightResponse;
+}
+export async function requestPreflight(
+  request: PreflightRequest,
+  signal: AbortSignal = AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS),
+): Promise<PreflightResponse | null> {
+  const response = await getClient().post("/api/cli/decisions/conflict-check", request, {
+    signal,
+    quietRefresh: true,
+  });
+  return parsePreflightResponse(response);
 }
 export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;

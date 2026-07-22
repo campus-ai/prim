@@ -2,7 +2,7 @@
 /**
  * `prim-daemon-server` — long-lived per-user companion for the prim hooks.
  *
- * Opens a Unix socket at ~/.config/prim/sock that the PreToolUse /
+ * Opens a Unix socket at ~/.config/prim/sock that decision reads plus the
  * SessionStart / SessionEnd hooks proxy through; amortizes the token-refresh
  * check; and heartbeats `agentPresence` every 30s, caching the online count
  * and the teammate-name roster the ack returns so a statusline can render
@@ -461,24 +461,6 @@ async function runIngestionLoop(): Promise<void> {
   }
 }
 
-async function handleConflictCheck(params: Record<string, unknown>): Promise<unknown> {
-  assertCallerEnvMatches(params.callerEnv, getSiteUrl());
-  if (params.protocolVersion === 3) {
-    const { callerEnv: _callerEnv, ...body } = params;
-    return await client.post("/api/cli/decisions/conflict-check", body, {
-      signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
-      quietRefresh: true,
-    });
-  }
-  if (typeof params.file !== "string") {
-    throw new Error("conflict_check requires `file: string`");
-  }
-  // The body is `{ file }` ONLY — conflict-scoring policy (fan-out /
-  // reversibility thresholds) is owned entirely by the server. The daemon is
-  // a transparent proxy; it forwards the path and relays the verdict verbatim.
-  return await client.post("/api/cli/decisions/conflict-check", { file: params.file });
-}
-
 function pathParam(params: Record<string, unknown>): string {
   if (typeof params.path !== "string" || !params.path.startsWith("/api/cli/")) {
     throw new Error("proxy request requires `path: string` under /api/cli/");
@@ -562,10 +544,6 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
   const id = req.id;
   try {
     switch (req.method) {
-      case "conflict_check": {
-        const result = await handleConflictCheck(req.params ?? {});
-        return { id, ok: true, result };
-      }
       case "decisions_recent": {
         const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/recent");
         return { id, ok: true, result };

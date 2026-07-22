@@ -12,11 +12,13 @@ import {
   type ConflictCheckResult,
   aggregateCheckResults,
   anyUnverified,
+  buildCodexOutput,
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
   extractFilePaths,
   extractFileTargets,
+  failOpenCodex,
   failOpenHermes,
   failOpenOutput,
   parseApplyPatchPaths,
@@ -148,6 +150,7 @@ describe("buildHookOutput", () => {
     expect(out.hookSpecificOutput.additionalContext).toContain(
       "[primitive] file touched a decision",
     );
+    expect(out.systemMessage).toContain("[primitive] file touched a decision");
   });
 
   it("surfaces a not-verified note instead of a bare allow when a result is unavailable", () => {
@@ -157,11 +160,13 @@ describe("buildHookOutput", () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(out.hookSpecificOutput.additionalContext).toContain("decision check skipped");
     expect(out.hookSpecificOutput.additionalContext).toContain("no organization bound");
+    expect(out.systemMessage).toContain("decision check skipped");
   });
 
   it("surfaces a partial note instead of a bare allow when a result is truncated", () => {
     const out = buildHookOutput("allow", [resultFixture({ truncated: true })]);
     expect(out.hookSpecificOutput.additionalContext).toContain("truncated");
+    expect(out.systemMessage).toContain("truncated");
   });
 
   it("emits a clean bare allow only when fully verified", () => {
@@ -169,6 +174,7 @@ describe("buildHookOutput", () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(out.hookSpecificOutput.permissionDecisionReason).toBeUndefined();
     expect(out.hookSpecificOutput.additionalContext).toBeUndefined();
+    expect(out.systemMessage).toBeUndefined();
   });
 
   it("treats a reconcile-bypass-consumed clean result as an authorized allow", () => {
@@ -187,32 +193,46 @@ describe("buildHookOutput", () => {
     expect(out.hookSpecificOutput.permissionDecisionReason).toContain("conflict detected");
   });
 
-  it("demotes a Codex ask to allow + merged additionalContext (Codex can't ask)", () => {
-    const out = buildHookOutput(
-      "ask",
-      [
-        resultFixture({
-          verdict: "ask",
-          reason: "please confirm",
-          additionalContext: "To reconcile, run: prim reconcile dec_ab12cd34",
-        }),
-      ],
-      "codex",
+  it("maps an accidental Codex ask to a valid deny with the reconcile instruction", () => {
+    const out = buildCodexOutput("ask", [
+      resultFixture({
+        verdict: "ask",
+        reason: "please confirm",
+        additionalContext: "To reconcile, run: prim reconcile dec_ab12cd34",
+      }),
+    ]);
+    expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("please confirm");
+    expect(out.hookSpecificOutput?.permissionDecisionReason).toContain(
+      "prim reconcile dec_ab12cd34",
     );
-    expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(out.hookSpecificOutput.permissionDecisionReason).toBeUndefined();
-    expect(out.hookSpecificOutput.additionalContext).toContain("please confirm");
-    expect(out.hookSpecificOutput.additionalContext).toContain("prim reconcile dec_ab12cd34");
   });
 
-  it("still denies for Codex (Codex honors deny)", () => {
-    const out = buildHookOutput(
-      "deny",
-      [resultFixture({ verdict: "deny", reason: "blocked" })],
-      "codex",
-    );
-    expect(out.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("blocked");
+  it("emits an empty object for a clean Codex allow", () => {
+    expect(buildCodexOutput("allow", [resultFixture()])).toEqual({});
+  });
+
+  it("uses visible Codex warning fields without a permission decision", () => {
+    const out = buildCodexOutput("warn", [
+      resultFixture({ verdict: "warn", reason: "not verified" }),
+    ]);
+    expect(out.systemMessage).toContain("not verified");
+    expect(out.hookSpecificOutput?.additionalContext).toContain("not verified");
+    expect(out.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+
+  it("surfaces an unavailable Codex result without marking the hook failed", () => {
+    const out = buildCodexOutput("allow", [
+      resultFixture({ verdict: "unavailable", unavailable: "service unavailable" }),
+    ]);
+    expect(out.systemMessage).toContain("service unavailable");
+    expect(out.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+
+  it("denies a Codex block with a nonempty reason", () => {
+    const out = buildCodexOutput("deny", [resultFixture({ verdict: "deny", reason: "blocked" })]);
+    expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("blocked");
   });
 });
 
@@ -426,6 +446,21 @@ describe("demoteForMode", () => {
     expect(demoteForMode("allow", "warn")).toBe("allow");
     expect(demoteForMode("warn", "block")).toBe("warn");
   });
+
+  it("makes a demoted block visible without blocking Claude or Codex", () => {
+    const result = resultFixture({
+      verdict: "deny",
+      reason: "conflict detected\nTo reconcile, run: prim reconcile dec_ab12cd34",
+    });
+    const aggregate = demoteForMode("deny", "warn");
+    const claude = buildHookOutput(aggregate, [result]);
+    const codex = buildCodexOutput(aggregate, [result]);
+
+    expect(claude.systemMessage).toContain("prim reconcile dec_ab12cd34");
+    expect(claude.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(codex.systemMessage).toContain("prim reconcile dec_ab12cd34");
+    expect(codex.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
 });
 
 describe("failOpenOutput", () => {
@@ -433,6 +468,10 @@ describe("failOpenOutput", () => {
     const out = failOpenOutput();
     expect(out.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+  });
+
+  it("emits an empty object for Codex", () => {
+    expect(failOpenCodex()).toEqual({});
   });
 });
 

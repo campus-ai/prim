@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldFlushAfter, toCommitMove, toMove } from "./prim-hook-core.js";
+import { postToolInvocationId, shouldFlushAfter, toCommitMove, toMove } from "./prim-hook-core.js";
 
 describe("toMove", () => {
   it("maps the Claude Code hook field names onto the envelope", () => {
@@ -64,10 +64,90 @@ describe("toMove", () => {
   });
 
   it("carries the preflight invocation id only when supplied by successful post capture", () => {
-    expect(toMove({ session_id: "s" }, "x", "claude_code", undefined, "tool-1")).toMatchObject({
-      invocationId: "tool-1",
-    });
+    expect(
+      toMove(
+        { session_id: "s", hook_event_name: "PostToolUse" },
+        "x",
+        "claude_code",
+        undefined,
+        "tool-1",
+      ),
+    ).toMatchObject({ invocationId: "tool-1" });
     expect(toMove({ session_id: "s" }, "x")).not.toHaveProperty("invocationId");
+  });
+
+  it("derives the specified deterministic PostToolUse id", () => {
+    const move = toMove(
+      { session_id: "sess-123", hook_event_name: "PostToolUse" },
+      "x",
+      "claude_code",
+      undefined,
+      "tool-1",
+    );
+    expect(move.moveId).toBe(
+      "posttool:v1:ab909ec351eae8ff307805fe71ab9f665b475ece7df8f814b86d838fd1b2e5b3",
+    );
+  });
+
+  it("gives passive and dedicated capture the same PostToolUse id", () => {
+    const args = { session_id: "session-1", hook_event_name: "PostToolUse" };
+    const passive = toMove(args, "x", "hermes", "workspace-1", "call-1");
+    const dedicated = toMove(args, "x", "hermes", "workspace-1", "call-1");
+    expect(passive.moveId).toBe(dedicated.moveId);
+  });
+
+  it("separates PostToolUse ids by producer, session, invocation, and event type", () => {
+    const post = { session_id: "session-1", hook_event_name: "PostToolUse" };
+    const base = toMove(post, "x", "claude_code", undefined, "call-1").moveId;
+    const ids = [
+      toMove(post, "x", "codex", undefined, "call-1").moveId,
+      toMove({ ...post, session_id: "session-2" }, "x", "claude_code", undefined, "call-1").moveId,
+      toMove(post, "x", "claude_code", undefined, "call-2").moveId,
+      toMove({ ...post, hook_event_name: "PreToolUse" }, "x", "claude_code", undefined, "call-1")
+        .moveId,
+    ];
+    expect(ids).not.toContain(base);
+    expect(new Set([base, ...ids]).size).toBe(5);
+  });
+
+  it("retains random ids without complete PostToolUse identity", () => {
+    const missingInvocation = toMove(
+      { session_id: "session-1", hook_event_name: "PostToolUse" },
+      "x",
+    );
+    const missingSession = toMove(
+      { hook_event_name: "PostToolUse" },
+      "x",
+      "claude_code",
+      undefined,
+      "call-1",
+    );
+    expect(missingInvocation.moveId).not.toMatch(/^posttool:v1:/);
+    expect(missingSession.moveId).not.toMatch(/^posttool:v1:/);
+  });
+
+  it("extracts the same invocation identity used by each host capture path", () => {
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PostToolUse", tool_use_id: "claude-call" },
+        "claude_code",
+      ),
+    ).toBe("claude-call");
+    expect(
+      postToolInvocationId({ hook_event_name: "PostToolUse", tool_use_id: "codex-call" }, "codex"),
+    ).toBe("codex-call");
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PostToolUse", extra: { tool_call_id: "hermes-call" } },
+        "hermes",
+      ),
+    ).toBe("hermes-call");
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PreToolUse", tool_use_id: "not-post" },
+        "claude_code",
+      ),
+    ).toBeUndefined();
   });
 });
 

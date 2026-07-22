@@ -131,9 +131,7 @@ export async function performReconcile(
 export function registerReconcileCommands(program: Command): void {
   program
     .command("reconcile <idOrShortId>")
-    .description(
-      "Issue a single-use bypass for a decision flagged by Conflict Gates Enforcement (not currently enabled)",
-    )
+    .description("Issue a single-use bypass for a decision flagged by Conflict Gates Enforcement")
     .option(
       "--flag <conflictFlagId>",
       "Specific flag id to bind the bypass to (default: the decision's latest unack'd flag)",

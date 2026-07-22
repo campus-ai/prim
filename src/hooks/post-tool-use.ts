@@ -34,7 +34,7 @@ import { type Agent, parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
 import { resolvePreflightTargets } from "./preflight-v3.js";
-import { toMove } from "./prim-hook-core.js";
+import { postToolInvocationId, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
@@ -74,6 +74,7 @@ interface PostToolUseEnvelope {
   tool_name?: string;
   tool_input?: unknown;
   tool_use_id?: string;
+  extra?: { tool_call_id?: unknown };
   cwd?: string;
 }
 
@@ -157,14 +158,11 @@ async function main(): Promise<void> {
       return;
     }
   }
-  // Stamp the same worktree provenance as passive prim-hook. The classifier
-  // may collapse these duplicate PostToolUse observations and keep either one.
+  // Stamp the same worktree provenance and natural event identity as passive
+  // prim-hook, so both delivery paths converge on one authoritative Move.
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
-  const invocationId =
-    agent === "claude_code" && typeof envelope.tool_use_id === "string"
-      ? envelope.tool_use_id
-      : undefined;
+  const invocationId = postToolInvocationId(parsed, agent);
   const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
   const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
   // Write-ahead before the synchronous fast path. The direct POST and every

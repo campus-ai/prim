@@ -9,10 +9,9 @@ presence — from the command line and via session + git hooks.
 
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
-> load-bearing decision it conflicts with; their **Enforcement** tier blocks or pauses
-> a conflicting edit until you reconcile and retry. Conflict Gates are **not currently
-> enabled** — automatic decision capture in active repos runs regardless. To enable them
-> for your team, contact **support@getprimitive.ai**.
+> load-bearing decision it conflicts with. When **Enforcement** is enabled for your
+> organization, gates can warn, pause, or block a conflicting edit until you reconcile
+> the decision and retry. Automatic decision capture in active repositories is separate.
 
 ## Installation
 
@@ -197,7 +196,7 @@ installation.
 ### Daemon
 
 A supervised long-lived companion process that continuously drains captured
-Moves, accelerates in-session decision checks, and powers the "team: N online"
+Moves, accelerates decision-graph reads, and powers the "team: N online"
 presence count. `prim setup` requires it to become healthy unless the explicit
 `--no-daemon` opt-out is supplied; hooks still fail soft if it later degrades.
 
@@ -249,8 +248,8 @@ would create a cycle (exit 2); an unresolved id exits 4.
 prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
 ```
 
-Part of Conflict Gates **Enforcement**, which is not currently enabled (see the note
-at the top). Contact support@getprimitive.ai to enable it.
+When Conflict Gates **Enforcement** is enabled for your organization, this command
+authorizes one retry for the named decision.
 
 ### Hooks
 
