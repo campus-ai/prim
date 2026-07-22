@@ -417,7 +417,7 @@ export function registerSetupCommand(
       // exits 0) is surfaced as `failed` — which, like any required step, flips
       // the overall exit to incomplete — rather than silently reported as ok.
       note("welcome");
-      results.welcome = run(["welcome"]).code === 0 ? "ok" : "failed";
+      results.welcome = run(["welcome", "--agent", agent]).code === 0 ? "ok" : "failed";
 
       const failed = Object.entries(results)
         .filter(([, v]) => v === "failed")

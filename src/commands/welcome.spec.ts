@@ -12,9 +12,11 @@ import { describe, expect, it } from "vitest";
 import type { DecisionFeedRow } from "../decisions/recent.js";
 import { stripAnsi } from "../lib/ansi.js";
 import {
-  SEED_GUIDANCE,
+  type WelcomeAgent,
   type WelcomeState,
   formatWelcome,
+  resolveWelcomeAgent,
+  seedGuidanceFor,
   welcomeJson,
   welcomeStateFromRecent,
 } from "./welcome.js";
@@ -115,7 +117,8 @@ describe("formatWelcome", () => {
     expect(plain).toContain("team's shared graph");
     expect(plain).toContain("From here on");
     expect(plain).toContain("add any decision to Primitive");
-    expect(plain).toContain("captures decisions passively");
+    // Flatten: the generic passive-capture bullet wraps across two lines.
+    expect(plain.replace(/\s+/g, " ")).toContain("captures decisions passively");
     expect(plain).toContain("prim enable");
     expect(plain).toContain("App: https://app.getprimitive.ai");
     expect(plain).not.toContain("Recent team decisions");
@@ -149,6 +152,39 @@ describe("formatWelcome", () => {
     expect(plain).toContain("prim decisions check --files <files>");
     expect(plain).toContain("prim --help");
   });
+
+  it("tailors the capture guidance per agent: live for Claude, gated for Codex/Hermes, hedged when unknown", () => {
+    const state: WelcomeState = { org: "seed", recent: [] };
+    const flat = (agent?: WelcomeAgent) =>
+      stripAnsi(formatWelcome(state, agent)).replace(/\s+/g, " ");
+    // Claude Code: hooks hot-reload at install — the unconditional claim is true.
+    expect(flat("claude")).toContain("Capture is automatic — keep coding");
+    // Codex/Hermes: hooks are inert until trusted/approved — the copy names
+    // the unlocking action instead of overclaiming.
+    expect(flat("codex")).toContain("run /hooks in Codex");
+    expect(flat("codex")).toContain("until then nothing is recorded");
+    expect(flat("codex")).not.toContain("Capture is automatic");
+    expect(flat("hermes")).toContain("approve the prim hooks when Hermes prompts");
+    expect(flat("hermes")).not.toContain("Capture is automatic");
+    // Unknown agent: hedged, never the unconditional claim.
+    expect(flat(undefined)).toContain("once your agent's prim hooks are active");
+  });
+});
+
+describe("resolveWelcomeAgent", () => {
+  it("takes a valid explicit --agent verbatim, over any environment signal", () => {
+    expect(resolveWelcomeAgent("codex", {})).toBe("codex");
+    expect(resolveWelcomeAgent("claude", { HERMES_INTERACTIVE: "1" })).toBe("claude");
+  });
+
+  it("auto-detects Hermes from its runtime marker when the flag is omitted", () => {
+    expect(resolveWelcomeAgent(undefined, { HERMES_INTERACTIVE: "1" })).toBe("hermes");
+  });
+
+  it("degrades a typo'd flag to the hedged generic copy instead of a usage error", () => {
+    expect(resolveWelcomeAgent("cluade", {})).toBeUndefined();
+    expect(resolveWelcomeAgent(undefined, {})).toBeUndefined();
+  });
 });
 
 describe("welcomeJson", () => {
@@ -166,7 +202,7 @@ describe("welcomeJson", () => {
     expect(welcomeJson({ org: "seed", recent })).toEqual({
       welcomed: true,
       org: "seed",
-      seedGuidance: SEED_GUIDANCE,
+      seedGuidance: seedGuidanceFor(undefined),
       recent,
     });
   });
@@ -175,7 +211,7 @@ describe("welcomeJson", () => {
     expect(welcomeJson({ org: "seed", recent: [] })).toEqual({
       welcomed: true,
       org: "seed",
-      seedGuidance: SEED_GUIDANCE,
+      seedGuidance: seedGuidanceFor(undefined),
       recent: [],
     });
   });
@@ -184,9 +220,17 @@ describe("welcomeJson", () => {
     expect(welcomeJson({ org: "unknown" })).toEqual({ welcomed: true, org: "unknown" });
   });
 
-  it("SEED_GUIDANCE is the verbatim standing guidance the agent surfaces after its final proposal", () => {
-    expect(SEED_GUIDANCE).toBe(
+  it("seedGuidance in the JSON is agent-tailored — the field the agent surfaces verbatim", () => {
+    const json = welcomeJson({ org: "seed", recent: [] }, "codex") as { seedGuidance: string };
+    expect(json.seedGuidance).toBe(seedGuidanceFor("codex"));
+    expect(json.seedGuidance).toContain("run /hooks in Codex");
+  });
+
+  it("seedGuidanceFor(claude) is the verbatim unconditional guidance; others gate on hook activation", () => {
+    expect(seedGuidanceFor("claude")).toBe(
       "You can tell your agent to add any decision to your Primitive decision graph at any time. Otherwise, Primitive passively captures decisions in the background while you work. To capture decisions in other repositories, enable Primitive there too: run `prim enable` in each one.",
     );
+    expect(seedGuidanceFor(undefined)).toContain("once your agent's prim hooks are active");
+    expect(seedGuidanceFor("hermes")).toContain("approve the prim hooks when Hermes prompts");
   });
 });

@@ -105,10 +105,12 @@ Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
 The welcome message is a **required deliverable** of setup: once install
 succeeded, the user must always see it. `setup` already ran it once; run it again
 to capture its structured output cleanly (this won't prompt — prim is authorized
-now):
+now). Pass `--agent` so the capture guidance speaks to your agent's hook
+reality (Claude's hooks are live at install; Codex/Hermes stay inert until
+trusted):
 
 ```
-npx --yes @primitive.ai/prim@latest welcome
+npx --yes @primitive.ai/prim@latest welcome --agent <your agent>
 ```
 
 Surface its **orientation** — the canonical "here's how Primitive works". It
@@ -229,5 +231,5 @@ user` where noted, then `prim enable` in each repo you want captured.
    this repo prim-active (`git config prim.active true`) so the global hooks
    capture here. Repeat in each repo you want; `… disable` mutes one. A per-repo
    (project-scope) install in step 3/5 activates automatically.
-8. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome` — then present it as
-   in section 2 above.
+8. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome --agent <your agent>`
+   — then present it as in section 2 above.
