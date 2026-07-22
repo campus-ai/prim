@@ -10,8 +10,8 @@
  * VIEWER-scoped, not org-scoped: a member who has authored nothing yet is
  * seeded even in an org that already has decisions.
  *   - seed    → the requesting viewer has no decisions: the block explains
- *               that their agent will propose a handful of decisions mined
- *               from memory — one at a time, each confirmed by the user —
+ *               that their agent will propose any decisions it finds in
+ *               memory — one at a time, each confirmed by the user —
  *               and closes on the standing capture guidance. The proposal
  *               procedure itself lives in the prim skill (SKILL.md); the JSON
  *               carries the guidance verbatim (`seedGuidance`) for the agent

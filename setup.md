@@ -175,9 +175,8 @@ directs, then present the next proposal in your following turn.
 
 After the final proposal's verdict — or immediately, if you found no viable
 candidates (say so briefly) — surface welcome's standing guidance verbatim from
-STDOUT's `seedGuidance`: the user can tell you to add any decision to the graph
-at any time, Primitive captures decisions passively in the background while
-they work, and other repos are captured only once `prim enable` is run in each.
+STDOUT's `seedGuidance` (record-anytime, passive background capture, and
+per-repo `prim enable`).
 
 **If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
 pass; the setup-specifics line is your close.
