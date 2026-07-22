@@ -13,11 +13,10 @@
  *   - every prim invocation stays pinned to @latest (mirrors the CI probe);
  *   - the welcome is delivered BEFORE the status confirmations (it's the required
  *     final deliverable; a non-zero confirm must not be able to suppress it);
- *   - the seeding question is the terminal call-to-action;
- *   - the seed close mines the agent's own memory for *stated* goals (never
- *     the repo's code, docs, or history), pointing each agent at its own
- *     memory surface, and reviews them via the CLI-owned template, with the
- *     open question as the verbatim fallback;
+ *   - the first seeding proposal is the terminal call-to-action;
+ *   - the seed close defers the seeding procedure to the installed prim skill
+ *     (proposals mined from memory, one at a time, at most six), closing on
+ *     welcome's CLI-owned `seedGuidance`;
  *   - the daemon has an explicit --no-daemon opt-out;
  *   - the now-false "next session" permissions premise never returns (Claude Code
  *     hot-reloads permissions, so the allow-rule takes effect this session).
@@ -109,46 +108,51 @@ describe("setup.md onboarding flow", () => {
     }
   });
 
-  it("handles the viewer-seed reverse-prompt branch (seed the graph via decisions create)", () => {
+  it("handles the viewer-seed branch by deferring the procedure to the installed skill", () => {
     const section = welcomeSection();
     expect(section).toContain('"org": "seed"');
-    expect(section).toContain("decisions create");
+    // The seeding procedure lives in the installed SKILL.md — setup.md points
+    // at it instead of carrying its own recording policy (which drifted).
+    expect(section).toContain("SKILL.md");
+    const flat = section.replace(/\s+/g, " ").toLowerCase();
+    expect(flat).toContain("read the prim skill you just installed");
+    expect(flat).toContain("never this guide's paraphrase");
+    expect(flat).toContain("never draft decisions without it");
   });
 
-  it("makes the seeding question the terminal call-to-action (after the confirmations, stop and wait)", () => {
+  it("makes the first seeding proposal the terminal call-to-action (after the confirmations, stop and wait)", () => {
     const section = welcomeSection();
-    // The seed CTA + decisions create come AFTER the last confirmation, so the
-    // question is the last thing the agent says — never buried above the checks.
+    // The seed close comes AFTER the last confirmation, so the first proposal
+    // is the last thing the agent says — never buried above the checks.
     expect(section.indexOf('"org": "seed"')).toBeGreaterThan(section.indexOf("skill status"));
-    expect(section.indexOf("decisions create")).toBeGreaterThan(section.indexOf("skill status"));
     // And the contract spells out the terminal-CTA behavior explicitly. Collapse
     // whitespace first so hard-wrapped phrases still match.
     const flat = section.replace(/\s+/g, " ").toLowerCase();
     expect(flat).toContain("stop and wait");
     expect(flat).toContain("nothing after it");
-    expect(flat).toContain("hold it back");
+    expect(flat).toContain("make the first proposal the close");
   });
 
-  it("seeds from the agent's memory: stated goals only, review template, open-question fallback", () => {
+  it("keeps the per-agent memory surfaces in setup.md, out of the skill (onboarding-time detail)", () => {
     const flat = welcomeSection().replace(/\s+/g, " ").toLowerCase();
-    // Sources are the agent's memory + conversation — never repo inference,
-    // never invented goals the user didn't state.
-    expect(flat).toContain("your own memory and conversation context");
-    expect(flat).toContain("never infer goals from the repo");
-    expect(flat).toContain("never invent");
-    // Parity: each agent is pointed at its own memory surface — Claude Code's
-    // auto-memory files, Codex's injected (opt-in) memories, Hermes's
-    // system-prompt snapshot.
     expect(flat).toContain("auto-memory");
     expect(flat).toContain("memories injected into this thread");
     expect(flat).toContain("memory snapshot in your system prompt");
-    // The CLI owns and versions the review wording; the agent only fills the slot.
-    expect(flat).toContain("reverseprompttemplate");
-    expect(flat).toContain("$found_goals");
-    // The open question survives as the found-nothing fallback, verbatim.
-    expect(flat).toContain("the open question — verbatim");
-    // The two-step review survives: goals settled in prose before any create.
-    expect(flat).toContain("settle the goals first");
-    expect(flat).toContain("confirm before creating");
+  });
+
+  it("seeds via one-at-a-time proposals capped at six, closing on welcome's standing guidance", () => {
+    const flat = welcomeSection().replace(/\s+/g, " ").toLowerCase();
+    // One proposal per message, at most six, never padded to the quota.
+    expect(flat).toContain("one at a time");
+    expect(flat).toContain("at most six");
+    expect(flat).toContain("never invent a proposal to fill the quota");
+    // The close is the CLI-owned guidance: record-anytime, passive capture,
+    // and per-repo enable — surfaced verbatim from welcome's JSON.
+    expect(flat).toContain("seedguidance");
+    expect(flat).toContain("prim enable");
+    // The open goals question and its review template are gone for good.
+    expect(flat).not.toContain("reverseprompt");
+    expect(flat).not.toContain("$found_goals");
+    expect(flat).not.toContain("most important goals");
   });
 });

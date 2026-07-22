@@ -23,7 +23,7 @@ runs the newest CLI.
 First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
 **Hermes**. It changes one flag in the install command (Hermes is auto-detected,
 so you can skip even that), how you present the welcome at the end, and which
-memory surface you mine for the seeding question; nothing else.
+memory surface you mine for seeding proposals; nothing else.
 
 ## 1. Install — one command
 
@@ -100,7 +100,7 @@ tell the user: "Approve the prim hooks when Hermes prompts — until you do,
 decision capture stays inert. To skip the prompts, start
 Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
 
-## 2. Welcome (always), then the seeding question — last
+## 2. Welcome (always), then the seeding proposals — last
 
 The welcome message is a **required deliverable** of setup: once install
 succeeded, the user must always see it. `setup` already ran it once; run it again
@@ -113,15 +113,12 @@ npx --yes @primitive.ai/prim@latest welcome
 
 Surface its **orientation** — the canonical "here's how Primitive works". It
 adapts to you: if **you** have recorded decisions it inlines the team's latest
-decisions; if you haven't yet, it also prints a reverse-prompt — a ruled "Your
-turn" callout — to seed the graph, with the team's recent decisions above it for
-context when the org has any. It always exits 0 (a failed decisions fetch degrades
+decisions; if you haven't yet, its seeding block explains that you will propose
+any decisions you find in memory and closes on the standing capture guidance —
+with the team's recent decisions above it for context when the org has any. The
+JSON carries that guidance verbatim (`seedGuidance`) for you to surface after
+your final proposal. It always exits 0 (a failed decisions fetch degrades
 gracefully).
-
-If the output ends with that "Your turn" callout, **hold it back here** — surface
-only the orientation above it for now; you'll render the seeding callout once, at
-the very end, as the closing call-to-action. Showing it now and again later buries
-the first copy in the middle of your message, which is exactly what we're avoiding.
 
 Then **run the confirmations** and surface their results — informational (a
 non-zero must NOT abort the run or retract the welcome), but run them so the user
@@ -140,12 +137,26 @@ welcome.
 **Then close:**
 
 **If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
-yet (this fires even in an org that already has decisions). Before you ask,
-mine **your own memory and conversation context** for goals — and
-not-focusing-on items — the user has already *stated*. Every agent has a memory
-surface; consult yours:
+yet (this fires even in an org that already has decisions). **Read the prim
+skill you just installed** — at the path `skill status` reported above (Claude:
+`~/.claude/skills/prim/SKILL.md` under the default `--scope user`; Codex /
+Hermes: the managed prim block in the rules file). It won't be auto-loaded as a
+skill in this session (that takes a restart or `/reload-plugins`); reading the
+installed file is the point. The skill owns the seeding procedure — candidate
+selection, the duplicate check, the personal-environment exclusion,
+per-proposal approval, intent wording, flags, attribution, rationale, and the
+inactive-repo consent flow — and it updates more often than this guide, so
+follow the copy you just read, never this guide's paraphrase of it. If the
+file is missing or unreadable, the required skill step failed: re-run
+`npx --yes @primitive.ai/prim@latest skill install --agent <your agent>` and
+read it then — never draft decisions without it.
 
-- **Claude Code** — read your auto-memory (MEMORY.md and the memory files it
+The memory surfaces to mine are onboarding-time detail this guide owns. Beyond
+the repo's tracked shared memory files (the skill names the scan), mine your
+own memory of goals and positions the user has already stated. Every agent has
+a memory surface; consult yours:
+
+- **Claude Code** — your auto-memory (MEMORY.md and the memory files it
   indexes), plus anything already recalled into this session.
 - **Codex** — the memories injected into this thread. The feature is opt-in:
   none injected just means found-nothing here — don't dig into memory files
@@ -153,45 +164,23 @@ surface; consult yours:
 - **Hermes** — the memory snapshot in your system prompt (`MEMORY.md` /
   `USER.md` from `~/.hermes/memories/`).
 
-Only their words count: never infer goals from the repo — its code, docs, or
-history — and never invent one they didn't say.
+Then run the skill's onboarding procedure: propose decisions mined from memory
+**one at a time — at most six in total**, fewer when the material runs out
+(never invent a proposal to fill the quota). Each proposal ENDS your message as
+a single, emphasized block with **nothing after it** — no confirmations, no
+sign-off — so it is unmistakably the user's to answer; make the first proposal
+the close of this setup message, right after the setup-specifics line. **Stop
+and wait** for their verdict, create each approved decision as the skill
+directs, then present the next proposal in your following turn.
 
-Make the seeding question the LAST thing you say: end your message with it as a
-single, emphasized block addressed to the user — rendered as the "Your turn"
-callout, the way welcome rendered its own — with **nothing after it**: no
-confirmations, no orientation, no sign-off. What goes inside:
-
-- **Found stated goals** → STDOUT's `reversePromptTemplate`, with `$FOUND_GOALS`
-  replaced by a short bulleted list of what you found. (Template absent on an
-  older CLI? Treat it as found-nothing.)
-- **Found nothing** → STDOUT's `reversePrompt` — the open question — verbatim.
-
-Then **stop and wait** for their answer; a question buried above other text
-reads as if no answer is expected, and this one must be unmistakably theirs to
-answer. When the user replies (your next turn), settle the goals first —
-iterate until the list is theirs, not yours. Then break the settled goals into
-**one decision per goal** (infer the best `--kind`; map a goal to `--intent` /
-`--decided`, and what they're *not* focusing on to `--alternatives`), show the
-drafted decisions, **confirm before creating — each drafted Decision needs its own
-approval**, then record each:
-`npx --yes @primitive.ai/prim@latest decisions create --intent "…" --attribution user [--decided "…"] [--alternatives "…"] [--area …] [--kind …]`.
-
-Use `--attribution user` here because the person confirmed each exact drafted
-choice. In general, use `user` only when the person directly stated, selected, or
-confirmed the exact recorded choice; use `agent` when the agent introduced it while
-pursuing a broader request. A broad task prompt or permission to implement is not
-user attribution. If the origin is ambiguous, ask the person to confirm the exact
-choice before creating it rather than guessing.
-
-That confirmation is also the consent boundary if passive capture is inactive in
-the current repo: obtain approval for each drafted Decision, then pass Prim's own
-`--yes` on each approved invocation:
-`npx --yes @primitive.ai/prim@latest --yes decisions create ... --attribution user`.
-An explicit local `prim.active=false` remains inactive. The create does not run
-`prim enable`, and its approval does not carry forward to another Decision.
+After the final proposal's verdict — or immediately, if you found no viable
+candidates (say so briefly) — surface welcome's standing guidance verbatim from
+STDOUT's `seedGuidance`: the user can tell you to add any decision to the graph
+at any time, Primitive captures decisions passively in the background while
+they work, and other repos are captured only once `prim enable` is run in each.
 
 **If STDOUT shows `"org": "active"` or `"org": "unknown"`** — there's no seeding
-question; the setup-specifics line is your close.
+pass; the setup-specifics line is your close.
 
 ---
 
