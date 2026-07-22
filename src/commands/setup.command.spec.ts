@@ -344,7 +344,7 @@ describe("registerSetupCommand", () => {
       ["hooks", "install"],
       ["skill", "install", "--agent", "codex"],
       ["enable"],
-      ["welcome"],
+      ["welcome", "--agent", "codex"],
     ]);
     expect(exit).toHaveBeenCalledWith(0);
   });

@@ -9,28 +9,31 @@
  * State-aware via one best-effort `fetchRecent` call. The seed signal is
  * VIEWER-scoped, not org-scoped: a member who has authored nothing yet is
  * seeded even in an org that already has decisions.
- *   - seed    → the requesting viewer has no decisions: a reverse-prompt
- *               asking what they are focusing on (and not), rendered as a
- *               ruled "Your turn" callout that is the terminal call to action
- *               (no footer follows it), which the setup agent collects and
- *               breaks into decisions. The JSON also carries a review template
- *               (`reversePromptTemplate`) the agent renders instead when its
- *               own memory/conversation context yields goals the user already
- *               stated — the open question is the verbatim fallback. If the
- *               team has decisions, they are inlined above the prompt for
- *               context.
+ *   - seed    → the requesting viewer has no decisions: the block explains
+ *               that their agent will propose any decisions it finds in
+ *               memory — one at a time, each confirmed by the user —
+ *               and closes on the standing capture guidance. The proposal
+ *               procedure itself lives in the prim skill (SKILL.md); the JSON
+ *               carries the guidance verbatim (`seedGuidance`) for the agent
+ *               to surface after its final proposal. If the team has
+ *               decisions, they are inlined above for context.
  *   - active  → the viewer has decisions: inline the latest few team
- *               decisions (reused renderer), no prompt.
+ *               decisions (reused renderer), no seeding block.
  *   - unknown → the static get-started copy (feed unverifiable: offline,
  *               auth-expired, or org-unbound — never mistaken for seed).
  *
  * AX contract: the human orientation block goes to STDERR (the `[prim]`
  * human-readable convention); STDOUT carries the `org` discriminant + payload
- * so the agent can branch — `seed` carries `reversePrompt`,
- * `reversePromptTemplate`, and `recent`,
+ * so the agent can branch — `seed` carries `seedGuidance` and `recent`,
  * `active` carries `recent`, `unknown` carries neither. The fetch is
  * best-effort and **always exits 0** — a failure degrades to the `unknown`
  * branch, never an error, preserving setup's "welcome always lands" guarantee.
+ *
+ * Capture-guidance copy (the orientation bullet, the seed block's passive
+ * bullet, and `seedGuidance`) is tailored per agent via `--agent`: Claude
+ * Code's hooks are live at install, Codex/Hermes hooks stay inert until
+ * trusted/approved, and an unknown agent gets the hedged generic form.
+ * Setup passes the flag through; Hermes is auto-detected.
  */
 
 import type { Command } from "commander";
@@ -52,51 +55,95 @@ const CMD_GUTTER = 38;
 // How many recent decisions to inline for an active org (the "3-5" target).
 const RECENT_LIMIT = 5;
 
-// The reverse-prompt for an org with no decisions yet — owned and versioned
-// here like the orientation copy. Stored as display lines (wrapped for the
-// terminal); REVERSE_PROMPT is the flat form the agent/JSON consumer reads.
-const REVERSE_PROMPT_LINES = [
-  "What are the most important goals in your organization that you're",
-  "responsible for, right now? What are you not focusing on, in order",
-  "to focus on those goals?",
-];
-export const REVERSE_PROMPT = REVERSE_PROMPT_LINES.join(" ");
+export type WelcomeAgent = "claude" | "codex" | "hermes";
 
-// The review-framed variant for an agent-driven setup: before asking the open
-// question, the agent mines its own memory and conversation context for goals
-// the user has already STATED (never inferred from the repo — code, docs, or
-// history) and, when it finds some, renders this with $FOUND_GOALS replaced by
-// that list. Found nothing → it falls back to REVERSE_PROMPT verbatim. The
-// copy stays source-neutral ("We found") — every agent has a memory surface,
-// but it may be disabled (Codex's is opt-in) or empty, leaving the current
-// conversation as the only source, so the copy must not claim
-// prior-conversation provenance. JSON-only: a human running `prim welcome` has
-// no agent to gather goals, so STDERR always shows the open question.
-export const REVERSE_PROMPT_TEMPLATE =
-  "We're interested in learning your current goals, as well as what you're not focusing on to achieve those goals. We found the following:\n\n$FOUND_GOALS\n\nHow do these look to you? Would you like to change these goals?";
+const WELCOME_AGENTS: readonly string[] = ["claude", "codex", "hermes"];
 
-// The seeding question is the human's one call-to-action — the thing they must
-// answer for setup to finish. Frame it in a ruled "Your turn" callout so it
-// reads as a prompt addressed to them, not buried orientation. The rule width
-// adapts to the longest line (the prompt is pre-wrapped), so it always clears
-// the text. Border is colored for a TTY and strips to plain box-drawing chars
-// when piped — width is computed on the plain string either way.
-const CALLOUT_TITLE = "Your turn";
-const CALLOUT_INDENT = "  ";
+/**
+ * Resolve the agent whose capture guidance the welcome speaks to. An explicit
+ * valid --agent wins; Hermes is auto-detected from its per-session runtime
+ * marker (the same signal setup keys on); anything else — including a typo'd
+ * flag — degrades to undefined (the hedged generic copy) rather than a usage
+ * error, preserving welcome's always-exits-0 contract.
+ */
+export function resolveWelcomeAgent(
+  agentFlag: string | undefined,
+  env: NodeJS.ProcessEnv,
+): WelcomeAgent | undefined {
+  if (agentFlag !== undefined && WELCOME_AGENTS.includes(agentFlag)) {
+    return agentFlag as WelcomeAgent;
+  }
+  if (agentFlag === undefined && env.HERMES_INTERACTIVE) {
+    return "hermes";
+  }
+  return undefined;
+}
 
-function ruledQuestion(lines: string[]): string[] {
-  const prefix = `┌─ ${CALLOUT_TITLE} `;
-  const width = Math.max(
-    `${prefix}┐`.length,
-    ...lines.map((line) => CALLOUT_INDENT.length + line.length + 1),
-  );
-  const top = `${prefix}${"─".repeat(width - prefix.length - 1)}┐`;
-  const bottom = `└${"─".repeat(top.length - 2)}┘`;
+// The capture claim is the one orientation line that varies by agent: Claude
+// Code's hooks hot-reload at install, so capture truly is automatic the moment
+// setup succeeds; Codex and Hermes hooks stay inert until the user trusts /
+// approves them, so their copy names the unlocking action instead of
+// overclaiming. An unknown agent gets the hedged generic form — never the
+// unconditional claim. First line renders as the bullet, the rest indent.
+type AgentCopyKey = WelcomeAgent | "generic";
+
+const CAPTURE_LINES: Record<AgentCopyKey, string[]> = {
+  claude: ["Capture is automatic — keep coding; your decisions are recorded for you."],
+  codex: [
+    "Capture starts once you trust the prim hooks — run /hooks in Codex;",
+    "until then nothing is recorded.",
+  ],
+  hermes: [
+    "Capture starts once you approve the prim hooks when Hermes prompts;",
+    "until then nothing is recorded.",
+  ],
+  generic: [
+    "Capture is automatic once your agent's prim hooks are active — keep",
+    "coding; your decisions are recorded for you.",
+  ],
+};
+
+// The seed block's passive-capture bullet, same per-agent truth in one line.
+const PASSIVE_LINES: Record<AgentCopyKey, string[]> = {
+  claude: ["Otherwise Primitive captures decisions passively while you work."],
+  codex: [
+    "Once you trust the prim hooks (/hooks in Codex), Primitive captures",
+    "decisions passively while you work.",
+  ],
+  hermes: [
+    "Once you approve the prim hooks, Primitive captures decisions",
+    "passively while you work.",
+  ],
+  generic: [
+    "Once your agent's prim hooks are active, Primitive captures decisions",
+    "passively while you work.",
+  ],
+};
+
+// The middle sentence of the standing seeding guidance, per agent.
+const GUIDANCE_PASSIVE: Record<AgentCopyKey, string> = {
+  claude: "Otherwise, Primitive passively captures decisions in the background while you work.",
+  codex:
+    "Otherwise, once you trust the prim hooks (run /hooks in Codex), Primitive passively captures decisions in the background while you work.",
+  hermes:
+    "Otherwise, once you approve the prim hooks when Hermes prompts, Primitive passively captures decisions in the background while you work.",
+  generic:
+    "Otherwise, once your agent's prim hooks are active, Primitive passively captures decisions in the background while you work.",
+};
+
+/**
+ * The standing guidance a seeded viewer must hear once the agent-driven
+ * proposal pass ends — owned and versioned here like the orientation copy.
+ * The agent surfaces it verbatim after its final memory proposal (the
+ * proposal procedure itself lives in the prim skill); the STDERR block
+ * carries the same substance for a human running `prim welcome` directly.
+ */
+export function seedGuidanceFor(agent?: WelcomeAgent): string {
   return [
-    color(top, "green"),
-    ...lines.map((line) => `${CALLOUT_INDENT}${line}`),
-    color(bottom, "green"),
-  ];
+    "You can tell your agent to add any decision to your Primitive decision graph at any time.",
+    GUIDANCE_PASSIVE[agent ?? "generic"],
+    "To capture decisions in other repositories, enable Primitive there too: run `prim enable` in each one.",
+  ].join(" ");
 }
 
 export type WelcomeState =
@@ -128,10 +175,17 @@ export function welcomeStateFromRecent(result: DecisionsRecentResult): WelcomeSt
   return { org: "active", recent };
 }
 
-export function formatWelcome(state: WelcomeState): string {
+export function formatWelcome(state: WelcomeState, agent?: WelcomeAgent): string {
   const cmd = (command: string, desc: string): string =>
     `  ${dim(command.padEnd(CMD_GUTTER))}${desc}`;
   const bullet = (text: string): string => `  ${color("•", "green")} ${text}`;
+  // Render a per-agent copy variant: first line bulleted, the rest indented
+  // to the bullet's text column like the other wrapped bullets.
+  const asBullet = ([first, ...rest]: string[]): string[] => [
+    bullet(first),
+    ...rest.map((line) => `    ${line}`),
+  ];
+  const copyKey: AgentCopyKey = agent ?? "generic";
 
   const head = [
     bold(color("Welcome to Primitive", "green")),
@@ -140,7 +194,7 @@ export function formatWelcome(state: WelcomeState): string {
     "shared graph — automatically, as you work.",
     "",
     bold("How it works"),
-    bullet("Capture is automatic — keep coding; your decisions are recorded for you."),
+    ...asBullet(CAPTURE_LINES[copyKey]),
     bullet("Conflict Gates (with Enforcement) flag or block edits that conflict"),
     "    with a load-bearing decision — not currently enabled. Contact",
     "    support@getprimitive.ai to turn them on for your team.",
@@ -161,8 +215,9 @@ export function formatWelcome(state: WelcomeState): string {
     ];
   } else if (state.org === "seed") {
     // The viewer has no decisions yet. If the team does, inline them above for
-    // context; then close on the ruled question callout so it's the terminal
-    // call to action — nothing follows it (the App footer is suppressed below).
+    // context; then explain the agent-driven proposal pass and close on the
+    // standing guidance (the same substance SEED_GUIDANCE carries for the
+    // agent/JSON consumer).
     const teamContext =
       state.recent.length > 0
         ? [bold("Recent team decisions"), ...state.recent.map(formatRecentRow), ""]
@@ -170,10 +225,16 @@ export function formatWelcome(state: WelcomeState): string {
     body = [
       ...teamContext,
       bold("Let's seed your decision graph"),
-      "You haven't recorded a decision yet — answer this and I'll record",
-      "each goal as a decision:",
+      "You haven't recorded a decision yet. Your agent will look through",
+      "what you've told it and this repo's shared memory files, and propose",
+      "any decisions it finds — approve, revise, or reject each one, and",
+      'share the "why" when it asks. Approved decisions become part of',
+      "your team's shared graph, visible to any teammates.",
       "",
-      ...ruledQuestion(REVERSE_PROMPT_LINES),
+      bold("From here on"),
+      bullet("Tell your agent to add any decision to Primitive, any time."),
+      ...asBullet(PASSIVE_LINES[copyKey]),
+      bullet("Run `prim enable` in each additional repo you want captured."),
     ];
   } else {
     body = [
@@ -184,29 +245,24 @@ export function formatWelcome(state: WelcomeState): string {
     ];
   }
 
-  // The seed branch ends on the question callout — its call to action must be
-  // the last thing the user sees, so the App footer is suppressed there (it
-  // still rides along on the active/unknown branches).
-  const footer = state.org === "seed" ? [] : ["", dim("App: https://app.getprimitive.ai")];
-  return [...head, ...body, ...footer].join("\n");
+  return [...head, ...body, "", dim("App: https://app.getprimitive.ai")].join("\n");
 }
 
 /** STDOUT payload: the org state plus the branch-specific signal for the agent. */
-export function welcomeJson(state: WelcomeState): Record<string, unknown> {
+export function welcomeJson(state: WelcomeState, agent?: WelcomeAgent): Record<string, unknown> {
   if (state.org === "active") {
     return { welcomed: true, org: "active", recent: state.recent };
   }
   if (state.org === "seed") {
-    // Carry the seeding signals: the open reverse-prompt (kept verbatim — it
-    // is the agent's found-nothing fallback, and older setup.md copies read it
-    // by name), the review template the agent prefers when its memory yields
-    // candidate goals, and any team decisions (empty when the org itself has
-    // none) so the agent has the same context shown on STDERR.
+    // Carry the seeding signals: the standing guidance the agent surfaces
+    // after its final memory proposal (the proposal procedure lives in the
+    // prim skill), tailored to the rendering agent's capture reality, and any
+    // team decisions (empty when the org itself has none) so the agent has
+    // the same context shown on STDERR.
     return {
       welcomed: true,
       org: "seed",
-      reversePrompt: REVERSE_PROMPT,
-      reversePromptTemplate: REVERSE_PROMPT_TEMPLATE,
+      seedGuidance: seedGuidanceFor(agent),
       recent: state.recent,
     };
   }
@@ -217,10 +273,15 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
   program
     .command("welcome")
     .description("Print a brief orientation to Primitive's decision graph")
-    .action(async () => {
+    .option(
+      "--agent <agent>",
+      "claude, codex, or hermes — tailors the capture guidance (Hermes auto-detected)",
+    )
+    .action(async (options: { agent?: string }) => {
+      const agent = resolveWelcomeAgent(options.agent, process.env);
       const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);
       const state = welcomeStateFromRecent(result);
-      process.stderr.write(`${formatWelcome(state)}\n`);
-      printJson(welcomeJson(state));
+      process.stderr.write(`${formatWelcome(state, agent)}\n`);
+      printJson(welcomeJson(state, agent));
     });
 }
