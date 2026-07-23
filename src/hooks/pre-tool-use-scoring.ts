@@ -240,8 +240,9 @@ export type HermesHookOutput = { action?: "block"; message?: string };
  * `deny` and `ask` become a block: Hermes has no soft-confirm tier, so a
  * decision Claude would raise as an `ask` dialog is here a block whose
  * message carries the reason and the `prim reconcile …` directive (the agent
- * reconciles, then retries). `warn`/`allow` pass through silently — an
- * advisory note cannot ride a pre_tool_call allow.
+ * reconciles, then retries). `warn`/`allow` return an empty object; the caller
+ * surfaces warnings on stderr and Hermes continues the tool, including for
+ * `semantic_uncertain`.
  */
 export function buildHermesOutput(
   aggregate: ConflictVerdict,
