@@ -55,13 +55,9 @@ describe("prim enable / disable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildProgram().parseAsync(["enable"], { from: "user" });
-    expect(vi.mocked(getClient)().post).toHaveBeenCalledWith(
-      "/api/cli/repositories/bind",
-      {
-        repositoryFullName: "campus-ai/primitive",
-      },
-      undefined,
-    );
+    expect(vi.mocked(getClient)().post).toHaveBeenCalledWith("/api/cli/repositories/bind", {
+      repositoryFullName: "campus-ai/primitive",
+    });
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
       ["config", "--local", "prim.repoSyncId", "sync-1"],

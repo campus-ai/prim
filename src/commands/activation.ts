@@ -7,10 +7,12 @@
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
  */
 import type { Command } from "commander";
-import { setRepoActive } from "../lib/activation.js";
-import { gitToplevel } from "../lib/git.js";
-import { bindRepository } from "../lib/repository-binding.js";
+import { getClient } from "../client.js";
+import { setRepoActive, setRepoSyncId } from "../lib/activation.js";
+import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { printJson } from "../output.js";
+
+type BindResponse = { repoSyncId?: unknown };
 
 async function applyActivation(active: boolean): Promise<void> {
   const root = gitToplevel();
@@ -23,7 +25,18 @@ async function applyActivation(active: boolean): Promise<void> {
   try {
     let bound: { repoSyncId: string; repositoryFullName: string } | undefined;
     if (active) {
-      bound = await bindRepository(root);
+      const repositoryFullName = githubRepositoryFullName(root);
+      if (!repositoryFullName) {
+        throw new Error("origin must be a GitHub HTTPS/SSH remote in owner/name form");
+      }
+      const response = (await getClient().post("/api/cli/repositories/bind", {
+        repositoryFullName,
+      })) as BindResponse;
+      if (typeof response.repoSyncId !== "string" || response.repoSyncId.length === 0) {
+        throw new Error("server returned no repository binding");
+      }
+      setRepoSyncId(root, response.repoSyncId);
+      bound = { repoSyncId: response.repoSyncId, repositoryFullName };
     }
     setRepoActive(root, active);
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
