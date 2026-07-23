@@ -9,9 +9,8 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
-import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { REAUTH_NOTICE } from "./reauth-notice.js";
 import {
@@ -38,12 +37,8 @@ vi.mock("../decisions/feedback.js", () => ({
   leaseDecisionFeedback: vi.fn(),
   renderFeedback: vi.fn(),
 }));
-vi.mock("../lib/activation.js", () => ({
-  isRepoActiveForCapture: vi.fn(),
-  repoSyncId: vi.fn(),
-}));
+vi.mock("../lib/activation.js", () => ({ isRepoActiveForCapture: vi.fn() }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn() }));
-vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../lib/workspace-id.js", () => ({ getOrCreateWorkspaceId: vi.fn() }));
 
 const ENVELOPE = JSON.stringify({
@@ -65,7 +60,6 @@ beforeEach(() => {
   vi.mocked(daemonRequest).mockResolvedValue(null);
   vi.mocked(leaseDecisionFeedback).mockResolvedValue(undefined);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
-  vi.mocked(repoSyncId).mockReturnValue("sync-existing");
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
@@ -137,57 +131,6 @@ describe("processSessionStart", () => {
     const refreshOrder = vi.mocked(refreshClaudePlugins).mock.invocationCallOrder[0];
     expect(kickOrder).toBeLessThan(daemonOrder);
     expect(daemonOrder).toBeLessThan(refreshOrder);
-  });
-
-  it("silently binds an active repository once before agent-specific work", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-
-    const feedbackSignal = AbortSignal.timeout(3_000);
-    await processSessionStart(ENVELOPE, "claude_code", feedbackSignal);
-
-    expect(bindRepository).toHaveBeenCalledOnce();
-    const options = vi.mocked(bindRepository).mock.calls[0]?.[1];
-    expect(options).toMatchObject({ quietRefresh: true });
-    expect(options?.signal).toBeInstanceOf(AbortSignal);
-    expect(options?.signal).not.toBe(feedbackSignal);
-  });
-
-  it("preserves normal output when opportunistic binding fails", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-    vi.mocked(bindRepository).mockRejectedValue(new Error("offline"));
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 0 });
-
-    const result = await processSessionStart(ENVELOPE, "claude_code");
-
-    expect(result.output.hookSpecificOutput?.additionalContext).toBe(PRIM_SKILL_REMINDER);
-  });
-
-  it("bounds an unavailable bind without spending the Decision feedback signal", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 0 });
-    vi.mocked(getOrCreateWorkspaceId).mockReturnValue({
-      status: "ready",
-      workspaceId: "00000000-0000-4000-8000-000000000001",
-      path: "/repo/.git/prim/workspace-id",
-      created: false,
-    });
-    vi.mocked(bindRepository).mockImplementation(
-      async (_root, options) =>
-        await new Promise((_, reject) => {
-          options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
-            once: true,
-          });
-        }),
-    );
-
-    await processSessionStart(ENVELOPE, "claude_code");
-
-    const feedback = vi.mocked(leaseDecisionFeedback).mock.calls[0]?.[0].signal;
-    expect(feedback).toBeInstanceOf(AbortSignal);
-    expect(feedback?.aborted).toBe(false);
   });
 
   it("refreshes only user scope and requests a reload in an inactive repo", async () => {
@@ -446,10 +389,8 @@ describe("processSessionStart", () => {
     expect(daemonRequest).toHaveBeenCalledOnce();
   });
 
-  it("binds Hermes while keeping its SessionStart output observer-only", async () => {
+  it("keeps Hermes observer-only, including under terminal auth", async () => {
     vi.mocked(isSessionEnded).mockReturnValue(true);
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
     const hermesEnvelope = JSON.stringify({
       hook_event_name: "on_session_start",
       session_id: "session-1",
@@ -459,28 +400,13 @@ describe("processSessionStart", () => {
     const result = await processSessionStart(hermesEnvelope, "hermes");
 
     expect(result.output).toEqual({});
-    expect(bindRepository).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ quietRefresh: true }),
-    );
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(isRepoActiveForCapture).not.toHaveBeenCalled();
     expect(daemonRequest).toHaveBeenCalledWith(
       "session_start",
       { sessionId: "session-1" },
       { timeoutMs: 250 },
     );
-  });
-
-  it.each([
-    ["inactive", false, null],
-    ["already bound", true, "sync-existing"],
-  ])("skips binding when the repository is %s", async (_name, active, binding) => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(active);
-    vi.mocked(repoSyncId).mockReturnValue(binding);
-
-    await processSessionStart(ENVELOPE, "codex");
-
-    expect(bindRepository).not.toHaveBeenCalled();
   });
 
   it.each(["not json", "null", "[]", '"scalar"'])(
