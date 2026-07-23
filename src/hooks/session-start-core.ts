@@ -9,8 +9,9 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
+import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
+import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
 import { type HookOutput, buildHookOutput } from "./decision-feedback-core.js";
@@ -18,6 +19,7 @@ import { normalizeEnvelope } from "./normalize.js";
 import { reauthNoticeFields } from "./reauth-notice.js";
 
 const DAEMON_TIMEOUT_MS = 250;
+const REPOSITORY_BIND_TIMEOUT_MS = 1_000;
 
 // Keep these shared clauses in lockstep with the SKILL.md description. Claude
 // and Codex differ only in how they invoke the installed Prim workflow.
@@ -35,6 +37,26 @@ export const PRIM_SKILL_REMINDER = primReminder("invoke the `prim` skill", "invo
 const CODEX_PRIM_ACTION = "follow the installed Prim workflow and use the `prim` CLI";
 export const CODEX_PRIM_REMINDER = primReminder(CODEX_PRIM_ACTION, CODEX_PRIM_ACTION);
 
+async function activeProjectRoot(cwd: string): Promise<string | null> {
+  try {
+    const root = gitToplevel(cwd);
+    if (!root || !isRepoActiveForCapture(cwd)) return null;
+    if (!repoSyncId(root)) {
+      try {
+        await bindRepository(root, {
+          signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
+          quietRefresh: true,
+        });
+      } catch {
+        // Binding is opportunistic. The gate visibly warns if it remains unavailable.
+      }
+    }
+    return root;
+  } catch {
+    return null;
+  }
+}
+
 interface SessionEnvelope {
   session_id?: string;
   hook_event_name?: string;
@@ -50,7 +72,7 @@ export interface SessionStartResult {
 export async function processSessionStart(
   raw: string,
   agent: Agent,
-  feedbackSignal: AbortSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS),
+  feedbackSignal?: AbortSignal,
 ): Promise<SessionStartResult> {
   let envelope: SessionEnvelope;
   try {
@@ -83,12 +105,13 @@ export async function processSessionStart(
   );
 
   const cwd = envelope.cwd ?? process.cwd();
+  let projectRoot: string | null = null;
   let active = false;
   let skillState = { installed: 0, refreshed: 0 };
   if (agent === "claude_code") {
+    projectRoot = await activeProjectRoot(cwd);
+    active = projectRoot !== null;
     try {
-      const projectRoot = gitToplevel(cwd);
-      active = projectRoot !== null && isRepoActiveForCapture(cwd);
       skillState = await refreshClaudePlugins(
         cwd,
         active && projectRoot !== null
@@ -126,11 +149,11 @@ export async function processSessionStart(
         ? `[prim] team: ${snapshot.onlineCount} online`
         : undefined;
 
+    projectRoot = await activeProjectRoot(cwd);
+    active = projectRoot !== null;
     let proactive = false;
     try {
-      const projectRoot = gitToplevel(cwd);
-      proactive =
-        projectRoot !== null && isRepoActiveForCapture(cwd) && hasUsableCodexGuidance(projectRoot);
+      proactive = projectRoot !== null && active && hasUsableCodexGuidance(projectRoot);
     } catch {
       // Guidance detection must never suppress otherwise-valid presence.
     }
@@ -146,10 +169,11 @@ export async function processSessionStart(
     if (active) {
       const identity = getOrCreateWorkspaceId(cwd);
       if (identity.status === "ready") {
+        const signal = feedbackSignal ?? AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
         const lease = await leaseDecisionFeedback({
           workspaceId: identity.workspaceId,
           currentSessionId: envelope.session_id,
-          signal: feedbackSignal,
+          signal,
         });
         const rendered = lease ? renderFeedback(lease) : undefined;
         return {
@@ -163,7 +187,7 @@ export async function processSessionStart(
                 await acknowledgeDecisionFeedback({
                   workspaceId: identity.workspaceId,
                   deliveries: rendered.deliveries,
-                  signal: feedbackSignal,
+                  signal,
                 });
               }
             : undefined,
@@ -173,5 +197,6 @@ export async function processSessionStart(
     return { output: buildHookOutput({ additionalContext, reloadSkills }) };
   }
 
+  await activeProjectRoot(cwd);
   return { output: buildHookOutput({}) };
 }

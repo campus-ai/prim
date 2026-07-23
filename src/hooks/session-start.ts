@@ -16,7 +16,6 @@
  * emit `{}` and exit 0. Hooks must never block.
  */
 
-import { FEEDBACK_DEADLINE_MS } from "../decisions/feedback.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
@@ -52,7 +51,6 @@ function readStdin(): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
   // SessionStart runs the bare ladder (cacheRead:false), so it always resolves
   // @latest fresh — the authoritative once-per-session refresh of the bin cache.
   warmBinCache();
@@ -64,7 +62,7 @@ async function main(): Promise<void> {
     await emitOutput(buildHookOutput({}));
     return;
   }
-  const result = await processSessionStart(raw, agent, feedbackSignal);
+  const result = await processSessionStart(raw, agent);
   await emitOutput(result.output, result.acknowledge);
 }
 
