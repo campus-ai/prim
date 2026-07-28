@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.61](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.60...v0.1.0-alpha.61) (2026-07-28)
+
+
+### Bug Fixes
+
+* make launchd daemon upgrades converge ([ed30ed2](https://github.com/campus-ai/prim/commit/ed30ed27e503d11587ce5b379554c807ddb484b1)), closes [#191](https://github.com/campus-ai/prim/issues/191)
+
 ## [0.1.0-alpha.60](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.59...v0.1.0-alpha.60) (2026-07-28)
 
 
