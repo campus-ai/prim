@@ -34,6 +34,7 @@ import {
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
+import { boundedHealthError } from "../lib/ansi.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
@@ -217,8 +218,13 @@ async function checkDaemon(): Promise<Check> {
   if (process.platform === "darwin") {
     try {
       service = getLaunchdService();
-    } catch {
-      service = { loaded: false };
+    } catch (error) {
+      const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
+      return {
+        name: "daemon",
+        status: "fail",
+        detail: `launchd status unavailable${detail ? `: ${detail}` : ""}`,
+      };
     }
   }
   const snapshot = await daemonRequest<DaemonDoctorSnapshot>(

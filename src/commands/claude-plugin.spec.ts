@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileLockExists, withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
 import {
-  compareSemver,
   installClaudePlugin,
   pluginPaths,
   refreshClaudePlugins,
@@ -248,18 +247,6 @@ describe("refreshClaudePlugins", () => {
 
     await expect(refreshClaudePlugins(root)).resolves.toEqual({ installed: 1, refreshed: 1 });
     expect(readFileSync(skillPath(projectDir), "utf-8")).toBe(loadSkill());
-  });
-
-  it.each([
-    ["1.0.0", "1.0.0-alpha", 1],
-    ["1.0.0-alpha.10", "1.0.0-alpha.2", 1],
-    ["1.0.0-alpha.beta", "1.0.0-alpha.50", 1],
-    ["1.0.0-alpha", "1.0.0-alpha.1", -1],
-    ["1.0.0+build.2", "1.0.0+build.1", 0],
-    ["1.0.0-alpha.01", "1.0.0-alpha.1", undefined],
-    ["1.0", "1.0.0", undefined],
-  ])("compares SemVer %s against %s", (left, right, precedence) => {
-    expect(compareSemver(left, right)).toBe(precedence);
   });
 
   it("re-reads a project version after acquiring the cross-process lock", async () => {

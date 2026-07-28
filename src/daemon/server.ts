@@ -501,6 +501,7 @@ function handleStatusSnapshot(params: Record<string, unknown>): unknown {
     sessionId: activeSessionId,
     lastHeartbeatAt,
     version: runtimeVersion,
+    launchRevision: process.env.PRIM_LAUNCH_REVISION,
     healthy: daemonHealth.healthy,
     needsReauth: daemonHealth.needsReauth === true,
     heartbeat: { ...daemonHealth.heartbeat },

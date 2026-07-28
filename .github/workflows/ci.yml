@@ -8,11 +8,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
+        os: [ubuntu-latest]
         node-version: [20, 22, 24]
+        include:
+          - os: macos-latest
+            node-version: 22
 
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +39,9 @@ jobs:
       - run: pnpm build
 
       - run: pnpm test
+
+      - name: Exercise launchd convergence
+        if: matrix.os == 'macos-latest'
+        run: pnpm vitest run src/daemon/launchd.integration.spec.ts
+        env:
+          PRIM_LAUNCHD_INTEGRATION: "1"

@@ -35,7 +35,7 @@ import {
   withDaemonLifecycleLock,
 } from "../daemon/launchd.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
-import { stripControlChars } from "../lib/ansi.js";
+import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
 
@@ -95,22 +95,12 @@ interface StatusSnapshot {
   heartbeat?: DaemonHeartbeatHealth;
   ingestion?: DaemonIngestionHealth;
   version?: string;
+  launchRevision?: string;
   onlineCount?: number;
   // Online teammates (self excluded), sorted. Surfaced in full here, where
   // there's room; the statusline truncates the same list.
   onlineNames?: string[];
   onlineTeammates?: Teammate[];
-}
-
-const MAX_HEALTH_ERROR_LENGTH = 240;
-
-function boundedHealthError(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const clean = stripControlChars(value).replace(/\s+/g, " ").trim();
-  if (!clean) return undefined;
-  return clean.length <= MAX_HEALTH_ERROR_LENGTH
-    ? clean
-    : `${clean.slice(0, MAX_HEALTH_ERROR_LENGTH - 1)}\u2026`;
 }
 
 /** Render the single most actionable cause of a degraded daemon snapshot. */
@@ -415,8 +405,9 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
   const healthy = daemonStartIsHealthy(serviceReady, snapshot, expectedVersion);
   if (healthy) {
     const verb = result.action === "none" ? "already running" : "started";
+    const servicePid = result.service.loaded ? result.service.pid : undefined;
     process.stderr.write(
-      `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? result.service.pid ?? "?"})`)}\n`,
+      `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? servicePid ?? "?"})`)}\n`,
     );
   } else {
     const reason = daemonDegradedReason(snapshot);
@@ -431,7 +422,7 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
         started: healthy,
         supervised: true,
         action: result.action,
-        pid: snapshot?.pid ?? result.service.pid,
+        pid: snapshot?.pid ?? (result.service.loaded ? result.service.pid : undefined),
         loaded: result.service.loaded,
         responding: result.responding,
         healthy,
@@ -531,11 +522,24 @@ export function classifyStatus(
 }
 
 export function classifyLaunchdStatus(
-  service: LaunchdService,
+  service: LaunchdService | undefined,
   responding: boolean,
   snapshot: StatusSnapshot | null,
   disabled: boolean,
 ): DaemonStatusVerdict {
+  if (!service) {
+    return {
+      json: {
+        running: responding,
+        responding,
+        supervised: true,
+        state: "unknown",
+        disabled,
+        ...(snapshot ?? {}),
+      },
+      exitCode: EXIT_BOOTING,
+    };
+  }
   if (!service.loaded) {
     if (responding) {
       return {
@@ -679,7 +683,13 @@ async function detachedDaemonStatus(): Promise<void> {
 }
 
 async function macDaemonStatus(): Promise<void> {
-  const service = getLaunchdService();
+  let service: LaunchdService | undefined;
+  let launchdError: unknown;
+  try {
+    service = getLaunchdService();
+  } catch (error) {
+    launchdError = error;
+  }
   const responding = await daemonIsLive(STATUS_PROBE_TIMEOUT_MS);
   const snapshot = responding
     ? await daemonRequest<StatusSnapshot>(
@@ -691,7 +701,12 @@ async function macDaemonStatus(): Promise<void> {
   const disabled = daemonExplicitlyDisabled();
   const { json, exitCode } = classifyLaunchdStatus(service, responding, snapshot, disabled);
 
-  if (!service.loaded && responding) {
+  if (!service) {
+    const detail = boundedHealthError(
+      launchdError instanceof Error ? launchdError.message : String(launchdError),
+    );
+    process.stderr.write(`[prim] ✗ launchd status unavailable${detail ? `: ${detail}` : ""}\n`);
+  } else if (!service.loaded && responding) {
     process.stderr.write(
       `[prim] ◌ daemon pid=${snapshot?.pid ?? "?"} is live but not supervised by launchd\n`,
     );
