@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.60](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.59...v0.1.0-alpha.60) (2026-07-28)
+
+
+### Features
+
+* bind active repositories at session start ([4b48c3a](https://github.com/campus-ai/prim/commit/4b48c3ad393daf062ca8b44b243da12fa970b55c))
+* bind active repositories at session start ([#200](https://github.com/campus-ai/prim/issues/200)) ([046e88b](https://github.com/campus-ai/prim/commit/046e88bb8d98add4148496e985a3384b9cb4b2eb))
+* **skill:** sharpen fork-in-the-road and rationale guidance ([#204](https://github.com/campus-ai/prim/issues/204)) ([1c6e36f](https://github.com/campus-ai/prim/commit/1c6e36f30a634e2e0ff137171f21f29c67742950))
+
 ## [0.1.0-alpha.59](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.58...v0.1.0-alpha.59) (2026-07-22)
 
 
