@@ -126,6 +126,22 @@ export function stripControlChars(text: string): string {
   return out;
 }
 
+const MAX_HEALTH_ERROR_LENGTH = 240;
+
+/**
+ * Normalize an operator-facing error string for a single-line health/status
+ * surface: strip control characters, collapse whitespace, and cap length with
+ * an ellipsis. Returns undefined for empty input.
+ */
+export function boundedHealthError(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const clean = stripControlChars(value).replace(/\s+/g, " ").trim();
+  if (!clean) return undefined;
+  return clean.length <= MAX_HEALTH_ERROR_LENGTH
+    ? clean
+    : `${clean.slice(0, MAX_HEALTH_ERROR_LENGTH - 1)}…`;
+}
+
 /**
  * Strip ANSI escape sequences from a string. Used by tests to assert
  * structural output independent of color, and by `softWrap` to measure

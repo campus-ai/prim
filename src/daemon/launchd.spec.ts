@@ -1,465 +1,541 @@
+import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readlinkSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
-  LAUNCHD_LABEL,
+  type EnsureMacDaemonOptions,
   type LaunchctlResult,
   type LaunchctlRunner,
-  type StageRuntimeOptions,
   bootoutMacDaemon,
   daemonExplicitlyDisabled,
   ensureMacDaemon,
-  generateLaunchAgentPlist,
+  launchdPaths,
   parseLaunchdService,
   runtimePaths,
-  runtimeStatuslineCommand,
-  setDaemonExplicitlyDisabled,
   stageRuntime,
   withDaemonLifecycleLock,
 } from "./launchd.js";
 
-const FIXED_DATE = new Date("2026-07-10T12:00:00.000Z");
+const UID = 501;
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+function mode(path: string): number {
+  return statSync(path).mode & 0o777;
+}
+interface Identity {
+  pid: number;
+  version?: string;
+  launchRevision?: string;
+}
+interface LauncherMetadata {
+  schemaVersion: number;
+  daemonPath: string;
+  runtimeVersion: string;
+  apiUrl: string | null;
+  revision: string;
+}
+function readLauncher(path: string): LauncherMetadata {
+  const encoded = /^# prim-daemon-launcher: ([A-Za-z0-9_-]+)$/mu.exec(
+    readFileSync(path, "utf8"),
+  )?.[1];
+  if (!encoded) throw new Error(`missing launcher metadata in ${path}`);
+  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as LauncherMetadata;
+}
+function result(
+  status: number | null,
+  stderr = "",
+  extra: Partial<LaunchctlResult> = {},
+): LaunchctlResult {
+  return { status, stdout: "", stderr, ...extra };
+}
+function printed(program: string, pid: number): LaunchctlResult {
+  return result(0, "", { stdout: `state = running\npid = ${String(pid)}\nprogram = ${program}` });
+}
+type BootstrapResult = LaunchctlResult & { apply?: boolean };
+const temporaryRoots: string[] = [];
+
+class FakeLaunchd {
+  readonly root = mkdtempSync(join(tmpdir(), "prim-launchd-"));
+  readonly homeDir = join(this.root, "Home O'Brien & More");
+  readonly dataHome = join(this.homeDir, "data");
+  readonly env = { XDG_DATA_HOME: this.dataHome };
+  readonly uid = UID;
+  readonly label = `ai.getprimitive.test-${process.pid}-${temporaryRoots.length}`;
+  readonly nodePath = join(this.root, "node");
+  readonly version = "1.0.0";
+  readonly nowMs = () => this.clock;
+  readonly daemonSource = join(this.root, "daemon.js");
+  readonly statuslineSource = join(this.root, "statusline.js");
+  readonly launcherPath = join(this.homeDir, ".config", "prim", "prim-daemon-launcher-v1");
+  readonly paths = launchdPaths({ homeDir: this.homeDir, uid: UID, label: this.label });
+  commands: string[][] = [];
+  timeouts: number[] = [];
+  sleeps: number[] = [];
+  printQueue: LaunchctlResult[] = [];
+  bootstrapQueue: BootstrapResult[] = [];
+  bootstrapDefault: BootstrapResult = result(0);
+  bootoutResult: BootstrapResult = result(0);
+  identityQueue: Array<Identity | null> = [];
+  validationError?: Error;
+  legacyIdentity: Identity | null = null;
+  loaded = false;
+  program: string | undefined;
+  pid = 987_654_321;
+  runningIdentity: Identity | null = null;
+  migrated = 0;
+  clock = 0;
+  constructor() {
+    temporaryRoots.push(this.root);
+    writeFileSync(this.nodePath, "#!/bin/sh\n");
+    chmodSync(this.nodePath, 0o700);
+    writeFileSync(this.daemonSource, "daemon-v1\n");
+    writeFileSync(this.statuslineSource, "statusline-v1\n");
+  }
+  readonly runner: LaunchctlRunner = (args, timeoutMs) => {
+    this.commands.push(args);
+    this.timeouts.push(timeoutMs ?? -1);
+    if (args[0] === "print") {
+      const queued = this.printQueue.shift();
+      if (queued) return queued;
+      if (!this.loaded) return result(113, "Could not find service");
+      return {
+        status: 0,
+        stdout: `state = running\npid = ${String(this.pid)}\n${
+          this.program ? `program = ${this.program}` : ""
+        }`,
+        stderr: "",
+      };
+    }
+    if (args[0] === "bootstrap") {
+      const queued = this.bootstrapQueue.shift() ?? this.bootstrapDefault;
+      if (queued.status === 0 || queued.apply) this.activate();
+      return queued;
+    }
+    if (args[0] === "bootout") {
+      if (this.bootoutResult.status === 0 || this.bootoutResult.apply) this.makeAbsent();
+      return this.bootoutResult;
+    }
+    if (args[0] === "kickstart") {
+      this.activate();
+      return result(0);
+    }
+    throw new Error(`unexpected launchctl command: ${args.join(" ")}`);
+  };
+  readonly inspectDaemon = async (): Promise<Identity | null> => {
+    if (this.identityQueue.length > 0) return this.identityQueue.shift() ?? null;
+    return this.loaded ? this.runningIdentity : this.legacyIdentity;
+  };
+  readonly sleep = async (ms: number): Promise<void> => {
+    this.sleeps.push(ms);
+    this.clock += ms;
+    await Promise.resolve();
+  };
+  readonly validatePlist = (): void => {
+    if (this.validationError) throw this.validationError;
+  };
+  readonly migrateLegacy = async (): Promise<boolean> => {
+    this.migrated++;
+    this.legacyIdentity = null;
+    return true;
+  };
+  desiredIdentity(): Identity {
+    const launcher = readLauncher(this.launcherPath);
+    return {
+      pid: this.pid,
+      version: launcher.runtimeVersion,
+      launchRevision: launcher.revision,
+    };
+  }
+  activate(): void {
+    this.loaded = true;
+    this.program = this.launcherPath;
+    this.runningIdentity = this.desiredIdentity();
+  }
+  makeAbsent(): void {
+    this.loaded = false;
+    this.program = undefined;
+    this.runningIdentity = null;
+  }
+  setPresent(program: string, identity: Identity): void {
+    this.loaded = true;
+    this.program = program;
+    this.runningIdentity = identity;
+    this.pid = identity.pid;
+  }
+  clearCommands(): void {
+    this.commands = [];
+    this.timeouts = [];
+    this.sleeps = [];
+  }
+  lifecycleCommands(): string[] {
+    return this.commands.filter(({ 0: command }) => command !== "print").map((args) => args[0]);
+  }
+  options(overrides: Partial<EnsureMacDaemonOptions> = {}): EnsureMacDaemonOptions {
+    return { ...this, ...overrides, env: overrides.env ?? this.env };
+  }
+  ensure(overrides: Partial<EnsureMacDaemonOptions> = {}) {
+    return ensureMacDaemon(this.options(overrides));
+  }
+  async seed(): Promise<void> {
+    const seeded = await this.ensure({ explicitlyStarted: true });
+    expect(seeded).toMatchObject({ state: "running", action: "bootstrap" });
+    this.clearCommands();
+  }
+}
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("runtime staging", () => {
-  let dir: string;
-  let daemonSource: string;
-  let statuslineSource: string;
-  let options: StageRuntimeOptions;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "prim-runtime-"));
-    daemonSource = join(dir, "daemon-source.js");
-    statuslineSource = join(dir, "statusline-source.js");
-    writeFileSync(daemonSource, "daemon-v1\n");
-    writeFileSync(statuslineSource, "statusline-v1\n");
-    options = {
-      env: { XDG_DATA_HOME: join(dir, "data") },
-      homeDir: join(dir, "home"),
-      nodePath: "/opt/primitive/node",
-      daemonSource,
-      statuslineSource,
-      version: "1.2.3",
-      now: () => FIXED_DATE,
-    };
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("atomically stages both standalone entries and an adjacent 0600 manifest", () => {
+  it("stages immutable hashed schema-v2 releases and repairs changes without churn", () => {
+    const fake = new FakeLaunchd();
+    const options = fake.options({ version: "1.2.3" });
     const staged = stageRuntime(options);
-
-    expect(staged.changed).toBe(true);
-    expect(lstatSync(staged.paths.currentLink).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(staged.paths.currentLink)).toMatch(/^releases\/release-/);
-    expect(readFileSync(staged.paths.daemonEntry, "utf8")).toBe("daemon-v1\n");
-    expect(readFileSync(staged.paths.statuslineEntry, "utf8")).toBe("statusline-v1\n");
-    expect(statSync(staged.paths.runtimeDir).mode & 0o777).toBe(0o700);
-    expect(statSync(staged.paths.daemonEntry).mode & 0o777).toBe(0o600);
-    expect(statSync(staged.paths.statuslineEntry).mode & 0o777).toBe(0o600);
-    expect(statSync(staged.paths.statuslineLauncher).mode & 0o777).toBe(0o700);
-    expect(statSync(staged.paths.manifestPath).mode & 0o777).toBe(0o600);
-    expect(readFileSync(staged.paths.statuslineLauncher, "utf8")).toBe(
-      `#!/bin/sh\nexec '/opt/primitive/node' '${staged.paths.statuslineEntry}'\n`,
-    );
-    expect(JSON.parse(readFileSync(staged.paths.manifestPath, "utf8"))).toEqual({
-      schemaVersion: 1,
+    const releaseDir = join(staged.daemonPath, "..");
+    const manifestPath = join(releaseDir, "manifest.json");
+    const statuslinePath = join(releaseDir, "prim-statusline");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof staged.manifest;
+    expect(manifest).toMatchObject({
+      schemaVersion: 2,
       version: "1.2.3",
-      nodePath: "/opt/primitive/node",
-      daemonFile: "prim-daemon-server",
-      statuslineFile: "prim-statusline",
-      stagedAt: FIXED_DATE.toISOString(),
+      daemonSha256: sha256("daemon-v1\n"),
+      statuslineSha256: sha256("statusline-v1\n"),
     });
-  });
-
-  it("does not churn a matching runtime, then atomically advances on version change", () => {
-    const first = stageRuntime(options);
-    const firstTarget = readlinkSync(first.paths.currentLink);
-
-    expect(stageRuntime({ ...options, now: () => new Date("2027-01-01") }).changed).toBe(false);
-    const upgraded = stageRuntime({ ...options, version: "1.2.4" });
-
-    expect(upgraded.changed).toBe(true);
-    expect(readlinkSync(upgraded.paths.currentLink)).not.toBe(firstTarget);
-    expect(existsSync(join(upgraded.paths.runtimeDir, firstTarget))).toBe(true);
-  });
-
-  it("stages without a statusline when that optional bundle is unavailable", () => {
-    const staged = stageRuntime({ ...options, statuslineSource: null });
-    expect(staged.manifest.statuslineFile).toBeUndefined();
-    expect(existsSync(staged.paths.statuslineEntry)).toBe(false);
-    expect(existsSync(staged.paths.statuslineLauncher)).toBe(false);
-  });
-
-  it("renders a shell-safe stable-launcher command without touching the filesystem", () => {
-    const homeDir = join(dir, "O'Brien");
-    const command = runtimeStatuslineCommand({
-      env: {},
-      homeDir,
-    });
-
-    expect(command).toBe(
-      `'${join(homeDir, ".local/share/prim/runtime/prim-statusline").replaceAll("'", `'"'"'`)}'`,
+    expect([staged.paths.runtimeDir, releaseDir].map(mode)).toEqual([0o700, 0o700]);
+    expect([staged.daemonPath, statuslinePath, manifestPath].map(mode)).toEqual([
+      0o600, 0o600, 0o600,
+    ]);
+    expect(mode(staged.paths.statuslineLauncher)).toBe(0o700);
+    expect(readFileSync(staged.paths.statuslineLauncher, "utf8")).toContain(
+      statuslinePath.replaceAll("'", `'"'"'`),
     );
-    expect(existsSync(runtimePaths({ env: {}, homeDir }).runtimeDir)).toBe(false);
-  });
-
-  it("keeps the persisted command stable while atomically updating its Node launcher", () => {
-    const command = runtimeStatuslineCommand(options);
-    const first = stageRuntime({ ...options, nodePath: "/old/node" });
-    expect(readFileSync(first.paths.statuslineLauncher, "utf8")).toContain("exec '/old/node'");
-
-    const second = stageRuntime({ ...options, nodePath: "/new/node" });
-    expect(runtimeStatuslineCommand(options)).toBe(command);
-    expect(readFileSync(second.paths.statuslineLauncher, "utf8")).toContain("exec '/new/node'");
-    expect(readFileSync(second.paths.statuslineLauncher, "utf8")).not.toContain("/old/node");
-    expect(statSync(second.paths.statuslineLauncher).mode & 0o777).toBe(0o700);
+    expect(stageRuntime({ ...options, now: () => new Date("2027-01-01") })).toMatchObject({
+      changed: false,
+      daemonPath: staged.daemonPath,
+    });
+    writeFileSync(staged.daemonPath, "corrupt\n");
+    const repaired = stageRuntime(options);
+    expect(readFileSync(staged.daemonPath, "utf8")).toBe("corrupt\n");
+    expect(readFileSync(repaired.daemonPath, "utf8")).toBe("daemon-v1\n");
+    writeFileSync(options.daemonSource as string, "same-version-new-bytes\n");
+    const repinned = stageRuntime(options);
+    expect(repinned.daemonPath).not.toBe(repaired.daemonPath);
+    expect(readFileSync(repaired.daemonPath, "utf8")).toBe("daemon-v1\n");
+    expect(repinned.manifest.daemonSha256).toBe(sha256("same-version-new-bytes\n"));
+    const without = stageRuntime({ ...options, statuslineSource: null });
+    expect(existsSync(without.paths.statuslineLauncher)).toBe(false);
   });
 });
 
-describe("launchd contract", () => {
-  it("renders the required resilient LaunchAgent keys and escapes paths", () => {
-    const plist = generateLaunchAgentPlist({
-      nodePath: "/Applications/Node & Tools/node",
-      daemonPath: "/Users/Alice/<runtime>/prim-daemon-server",
-      runtimeVersion: "1.2.3-beta&1",
-      logPath: "/Users/Alice/.config/prim/daemon.log",
-      workingDirectory: "/Users/Alice",
-      apiUrl: "https://example.test/?a=1&b=2",
-    });
-
-    expect(plist).toContain(`<string>${LAUNCHD_LABEL}</string>`);
-    expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
-    expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
-    expect(plist).toContain("<key>ThrottleInterval</key>\n  <integer>10</integer>");
-    expect(plist).toContain("<key>ProcessType</key>\n  <string>Background</string>");
-    expect(plist).toContain("<key>Umask</key>\n  <integer>63</integer>");
-    expect(plist).toContain("/Applications/Node &amp; Tools/node");
-    expect(plist).toContain("/Users/Alice/&lt;runtime&gt;/prim-daemon-server");
-    expect(plist).toContain("https://example.test/?a=1&amp;b=2");
-    expect(plist).toContain("<key>PRIM_RUNTIME_VERSION</key>");
-    expect(plist).toContain("<string>1.2.3-beta&amp;1</string>");
-  });
-
-  it("parses loaded state and pid without depending on launchctl's full text format", () => {
+describe("launchd observation", () => {
+  it("classifies only trustworthy print results and sanitizes bounded errors", () => {
     expect(
       parseLaunchdService({
         status: 0,
-        stdout: `gui/501/${LAUNCHD_LABEL} = {\n\tstate = running\n\tpid = 4242\n}\n`,
+        stdout: "state = running\npid = 4242\nprogram = /tmp/launcher\n",
         stderr: "",
       }),
-    ).toMatchObject({ loaded: true, state: "running", pid: 4242 });
-    expect(parseLaunchdService({ status: 113, stdout: "", stderr: "not found" })).toEqual({
-      loaded: false,
+    ).toMatchObject({
+      loaded: true,
+      state: "running",
+      pid: 4242,
+      program: "/tmp/launcher",
     });
+    expect(parseLaunchdService(result(113, "not found"))).toEqual({ loaded: false });
+    const noise = "x".repeat(5_000);
+    try {
+      parseLaunchdService(
+        result(5, `${noise}\nTry re-running the command as root for richer errors.`),
+      );
+    } catch (error) {
+      expect((error as Error).message).not.toContain("re-running");
+      expect((error as Error).message.length).toBeLessThan(4_200);
+    }
   });
 });
 
-describe("launchd lifecycle", () => {
-  let dir: string;
-  let loaded: boolean;
-  let servicePid: number | undefined;
-  let commands: string[][];
-  let runner: LaunchctlRunner;
-  let base: StageRuntimeOptions & {
-    uid: number;
-    runner: LaunchctlRunner;
-    identify: () => Promise<number>;
-  };
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "prim-launchd-"));
-    const daemonSource = join(dir, "daemon.js");
-    const statuslineSource = join(dir, "statusline.js");
-    writeFileSync(daemonSource, "daemon\n");
-    writeFileSync(statuslineSource, "statusline\n");
-    loaded = false;
-    servicePid = 4242;
-    commands = [];
-    runner = (args): LaunchctlResult => {
-      commands.push(args);
-      if (args[0] === "print") {
-        return loaded
-          ? {
-              status: 0,
-              stdout: `\tstate = running\n${servicePid === undefined ? "" : `\tpid = ${String(servicePid)}\n`}`,
-              stderr: "",
-            }
-          : { status: 113, stdout: "", stderr: "not found" };
-      }
-      if (args[0] === "bootstrap") loaded = true;
-      if (args[0] === "bootout") loaded = false;
-      if (args[0] === "kickstart") servicePid = 4242;
-      return { status: 0, stdout: "", stderr: "" };
-    };
-    base = {
-      env: { XDG_DATA_HOME: join(dir, "data") },
-      homeDir: join(dir, "home"),
-      uid: 501,
-      runner,
-      identify: async () => 4242,
-      nodePath: "/opt/node",
-      daemonSource,
-      statuslineSource,
-      version: "1.0.0",
-      now: () => FIXED_DATE,
-    };
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("bootstraps once, then leaves a matching healthy service alone", async () => {
-    let probeCount = 0;
-    const first = await ensureMacDaemon({
-      ...base,
+describe("generated launchd contract", () => {
+  it("writes one stable schema-v1 launcher and a structural-only validated plist", async () => {
+    const fake = new FakeLaunchd();
+    await fake.ensure({
       explicitlyStarted: true,
-      probe: async () => ++probeCount > 1,
+      env: { XDG_DATA_HOME: fake.dataHome, PRIM_API_URL: " https://api.test/// " },
     });
-    expect(first).toMatchObject({ state: "running", action: "bootstrap", responding: true });
-    expect(commands.some((args) => args[0] === "bootstrap")).toBe(true);
-
-    commands = [];
-    const second = await ensureMacDaemon({ ...base, probe: async () => true });
-    expect(second).toMatchObject({ state: "running", action: "none", runtimeChanged: false });
-    expect(commands.some((args) => args[0] === "kickstart")).toBe(false);
-    expect(commands.some((args) => args[0] === "bootstrap")).toBe(false);
+    const launcher = readLauncher(fake.launcherPath);
+    const launcherText = readFileSync(fake.launcherPath, "utf8");
+    const plist = readFileSync(fake.paths.plistPath, "utf8");
+    expect(launcher).toMatchObject({
+      schemaVersion: 1,
+      runtimeVersion: "1.0.0",
+      apiUrl: "https://api.test",
+    });
+    expect(launcherText).toContain(`export PRIM_RUNTIME_VERSION='1.0.0'`);
+    expect(launcherText).toContain(`export PRIM_LAUNCH_REVISION='${launcher.revision}'`);
+    expect(launcherText).toContain(`export PRIM_API_URL='https://api.test'`);
+    expect(launcherText).toContain(`O'"'"'Brien`);
+    expect(mode(fake.launcherPath)).toBe(0o700);
+    const escapedLauncher = fake.launcherPath.replaceAll("&", "&amp;").replaceAll("'", "&apos;");
+    expect(plist).toContain(`<string>${escapedLauncher}</string>`);
+    expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>5</integer>");
+    expect(plist).not.toContain("PRIM_RUNTIME_VERSION");
+    expect(plist).not.toContain(launcher.daemonPath);
+    fake.clearCommands();
+    const second = await fake.ensure({
+      env: { XDG_DATA_HOME: fake.dataHome, PRIM_API_URL: "https://other.test/" },
+    });
+    expect(second).toMatchObject({ action: "kickstart", plistChanged: false });
+    expect(readFileSync(fake.paths.plistPath, "utf8")).toBe(plist);
+    expect(readLauncher(fake.launcherPath).apiUrl).toBe("https://other.test");
+    fake.clearCommands();
+    writeFileSync(fake.paths.plistPath, "known-good\n");
+    fake.validationError = new Error("invalid plist");
+    await expect(fake.ensure()).rejects.toThrow("invalid plist");
+    expect(readFileSync(fake.paths.plistPath, "utf8")).toBe("known-good\n");
+    expect(fake.lifecycleCommands()).toEqual([]);
   });
+});
 
-  it("kickstarts an unhealthy service and reloads an upgraded runtime", async () => {
-    loaded = true;
-    await ensureMacDaemon({ ...base, probe: async () => true });
-    commands = [];
-    let probeCount = 0;
-    const healed = await ensureMacDaemon({
-      ...base,
-      probe: async () => ++probeCount > 1,
+describe("launchd reconciliation", () => {
+  it("cold-boots, no-ops, and resumes from observable interrupted states", async () => {
+    const fake = new FakeLaunchd();
+    await fake.seed();
+    expect(await fake.ensure()).toMatchObject({
+      state: "running",
+      action: "none",
+      runtimeChanged: false,
+      plistChanged: false,
+      responding: true,
+      socketPid: fake.pid,
     });
-    expect(healed.action).toBe("kickstart");
-    expect(commands).toContainEqual(["kickstart", "-k", `gui/501/${LAUNCHD_LABEL}`]);
-
-    commands = [];
-    const upgraded = await ensureMacDaemon({
-      ...base,
-      version: "1.0.1",
-      probe: async () => true,
-    });
-    expect(upgraded).toMatchObject({ action: "reload", runtimeChanged: true });
+    expect(fake.lifecycleCommands()).toEqual([]);
+    fake.makeAbsent();
+    expect(await fake.ensure()).toMatchObject({ action: "bootstrap", state: "running" });
+    fake.runningIdentity = { pid: fake.pid, version: "1.0.0", launchRevision: "pre-replace" };
+    expect(await fake.ensure()).toMatchObject({ action: "kickstart", state: "running" });
+    expect(existsSync(join(fake.dataHome, "prim", "launchd-state.json"))).toBe(false);
   });
-
-  it("reloads launchd when the persisted plist changes", async () => {
-    loaded = true;
-    await ensureMacDaemon({ ...base, probe: async () => true });
-    commands = [];
-
-    const changed = await ensureMacDaemon({
-      ...base,
-      nodePath: "/new/node",
-      probe: async () => true,
-    });
-
-    expect(changed.action).toBe("reload");
-    expect(commands).toContainEqual(["bootout", `gui/501/${LAUNCHD_LABEL}`]);
-    expect(commands).toContainEqual([
-      "bootstrap",
-      "gui/501",
-      join(base.homeDir as string, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`),
-    ]);
+  it.each([
+    ["version", { version: "1.1.0" }],
+    ["Node", { nodePath: "/different/node" }],
+  ] as const)("applies a %s change with kickstart only", async (_name, change) => {
+    const fake = new FakeLaunchd();
+    await fake.seed();
+    const changed = await fake.ensure(change);
+    expect(changed.action).toBe("kickstart");
+    expect(fake.lifecycleCommands()).toEqual(["kickstart"]);
   });
-
-  it("migrates a verified legacy socket owner before kickstarting the loaded job", async () => {
-    loaded = true;
-    await ensureMacDaemon({ ...base, probe: async () => true });
-    commands = [];
-    let identifyCount = 0;
-    let migrated = 0;
-
-    const repaired = await ensureMacDaemon({
-      ...base,
-      probe: async () => true,
-      identify: async () => (++identifyCount === 1 ? 999 : 4242),
-      migrateLegacy: async () => {
-        migrated++;
-        return true;
-      },
-    });
-
-    expect(migrated).toBe(1);
-    expect(repaired).toMatchObject({ state: "running", action: "kickstart", socketPid: 4242 });
-    expect(commands).toContainEqual(["kickstart", "-k", `gui/501/${LAUNCHD_LABEL}`]);
+  it("fences automatic downgrade, rejects a corrupt incumbent, and permits explicit downgrade", async () => {
+    const fake = new FakeLaunchd();
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    fake.clearCommands();
+    const selected = readLauncher(fake.launcherPath);
+    const retained = await fake.ensure({ version: "1.0.0" });
+    expect(retained).toMatchObject({ action: "none", runtimeChanged: false });
+    expect(readLauncher(fake.launcherPath).daemonPath).toBe(selected.daemonPath);
+    rmSync(fake.nodePath);
+    await expect(fake.ensure({ version: "1.0.0" })).rejects.toThrow("unavailable or corrupt");
+    writeFileSync(fake.nodePath, "#!/bin/sh\n", { mode: 0o700 });
+    writeFileSync(selected.daemonPath, "corrupt\n");
+    await expect(fake.ensure({ version: "1.0.0" })).rejects.toThrow(
+      "unavailable or corrupt; refusing automatic downgrade",
+    );
+    expect(fake.lifecycleCommands()).toEqual([]);
+    const downgraded = await fake.ensure({ version: "1.0.0", explicitlyStarted: true });
+    expect(downgraded).toMatchObject({ action: "kickstart", runtimeChanged: true });
+    expect(readLauncher(fake.launcherPath).runtimeVersion).toBe("1.0.0");
+    fake.clearCommands();
+    expect(await fake.ensure({ version: "nightly" })).toMatchObject({ action: "none" });
+    expect(readLauncher(fake.launcherPath).runtimeVersion).toBe("1.0.0");
   });
-
-  it("verified-stops an identified socket when launchctl omits its pid", async () => {
-    await ensureMacDaemon({
-      ...base,
-      explicitlyStarted: true,
-      probe: async () => true,
-      migrateLegacy: async () => true,
+  it("converges the bootout race with one bootout and bootstrap 5, 5, 0", async () => {
+    const fake = new FakeLaunchd();
+    fake.setPresent("/legacy/mutable-daemon", {
+      pid: fake.pid,
+      version: "0.9.0",
+      launchRevision: "legacy",
     });
-    servicePid = undefined;
-    commands = [];
-    let migrated = 0;
-
-    const repaired = await ensureMacDaemon({
-      ...base,
-      probe: async () => true,
-      identify: async () => 4242,
-      migrateLegacy: async () => {
-        migrated++;
-        return true;
-      },
-    });
-
-    expect(migrated).toBe(1);
-    expect(repaired).toMatchObject({ state: "running", action: "kickstart", socketPid: 4242 });
-    expect(commands).toContainEqual(["kickstart", "-k", `gui/501/${LAUNCHD_LABEL}`]);
+    fake.bootoutResult = result(5, "transition in progress");
+    fake.bootstrapQueue = [
+      result(5, "transition in progress"),
+      result(5, "transition in progress"),
+      result(0),
+    ];
+    const repaired = await fake.ensure();
+    expect(repaired).toMatchObject({ state: "running", action: "reload" });
+    expect(fake.lifecycleCommands()).toEqual(["bootout", "bootstrap", "bootstrap", "bootstrap"]);
+    expect(fake.sleeps).toEqual([100, 200]);
+    fake.clearCommands();
+    expect(await fake.ensure()).toMatchObject({ state: "running", action: "none" });
+    expect(fake.lifecycleCommands()).toEqual([]);
   });
-
-  it("respects a deliberate stop until an explicit start clears the marker", async () => {
-    setDaemonExplicitlyDisabled(true, base);
-    const disabled = await ensureMacDaemon({
-      ...base,
-      daemonSource: join(dir, "does-not-exist"),
-      probe: async () => true,
+  it("accepts an ambiguously applied bootstrap and fails fast on non-retryable errors", async () => {
+    const applied = new FakeLaunchd();
+    applied.bootstrapQueue = [
+      { ...result(null, "operation timed out", { timedOut: true }), apply: true },
+    ];
+    await expect(applied.ensure()).resolves.toMatchObject({
+      state: "running",
+      action: "bootstrap",
     });
-    expect(disabled).toMatchObject({ state: "disabled", action: "none" });
-    expect(commands.every((args) => args[0] === "print")).toBe(true);
-
-    const started = await ensureMacDaemon({
-      ...base,
-      explicitlyStarted: true,
-      probe: async () => true,
-      migrateLegacy: async () => true,
-    });
-    expect(started.state).toBe("running");
-    expect(daemonExplicitlyDisabled(base)).toBe(false);
+    expect(applied.lifecycleCommands()).toEqual(["bootstrap"]);
+    const rejected = new FakeLaunchd();
+    rejected.bootstrapDefault = result(78, "bad request");
+    await expect(rejected.ensure()).rejects.toThrow("bad request");
+    expect(rejected.lifecycleCommands()).toEqual(["bootstrap"]);
   });
+  it("fails closed when failed lifecycle commands cannot prove the expected state", async () => {
+    const unknown = new FakeLaunchd();
+    unknown.setPresent("/old", { pid: unknown.pid, version: "old" });
+    unknown.bootoutResult = result(78, "bootout denied");
+    unknown.printQueue = [
+      printed("/old", unknown.pid),
+      printed("/old", unknown.pid),
+      result(null, "observation timed out", { timedOut: true }),
+    ];
+    await expect(unknown.ensure()).rejects.toThrow("bootout denied");
+    expect(unknown.lifecycleCommands()).toEqual(["bootout"]);
 
-  it("bootout writes the disable marker and never signals a pid", async () => {
-    loaded = true;
-    const stopped = await bootoutMacDaemon({ ...base, probe: async () => false });
+    const third = new FakeLaunchd();
+    third.setPresent("/old", { pid: third.pid, version: "old" });
+    third.printQueue = [
+      printed("/old", third.pid),
+      printed("/old", third.pid),
+      printed("/unexpected", third.pid),
+    ];
+    third.bootstrapQueue = [result(5, "transition in progress")];
+    await expect(third.ensure()).rejects.toThrow("unexpected launchd program /unexpected");
+
+    const wrongIdentity = new FakeLaunchd();
+    wrongIdentity.bootstrapQueue = [{ ...result(78, "bootstrap denied"), apply: true }];
+    wrongIdentity.identityQueue = [null, { pid: wrongIdentity.pid, version: "wrong" }];
+    await expect(wrongIdentity.ensure()).rejects.toThrow("bootstrap denied");
+  });
+  it("uses one deadline and capped command timeouts when bootstrap never converges", async () => {
+    const fake = new FakeLaunchd();
+    fake.bootstrapDefault = result(5, "transition in progress");
+    await expect(fake.ensure()).rejects.toThrow("did not converge within 15000ms");
+    expect(fake.clock).toBe(15_000);
+    expect(fake.sleeps.slice(0, 4)).toEqual([100, 200, 400, 500]);
+    expect(Math.max(...fake.timeouts)).toBeLessThanOrEqual(5_000);
+  });
+  it("restarts identity mismatches and force, but ignores backend health", async () => {
+    const fake = new FakeLaunchd();
+    await fake.seed();
+    for (const identity of [
+      { pid: 1, version: "1.0.0", launchRevision: "wrong" },
+      { pid: fake.pid, version: "1.0.0" },
+    ]) {
+      fake.identityQueue.push(identity);
+      await expect(fake.ensure()).resolves.toMatchObject({ action: "kickstart", state: "running" });
+    }
+    await expect(fake.ensure({ forceRestart: true })).resolves.toMatchObject({
+      action: "kickstart",
+    });
+    const backendUnhealthy = { ...fake.desiredIdentity(), backendHealthy: false };
+    fake.identityQueue.push(backendUnhealthy);
+    await expect(fake.ensure()).resolves.toMatchObject({ action: "none", state: "running" });
+  });
+});
+
+describe("failure safety, migration, and locking", () => {
+  it.each([
+    ["status 5", result(5, "busy")],
+    ["timeout", result(null, "timeout", { timedOut: true })],
+    ["missing program", { status: 0, stdout: "state = running\npid = 1\n", stderr: "" }],
+  ])("does not stage or mutate lifecycle after an initial print %s", async (_name, failure) => {
+    const fake = new FakeLaunchd();
+    fake.printQueue.push(failure);
+    await expect(fake.ensure()).rejects.toThrow();
+    expect(fake.commands.map((args) => args[0])).toEqual(["print"]);
+    expect(existsSync(runtimePaths(fake).runtimeDir)).toBe(false);
+    expect(existsSync(fake.launcherPath)).toBe(false);
+    expect(existsSync(fake.paths.plistPath)).toBe(false);
+    expect(existsSync(fake.paths.logPath)).toBe(false);
+  });
+  it("migrates a verified legacy owner only when launchd is absent", async () => {
+    const absent = new FakeLaunchd();
+    absent.legacyIdentity = { pid: 700, version: "legacy" };
+    const bootstrapped = await absent.ensure();
+    expect(bootstrapped.action).toBe("bootstrap");
+    expect(absent.migrated).toBe(1);
+    const present = new FakeLaunchd();
+    await present.seed();
+    present.identityQueue.push({ pid: 700, version: "foreign" });
+    const repaired = await present.ensure();
+    expect(repaired.action).toBe("kickstart");
+    expect(present.migrated).toBe(0);
+  });
+  it("persists both disabled markers across stop and clears them on explicit start", async () => {
+    const fake = new FakeLaunchd();
+    await fake.seed();
+    const legacyMarker = runtimePaths(fake).disabledMarker;
+    const homeMarker = join(fake.homeDir, ".config", "prim", "daemon.disabled");
+    fake.bootoutResult = result(5, "transition in progress");
+    await expect(bootoutMacDaemon(fake.options())).rejects.toThrow("did not converge");
+    expect(fake.sleeps.length).toBeGreaterThan(0);
+    expect([legacyMarker, homeMarker].map(mode)).toEqual([0o600, 0o600]);
+    fake.bootoutResult = { ...result(5, "transition in progress"), apply: true };
+    const stopped = await bootoutMacDaemon(fake.options());
     expect(stopped).toMatchObject({ wasLoaded: true, legacyStopped: false });
-    expect(commands).toContainEqual(["bootout", `gui/501/${LAUNCHD_LABEL}`]);
-    expect(daemonExplicitlyDisabled(base)).toBe(true);
+    fake.clearCommands();
+    expect(await fake.ensure()).toMatchObject({ state: "disabled", action: "none" });
+    expect(fake.lifecycleCommands()).toEqual([]);
+    expect(await fake.ensure({ explicitlyStarted: true })).toMatchObject({
+      state: "running",
+      action: "bootstrap",
+    });
+    expect(daemonExplicitlyDisabled(fake)).toBe(false);
   });
-
-  it("serializes concurrent ensures so only one process bootstraps", async () => {
-    let releaseProbe!: () => void;
-    const probeReleased = new Promise<void>((resolvePromise) => {
-      releaseProbe = resolvePromise;
-    });
-    let enteredProbe!: () => void;
-    const probeEntered = new Promise<void>((resolvePromise) => {
-      enteredProbe = resolvePromise;
-    });
-    let firstProbeCount = 0;
-    const first = ensureMacDaemon({
-      ...base,
-      explicitlyStarted: true,
-      probe: async () => {
-        firstProbeCount++;
-        if (firstProbeCount === 1) {
-          enteredProbe();
-          await probeReleased;
-          return false;
-        }
-        return true;
-      },
-    });
-    await probeEntered;
-    const second = ensureMacDaemon({ ...base, probe: async () => true });
-
-    releaseProbe();
-    const [firstResult, secondResult] = await Promise.all([first, second]);
-
-    expect(firstResult.action).toBe("bootstrap");
-    expect(secondResult.action).toBe("none");
-    expect(commands.filter((args) => args[0] === "bootstrap")).toHaveLength(1);
+  it("migrates a released XDG disabled marker without staging", async () => {
+    const fake = new FakeLaunchd();
+    const legacyMarker = runtimePaths(fake).disabledMarker;
+    mkdirSync(join(fake.dataHome, "prim"), { recursive: true });
+    writeFileSync(legacyMarker, "disabled\n");
+    const disabled = await fake.ensure();
+    expect(disabled).toMatchObject({ state: "disabled", action: "none" });
+    expect(existsSync(join(fake.homeDir, ".config", "prim", "daemon.disabled"))).toBe(true);
+    expect(existsSync(runtimePaths(fake).runtimeDir)).toBe(false);
+    expect(fake.lifecycleCommands()).toEqual([]);
   });
-
-  it("makes a concurrent stop win after an in-flight ensure", async () => {
-    let releaseProbe!: () => void;
-    const probeReleased = new Promise<void>((resolvePromise) => {
-      releaseProbe = resolvePromise;
+  it("serializes one HOME across XDG roots and canonicalizes lock aliases", async () => {
+    const fake = new FakeLaunchd();
+    const shared = join(fake.root, "shared");
+    mkdirSync(join(shared, "prim"), { recursive: true });
+    mkdirSync(fake.homeDir, { recursive: true });
+    symlinkSync(shared, join(fake.homeDir, ".config"));
+    let release!: () => void;
+    const gate = new Promise<void>((resolvePromise) => {
+      release = resolvePromise;
     });
-    let enteredProbe!: () => void;
-    const probeEntered = new Promise<void>((resolvePromise) => {
-      enteredProbe = resolvePromise;
+    const first = withDaemonLifecycleLock(() => gate, {
+      homeDir: fake.homeDir,
+      env: { XDG_DATA_HOME: shared },
     });
-    let probeCount = 0;
-    const ensuring = ensureMacDaemon({
-      ...base,
-      explicitlyStarted: true,
-      probe: async () => {
-        probeCount++;
-        if (probeCount === 1) {
-          enteredProbe();
-          await probeReleased;
-          return false;
-        }
-        return true;
+    await Promise.resolve();
+    let secondEntered = false;
+    const second = withDaemonLifecycleLock(
+      async () => {
+        secondEntered = true;
       },
-    });
-    await probeEntered;
-    const stopping = bootoutMacDaemon({ ...base, probe: async () => false });
-
-    releaseProbe();
-    const [ensured, stopped] = await Promise.all([ensuring, stopping]);
-
-    expect(ensured.action).toBe("bootstrap");
-    expect(stopped.wasLoaded).toBe(true);
-    expect(loaded).toBe(false);
-    expect(daemonExplicitlyDisabled(base)).toBe(true);
-    expect(commands.findIndex((args) => args[0] === "bootstrap")).toBeLessThan(
-      commands.findIndex((args) => args[0] === "bootout"),
+      { homeDir: fake.homeDir, env: { XDG_DATA_HOME: join(fake.root, "xdg-b") } },
     );
-  });
-
-  it("recovers a lifecycle lock whose recorded owner is dead", async () => {
-    const lockDir = runtimePaths(base).lifecycleLockDir;
-    mkdirSync(lockDir, { recursive: true });
-    writeFileSync(
-      join(lockDir, "owner.json"),
-      `${JSON.stringify({ pid: 999_999, nonce: "dead-owner", createdAt: Date.now() - 5_000 })}\n`,
-    );
-
-    const result = await withDaemonLifecycleLock(async () => "acquired", {
-      ...base,
-      lifecycleLock: { processAlive: () => false, pollMs: 1 },
-    });
-
-    expect(result).toBe("acquired");
-    expect(existsSync(lockDir)).toBe(false);
-  });
-
-  it("recovers when an owner died between creating the lock and writing metadata", async () => {
-    const lockDir = runtimePaths(base).lifecycleLockDir;
-    mkdirSync(lockDir, { recursive: true });
-    const afterGrace = statSync(lockDir).mtimeMs + 3_000;
-
-    const result = await withDaemonLifecycleLock(async () => "acquired", {
-      ...base,
-      lifecycleLock: {
-        nowMs: () => afterGrace,
-        processAlive: () => false,
-        pollMs: 1,
-      },
-    });
-
-    expect(result).toBe("acquired");
-    expect(existsSync(lockDir)).toBe(false);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    expect(secondEntered).toBe(false);
+    release();
+    await Promise.all([first, second]);
+    expect(secondEntered).toBe(true);
   });
 });

@@ -87,7 +87,7 @@ describe("classifyLaunchdStatus", () => {
     sessionId: "daemon-4242",
   };
 
-  it("distinguishes an unloaded service from an unsupervised legacy daemon", () => {
+  it("distinguishes absent, unsupervised, and unavailable launchd states", () => {
     expect(classifyLaunchdStatus({ loaded: false }, false, null, true)).toEqual({
       json: { running: false, supervised: true, loaded: false, disabled: true },
       exitCode: EXIT_NOT_RUNNING,
@@ -98,6 +98,17 @@ describe("classifyLaunchdStatus", () => {
         responding: true,
         supervised: false,
         state: "unsupervised",
+        disabled: false,
+        ...snapshot,
+      },
+      exitCode: EXIT_BOOTING,
+    });
+    expect(classifyLaunchdStatus(undefined, true, snapshot, false)).toEqual({
+      json: {
+        running: true,
+        responding: true,
+        supervised: true,
+        state: "unknown",
         disabled: false,
         ...snapshot,
       },
