@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.62](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.61...v0.1.0-alpha.62) (2026-07-29)
+
+
+### Bug Fixes
+
+* make passive commit capture reliable ([#206](https://github.com/campus-ai/prim/issues/206)) ([1702f20](https://github.com/campus-ai/prim/commit/1702f2086a5b0a673bf2d5e6c00d1620fb6f7e34))
+
 ## [0.1.0-alpha.61](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.60...v0.1.0-alpha.61) (2026-07-28)
 
 
