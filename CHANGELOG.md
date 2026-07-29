@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.63](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.62...v0.1.0-alpha.63) (2026-07-29)
+
+
+### Bug Fixes
+
+* eliminate macOS statusline Node cold starts ([a4d57b4](https://github.com/campus-ai/prim/commit/a4d57b42b167611c8db7db40b24f8723af0e3da0))
+
 ## [0.1.0-alpha.62](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.61...v0.1.0-alpha.62) (2026-07-29)
 
 
