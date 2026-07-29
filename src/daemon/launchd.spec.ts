@@ -1,3 +1,4 @@
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -65,6 +66,7 @@ function printed(program: string, pid: number): LaunchctlResult {
 }
 type BootstrapResult = LaunchctlResult & { apply?: boolean };
 const temporaryRoots: string[] = [];
+const macIt = process.platform === "darwin" ? it : it.skip;
 
 class FakeLaunchd {
   readonly root = mkdtempSync(join(tmpdir(), "prim-launchd-"));
@@ -77,7 +79,6 @@ class FakeLaunchd {
   readonly version = "1.0.0";
   readonly nowMs = () => this.clock;
   readonly daemonSource = join(this.root, "daemon.js");
-  readonly statuslineSource = join(this.root, "statusline.js");
   readonly launcherPath = join(this.homeDir, ".config", "prim", "prim-daemon-launcher-v1");
   readonly paths = launchdPaths({ homeDir: this.homeDir, uid: UID, label: this.label });
   commands: string[][] = [];
@@ -101,7 +102,6 @@ class FakeLaunchd {
     writeFileSync(this.nodePath, "#!/bin/sh\n");
     chmodSync(this.nodePath, 0o700);
     writeFileSync(this.daemonSource, "daemon-v1\n");
-    writeFileSync(this.statuslineSource, "statusline-v1\n");
   }
   readonly runner: LaunchctlRunner = (args, timeoutMs) => {
     this.commands.push(args);
@@ -200,32 +200,47 @@ afterEach(() => {
 });
 
 describe("runtime staging", () => {
-  it("stages immutable hashed schema-v2 releases and repairs changes without churn", () => {
+  it("stages schema-v3 daemon releases and repairs the native statusline launcher", () => {
     const fake = new FakeLaunchd();
     const options = fake.options({ version: "1.2.3" });
     const staged = stageRuntime(options);
     const releaseDir = join(staged.daemonPath, "..");
     const manifestPath = join(releaseDir, "manifest.json");
-    const statuslinePath = join(releaseDir, "prim-statusline");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof staged.manifest;
     expect(manifest).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       version: "1.2.3",
       daemonSha256: sha256("daemon-v1\n"),
-      statuslineSha256: sha256("statusline-v1\n"),
     });
+    expect(manifest).not.toHaveProperty("statuslineFile");
+    expect(manifest).not.toHaveProperty("statuslineSha256");
+    expect(existsSync(join(releaseDir, "prim-statusline"))).toBe(false);
     expect([staged.paths.runtimeDir, releaseDir].map(mode)).toEqual([0o700, 0o700]);
-    expect([staged.daemonPath, statuslinePath, manifestPath].map(mode)).toEqual([
-      0o600, 0o600, 0o600,
-    ]);
+    expect([staged.daemonPath, manifestPath].map(mode)).toEqual([0o600, 0o600]);
     expect(mode(staged.paths.statuslineLauncher)).toBe(0o700);
-    expect(readFileSync(staged.paths.statuslineLauncher, "utf8")).toContain(
-      statuslinePath.replaceAll("'", `'"'"'`),
+    const launcher = readFileSync(staged.paths.statuslineLauncher, "utf8");
+    expect(launcher).toContain("/usr/bin/nc -U -w 1");
+    expect(launcher).toContain(
+      join(fake.homeDir, ".config", "prim", "sock").replaceAll("'", `'"'"'`),
     );
+    expect(launcher).toContain("primitive 1.2.3 (daemon: down)");
+    expect(launcher).not.toMatch(/\b(?:node|npx)\b/u);
+    expect(
+      execFileSync(staged.paths.statuslineLauncher, [], {
+        cwd: fake.root,
+        encoding: "utf8",
+        timeout: 2_000,
+      }),
+    ).toBe("primitive 1.2.3 (daemon: down)");
+
+    writeFileSync(staged.paths.statuslineLauncher, "broken\n");
     expect(stageRuntime({ ...options, now: () => new Date("2027-01-01") })).toMatchObject({
       changed: false,
       daemonPath: staged.daemonPath,
     });
+    expect(readFileSync(staged.paths.statuslineLauncher, "utf8")).toBe(launcher);
+    expect(mode(staged.paths.statuslineLauncher)).toBe(0o700);
+
     writeFileSync(staged.daemonPath, "corrupt\n");
     const repaired = stageRuntime(options);
     expect(readFileSync(staged.daemonPath, "utf8")).toBe("corrupt\n");
@@ -235,9 +250,73 @@ describe("runtime staging", () => {
     expect(repinned.daemonPath).not.toBe(repaired.daemonPath);
     expect(readFileSync(repaired.daemonPath, "utf8")).toBe("daemon-v1\n");
     expect(repinned.manifest.daemonSha256).toBe(sha256("same-version-new-bytes\n"));
-    const without = stageRuntime({ ...options, statuslineSource: null });
-    expect(existsSync(without.paths.statuslineLauncher)).toBe(false);
   });
+
+  it("restages an otherwise-current schema-v2 runtime as schema v3", () => {
+    const fake = new FakeLaunchd();
+    const options = fake.options({ version: "1.2.3" });
+    const staged = stageRuntime(options);
+    const releaseDir = join(staged.daemonPath, "..");
+    const manifestPath = join(releaseDir, "manifest.json");
+    writeFileSync(
+      manifestPath,
+      `${JSON.stringify({ ...staged.manifest, schemaVersion: 2 }, null, 2)}\n`,
+    );
+
+    const restaged = stageRuntime(options);
+    expect(restaged.changed).toBe(true);
+    expect(restaged.daemonPath).not.toBe(staged.daemonPath);
+    expect(restaged.manifest.schemaVersion).toBe(3);
+  });
+
+  macIt(
+    "falls back within the deadline when an old daemon accepts but never responds",
+    async () => {
+      const fake = new FakeLaunchd();
+      const staged = stageRuntime(fake.options({ version: "1.2.3" }));
+      const socketPath = join(fake.homeDir, ".config", "prim", "sock");
+      mkdirSync(join(socketPath, ".."), { recursive: true });
+      const child = spawn(
+        process.execPath,
+        [
+          "--input-type=commonjs",
+          "--eval",
+          `
+const net = require("node:net");
+net.createServer((socket) => socket.on("data", () => {}))
+  .listen(process.env.TEST_SOCKET, () => process.stdout.write("ready\\n"));
+`,
+        ],
+        {
+          env: { ...process.env, TEST_SOCKET: socketPath },
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("old daemon did not listen")), 2_000);
+          child.once("error", reject);
+          child.stdout.on("data", (chunk) => {
+            if (chunk.toString().includes("ready")) {
+              clearTimeout(timer);
+              resolve();
+            }
+          });
+        });
+        expect(
+          execFileSync(staged.paths.statuslineLauncher, [], {
+            cwd: fake.root,
+            encoding: "utf8",
+            timeout: 2_500,
+          }),
+        ).toBe("primitive 1.2.3 (daemon: down)");
+      } finally {
+        const exited = new Promise((resolve) => child.once("exit", resolve));
+        child.kill("SIGTERM");
+        await exited;
+      }
+    },
+  );
 });
 
 describe("launchd observation", () => {

@@ -7,6 +7,7 @@
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
  */
 import type { Command } from "commander";
+import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
 import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
@@ -29,6 +30,7 @@ async function applyActivation(active: boolean): Promise<void> {
       bound = await bindRepository(root);
     }
     setRepoActive(root, active);
+    await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
     printJson({ active, repo: root, ...bound, ...(postCommitHook ? { postCommitHook } : {}) });
   } catch (err) {

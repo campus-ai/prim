@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "tsup";
 import { describe, expect, it } from "vitest";
+import { stageRuntime } from "./daemon/launchd.js";
 
 type ChildResult = { code: number | null; stdout: string; stderr: string };
 type RunningChild = {
@@ -176,6 +177,41 @@ function daemonRequest(
       resolve(parsed.result);
     });
   });
+}
+
+function rawStatuslineRequest(socketPath: string, chunks: Buffer[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    const response: Buffer[] = [];
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve(Buffer.concat(response));
+    };
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      finish(new Error("raw statusline request timed out"));
+    }, 3_000);
+    socket.once("error", (error) => finish(error));
+    socket.on("data", (chunk) => response.push(Buffer.from(chunk)));
+    socket.once("end", () => finish());
+    socket.once("connect", () => {
+      let index = 0;
+      const writeNext = (): void => {
+        const chunk = chunks[index++];
+        if (!chunk) return;
+        socket.write(chunk, () => setImmediate(writeNext));
+      };
+      writeNext();
+    });
+  });
+}
+
+function statuslineRequest(cwd: string, apiUrl = ""): Buffer {
+  return Buffer.from(`prim-statusline-v1\0${cwd}\0${apiUrl}\0`);
 }
 
 describe("cross-process browser credential rotation", () => {
@@ -378,4 +414,183 @@ describe("daemon terminal-auth lifecycle", () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 20_000);
+});
+
+describe("daemon raw statusline socket", () => {
+  it("serves fragmented and concurrent raw clients without changing JSON RPC", async () => {
+    const home = mkdtempSync(join(tmpdir(), "prim-daemon-statusline-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    const socketPath = join(config, "sock");
+    const activeRepo = join(home, "active repo");
+    const inactiveRepo = join(home, "inactive");
+    const otherEnvRepo = join(home, "other-env");
+    for (const repo of [activeRepo, inactiveRepo, otherEnvRepo]) {
+      mkdirSync(repo, { recursive: true });
+      execFileSync("git", ["init", "--quiet"], { cwd: repo });
+    }
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
+    execFileSync("git", ["config", "--local", "prim.active", "false"], { cwd: inactiveRepo });
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: otherEnvRepo });
+    writeFileSync(join(otherEnvRepo, ".env"), "PRIM_API_URL=https://other.example.test\n");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "token"), "test-token\n");
+
+    const server = createServer((request, response) => {
+      request.resume();
+      if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            accepted: true,
+            lastHeartbeatAt: Date.now(),
+            onlineCount: 2,
+            onlineNames: ["Kasey"],
+            onlineTeammates: [
+              {
+                name: "Kasey",
+                area: "auth",
+                decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+    let daemon: RunningChild | undefined;
+
+    try {
+      const port = await listen(server);
+      const apiUrl = `http://127.0.0.1:${String(port)}`;
+      await build({
+        entry: [join(process.cwd(), "src/daemon/server.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
+      daemon = runDaemonProcess(moduleUrl, home, apiUrl);
+      await eventually(
+        () => existsSync(socketPath),
+        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+      );
+      await eventually(
+        () => {
+          try {
+            const health = JSON.parse(readFileSync(join(config, "daemon-health.json"), "utf8")) as {
+              healthy?: boolean;
+            };
+            return health.healthy === true;
+          } catch {
+            return false;
+          }
+        },
+        () => `daemon did not become healthy: ${daemon?.stderr() ?? ""}`,
+      );
+
+      await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
+
+      const raw = statuslineRequest(activeRepo, apiUrl);
+      const fragmented = await rawStatuslineRequest(
+        socketPath,
+        Array.from(raw, (byte) => Buffer.from([byte])),
+      );
+      const linkedTeammate =
+        "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07" +
+        "\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07";
+      const expected = `primitive test (daemon: live, Decision ingestion enabled · team: ${linkedTeammate})`;
+      expect(fragmented.toString()).toBe(expected);
+
+      if (process.platform === "darwin") {
+        const runtime = stageRuntime({
+          homeDir: home,
+          env: { XDG_DATA_HOME: join(home, "data") },
+          daemonSource: join(bundleDir, "server.js"),
+          nodePath: process.execPath,
+          version: "test",
+        });
+        expect(
+          execFileSync(runtime.paths.statuslineLauncher, [], {
+            cwd: activeRepo,
+            encoding: "utf8",
+            env: { ...process.env, PRIM_API_URL: apiUrl },
+          }),
+        ).toBe(expected);
+        expect(
+          execFileSync(runtime.paths.statuslineLauncher, [], {
+            cwd: inactiveRepo,
+            encoding: "utf8",
+            env: { ...process.env, PRIM_API_URL: apiUrl },
+          }),
+        ).toBe(
+          `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+        );
+        const mismatchedEnv = { ...process.env };
+        mismatchedEnv.PRIM_API_URL = undefined;
+        expect(
+          execFileSync(runtime.paths.statuslineLauncher, [], {
+            cwd: otherEnvRepo,
+            encoding: "utf8",
+            env: mismatchedEnv,
+          }),
+        ).toBe("primitive test (daemon: live, Decision ingestion enabled · presence: other env)");
+      }
+
+      const concurrent = await Promise.all(
+        Array.from({ length: 23 }, () => rawStatuslineRequest(socketPath, [raw])),
+      );
+      expect(concurrent.every((response) => response.toString() === expected)).toBe(true);
+
+      expect(
+        (
+          await rawStatuslineRequest(socketPath, [statuslineRequest(inactiveRepo, apiUrl)])
+        ).toString(),
+      ).toBe(
+        `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+      );
+      expect(
+        (await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo)])).toString(),
+      ).toBe("primitive test (daemon: live, Decision ingestion enabled · presence: other env)");
+      expect(
+        (
+          await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo, apiUrl)])
+        ).toString(),
+      ).toBe(expected);
+
+      execFileSync("git", ["config", "--local", "prim.active", "false"], { cwd: activeRepo });
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+      await expect(daemonRequest(socketPath, "statusline_invalidate")).resolves.toEqual({
+        ack: true,
+      });
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toContain(
+        "Decision ingestion disabled",
+      );
+      execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
+      await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" });
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+
+      const relative = statuslineRequest("relative/path", apiUrl);
+      await expect(rawStatuslineRequest(socketPath, [relative])).resolves.toEqual(Buffer.alloc(0));
+      const oversized = Buffer.concat([
+        Buffer.from("prim-statusline-v1\0/"),
+        Buffer.alloc(65_536, "x"),
+      ]);
+      await expect(rawStatuslineRequest(socketPath, [oversized])).resolves.toEqual(Buffer.alloc(0));
+      await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
+    } finally {
+      if (daemon) {
+        daemon.kill();
+        await daemon.exited;
+      }
+      await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 25_000);
 });

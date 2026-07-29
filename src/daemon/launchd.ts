@@ -25,7 +25,7 @@ import { normalizeApiUrl } from "./env-binding.js";
 
 export const LAUNCHD_LABEL = "ai.getprimitive.prim-daemon";
 
-const RUNTIME_SCHEMA_VERSION = 2;
+const RUNTIME_SCHEMA_VERSION = 3;
 const RUNTIME_DIR_MODE = 0o700;
 const RUNTIME_FILE_MODE = 0o600;
 const RUNTIME_LAUNCHER_MODE = 0o700;
@@ -61,15 +61,12 @@ export interface RuntimeManifest {
   nodePath: string;
   daemonFile: "prim-daemon-server";
   daemonSha256: string;
-  statuslineFile?: "prim-statusline";
-  statuslineSha256?: string;
   stagedAt: string;
 }
 
 export interface StageRuntimeOptions extends RuntimePathOptions {
   nodePath?: string;
   daemonSource?: string | null;
-  statuslineSource?: string | null;
   version?: string;
   now?: () => Date;
 }
@@ -242,10 +239,7 @@ function readRuntimeManifest(path: string): RuntimeManifest | null {
       typeof parsed.nodePath !== "string" ||
       parsed.daemonFile !== "prim-daemon-server" ||
       typeof parsed.daemonSha256 !== "string" ||
-      !/^[a-f0-9]{64}$/u.test(parsed.daemonSha256) ||
-      (parsed.statuslineFile !== undefined && parsed.statuslineFile !== "prim-statusline") ||
-      (parsed.statuslineFile === undefined) !== (parsed.statuslineSha256 === undefined) ||
-      (parsed.statuslineSha256 !== undefined && !/^[a-f0-9]{64}$/u.test(parsed.statuslineSha256))
+      !/^[a-f0-9]{64}$/u.test(parsed.daemonSha256)
     ) {
       return null;
     }
@@ -259,24 +253,17 @@ function sameRuntime(
   current: RuntimeManifest | null,
   desired: RuntimeManifest,
   daemonPath: string,
-  statuslinePath: string,
 ): boolean {
   if (
     !current ||
     current.version !== desired.version ||
     current.nodePath !== desired.nodePath ||
-    current.daemonSha256 !== desired.daemonSha256 ||
-    current.statuslineFile !== desired.statuslineFile ||
-    current.statuslineSha256 !== desired.statuslineSha256
+    current.daemonSha256 !== desired.daemonSha256
   ) {
     return false;
   }
   try {
-    return (
-      sha256File(daemonPath) === desired.daemonSha256 &&
-      (desired.statuslineSha256 === undefined ||
-        sha256File(statuslinePath) === desired.statuslineSha256)
-    );
+    return sha256File(daemonPath) === desired.daemonSha256;
   } catch {
     return false;
   }
@@ -301,9 +288,9 @@ function atomicSymlink(target: string, linkPath: string): void {
 }
 
 /**
- * Copy the standalone runtime entries into an immutable release directory,
+ * Copy the standalone daemon entry into an immutable release directory,
  * then atomically repoint `runtime/current`. The manifest is written beside
- * the entries so either standalone binary can identify the staged version.
+ * it so the daemon can identify the staged version.
  */
 export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeResult {
   const paths = runtimePaths(options);
@@ -311,10 +298,6 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
   if (!daemonSource || !existsSync(daemonSource)) {
     throw new Error("cannot stage runtime: prim-daemon-server bundle is unavailable");
   }
-  const configuredStatusline =
-    options.statuslineSource === undefined ? binFile("prim-statusline") : options.statuslineSource;
-  const statuslineSource =
-    configuredStatusline && existsSync(configuredStatusline) ? configuredStatusline : null;
   const nodePath = resolve(options.nodePath ?? process.execPath);
   const version = options.version ?? findPackageVersion(daemonSource);
   const desired: RuntimeManifest = {
@@ -323,12 +306,6 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     nodePath,
     daemonFile: "prim-daemon-server",
     daemonSha256: sha256File(daemonSource),
-    ...(statuslineSource
-      ? {
-          statuslineFile: "prim-statusline" as const,
-          statuslineSha256: sha256File(statuslineSource),
-        }
-      : {}),
     stagedAt: (options.now?.() ?? new Date()).toISOString(),
   };
 
@@ -342,19 +319,13 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     ? readRuntimeManifest(join(currentRelease, "manifest.json"))
     : null;
   const currentDaemon = currentRelease ? join(currentRelease, desired.daemonFile) : "";
-  const currentStatusline = currentRelease ? join(currentRelease, "prim-statusline") : "";
-  if (currentRelease && sameRuntime(current, desired, currentDaemon, currentStatusline)) {
+  if (currentRelease && sameRuntime(current, desired, currentDaemon)) {
     const manifest = current as RuntimeManifest;
-    const statuslinePath = manifest.statuslineFile ? currentStatusline : undefined;
-    if (statuslinePath) {
-      atomicWrite(
-        paths.statuslineLauncher,
-        statuslineLauncherContent(statuslinePath, manifest.nodePath),
-        RUNTIME_LAUNCHER_MODE,
-      );
-    } else {
-      rmSync(paths.statuslineLauncher, { force: true });
-    }
+    atomicWrite(
+      paths.statuslineLauncher,
+      statuslineLauncherContent(manifest.version, options.homeDir),
+      RUNTIME_LAUNCHER_MODE,
+    );
     return {
       changed: false,
       manifest,
@@ -377,14 +348,6 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     if (sha256File(daemonTarget) !== desired.daemonSha256) {
       throw new Error("cannot stage runtime: daemon bundle changed while it was copied");
     }
-    if (statuslineSource && desired.statuslineFile) {
-      const statuslineTarget = join(stagingDir, desired.statuslineFile);
-      copyFileSync(statuslineSource, statuslineTarget);
-      chmodSync(statuslineTarget, RUNTIME_FILE_MODE);
-      if (sha256File(statuslineTarget) !== desired.statuslineSha256) {
-        throw new Error("cannot stage runtime: statusline bundle changed while it was copied");
-      }
-    }
     const manifestTarget = join(stagingDir, "manifest.json");
     writeFileSync(manifestTarget, `${JSON.stringify(desired, null, 2)}\n`, {
       encoding: "utf8",
@@ -393,25 +356,18 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     });
 
     const releaseName = `release-${createHash("sha256")
-      .update(
-        `${version}\0${nodePath}\0${desired.statuslineFile ?? ""}\0${desired.stagedAt}\0${process.pid}\0${Math.random()}`,
-      )
+      .update(`${version}\0${nodePath}\0${desired.stagedAt}\0${process.pid}\0${Math.random()}`)
       .digest("hex")
       .slice(0, 16)}`;
     releaseDir = join(paths.releasesDir, releaseName);
     renameSync(stagingDir, releaseDir);
     releaseDir = realpathSync(releaseDir);
     atomicSymlink(join("releases", releaseName), paths.currentLink);
-    if (desired.statuslineFile) {
-      const statuslinePath = join(releaseDir, desired.statuslineFile);
-      atomicWrite(
-        paths.statuslineLauncher,
-        statuslineLauncherContent(statuslinePath, desired.nodePath),
-        RUNTIME_LAUNCHER_MODE,
-      );
-    } else {
-      rmSync(paths.statuslineLauncher, { force: true });
-    }
+    atomicWrite(
+      paths.statuslineLauncher,
+      statuslineLauncherContent(desired.version, options.homeDir),
+      RUNTIME_LAUNCHER_MODE,
+    );
   } catch (error) {
     rmSync(stagingDir, { recursive: true, force: true });
     throw error;
@@ -429,8 +385,21 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function statuslineLauncherContent(statuslinePath: string, nodePath: string): string {
-  return `#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(statuslinePath)}\n`;
+function statuslineLauncherContent(version: string, homeDir = homedir()): string {
+  const socketPath = join(homeDir, ".config", "prim", "sock");
+  const fallback = `primitive ${version} (daemon: down)`;
+  return `#!/bin/sh
+response=$(
+  printf 'prim-statusline-v1\\000%s\\000%s\\000' "\${PWD:-/}" "\${PRIM_API_URL:-}" |
+    /usr/bin/nc -U -w 1 ${shellQuote(socketPath)} 2>/dev/null
+)
+status=$?
+if [ "$status" -eq 0 ] && [ -n "$response" ]; then
+  printf '%s' "$response"
+else
+  printf '%s' ${shellQuote(fallback)}
+fi
+`;
 }
 
 /** Pure command rendering; callers stage first, then persist this command. */

@@ -22,9 +22,13 @@ import { type SpawnOptions, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
 import type { DaemonHeartbeatHealth, DaemonIngestionHealth } from "../daemon/health.js";
+import {
+  type CurrentDaemonEnsureResult,
+  runLatestDaemonBootstrap,
+} from "../daemon/latest-bootstrap.js";
 import {
   type LaunchdService,
   bootoutMacDaemon,
@@ -754,7 +758,7 @@ async function daemonRestart(opts: { foreground?: boolean }): Promise<void> {
   await daemonStart(opts);
 }
 
-async function daemonEnsure(): Promise<void> {
+async function daemonEnsure(): Promise<CurrentDaemonEnsureResult> {
   if (process.platform !== "darwin") {
     const disabled = await withDaemonLifecycleLock(async () => {
       if (daemonExplicitlyDisabled()) return true;
@@ -765,7 +769,7 @@ async function daemonEnsure(): Promise<void> {
       process.stderr.write("[prim] daemon remains explicitly disabled\n");
       console.log(JSON.stringify({ ensured: false, disabled: true, supervised: false }, null, 2));
     }
-    return;
+    return { disabled };
   }
   const result = await ensureMacDaemon();
   if (result.state === "disabled") {
@@ -790,6 +794,7 @@ async function daemonEnsure(): Promise<void> {
       2,
     ),
   );
+  return { disabled: result.state === "disabled" };
 }
 
 export function registerDaemonCommands(program: Command): void {
@@ -830,7 +835,12 @@ export function registerDaemonCommands(program: Command): void {
   daemon
     .command("ensure")
     .description("Idempotently install, upgrade, and heal the daemon unless explicitly disabled")
-    .action(async () => {
+    .addOption(new Option("--latest-bootstrap").hideHelp())
+    .action(async (opts: { latestBootstrap?: boolean }) => {
+      if (opts.latestBootstrap) {
+        await runLatestDaemonBootstrap(daemonEnsure);
+        return;
+      }
       await daemonEnsure();
     });
 }

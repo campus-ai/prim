@@ -1,7 +1,7 @@
 /**
  * `prim statusline` — print Claude Code statusLine output.
  *
- * Spawned by Claude Code on every status refresh (~1Hz idle). Reads
+ * Spawned by Claude Code on every configured status refresh. Reads
  * the daemon's status snapshot and renders a single-line summary:
  *
  *   primitive 0.4.2 (daemon: live, Decision ingestion enabled · team: 4 online)
@@ -25,50 +25,16 @@ import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
-import { type Teammate, formatTeammates, formatTeammatesWithArea } from "../lib/presence.js";
-
-type StatusSnapshot = {
-  pid: number;
-  uptimeMs: number;
-  sessionId: string;
-  lastHeartbeatAt?: number;
-  // From the daemon's last accepted heartbeat ack (server-derived from the
-  // token). `onlineTeammates` are the online teammates (self excluded), sorted,
-  // each with the area of their most recent decision — preferred when present.
-  // `onlineNames` is the same roster without areas, kept for a server that
-  // predates `onlineTeammates`. `onlineCount` is the self-inclusive count, a
-  // last-resort fallback for a server that predates names entirely.
-  onlineCount?: number;
-  onlineNames?: string[];
-  onlineTeammates?: Teammate[];
-  // True when the daemon is alive but its heartbeats have stopped landing, so
-  // the cached presence is frozen and not to be trusted.
-  presenceStale?: boolean;
-  // True when the daemon is bound to a DIFFERENT deployment than this statusline
-  // targets; presence is withheld (it would be another env's roster).
-  envMismatch?: boolean;
-  // Newer supervised daemons expose end-to-end heartbeat + delivery health.
-  // Undefined preserves mixed-version rollout behavior with older daemons.
-  healthy?: boolean;
-  heartbeat?: { healthy?: boolean };
-  ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
-  // True when the daemon has halted its poll loops awaiting `prim auth login`.
-  // It is the actionable root cause behind the halted heartbeat/ingestion, so
-  // the statusline surfaces it ahead of the derived "delivery/presence" states.
-  needsReauth?: boolean;
-};
+import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 
 const STATUSLINE_TIMEOUT_MS = 200;
-// Names shown before collapsing the rest into "+N" — keeps the one-line
-// statusline from overflowing on a busy team.
-const STATUSLINE_NAME_CAP = 3;
 
 export function readPackageVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [
-      // The supervised runtime stages a tiny manifest beside the standalone
-      // statusline bundle, so it remains versioned without loading the package.
+      // Schema-v2 runtimes staged a manifest beside this standalone bundle.
+      // Keep resolving it while those legacy launchers transition to schema v3.
       resolve(here, "manifest.json"),
       resolve(here, "../../package.json"),
       resolve(here, "../package.json"),
@@ -108,52 +74,8 @@ export async function renderStatusline(): Promise<string> {
   );
   if (!snapshot) {
     debug("daemon snapshot missing");
-    return `primitive ${version} (daemon: down)`;
   }
-  if (snapshot.healthy === false) {
-    // Auth is the actionable root cause: a reauth-hold halts both loops, so
-    // surface the one-command fix ahead of the derived delivery/presence states.
-    if (snapshot.needsReauth) {
-      return `primitive ${version} (daemon: paused · run \`prim auth login\`)`;
-    }
-    if (snapshot.ingestion?.healthy === false) {
-      const pending = snapshot.ingestion.pendingCount;
-      const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
-      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""})`;
-    }
-    if (snapshot.heartbeat?.healthy === false) {
-      return `primitive ${version} (daemon: degraded · presence: unavailable)`;
-    }
-    return `primitive ${version} (daemon: starting)`;
-  }
-  const ingestionStatus = decisionIngestionStatus(process.cwd());
-  // The daemon is alive but on another deployment — show that honestly rather
-  // than its env's team or a misleading "down".
-  if (snapshot.envMismatch) {
-    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other env)`;
-  }
-  // A stale snapshot means the daemon is alive but its heartbeats are failing —
-  // the cached presence is frozen, so render the degraded state honestly
-  // instead of a confident, wrong roster.
-  if (snapshot.presenceStale) {
-    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: stale)`;
-  }
-  // Prefer teammates-with-area ("Kasey - auth, Sam +3"); fall back to bare
-  // names for a server that predates areas ("Maya, Alex +3" / "just you"); then
-  // to the bare count for one that predates names — each better than regressing
-  // to "—"; and to "—" when none is fresh (no ack yet, or the last ack was
-  // org-unbound), which is unknown, not necessarily a team of one.
-  let team: string;
-  if (snapshot.onlineTeammates !== undefined) {
-    team = `team: ${formatTeammatesWithArea(snapshot.onlineTeammates, STATUSLINE_NAME_CAP)}`;
-  } else if (snapshot.onlineNames !== undefined) {
-    team = `team: ${formatTeammates(snapshot.onlineNames, STATUSLINE_NAME_CAP)}`;
-  } else if (typeof snapshot.onlineCount === "number") {
-    team = `team: ${String(snapshot.onlineCount)} online`;
-  } else {
-    team = "team: —";
-  }
-  return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · ${team})`;
+  return formatStatusline(version, snapshot, () => decisionIngestionStatus(process.cwd()));
 }
 
 export function registerStatuslineCommands(program: Command): void {
@@ -162,7 +84,7 @@ export function registerStatuslineCommands(program: Command): void {
     .description("Render the Claude Code statusLine for the prim companion daemon")
     .action(async () => {
       try {
-        // ~1Hz refresh is the highest-frequency shim caller; keep the bin cache
+        // Status refresh is the highest-frequency shim caller; keep the bin cache
         // warm so it execs directly instead of re-resolving npx each tick.
         warmBinCache();
         const line = await renderStatusline();

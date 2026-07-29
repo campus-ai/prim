@@ -20,10 +20,10 @@ const REFRESH_THRESHOLD_MS = 60_000;
 const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
-function loadEnvFile(): Record<string, string> {
+function loadEnvFile(cwd = process.cwd()): Record<string, string> {
   const envVars: Record<string, string> = {};
   for (const file of [".env.local", ".env"]) {
-    const filePath = resolve(process.cwd(), file);
+    const filePath = resolve(cwd, file);
     if (!existsSync(filePath)) continue;
     const content = readFileSync(filePath, "utf-8");
     for (const line of content.split("\n")) {
@@ -88,8 +88,13 @@ export function getAuthToken(): string | undefined {
 }
 
 export function getSiteUrl(): string {
-  if (process.env.PRIM_API_URL) return process.env.PRIM_API_URL;
-  return loadEnvFile().PRIM_API_URL ?? DEFAULT_API_URL;
+  return getSiteUrlForCwd(process.cwd(), process.env.PRIM_API_URL);
+}
+
+/** Resolve a caller's deployment using the CLI's existing cwd/env precedence. */
+export function getSiteUrlForCwd(cwd: string, primApiUrl?: string): string {
+  if (primApiUrl) return primApiUrl;
+  return loadEnvFile(cwd).PRIM_API_URL ?? DEFAULT_API_URL;
 }
 
 function getJwtExpiry(token: string): number | undefined {

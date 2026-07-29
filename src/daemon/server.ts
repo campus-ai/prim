@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import {
   getClient,
   getSiteUrl,
+  getSiteUrlForCwd,
   getTokenExpiresAt,
   isSessionEnded,
   refreshToken,
@@ -31,7 +32,13 @@ import {
 } from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
+import { decisionIngestionStatus } from "../lib/activation.js";
 import type { Teammate } from "../lib/presence.js";
+import {
+  type StatusSnapshot,
+  StatuslineIngestionCache,
+  formatStatusline,
+} from "../lib/statusline-render.js";
 import { daemonRequest } from "./client.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 import {
@@ -50,6 +57,12 @@ import {
   readDaemonPid,
   releaseDaemonOwnership,
 } from "./instance-lock.js";
+import {
+  STATUSLINE_PROTOCOL_PREFIX,
+  STATUSLINE_REQUEST_MAX_BYTES,
+  isStatuslineRequestPrefix,
+  parseStatuslineRequest,
+} from "./statusline-protocol.js";
 
 const CONFIG_DIR = join(homedir(), ".config", "prim");
 const SOCK_PATH = join(CONFIG_DIR, "sock");
@@ -83,6 +96,7 @@ const startedAt = Date.now();
 const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
 const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
+const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus);
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 let lastHeartbeatAt: number | undefined;
 // From the last accepted heartbeat ack, cached for the statusline /
@@ -483,7 +497,7 @@ async function proxyGet(params: Record<string, unknown>, allowedPrefix: string):
   return await client.get(path, { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
 }
 
-function handleStatusSnapshot(params: Record<string, unknown>): unknown {
+function handleStatusSnapshot(params: Record<string, unknown>): StatusSnapshot {
   const wasHealthy = daemonHealth.healthy;
   const heartbeatWasHealthy = daemonHealth.heartbeat.healthy;
   const ingestionWasHealthy = daemonHealth.ingestion.healthy;
@@ -562,6 +576,7 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
         return { id, ok: true, result };
       }
       case "session_start": {
+        statuslineIngestionCache.clear();
         const sid = req.params?.sessionId;
         if (typeof sid === "string" && sid.length > 0) {
           activeSessionId = sid;
@@ -576,6 +591,9 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
       }
       case "status_snapshot":
         return { id, ok: true, result: handleStatusSnapshot(req.params ?? {}) };
+      case "statusline_invalidate":
+        statuslineIngestionCache.clear();
+        return { id, ok: true, result: { ack: true } };
       case "ping":
         return { id, ok: true, result: { pong: true } };
       default:
@@ -591,13 +609,16 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
 }
 
 function handleConnection(conn: Socket): void {
-  let buffer = "";
-  conn.on("data", (chunk) => {
-    buffer += chunk.toString("utf-8");
-    let newlineIdx = buffer.indexOf("\n");
+  let mode: "undecided" | "statusline" | "json" = "undecided";
+  let rawBuffer = Buffer.alloc(0);
+  let jsonBuffer = "";
+
+  const dispatchJson = (chunk: string): void => {
+    jsonBuffer += chunk;
+    let newlineIdx = jsonBuffer.indexOf("\n");
     while (newlineIdx !== -1) {
-      const line = buffer.slice(0, newlineIdx);
-      buffer = buffer.slice(newlineIdx + 1);
+      const line = jsonBuffer.slice(0, newlineIdx);
+      jsonBuffer = jsonBuffer.slice(newlineIdx + 1);
       if (line.length > 0) {
         try {
           const req = JSON.parse(line) as SocketRequest;
@@ -613,8 +634,60 @@ function handleConnection(conn: Socket): void {
           // ignore malformed envelopes — fail-soft
         }
       }
-      newlineIdx = buffer.indexOf("\n");
+      newlineIdx = jsonBuffer.indexOf("\n");
     }
+  };
+
+  const dispatchStatusline = (): void => {
+    const parsed = parseStatuslineRequest(rawBuffer);
+    if (parsed.state === "incomplete") {
+      return;
+    }
+    if (parsed.state === "invalid") {
+      conn.end();
+      return;
+    }
+    try {
+      const callerEnv = getSiteUrlForCwd(
+        parsed.request.cwd,
+        parsed.request.primApiUrl || undefined,
+      );
+      const snapshot = handleStatusSnapshot({ callerEnv });
+      const line = formatStatusline(runtimeVersion, snapshot, () =>
+        statuslineIngestionCache.get(parsed.request.cwd),
+      );
+      conn.end(line);
+    } catch {
+      conn.end();
+    }
+  };
+
+  conn.on("data", (chunk) => {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    if (mode === "json") {
+      dispatchJson(bytes.toString("utf8"));
+      return;
+    }
+    rawBuffer = Buffer.concat([rawBuffer, bytes]);
+    if (mode === "statusline") {
+      if (rawBuffer.length > STATUSLINE_REQUEST_MAX_BYTES) {
+        conn.end();
+      } else {
+        dispatchStatusline();
+      }
+      return;
+    }
+
+    if (isStatuslineRequestPrefix(rawBuffer)) {
+      if (rawBuffer.length >= STATUSLINE_PROTOCOL_PREFIX.length) {
+        mode = "statusline";
+        dispatchStatusline();
+      }
+      return;
+    }
+    mode = "json";
+    dispatchJson(rawBuffer.toString("utf8"));
+    rawBuffer = Buffer.alloc(0);
   });
   conn.on("error", () => {
     // socket clients come and go; never propagate
