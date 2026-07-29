@@ -1,9 +1,10 @@
 import { type RequestOptions, getClient } from "../client.js";
-import { setRepoSyncId } from "./activation.js";
+import { isValidRepoSyncId, setRepoSyncId } from "./activation.js";
 import { githubRepositoryFullName } from "./git.js";
 
 type BindResponse = { repoSyncId?: unknown };
 
+/** Bind a GitHub checkout and persist only the opaque id returned by Prim. */
 export async function bindRepository(
   root: string,
   options?: RequestOptions,
@@ -17,7 +18,7 @@ export async function bindRepository(
     { repositoryFullName },
     options,
   )) as BindResponse;
-  if (typeof response.repoSyncId !== "string" || response.repoSyncId.length === 0) {
+  if (!isValidRepoSyncId(response.repoSyncId)) {
     throw new Error("server returned no repository binding");
   }
   setRepoSyncId(root, response.repoSyncId);

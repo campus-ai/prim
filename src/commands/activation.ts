@@ -9,6 +9,7 @@
 import type { Command } from "commander";
 import { setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
+import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 
@@ -22,16 +23,18 @@ async function applyActivation(active: boolean): Promise<void> {
   }
   try {
     let bound: { repoSyncId: string; repositoryFullName: string } | undefined;
+    let postCommitHook: string | undefined;
     if (active) {
+      postCommitHook = ensureEffectivePostCommitHook(root).path;
       bound = await bindRepository(root);
     }
     setRepoActive(root, active);
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
-    printJson({ active, repo: root, ...bound });
+    printJson({ active, repo: root, ...bound, ...(postCommitHook ? { postCommitHook } : {}) });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[prim] failed to ${active ? "bind and enable" : "disable"} prim: ${detail}\n`,
+      `[prim] failed to ${active ? "cover, bind, and enable" : "disable"} prim: ${detail}\n`,
     );
     process.exit(1);
   }

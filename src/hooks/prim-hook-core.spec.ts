@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { postToolInvocationId, shouldFlushAfter, toCommitMove, toMove } from "./prim-hook-core.js";
+import {
+  commitAttributionFromEnvironment,
+  postToolInvocationId,
+  shouldFlushAfter,
+  toCommitMove,
+  toMove,
+} from "./prim-hook-core.js";
 
 describe("toMove", () => {
   it("maps the Claude Code hook field names onto the envelope", () => {
@@ -14,7 +20,6 @@ describe("toMove", () => {
     expect(typeof move.moveId).toBe("string");
     expect(typeof move.capturedAt).toBe("number");
     expect(move.envelopeVersion).toBe(3);
-    expect(move.producer).toBe("claude_code");
   });
 
   it("stores the raw hook event verbatim as payload", () => {
@@ -34,7 +39,7 @@ describe("toMove", () => {
     expect(move.env.cwd).toBe(process.cwd());
   });
 
-  it("always stamps an explicit Claude producer for classifier sequencing", () => {
+  it("stamps an explicit V3 producer for Claude Code", () => {
     const move = toMove({ session_id: "s" }, "x");
     expect(move.producer).toBe("claude_code");
     expect(move.envelopeVersion).toBe(3);
@@ -45,7 +50,7 @@ describe("toMove", () => {
     expect(move.producer).toBe("codex");
   });
 
-  it("stamps optional worktree provenance on the V3 Claude envelope", () => {
+  it("stamps explicit V3 Claude provenance when worktree identity is ready", () => {
     const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
     const move = toMove({ session_id: "s", cwd: "/repo" }, "x", "claude_code", workspaceId);
     expect(move).toMatchObject({
@@ -63,91 +68,34 @@ describe("toMove", () => {
     expect(move.env).toMatchObject({ workspaceId });
   });
 
-  it("carries the preflight invocation id only when supplied by successful post capture", () => {
-    expect(
-      toMove(
-        { session_id: "s", hook_event_name: "PostToolUse" },
-        "x",
-        "claude_code",
-        undefined,
-        "tool-1",
-      ),
-    ).toMatchObject({ invocationId: "tool-1" });
-    expect(toMove({ session_id: "s" }, "x")).not.toHaveProperty("invocationId");
+  it("stamps canonical repository metadata when resolution succeeded", () => {
+    const move = toMove({ session_id: "s", cwd: "/repo/subdir" }, "x", "claude_code", undefined, {
+      repoRoot: "/repo",
+      repoKey: "repo_v1_key",
+      identitySource: "origin",
+      repoFullName: "campus-ai/primitive",
+      repoSyncId: "repoSync123",
+    });
+    expect(move.env).toMatchObject({
+      repoRoot: "/repo",
+      repoKey: "repo_v1_key",
+      gitRoot: "/repo",
+      repoFullName: "campus-ai/primitive",
+      repoSyncId: "repoSync123",
+    });
   });
 
-  it("derives the specified deterministic PostToolUse id", () => {
-    const move = toMove(
-      { session_id: "sess-123", hook_event_name: "PostToolUse" },
-      "x",
-      "claude_code",
-      undefined,
-      "tool-1",
-    );
-    expect(move.moveId).toBe(
-      "posttool:v1:ab909ec351eae8ff307805fe71ab9f665b475ece7df8f814b86d838fd1b2e5b3",
-    );
-  });
-
-  it("gives passive and dedicated capture the same PostToolUse id", () => {
-    const args = { session_id: "session-1", hook_event_name: "PostToolUse" };
-    const passive = toMove(args, "x", "hermes", "workspace-1", "call-1");
-    const dedicated = toMove(args, "x", "hermes", "workspace-1", "call-1");
-    expect(passive.moveId).toBe(dedicated.moveId);
-  });
-
-  it("separates PostToolUse ids by producer, session, invocation, and event type", () => {
-    const post = { session_id: "session-1", hook_event_name: "PostToolUse" };
-    const base = toMove(post, "x", "claude_code", undefined, "call-1").moveId;
-    const ids = [
-      toMove(post, "x", "codex", undefined, "call-1").moveId,
-      toMove({ ...post, session_id: "session-2" }, "x", "claude_code", undefined, "call-1").moveId,
-      toMove(post, "x", "claude_code", undefined, "call-2").moveId,
-      toMove({ ...post, hook_event_name: "PreToolUse" }, "x", "claude_code", undefined, "call-1")
-        .moveId,
-    ];
-    expect(ids).not.toContain(base);
-    expect(new Set([base, ...ids]).size).toBe(5);
-  });
-
-  it("retains random ids without complete PostToolUse identity", () => {
-    const missingInvocation = toMove(
-      { session_id: "session-1", hook_event_name: "PostToolUse" },
-      "x",
-    );
-    const missingSession = toMove(
-      { hook_event_name: "PostToolUse" },
-      "x",
-      "claude_code",
-      undefined,
-      "call-1",
-    );
-    expect(missingInvocation.moveId).not.toMatch(/^posttool:v1:/);
-    expect(missingSession.moveId).not.toMatch(/^posttool:v1:/);
-  });
-
-  it("extracts the same invocation identity used by each host capture path", () => {
-    expect(
-      postToolInvocationId(
-        { hook_event_name: "PostToolUse", tool_use_id: "claude-call" },
-        "claude_code",
-      ),
-    ).toBe("claude-call");
-    expect(
-      postToolInvocationId({ hook_event_name: "PostToolUse", tool_use_id: "codex-call" }, "codex"),
-    ).toBe("codex-call");
-    expect(
-      postToolInvocationId(
-        { hook_event_name: "PostToolUse", extra: { tool_call_id: "hermes-call" } },
-        "hermes",
-      ),
-    ).toBe("hermes-call");
-    expect(
-      postToolInvocationId(
-        { hook_event_name: "PreToolUse", tool_use_id: "not-post" },
-        "claude_code",
-      ),
-    ).toBeUndefined();
+  it("uses a stable PostToolUse identity when the producer supplied an invocation id", () => {
+    const parsed = {
+      session_id: "s",
+      hook_event_name: "PostToolUse",
+      tool_use_id: "tool-1",
+    };
+    const invocationId = postToolInvocationId(parsed, "claude_code");
+    const first = toMove(parsed, "x", "claude_code", undefined, undefined, invocationId);
+    const replay = toMove(parsed, "x", "claude_code", undefined, undefined, invocationId);
+    expect(first.moveId).toBe(replay.moveId);
+    expect(first.invocationId).toBe("tool-1");
   });
 });
 
@@ -171,15 +119,47 @@ describe("shouldFlushAfter", () => {
 });
 
 describe("toCommitMove", () => {
+  const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
+  const repoSyncId = "repoSync123";
   const commit = {
-    sha: "abc123",
+    sha: "a".repeat(40),
     parentSha: "parent0",
     branch: "main",
     files: ["src/a.ts", "src/b.ts"],
+    filesComplete: true,
   };
 
-  it("derives a deterministic moveId from the sha", () => {
-    expect(toCommitMove(commit, "1.0.0", "/repo").moveId).toBe("commit:abc123");
+  it("derives a deterministic v2 moveId from repository, worktree, and SHA", () => {
+    const context = { repoSyncId, workspaceId };
+    const first = toCommitMove(commit, "1.0.0", "/repo", context);
+    const replay = toCommitMove(commit, "1.0.0", "/repo", context);
+    expect(first.moveId).toMatch(/^commit:v2:[0-9a-f]{64}$/u);
+    expect(replay.moveId).toBe(first.moveId);
+    expect(
+      toCommitMove(commit, "1.0.0", "/repo", {
+        repoSyncId: "otherRepo123",
+        workspaceId,
+      }).moveId,
+    ).not.toBe(first.moveId);
+    expect(
+      toCommitMove(commit, "1.0.0", "/repo", {
+        repoSyncId,
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+      }).moveId,
+    ).not.toBe(first.moveId);
+  });
+
+  it("uses collision-resistant non-deterministic fallbacks without complete valid identity", () => {
+    const first = toCommitMove(commit, "1.0.0", "/repo");
+    const second = toCommitMove(commit, "1.0.0", "/repo");
+    expect(first.moveId).toMatch(/^commit:v2:unscoped:[0-9a-f-]{36}$/u);
+    expect(second.moveId).not.toBe(first.moveId);
+    expect(
+      toCommitMove(commit, "1.0.0", "/repo", {
+        repoSyncId: "repo.with.punctuation",
+        workspaceId,
+      }).env,
+    ).not.toHaveProperty("repoSyncId");
   });
 
   it("uses the git.commit eventType and an empty sessionId", () => {
@@ -192,10 +172,11 @@ describe("toCommitMove", () => {
     const move = toCommitMove(commit, "1.0.0", "/repo");
     expect(move.payload).toMatchObject({
       kind: "git.commit",
-      sha: "abc123",
+      sha: "a".repeat(40),
       parentSha: "parent0",
       branch: "main",
-      files: ["src/a.ts", "src/b.ts"],
+      changedFiles: ["src/a.ts", "src/b.ts"],
+      changedFilesComplete: true,
     });
   });
 
@@ -204,6 +185,65 @@ describe("toCommitMove", () => {
     expect(move.env.cwd).toBe("/repo");
     expect(move.env.cliVersion).toBe("1.2.3");
     expect(move.envelopeVersion).toBe(1);
+    expect("producer" in move).toBe(false);
+  });
+
+  it("stamps repository metadata on commit boundaries", () => {
+    const move = toCommitMove(commit, "1.2.3", "/repo", {
+      repository: { repoRoot: "/repo", repoKey: "repo_v1_key" },
+      repoFullName: "campus-ai/primitive",
+      repoSyncId,
+      workspaceId,
+    });
+    expect(move.env).toMatchObject({
+      repoRoot: "/repo",
+      repoKey: "repo_v1_key",
+      gitRoot: "/repo",
+      repoFullName: "campus-ai/primitive",
+      repoSyncId,
+      workspaceId,
+    });
+  });
+
+  it("emits V3 only for one valid Claude/Codex session hint", () => {
+    const attribution = commitAttributionFromEnvironment(
+      { CLAUDE_CODE_SESSION_ID: "claude-session" },
+      workspaceId,
+    );
+    const move = toCommitMove(commit, "1.2.3", "/repo", {
+      workspaceId,
+      attribution,
+    });
+    expect(move).toMatchObject({
+      envelopeVersion: 3,
+      producer: "claude_code",
+      sessionId: "claude-session",
+      env: { workspaceId },
+    });
+  });
+
+  it.each([
+    [{}, "d84b97dc-b69f-4b59-9d0a-f6b3436239a4"],
+    [
+      { CLAUDE_CODE_SESSION_ID: "claude", CODEX_THREAD_ID: "codex" },
+      "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
+    ],
+    [{ CLAUDE_CODE_SESSION_ID: "claude" }, undefined],
+    [{ CLAUDE_CODE_SESSION_ID: "claude" }, "not-a-workspace-id"],
+    [{ HERMES_INTERACTIVE: "1" }, "d84b97dc-b69f-4b59-9d0a-f6b3436239a4"],
+    [
+      { HERMES_INTERACTIVE: "1", CLAUDE_CODE_SESSION_ID: "inherited-claude" },
+      "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
+    ],
+    [
+      { HERMES_INTERACTIVE: "1", CODEX_THREAD_ID: "inherited-codex" },
+      "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
+    ],
+  ])("keeps missing, conflicting, unbound, and Hermes commits sessionless", (env, workspaceId) => {
+    const attribution = commitAttributionFromEnvironment(env, workspaceId);
+    const move = toCommitMove(commit, "1.2.3", "/repo", { workspaceId, attribution });
+    expect(move.envelopeVersion).toBe(1);
+    expect(move.sessionId).toBe("");
     expect("producer" in move).toBe(false);
   });
 });

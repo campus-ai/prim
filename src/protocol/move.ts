@@ -29,6 +29,18 @@ export type MoveEnvironment = {
   cwd: string;
   cliVersion: string;
   osPlatform: NodeJS.Platform;
+  /** Canonical git worktree root used to derive every file reference. */
+  repoRoot?: string;
+  /** Opaque, credential-free repository identity shared across clones/worktrees. */
+  repoKey?: string;
+  /** Canonical Git worktree root used by commit correlation. */
+  gitRoot?: string;
+  /** Validated GitHub owner/repository name, when origin is GitHub. */
+  repoFullName?: string;
+  /** Existing local Prim repository binding; the server revalidates it. */
+  repoSyncId?: string;
+  /** Stable local worktree identity, nested for wire compatibility. */
+  workspaceId?: string;
 };
 
 type MoveFields = {
@@ -60,7 +72,7 @@ export type MoveV1 = MoveFields & {
  * accept the additive envelope during a server-first rollout.
  */
 export type AgentMoveV3 = MoveFields & {
-  env: MoveEnvironment & { workspaceId?: string };
+  env: MoveEnvironment;
   envelopeVersion: typeof AGENT_ENVELOPE_VERSION;
   producer: AgentProducer;
   invocationId?: string;

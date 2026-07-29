@@ -24,6 +24,8 @@ import { gitToplevel } from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
 export const PRIM_REPO_SYNC_ID_KEY = "prim.repoSyncId";
+const GIT_TIMEOUT_MS = 1_000;
+const REPO_SYNC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 // Project-scope agent config files, relative to the REPO ROOT (where a
 // project-scope install writes them). Never the user-scope files under $HOME —
@@ -39,12 +41,13 @@ const PRIM_HOOK_BINS = ["prim-hook", "prim-pre-tool-use", "prim-post-tool-use"];
  * undefined when unset. Distinguishing "false" from unset lets `prim disable`
  * be authoritative while an unset flag can still self-heal (see below).
  */
-function repoActiveFlag(cwd: string): "true" | "false" | undefined {
+export function repoActiveFlag(cwd: string): "true" | "false" | undefined {
   try {
     const value = execFileSync("git", ["config", "--get", PRIM_ACTIVE_KEY], {
       cwd,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
     if (value === "true") return "true";
     if (value === "false") return "false";
@@ -65,30 +68,40 @@ export function setRepoActive(cwd: string, active: boolean): void {
   execFileSync("git", ["config", "--local", PRIM_ACTIVE_KEY, active ? "true" : "false"], {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
   });
 }
 
+export function isValidRepoSyncId(value: unknown): value is string {
+  return typeof value === "string" && REPO_SYNC_ID_RE.test(value);
+}
+
+/**
+ * Read the server-issued repository binding already stored in local Git
+ * config. This is only an attribution hint; the server remains authoritative.
+ */
 export function repoSyncId(cwd: string): string | undefined {
   try {
-    return (
-      execFileSync("git", ["config", "--local", "--get", PRIM_REPO_SYNC_ID_KEY], {
-        cwd,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim() || undefined
-    );
+    const value = execFileSync("git", ["config", "--local", "--get", PRIM_REPO_SYNC_ID_KEY], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    }).trim();
+    return isValidRepoSyncId(value) ? value : undefined;
   } catch {
     return undefined;
   }
 }
 
 export function setRepoSyncId(cwd: string, value: string): void {
-  if (!value || value.includes("\0") || value.includes("\n")) {
+  if (!isValidRepoSyncId(value)) {
     throw new Error("invalid repository binding returned by server");
   }
   execFileSync("git", ["config", "--local", PRIM_REPO_SYNC_ID_KEY, value], {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
   });
 }
 

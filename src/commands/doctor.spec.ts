@@ -15,6 +15,8 @@ import {
   classifyDaemonHealth,
   classifyDoctor,
   classifyMovesStatus,
+  classifyPostCommitHook,
+  classifyRepositoryBinding,
 } from "./doctor.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
@@ -191,8 +193,75 @@ describe("moves status diagnostics", () => {
   });
 
   it("surfaces classifier backlog without treating in-flight work as lost", () => {
-    const [, classification] = classifyMovesStatus(status({ pendingSessionCount: 2 }));
+    const [, classification] = classifyMovesStatus(
+      status({ pendingSessionCount: 2, oldestPendingAgeMs: 65_000 }),
+    );
     expect(classification.status).toBe("warn");
     expect(classification.detail).toContain("2 session");
+    expect(classification.detail).toContain("oldest 65s");
   });
+
+  it("surfaces the additive commit-correlation backlog without breaking old responses", () => {
+    expect(classifyMovesStatus(status())).toHaveLength(2);
+    const checks = classifyMovesStatus(status({ pendingCommitCorrelationCount: 3 }));
+    expect(checks[2]).toMatchObject({
+      name: "commit-correlation",
+      status: "warn",
+    });
+    expect(checks[2].detail).toContain("3 commit");
+  });
+});
+
+describe("effective post-commit diagnostics", () => {
+  const inspection = {
+    gitRoot: "/repo",
+    hooksDir: "/repo/.git/hooks",
+    hookPath: "/repo/.git/hooks/post-commit",
+    kind: "direct" as const,
+    covered: true,
+    executable: true,
+    current: true,
+  };
+
+  it("passes only a current executable effective hook", () => {
+    expect(classifyPostCommitHook(inspection)).toMatchObject({
+      name: "post-commit",
+      status: "ok",
+    });
+  });
+
+  it("fails an uncovered effective hook with an actionable reason", () => {
+    expect(
+      classifyPostCommitHook({
+        ...inspection,
+        covered: false,
+        executable: false,
+        current: false,
+        reason: "not_executable",
+      }),
+    ).toMatchObject({
+      name: "post-commit",
+      status: "fail",
+      detail: expect.stringContaining("not_executable"),
+    });
+  });
+});
+
+describe("repository binding diagnostics", () => {
+  it("requires a valid server-issued local binding", () => {
+    expect(classifyRepositoryBinding("repoSync123")).toMatchObject({
+      name: "repo-binding",
+      status: "ok",
+    });
+  });
+
+  it.each([undefined, "", "-leading", "a".repeat(65), "bad\nid"])(
+    "fails a missing or malformed local binding (%s)",
+    (value) => {
+      expect(classifyRepositoryBinding(value)).toMatchObject({
+        name: "repo-binding",
+        status: "fail",
+      });
+    },
+  );
 });

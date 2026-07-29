@@ -29,6 +29,13 @@ import { type Command, Option } from "commander";
 import { pinnedHookCommand } from "../lib/bin-path.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
+import {
+  ensureEffectivePostCommitHook,
+  ensurePostCommitHookAtPath,
+  postCommitHookBlock,
+  uninstallPostCommitHookAtPath,
+  uninstallProjectPostCommitHook,
+} from "../lib/post-commit-hook.js";
 
 type HookSpec = { hookName: string; binName: string };
 
@@ -36,6 +43,7 @@ const PRE_COMMIT: HookSpec = { hookName: "pre-commit", binName: "prim-pre-commit
 const POST_COMMIT: HookSpec = { hookName: "post-commit", binName: "prim-post-commit" };
 // Pre-commit first: install order is asserted by hooks.spec.ts (calls[0]).
 const HOOKS: HookSpec[] = [PRE_COMMIT, POST_COMMIT];
+const GIT_TIMEOUT_MS = 1_000;
 
 function blockMarkers(spec: HookSpec): { start: string; end: string } {
   return {
@@ -80,6 +88,7 @@ ${hookShim(spec.binName)}
 }
 
 function huskyBlock(spec: HookSpec): string {
+  if (spec.hookName === POST_COMMIT.hookName) return postCommitHookBlock();
   const { start, end } = blockMarkers(spec);
   return `${start}
 ${hookShim(spec.binName)}
@@ -90,6 +99,7 @@ ${end}`;
 // at user scope prim must stay opt-in even when appended into a foreign
 // core.hooksPath dir. Same markers, so stripPrimBlock removes it identically.
 function gatedBlock(spec: HookSpec): string {
+  if (spec.hookName === POST_COMMIT.hookName) return postCommitHookBlock();
   const { start, end } = blockMarkers(spec);
   return `${start}
 ${gatedShim(spec.binName)}
@@ -102,6 +112,21 @@ ${end}`;
 function mergePrimBlock(hookPath: string, block: string, binName: string): boolean {
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, "utf-8");
+    const start = block.slice(0, block.indexOf("\n"));
+    const end = block.slice(block.lastIndexOf("\n") + 1);
+    const starts = existing.split(start).length - 1;
+    const ends = existing.split(end).length - 1;
+    if (starts !== 0 || ends !== 0) {
+      if (starts !== 1 || ends !== 1 || existing.indexOf(end) < existing.indexOf(start)) {
+        throw new Error(`malformed Prim hook markers in ${hookPath}`);
+      }
+      const from = existing.indexOf(start);
+      const through = existing.indexOf(end) + end.length;
+      const refreshed = existing.slice(0, from) + block + existing.slice(through);
+      if (refreshed === existing) return false;
+      writeFileSync(hookPath, refreshed, { mode: 0o755 });
+      return true;
+    }
     if (containsPrimHook(existing, binName)) return false;
     const separator = existing.endsWith("\n") ? "\n" : "\n\n";
     writeFileSync(hookPath, `${existing}${separator}${block}\n`, { mode: 0o755 });
@@ -165,7 +190,7 @@ export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): vo
 }
 
 export function installToDotGit(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
-  const hooksDir = resolve(gitRoot, ".git", "hooks");
+  const hooksDir = projectHooksDir(gitRoot);
   const hookPath = resolve(hooksDir, spec.hookName);
 
   if (!existsSync(hooksDir)) {
@@ -185,6 +210,24 @@ export function installToDotGit(gitRoot: string, spec: HookSpec = PRE_COMMIT): v
 
   writeFileSync(hookPath, dotGitScript(spec), { mode: 0o755 });
   console.log(`Installed ${spec.hookName} hook at ${hookPath}`);
+}
+
+/**
+ * Resolve the repository-owned hooks directory without following
+ * core.hooksPath. In a linked worktree `<root>/.git` is a file, while Git's
+ * common directory still owns the pre-commit hook that project scope manages.
+ */
+export function projectHooksDir(gitRoot: string): string {
+  const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: gitRoot,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: GIT_TIMEOUT_MS,
+  }).trim();
+  if (commonDir === "") {
+    throw new Error("git returned an empty common directory");
+  }
+  return resolve(gitRoot, commonDir, "hooks");
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +256,7 @@ function gitConfigGet(level: "--global" | "--system"): string {
     return execFileSync("git", ["config", level, "--get", "core.hooksPath"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     // Unset (exit 1) or no such config file — treat as empty.
@@ -258,14 +302,17 @@ function globalHookScript(spec: HookSpec): string {
   // pre-commit may legitimately block the commit — propagate the repo hook's
   // exit; post-commit runs after the commit and cannot block, so ignore it.
   const chainExit = spec.hookName === "pre-commit" ? "|| exit $?" : "|| true";
+  const invocation =
+    spec.hookName === POST_COMMIT.hookName ? postCommitHookBlock() : gatedShim(spec.binName);
+  const beforeComments = spec.hookName === POST_COMMIT.hookName ? `${invocation}\n` : "";
+  const afterComments = spec.hookName === POST_COMMIT.hookName ? "" : `${invocation}\n`;
   return `#!/bin/sh
-# prim global ${spec.hookName} hook (core.hooksPath) — managed by prim; do not edit.
+${beforeComments}# prim global ${spec.hookName} hook (core.hooksPath) — managed by prim; do not edit.
 # Install/uninstall: prim hooks install|uninstall --scope user
 # Runs prim only where activated — 'prim enable' (this repo) or
 # 'git config --global prim.active true' (every repo). Chains to the repo's own
 # hook regardless, so inactive repos are unaffected.
-${gatedShim(spec.binName)}
-common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+${afterComments}common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
 repo_hook="$common_dir/hooks/${spec.hookName}"
 if [ -x "$repo_hook" ] && ! grep -q '${PRIM_MANAGED_MARK}' "$repo_hook" 2>/dev/null; then
   "$repo_hook" "$@" ${chainExit}
@@ -297,9 +344,12 @@ function writeOwnHooks(): void {
     mkdirSync(PRIM_GIT_HOOKS_DIR, { recursive: true });
   }
   for (const spec of HOOKS) {
-    writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, spec.hookName), globalHookScript(spec), {
-      mode: 0o755,
-    });
+    const path = resolve(PRIM_GIT_HOOKS_DIR, spec.hookName);
+    if (spec.hookName === POST_COMMIT.hookName) {
+      ensurePostCommitHookAtPath(path, globalHookScript(spec));
+    } else {
+      writeFileSync(path, globalHookScript(spec), { mode: 0o755 });
+    }
   }
   for (const name of PASSTHROUGH_HOOKS) {
     writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, name), passThroughScript(name), { mode: 0o755 });
@@ -311,10 +361,18 @@ function writeOwnHooks(): void {
 // so the file's other contents are the repo owner's, left in place. Gated, so
 // user scope stays opt-in even here.
 function appendPrimBlock(hookPath: string, spec: HookSpec): void {
+  if (spec.hookName === POST_COMMIT.hookName) {
+    ensurePostCommitHookAtPath(hookPath);
+    return;
+  }
   mergePrimBlock(hookPath, gatedBlock(spec), spec.binName);
 }
 
 function stripPrimBlock(hookPath: string, spec: HookSpec): void {
+  if (spec.hookName === POST_COMMIT.hookName) {
+    uninstallPostCommitHookAtPath(hookPath);
+    return;
+  }
   if (!existsSync(hookPath)) return;
   const existing = readFileSync(hookPath, "utf-8");
   const primCreated = existing.includes(PRIM_CREATED_MARK);
@@ -354,7 +412,10 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
       );
     }
     writeOwnHooks();
-    execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR]);
+    execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
+    });
     console.log(
       `Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}. Repos are opt-in: run \`prim enable\` in each repo to capture, or \`git config --global prim.active true\` for all.`,
     );
@@ -386,7 +447,10 @@ export function uninstallGlobalHooks(): void {
     }
     // Only unset because the value is still ours (avoids the exit-5-on-absent
     // and multivar footguns of a blind --unset).
-    execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"]);
+    execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
+    });
     console.log("Removed prim global git hooks and unset core.hooksPath.");
     return;
   }
@@ -404,13 +468,17 @@ export function uninstallGlobalHooks(): void {
 // Install every prim git hook (pre-commit + post-commit) to the chosen
 // destination, pre-commit first so its write is calls[0] in tests.
 function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
-  for (const spec of HOOKS) {
+  for (const spec of HOOKS.filter((candidate) => candidate !== POST_COMMIT)) {
     if (target === "husky") {
       installToHusky(gitRoot, spec);
     } else {
       installToDotGit(gitRoot, spec);
     }
   }
+  const postCommit = ensureEffectivePostCommitHook(gitRoot);
+  console.log(
+    `${postCommit.changed ? "Installed" : "Refreshed"} effective post-commit hook at ${postCommit.path}.`,
+  );
 }
 
 export function registerHooksCommands(program: Command) {
@@ -499,8 +567,9 @@ export function registerHooksCommands(program: Command) {
         return;
       }
       const gitRoot = getGitRoot();
-      for (const spec of HOOKS) {
-        const hookPath = resolve(gitRoot, ".git", "hooks", spec.hookName);
+      const hooksDir = projectHooksDir(gitRoot);
+      for (const spec of HOOKS.filter((candidate) => candidate !== POST_COMMIT)) {
+        const hookPath = resolve(hooksDir, spec.hookName);
         if (!existsSync(hookPath)) {
           console.log(`No ${spec.hookName} hook found.`);
           continue;
@@ -511,6 +580,14 @@ export function registerHooksCommands(program: Command) {
         } else {
           console.log(`Left ${spec.hookName} hook at ${hookPath} untouched (not a prim hook).`);
         }
+      }
+      const postCommit = uninstallProjectPostCommitHook(gitRoot);
+      if (!postCommit.changed) {
+        console.log(`No Prim post-commit block found at ${postCommit.path}.`);
+      } else if (postCommit.removedFile) {
+        console.log(`Removed Prim-created post-commit hook at ${postCommit.path}.`);
+      } else {
+        console.log(`Removed the Prim post-commit block from ${postCommit.path}.`);
       }
     });
 }

@@ -19,6 +19,8 @@ import {
   hasProjectPrimInstall,
   isRepoActive,
   isRepoActiveForCapture,
+  isValidRepoSyncId,
+  repoActiveFlag,
   repoSyncId,
   setRepoActive,
   setRepoSyncId,
@@ -75,6 +77,46 @@ describe("isRepoActive", () => {
       throw new Error("exit 1");
     });
     expect(isRepoActive("/repo")).toBe(false);
+  });
+});
+
+describe("repoActiveFlag", () => {
+  it("exposes unset separately for SessionStart legacy activation repair", () => {
+    stubGit(() => {
+      throw new Error("unset");
+    });
+    expect(repoActiveFlag("/repo")).toBeUndefined();
+  });
+});
+
+describe("repository binding", () => {
+  it.each(["repoSync123", "sync-1", "A", "a".repeat(64)])(
+    "accepts a canonical id (%s)",
+    (value) => {
+      expect(isValidRepoSyncId(value)).toBe(true);
+    },
+  );
+
+  it.each(["", "-leading", "with space", "a".repeat(65), "bad\nid"])(
+    "rejects a malformed id (%s)",
+    (value) => {
+      expect(isValidRepoSyncId(value)).toBe(false);
+      expect(() => setRepoSyncId("/repo", value)).toThrow(/invalid repository binding/);
+    },
+  );
+
+  it("filters malformed local config values", () => {
+    stubGit(() => "with space\n");
+    expect(repoSyncId("/repo")).toBeUndefined();
+  });
+
+  it("persists a valid local binding", () => {
+    setRepoSyncId("/repo", "repoSync123");
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", "prim.repoSyncId", "repoSync123"],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
   });
 });
 

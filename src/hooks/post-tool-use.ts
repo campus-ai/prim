@@ -2,7 +2,7 @@
 /**
  * prim PostToolUse hook for Claude Code and Codex.
  *
- * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit or Codex
+ * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit/NotebookEdit or Codex
  * apply_patch (selected by `--agent`) — as `moves` rows by POSTing them to the
  * server's ingest endpoint, where the extractor / classifier /
  * linker pipeline turns them into decisions. It writes the Move to the same
@@ -26,14 +26,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
-import { isRepoActive, repoSyncId } from "../lib/activation.js";
+import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
+import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
-import { resolvePreflightTargets } from "./preflight-v3.js";
 import { postToolInvocationId, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
@@ -73,8 +74,6 @@ interface PostToolUseEnvelope {
   hook_event_name?: string;
   tool_name?: string;
   tool_input?: unknown;
-  tool_use_id?: string;
-  extra?: { tool_call_id?: unknown };
   cwd?: string;
 }
 
@@ -142,29 +141,44 @@ async function main(): Promise<void> {
   // payload that persists — exactly as the capture hook does.
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
-  if (!isRepoActive(cwd) || !repoSyncId(cwd)) {
+  if (!isRepoActiveForCapture(cwd)) {
     emit();
     return;
   }
-  if (agent === "claude_code") {
-    const targets = resolvePreflightTargets({
-      toolName,
-      toolInput: envelope.tool_input,
-      agent,
-      cwd,
-    });
-    if (targets.mutation === "none") {
-      emit();
-      return;
-    }
+  const resolvedRepository = resolveRepositoryContext(cwd);
+  if (!resolvedRepository) {
+    emit();
+    return;
   }
-  // Stamp the same worktree provenance and natural event identity as passive
-  // prim-hook, so both delivery paths converge on one authoritative Move.
+  const repository = { ...resolvedRepository, repoSyncId: repoSyncId(cwd) };
+
+  const enrichment = enrichHookPayloadWithFileRefs({
+    parsed,
+    agent,
+    cwd,
+    repository,
+  });
+  const { resolution } = enrichment;
+  if (resolution.shellMutation === "none") {
+    emit();
+    return;
+  }
+  if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
+    emit();
+    return;
+  }
+  const enriched = enrichment.parsed;
+  // Stamp the same worktree provenance as passive prim-hook. The classifier
+  // may collapse these duplicate PostToolUse observations and keep either one.
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
-  const invocationId = postToolInvocationId(parsed, agent);
-  const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
-  const move: Move = { ...base, payload: scrubFromCwd(parsed, cwd) };
+  const invocationId = postToolInvocationId(enriched, agent);
+  const base = toMove(enriched, resolveCliVersion(), agent, workspaceId, repository, invocationId);
+  const scrubbed = scrubFromCwd(enriched, cwd);
+  const move: Move = {
+    ...base,
+    payload: preserveHookFileMetadata(scrubbed, resolution),
+  };
   // Write-ahead before the synchronous fast path. The direct POST and every
   // later replay carry this exact moveId, so a timeout/crash cannot create an
   // ingestion gap and a successful direct delivery deduplicates safely when

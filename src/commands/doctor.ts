@@ -33,8 +33,12 @@ import {
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { pendingJournalStats } from "../journal.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, isValidRepoSyncId, repoSyncId } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
+import {
+  type PostCommitHookInspection,
+  inspectEffectivePostCommitHook,
+} from "../lib/post-commit-hook.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
@@ -70,6 +74,9 @@ export type MovesStatus = {
   highWaterMark: number | null;
   pendingSessionCount: number;
   sampled: boolean;
+  oldestPendingAt?: number | null;
+  oldestPendingAgeMs?: number | null;
+  pendingCommitCorrelationCount?: number;
 };
 
 /**
@@ -323,6 +330,52 @@ function checkWorkspaceIdentity(): Check {
   }
 }
 
+export function classifyRepositoryBinding(value: string | undefined): Check {
+  return isValidRepoSyncId(value)
+    ? {
+        name: "repo-binding",
+        status: "ok",
+        detail: "valid local repository binding ready",
+      }
+    : {
+        name: "repo-binding",
+        status: "fail",
+        detail: "missing or invalid local prim.repoSyncId — run `prim enable`",
+      };
+}
+
+function checkRepositoryBinding(): Check {
+  return classifyRepositoryBinding(repoSyncId(process.cwd()));
+}
+
+export function classifyPostCommitHook(inspection: PostCommitHookInspection): Check {
+  if (inspection.covered) {
+    return {
+      name: "post-commit",
+      status: "ok",
+      detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
+    };
+  }
+  return {
+    name: "post-commit",
+    status: "fail",
+    detail: `${inspection.reason ?? "uncovered"} · ${inspection.hookPath}`,
+  };
+}
+
+function checkPostCommitHook(): Check {
+  try {
+    return classifyPostCommitHook(inspectEffectivePostCommitHook());
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      name: "post-commit",
+      status: /not a git repository/iu.test(detail) ? "warn" : "fail",
+      detail: detail.slice(0, 120),
+    };
+  }
+}
+
 function checkFeedbackHooks(): Check {
   try {
     const status = claudeStatus();
@@ -363,6 +416,16 @@ function parseMovesStatus(value: unknown): MovesStatus {
   ) {
     throw new Error("moves status returned an invalid response");
   }
+  if (
+    (status.oldestPendingAt !== undefined && !nullableNumber(status.oldestPendingAt)) ||
+    (status.oldestPendingAgeMs !== undefined && !nullableNumber(status.oldestPendingAgeMs)) ||
+    (typeof status.oldestPendingAgeMs === "number" && status.oldestPendingAgeMs < 0) ||
+    (status.pendingCommitCorrelationCount !== undefined &&
+      (!Number.isInteger(status.pendingCommitCorrelationCount) ||
+        status.pendingCommitCorrelationCount < 0))
+  ) {
+    throw new Error("moves status returned invalid pending-age fields");
+  }
   return status as MovesStatus;
 }
 
@@ -377,10 +440,16 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
         };
   let classification: Check;
   if (status.pendingSessionCount > 0) {
+    const oldest =
+      typeof status.oldestPendingAgeMs === "number"
+        ? ` · oldest ${String(Math.round(status.oldestPendingAgeMs / MS_PER_SECOND))}s`
+        : typeof status.oldestPendingAt === "number"
+          ? ` · oldest ${String(Math.max(0, Math.round((Date.now() - status.oldestPendingAt) / MS_PER_SECOND)))}s`
+          : "";
     classification = {
       name: "classification",
       status: "warn",
-      detail: `${String(status.pendingSessionCount)} session(s) pending${status.sampled ? " in a bounded sample" : ""}`,
+      detail: `${String(status.pendingSessionCount)} session(s) pending${oldest}${status.sampled ? " in a bounded sample" : ""}`,
     };
   } else if (status.sampled) {
     classification = {
@@ -398,7 +467,21 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
           : `caught up · last ${new Date(status.latestClassificationAt).toISOString()}`,
     };
   }
-  return [capture, classification];
+  const correlation: Check | undefined =
+    status.pendingCommitCorrelationCount === undefined
+      ? undefined
+      : status.pendingCommitCorrelationCount > 0
+        ? {
+            name: "commit-correlation",
+            status: "warn",
+            detail: `${String(status.pendingCommitCorrelationCount)} commit(s) awaiting evidence correlation`,
+          }
+        : {
+            name: "commit-correlation",
+            status: "ok",
+            detail: "caught up",
+          };
+  return correlation ? [capture, classification, correlation] : [capture, classification];
 }
 
 async function checkBackend(): Promise<Check[]> {
@@ -454,6 +537,8 @@ async function collectChecks(): Promise<Check[]> {
     checkStranded(),
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
+    checkRepositoryBinding(),
+    checkPostCommitHook(),
     ...backend,
     await checkFeedbackCapability(),
   ];
