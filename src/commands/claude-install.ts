@@ -606,8 +606,8 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   );
   let statuslineCommand = STATUSLINE_COMMAND;
   // A long-lived Claude setting must not point into an npx cache that package
-  // cleanup can remove. On macOS, stage the standalone status-line entry beside
-  // the supervised daemon and persist that stable path. Custom slots are left
+  // cleanup can remove. On macOS, stage the socket launcher beside the
+  // supervised daemon runtime and persist that stable path. Custom slots are left
   // entirely untouched, so there is nothing to stage for them.
   if (
     !blockedByUserStatusline &&
@@ -615,10 +615,7 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     (!before.statusLine || isPrimStatusLine(before))
   ) {
     try {
-      const runtime = stageRuntime();
-      if (!runtime.manifest.statuslineFile) {
-        throw new Error("standalone prim-statusline entry is unavailable");
-      }
+      stageRuntime();
       statuslineCommand = runtimeStatuslineCommand();
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

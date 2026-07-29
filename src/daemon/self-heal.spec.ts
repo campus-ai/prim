@@ -10,6 +10,25 @@ describe("kickDaemonEnsure", () => {
       kickDaemonEnsure({
         primEntry: "/pkg/dist/index.js",
         nodeEntry: "/usr/bin/node",
+        platform: "darwin",
+        spawnProcess,
+      }),
+    ).toBe(true);
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "/usr/bin/node",
+      ["/pkg/dist/index.js", "daemon", "ensure", "--latest-bootstrap"],
+      { detached: true, stdio: "ignore" },
+    );
+    expect(unref).toHaveBeenCalledOnce();
+  });
+
+  it("leaves non-macOS daemon self-heal behavior unchanged", () => {
+    const spawnProcess = vi.fn(() => ({ unref: vi.fn() }));
+    expect(
+      kickDaemonEnsure({
+        primEntry: "/pkg/dist/index.js",
+        nodeEntry: "/usr/bin/node",
+        platform: "linux",
         spawnProcess,
       }),
     ).toBe(true);
@@ -18,7 +37,6 @@ describe("kickDaemonEnsure", () => {
       ["/pkg/dist/index.js", "daemon", "ensure"],
       { detached: true, stdio: "ignore" },
     );
-    expect(unref).toHaveBeenCalledOnce();
   });
 
   it("fails soft when the CLI entry cannot be resolved", () => {

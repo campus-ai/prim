@@ -5,6 +5,7 @@ type SpawnedProcess = { unref(): void };
 type SpawnProcess = (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
 
 export type DaemonEnsureOptions = {
+  platform?: NodeJS.Platform;
   primEntry?: string | null;
   nodeEntry?: string;
   spawnProcess?: SpawnProcess;
@@ -23,9 +24,13 @@ export function kickDaemonEnsure(options: DaemonEnsureOptions = {}): boolean {
   }
 
   try {
+    const args = [primEntry, "daemon", "ensure"];
+    if ((options.platform ?? process.platform) === "darwin") {
+      args.push("--latest-bootstrap");
+    }
     const child = (options.spawnProcess ?? (spawn as SpawnProcess))(
       options.nodeEntry ?? process.execPath,
-      [primEntry, "daemon", "ensure"],
+      args,
       { detached: true, stdio: "ignore" },
     );
     child.unref();

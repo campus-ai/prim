@@ -8,8 +8,10 @@ vi.mock("../lib/post-commit-hook.js", () => ({
   ensureEffectivePostCommitHook: vi.fn(),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
+vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
 
 import { execFileSync } from "node:child_process";
+import { daemonRequest } from "../daemon/client.js";
 import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { registerActivationCommands } from "./activation.js";
@@ -68,6 +70,7 @@ describe("prim enable / disable", () => {
       ["config", "--local", "prim.active", "true"],
       expect.anything(),
     );
+    expect(daemonRequest).toHaveBeenCalledWith("statusline_invalidate", {}, { timeoutMs: 250 });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"repoSyncId": "repoSync123"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
@@ -85,6 +88,7 @@ describe("prim enable / disable", () => {
       ["config", "--local", "prim.active", "false"],
       expect.anything(),
     );
+    expect(daemonRequest).toHaveBeenCalledWith("statusline_invalidate", {}, { timeoutMs: 250 });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": false'));
     expect(ensureEffectivePostCommitHook).not.toHaveBeenCalled();
     expect(bindRepository).not.toHaveBeenCalled();

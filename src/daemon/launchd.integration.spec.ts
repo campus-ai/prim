@@ -61,7 +61,6 @@ async function exerciseMainMigration(round: number): Promise<void> {
     homeDir,
     env: { XDG_DATA_HOME: join(dir, "xdg") },
     daemonSource: fixturePath,
-    statuslineSource: null,
     runner,
     inspectDaemon: async () => identity(),
   };
