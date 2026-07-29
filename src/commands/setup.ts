@@ -86,12 +86,6 @@ export function planSetupSteps(opts: {
       args: ["daemon", "start"],
       required: true,
     });
-    steps.push({
-      key: "health",
-      label: "Capture health",
-      args: ["doctor"],
-      required: true,
-    });
   } else {
     // Persist the opt-out, not merely the absence of a start attempt. The
     // SessionStart self-healer respects the same explicit-stop marker, so it
@@ -120,14 +114,25 @@ export function planSetupSteps(opts: {
   // on CLAUDE.md (its no-candidate default).
   const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
-  // Hook installation never activates an unbound repository. Binding is a
-  // load-bearing setup step for both scopes and must complete before capture.
+  // Activation also verifies the effective post-commit destination and
+  // persists the server-issued repository binding. It is required at both
+  // scopes: setup must not claim success for an uncovered checkout.
   steps.push({
     key: "enable",
-    label: "Bind and activate this repo",
+    label: "Activate this repo",
     args: ["enable"],
     required: true,
   });
+  if (opts.daemon) {
+    // Doctor must observe the final installed + enabled state. In particular,
+    // setup cannot report success while a local core.hooksPath shadows Prim.
+    steps.push({
+      key: "health",
+      label: "Capture health",
+      args: ["doctor"],
+      required: true,
+    });
+  }
   return steps;
 }
 
@@ -383,8 +388,14 @@ export function registerSetupCommand(
           run(["claude", "preauth", "--scope", "user"]).code === 0 ? "ok" : "skipped";
       }
 
-      // 2..N · the install steps.
-      for (const step of planSetupSteps({ agent, daemon: opts.daemon, scope })) {
+      // 2..N · the mutating install steps. Activation and health are deliberately
+      // deferred until after optional migration, which may remove project hook
+      // bytes. Activation then repairs and verifies the final effective hook even
+      // for --no-daemon setups, where no doctor step is planned.
+      const setupSteps = planSetupSteps({ agent, daemon: opts.daemon, scope });
+      for (const step of setupSteps.filter(
+        (candidate) => candidate.key !== "enable" && candidate.key !== "health",
+      )) {
         note(`${step.label} · installing…`);
         const { code } = run(step.args);
         results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
@@ -409,6 +420,23 @@ export function registerSetupCommand(
             `migrate · project-scoped prim config present in this repo (${conflicts.join(", ")}) — it will double-fire with the user-scope install. Re-run \`prim setup --migrate\` to remove it.`,
           );
         }
+      }
+
+      // Activation must observe and repair the actual final hook state, including
+      // migration. It is required even when --no-daemon omits doctor.
+      const enableStep = setupSteps.find((candidate) => candidate.key === "enable");
+      if (enableStep) {
+        note(`${enableStep.label} · installing…`);
+        const { code } = run(enableStep.args);
+        results[enableStep.key] = code === 0 ? "ok" : enableStep.required ? "failed" : "skipped";
+      }
+
+      // Doctor verifies that same final state when the daemon was requested.
+      const healthStep = setupSteps.find((candidate) => candidate.key === "health");
+      if (healthStep) {
+        note(`${healthStep.label} · verifying…`);
+        const { code } = run(healthStep.args);
+        results[healthStep.key] = code === 0 ? "ok" : healthStep.required ? "failed" : "skipped";
       }
 
       // Final · welcome — its output (orientation + any seeding guidance)

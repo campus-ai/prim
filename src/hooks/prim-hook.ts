@@ -28,11 +28,13 @@ import {
   renderFeedback,
 } from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
+import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
+import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { postToolInvocationId, shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
@@ -108,15 +110,39 @@ async function main(): Promise<void> {
 
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
+  const resolvedRepository = resolveRepositoryContext(cwd);
+  const repository = resolvedRepository
+    ? { ...resolvedRepository, repoSyncId: repoSyncId(cwd) }
+    : null;
 
   try {
     // Derive the envelope's identity/control fields (sessionId, eventType,
     // env.cwd) from the (normalized) event so org binding is provably
     // independent of redaction, then scrub ONLY the payload body that persists
     // to the journal, transits to the server, and lands in the moves table.
-    const invocationId = postToolInvocationId(parsed, agent);
-    const base = toMove(parsed, resolveCliVersion(), agent, workspaceId, invocationId);
-    const move = { ...base, payload: scrubFromCwd(parsed, cwd) };
+    // Canonical refs are authoritative on every captured tool event. In
+    // particular, PreToolUse can be selected as Decision evidence on its own;
+    // leaving it raw would let the backend recreate a lexical ref that the
+    // synchronous gate (or PostToolUse) rejected as a symlink/root escape.
+    // Non-tool events expose no paths and pass through byte-for-byte.
+    const enrichment = repository
+      ? enrichHookPayloadWithFileRefs({ parsed, agent, cwd, repository })
+      : undefined;
+    const enriched = enrichment?.parsed ?? parsed;
+    const invocationId = postToolInvocationId(enriched, agent);
+    const base = toMove(
+      enriched,
+      resolveCliVersion(),
+      agent,
+      workspaceId,
+      repository,
+      invocationId,
+    );
+    const scrubbed = scrubFromCwd(enriched, cwd);
+    const move = {
+      ...base,
+      payload: enrichment ? preserveHookFileMetadata(scrubbed, enrichment.resolution) : scrubbed,
+    };
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
     appendMove(move, orgId);
     if (shouldFlushAfter(move.eventType)) {

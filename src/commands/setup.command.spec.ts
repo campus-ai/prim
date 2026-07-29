@@ -22,15 +22,15 @@ import {
 const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts).map((s) => s.key);
 
 describe("planSetupSteps", () => {
-  it("claude, with daemon: session → daemon → health → hooks → skill, in order", () => {
+  it("claude, with daemon: doctor observes the final hooks + enable state", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
     expect(steps.map((s) => s.key)).toEqual([
       "session",
       "daemon",
-      "health",
       "hooks",
       "skill",
       "enable",
+      "health",
     ]);
     expect(steps[0].args).toEqual(["claude", "install"]);
     // A requested daemon is required: --no-daemon is the explicit opt-out.
@@ -115,19 +115,20 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("user scope: appends a required repository bind/enable step", () => {
+  it("user scope: requires enable so setup cannot succeed with an uncovered checkout", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     const enable = steps.find((s) => s.key === "enable");
     expect(enable?.args).toEqual(["enable"]);
     expect(enable?.required).toBe(true);
   });
 
-  it("project scope: also requires bind/enable after installing hooks", () => {
+  it("project scope: enable is required so coverage and repository binding are verified", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
     expect(steps.find((s) => s.key === "enable")).toMatchObject({
       args: ["enable"],
       required: true,
     });
+    expect(steps.at(-1)?.key).toBe("health");
   });
 });
 
@@ -346,6 +347,79 @@ describe("registerSetupCommand", () => {
       ["enable"],
       ["welcome", "--agent", "codex"],
     ]);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("runs doctor after every project cleanup during user-scope migration", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        if (args[0] === "codex" && args[1] === "status") {
+          return { code: 0, stdout: '{"project":{"capture":true}}' };
+        }
+        if (args[0] === "skill" && args[1] === "status") {
+          return { code: 0, stdout: '{"installed":false}' };
+        }
+        return { code: 0, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(["setup", "--agent", "codex", "--scope", "user", "--migrate"], {
+      from: "user",
+    });
+
+    const cleanup = calls.findIndex((args) => args[0] === "codex" && args[1] === "uninstall");
+    const enable = calls.findIndex((args) => args[0] === "enable");
+    const doctor = calls.findIndex((args) => args[0] === "doctor");
+    const welcome = calls.findIndex((args) => args[0] === "welcome");
+    expect(cleanup).toBeGreaterThan(-1);
+    expect(enable).toBeGreaterThan(cleanup);
+    expect(doctor).toBeGreaterThan(cleanup);
+    expect(doctor).toBeGreaterThan(enable);
+    expect(welcome).toBeGreaterThan(doctor);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("--no-daemon activates only after every project cleanup during user-scope migration", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        if (args[0] === "codex" && args[1] === "status") {
+          return { code: 0, stdout: '{"project":{"capture":true}}' };
+        }
+        if (args[0] === "skill" && args[1] === "status") {
+          return { code: 0, stdout: '{"installed":false}' };
+        }
+        return { code: 0, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(
+      ["setup", "--agent", "codex", "--scope", "user", "--no-daemon", "--migrate"],
+      { from: "user" },
+    );
+
+    const cleanup = calls.findIndex((args) => args[0] === "codex" && args[1] === "uninstall");
+    const enable = calls.findIndex((args) => args[0] === "enable");
+    expect(cleanup).toBeGreaterThan(-1);
+    expect(enable).toBeGreaterThan(cleanup);
+    expect(calls.some((args) => args[0] === "doctor")).toBe(false);
     expect(exit).toHaveBeenCalledWith(0);
   });
 });

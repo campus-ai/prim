@@ -4,10 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => ""),
 }));
-vi.mock("../client.js", () => ({ getClient: vi.fn() }));
+vi.mock("../lib/post-commit-hook.js", () => ({
+  ensureEffectivePostCommitHook: vi.fn(),
+}));
+vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 
 import { execFileSync } from "node:child_process";
-import { getClient } from "../client.js";
+import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
+import { bindRepository } from "../lib/repository-binding.js";
 import { registerActivationCommands } from "./activation.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
@@ -18,9 +22,6 @@ const inRepo = (root: string | null): void => {
     if (args[0] === "rev-parse") {
       if (root === null) throw new Error("not a git repository");
       return `${root}\n`;
-    }
-    if (args.join(" ") === "config --get remote.origin.url") {
-      return "git@github.com:campus-ai/primitive.git\n";
     }
     return "";
   }) as unknown as typeof execFileSync);
@@ -35,9 +36,14 @@ function buildProgram(): Command {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(getClient).mockReturnValue({
-    get: vi.fn(),
-    post: vi.fn().mockResolvedValue({ repoSyncId: "sync-1" }),
+  vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
+    path: "/repo/.git/hooks/post-commit",
+    changed: false,
+    kind: "direct",
+  });
+  vi.mocked(bindRepository).mockResolvedValue({
+    repoSyncId: "repoSync123",
+    repositoryFullName: "campus-ai/primitive",
   });
 });
 
@@ -50,30 +56,21 @@ describe("prim enable / disable", () => {
     expect(names).toContain("disable");
   });
 
-  it("enable binds, persists the opaque id, then sets prim.active=true", async () => {
+  it("enable repairs coverage, binds, sets prim.active=true, and prints the result", async () => {
     inRepo("/repo");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildProgram().parseAsync(["enable"], { from: "user" });
-    expect(vi.mocked(getClient)().post).toHaveBeenCalledWith(
-      "/api/cli/repositories/bind",
-      {
-        repositoryFullName: "campus-ai/primitive",
-      },
-      undefined,
-    );
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
-      "git",
-      ["config", "--local", "prim.repoSyncId", "sync-1"],
-      expect.anything(),
-    );
+    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(bindRepository).toHaveBeenCalledWith("/repo");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
       ["config", "--local", "prim.active", "true"],
       expect.anything(),
     );
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"repoSyncId": "sync-1"'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"repoSyncId": "repoSync123"'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -89,6 +86,8 @@ describe("prim enable / disable", () => {
       expect.anything(),
     );
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": false'));
+    expect(ensureEffectivePostCommitHook).not.toHaveBeenCalled();
+    expect(bindRepository).not.toHaveBeenCalled();
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -109,20 +108,26 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("never activates when binding fails", async () => {
+  it("never activates or reports success when effective hook repair fails", async () => {
     inRepo("/repo");
-    vi.mocked(getClient)().post = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
+      throw new Error("malformed Prim hook markers");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`exit ${code}`);
     });
     await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
+    expect(bindRepository).not.toHaveBeenCalled();
     expect(
       mockedExecFileSync.mock.calls.some(
         (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
       ),
     ).toBe(false);
+    expect(logSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();
     errSpy.mockRestore();
+    logSpy.mockRestore();
   });
 });

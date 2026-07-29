@@ -16,42 +16,106 @@
  * separate process with no shared state, and keeping it self-contained
  * keeps shared-module resolution off the commit cold path.
  */
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
-import { isRepoActiveForCapture } from "../lib/activation.js";
-import { type CommitInfo, toCommitMove } from "./prim-hook-core.js";
+import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
+import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
+import {
+  type CommitInfo,
+  commitAttributionFromEnvironment,
+  toCommitMove,
+} from "./prim-hook-core.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const GIT_TIMEOUT_MS = 1_000;
+const FULL_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 
-function git(args: string): string | undefined {
+function gitText(args: string[]): string | undefined {
   try {
-    return execSync(`git ${args}`, {
+    return execFileSync("git", args, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     return;
   }
 }
 
+function gitBytes(args: string[]): Buffer | undefined {
+  try {
+    return execFileSync("git", args, {
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+  } catch {
+    return;
+  }
+}
+
+function parseNulPaths(value: Buffer): { files: string[]; complete: boolean } {
+  if (value.length === 0) return { files: [], complete: true };
+  const chunks: Buffer[] = [];
+  let start = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    if (value[i] !== 0) continue;
+    chunks.push(value.subarray(start, i));
+    start = i + 1;
+  }
+  if (start !== value.length || chunks.some((chunk) => chunk.length === 0)) {
+    return { files: [], complete: false };
+  }
+  const files: string[] = [];
+  for (const chunk of chunks) {
+    const file = chunk.toString("utf8");
+    if (!Buffer.from(file, "utf8").equals(chunk)) {
+      return { files: [], complete: false };
+    }
+    files.push(file);
+  }
+  return { files: [...new Set(files)], complete: true };
+}
+
 function readCommit(): CommitInfo | null {
-  const sha = git("rev-parse HEAD");
-  if (!sha) {
+  const snapshotProvided = process.env.PRIM_COMMIT_SHA !== undefined;
+  const sha = snapshotProvided ? process.env.PRIM_COMMIT_SHA : gitText(["rev-parse", "HEAD"]);
+  if (!sha || !FULL_SHA_RE.test(sha)) {
     return null;
   }
-  const branch = git("rev-parse --abbrev-ref HEAD");
-  const files = (git("diff-tree --no-commit-id --name-only -r -m --root HEAD") ?? "")
-    .split("\n")
-    .filter((f) => f.length > 0);
+  const rawBranch =
+    process.env.PRIM_COMMIT_BRANCH !== undefined
+      ? process.env.PRIM_COMMIT_BRANCH
+      : gitText(["rev-parse", "--abbrev-ref", "HEAD"]);
+  const branch =
+    rawBranch &&
+    rawBranch === rawBranch.trim() &&
+    ![...rawBranch].some((char) => char < " " || char === "\u007f")
+      ? rawBranch
+      : undefined;
+  const rawFiles = gitBytes([
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-z",
+    "-r",
+    "-m",
+    "--root",
+    sha,
+  ]);
+  const { files, complete } =
+    rawFiles === undefined ? { files: [], complete: false } : parseNulPaths(rawFiles);
   return {
     sha,
-    parentSha: git("rev-parse --verify --quiet HEAD^") || undefined,
+    parentSha: gitText(["rev-parse", "--verify", "--quiet", `${sha}^`]) || undefined,
     branch: branch && branch !== "HEAD" ? branch : undefined,
     files,
+    filesComplete: complete,
   };
 }
 
@@ -75,14 +139,24 @@ function spawnBackgroundFlush(): void {
 }
 
 export function runPostCommit(): void {
-  const cwd = git("rev-parse --show-toplevel") ?? process.cwd();
+  const cwd = gitText(["rev-parse", "--show-toplevel"]) ?? process.cwd();
   if (!isRepoActiveForCapture(cwd)) {
     return;
   }
   const commit = readCommit();
   if (commit) {
-    const move = toCommitMove(commit, resolveCliVersion(), cwd);
-    const { orgId } = resolveOrg({ sessionId: "", cwd });
+    const repository = resolveRepositoryContext(cwd);
+    const identity = getOrCreateWorkspaceId(cwd);
+    const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
+    const attribution = commitAttributionFromEnvironment(process.env, workspaceId);
+    const move = toCommitMove(commit, resolveCliVersion(), cwd, {
+      repository,
+      repoFullName: githubRepositoryFullName(cwd) ?? undefined,
+      repoSyncId: repoSyncId(cwd),
+      workspaceId,
+      attribution,
+    });
+    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
     appendMove(move, orgId);
     spawnBackgroundFlush();
   }

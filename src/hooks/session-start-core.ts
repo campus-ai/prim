@@ -9,8 +9,14 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import {
+  isRepoActiveForCapture,
+  repoActiveFlag,
+  repoSyncId,
+  setRepoActive,
+} from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
+import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
@@ -41,6 +47,25 @@ async function activeProjectRoot(cwd: string): Promise<string | null> {
   try {
     const root = gitToplevel(cwd);
     if (!root || !isRepoActiveForCapture(cwd)) return null;
+    let shellGateActive = repoActiveFlag(root) === "true";
+    if (!shellGateActive) {
+      try {
+        // Legacy project installs are considered active by the Node gate, but
+        // the portable post-commit shell block can only read Git config.
+        setRepoActive(root, true);
+        shellGateActive = true;
+      } catch {
+        // Do not refresh to a raw-config-gated block that would silently turn
+        // off commit capture. SessionStart remains fail-soft and retries later.
+      }
+    }
+    if (shellGateActive) {
+      try {
+        ensureEffectivePostCommitHook(root);
+      } catch {
+        // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
+      }
+    }
     if (!repoSyncId(root)) {
       try {
         await bindRepository(root, {
@@ -48,7 +73,7 @@ async function activeProjectRoot(cwd: string): Promise<string | null> {
           quietRefresh: true,
         });
       } catch {
-        // Binding is opportunistic. The gate visibly warns if it remains unavailable.
+        // Binding is opportunistic. A later enable/SessionStart retries it.
       }
     }
     return root;

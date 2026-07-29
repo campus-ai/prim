@@ -9,8 +9,14 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import {
+  isRepoActiveForCapture,
+  repoActiveFlag,
+  repoSyncId,
+  setRepoActive,
+} from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
+import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { REAUTH_NOTICE } from "./reauth-notice.js";
@@ -40,9 +46,12 @@ vi.mock("../decisions/feedback.js", () => ({
 }));
 vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: vi.fn(),
+  repoActiveFlag: vi.fn(),
   repoSyncId: vi.fn(),
+  setRepoActive: vi.fn(),
 }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn() }));
+vi.mock("../lib/post-commit-hook.js", () => ({ ensureEffectivePostCommitHook: vi.fn() }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../lib/workspace-id.js", () => ({ getOrCreateWorkspaceId: vi.fn() }));
 
@@ -65,7 +74,13 @@ beforeEach(() => {
   vi.mocked(daemonRequest).mockResolvedValue(null);
   vi.mocked(leaseDecisionFeedback).mockResolvedValue(undefined);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
-  vi.mocked(repoSyncId).mockReturnValue("sync-existing");
+  vi.mocked(repoActiveFlag).mockReturnValue("true");
+  vi.mocked(repoSyncId).mockReturnValue("repoSync123");
+  vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
+    path: "/repo/.git/hooks/post-commit",
+    changed: false,
+    kind: "direct",
+  });
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
@@ -120,6 +135,7 @@ describe("processSessionStart", () => {
       },
     });
     expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
     expect(gitToplevel).toHaveBeenCalledWith("/repo");
     expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", {
       includeProject: true,
@@ -137,57 +153,6 @@ describe("processSessionStart", () => {
     const refreshOrder = vi.mocked(refreshClaudePlugins).mock.invocationCallOrder[0];
     expect(kickOrder).toBeLessThan(daemonOrder);
     expect(daemonOrder).toBeLessThan(refreshOrder);
-  });
-
-  it("silently binds an active repository once before agent-specific work", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-
-    const feedbackSignal = AbortSignal.timeout(3_000);
-    await processSessionStart(ENVELOPE, "claude_code", feedbackSignal);
-
-    expect(bindRepository).toHaveBeenCalledOnce();
-    const options = vi.mocked(bindRepository).mock.calls[0]?.[1];
-    expect(options).toMatchObject({ quietRefresh: true });
-    expect(options?.signal).toBeInstanceOf(AbortSignal);
-    expect(options?.signal).not.toBe(feedbackSignal);
-  });
-
-  it("preserves normal output when opportunistic binding fails", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-    vi.mocked(bindRepository).mockRejectedValue(new Error("offline"));
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 0 });
-
-    const result = await processSessionStart(ENVELOPE, "claude_code");
-
-    expect(result.output.hookSpecificOutput?.additionalContext).toBe(PRIM_SKILL_REMINDER);
-  });
-
-  it("bounds an unavailable bind without spending the Decision feedback signal", async () => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 0 });
-    vi.mocked(getOrCreateWorkspaceId).mockReturnValue({
-      status: "ready",
-      workspaceId: "00000000-0000-4000-8000-000000000001",
-      path: "/repo/.git/prim/workspace-id",
-      created: false,
-    });
-    vi.mocked(bindRepository).mockImplementation(
-      async (_root, options) =>
-        await new Promise((_, reject) => {
-          options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
-            once: true,
-          });
-        }),
-    );
-
-    await processSessionStart(ENVELOPE, "claude_code");
-
-    const feedback = vi.mocked(leaseDecisionFeedback).mock.calls[0]?.[0].signal;
-    expect(feedback).toBeInstanceOf(AbortSignal);
-    expect(feedback?.aborted).toBe(false);
   });
 
   it("refreshes only user scope and requests a reload in an inactive repo", async () => {
@@ -446,10 +411,8 @@ describe("processSessionStart", () => {
     expect(daemonRequest).toHaveBeenCalledOnce();
   });
 
-  it("binds Hermes while keeping its SessionStart output observer-only", async () => {
+  it("keeps Hermes observer-only, including under terminal auth", async () => {
     vi.mocked(isSessionEnded).mockReturnValue(true);
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
     const hermesEnvelope = JSON.stringify({
       hook_event_name: "on_session_start",
       session_id: "session-1",
@@ -459,11 +422,8 @@ describe("processSessionStart", () => {
     const result = await processSessionStart(hermesEnvelope, "hermes");
 
     expect(result.output).toEqual({});
-    expect(bindRepository).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ quietRefresh: true }),
-    );
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
     expect(daemonRequest).toHaveBeenCalledWith(
       "session_start",
       { sessionId: "session-1" },
@@ -471,16 +431,59 @@ describe("processSessionStart", () => {
     );
   });
 
-  it.each([
-    ["inactive", false, null],
-    ["already bound", true, "sync-existing"],
-  ])("skips binding when the repository is %s", async (_name, active, binding) => {
-    vi.mocked(isRepoActiveForCapture).mockReturnValue(active);
-    vi.mocked(repoSyncId).mockReturnValue(binding);
+  it("repairs an active repository hook and opportunistically binds it once", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(repoSyncId).mockReturnValue(undefined);
+    vi.mocked(bindRepository).mockResolvedValue({
+      repoSyncId: "repoSync123",
+      repositoryFullName: "campus-ai/primitive",
+    });
 
     await processSessionStart(ENVELOPE, "codex");
 
-    expect(bindRepository).not.toHaveBeenCalled();
+    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(bindRepository).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ quietRefresh: true }),
+    );
+  });
+
+  it("persists legacy project-install activation before refreshing the shell-gated hook", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(repoActiveFlag).mockReturnValue(undefined);
+
+    await processSessionStart(ENVELOPE, "codex");
+
+    expect(setRepoActive).toHaveBeenCalledWith("/repo", true);
+    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(vi.mocked(setRepoActive).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("does not install a raw-config-gated block when legacy activation persistence fails", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(repoActiveFlag).mockReturnValue(undefined);
+    vi.mocked(setRepoActive).mockImplementation(() => {
+      throw new Error("read only config");
+    });
+
+    await processSessionStart(ENVELOPE, "codex");
+
+    expect(ensureEffectivePostCommitHook).not.toHaveBeenCalled();
+  });
+
+  it("keeps SessionStart fail-soft when effective hook repair fails", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
+      throw new Error("malformed markers");
+    });
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output).toEqual({});
+    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
   });
 
   it.each(["not json", "null", "[]", '"scalar"'])(
