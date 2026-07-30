@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getClient } from "../client.js";
 import { setRepoSyncId } from "./activation.js";
 import { githubRepositoryFullName } from "./git.js";
-import { bindRepository } from "./repository-binding.js";
+import { bindRepository, resolveRepositoryBinding } from "./repository-binding.js";
 
 vi.mock("../client.js", () => ({ getClient: vi.fn() }));
 vi.mock("./activation.js", () => ({
@@ -22,6 +22,14 @@ beforeEach(() => {
 });
 
 describe("bindRepository", () => {
+  it("can verify the current binding without mutating local Git config", async () => {
+    await expect(resolveRepositoryBinding("/repo")).resolves.toEqual({
+      repoSyncId: "repoSync123",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    expect(setRepoSyncId).not.toHaveBeenCalled();
+  });
+
   it("persists only the authenticated server-issued binding", async () => {
     const signal = AbortSignal.timeout(1_000);
     await expect(bindRepository("/repo", { signal, quietRefresh: true })).resolves.toEqual({

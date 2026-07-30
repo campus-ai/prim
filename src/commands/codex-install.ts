@@ -53,6 +53,8 @@ const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
 const SESSION_START_BIN = "prim-session-start";
 const CODEX_ARGS = "--agent codex";
+const CODEX_EDIT_MATCHER = "apply_patch";
+const CODEX_POST_TOOL_MATCHER = "apply_patch|Bash";
 const JSON_INDENT = 2;
 
 // The Codex hook events capture rides. Mirrors the Claude capture set minus
@@ -75,8 +77,8 @@ const PRIM_BINS: readonly string[] = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, 
 // which is intended.
 const CODEX_REGISTRATIONS: Registration[] = [
   ...CODEX_CAPTURE_EVENTS.map((event) => makeRegistration(event, "*", CAPTURE_BIN, CODEX_ARGS)),
-  makeRegistration("PreToolUse", "apply_patch", GATE_BIN, CODEX_ARGS),
-  makeRegistration("PostToolUse", "apply_patch", POST_TOOL_USE_BIN, CODEX_ARGS),
+  makeRegistration("PreToolUse", CODEX_EDIT_MATCHER, GATE_BIN, CODEX_ARGS),
+  makeRegistration("PostToolUse", CODEX_POST_TOOL_MATCHER, POST_TOOL_USE_BIN, CODEX_ARGS),
   makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS),
 ];
 

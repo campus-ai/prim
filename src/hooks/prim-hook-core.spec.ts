@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   commitAttributionFromEnvironment,
   postToolInvocationId,
@@ -167,6 +167,25 @@ describe("toCommitMove", () => {
     expect(move.eventType).toBe("git.commit");
     expect(move.sessionId).toBe("");
   });
+
+  it("preserves a validated synchronous hook-fire timestamp", () => {
+    const capturedAt = 1_785_000_000_123;
+    expect(toCommitMove(commit, "1.0.0", "/repo", { capturedAt }).capturedAt).toBe(capturedAt);
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    "rejects an invalid launcher timestamp (%s)",
+    (capturedAt) => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(1_785_000_000_456);
+      try {
+        expect(toCommitMove(commit, "1.0.0", "/repo", { capturedAt }).capturedAt).toBe(
+          1_785_000_000_456,
+        );
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
 
   it("carries the commit facts in the payload", () => {
     const move = toCommitMove(commit, "1.0.0", "/repo");

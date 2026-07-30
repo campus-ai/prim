@@ -95,6 +95,8 @@ export type CommitMoveContext = {
   repoSyncId?: string;
   workspaceId?: string;
   attribution?: CommitAttribution;
+  /** Hook-fire time preserved by the synchronous post-commit launcher. */
+  capturedAt?: number;
 };
 
 const MAX_CLASSIFIER_ID_CHARS = 256;
@@ -155,11 +157,15 @@ export function toCommitMove(
   cwd: string,
   context: CommitMoveContext = {},
 ): Move {
-  const { repository, repoFullName, repoSyncId, workspaceId, attribution } = context;
+  const { repository, repoFullName, repoSyncId, workspaceId, attribution, capturedAt } = context;
   const validatedRepoSyncId = isValidRepoSyncId(repoSyncId) ? repoSyncId : undefined;
   const validatedWorkspaceId =
     workspaceId && isCanonicalWorkspaceId(workspaceId) ? workspaceId : undefined;
   const validatedAttribution = validatedWorkspaceId ? attribution : undefined;
+  const validatedCapturedAt =
+    typeof capturedAt === "number" && Number.isSafeInteger(capturedAt) && capturedAt > 0
+      ? capturedAt
+      : Date.now();
   const fullSha = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(commit.sha);
   const moveId =
     validatedRepoSyncId && validatedWorkspaceId && fullSha
@@ -171,7 +177,7 @@ export function toCommitMove(
       : `commit:v2:unscoped:${randomUUID()}`;
   const base = {
     moveId,
-    capturedAt: Date.now(),
+    capturedAt: validatedCapturedAt,
     sessionId: validatedAttribution?.sessionId ?? "",
     eventType: "git.commit",
     payload: {

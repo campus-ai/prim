@@ -267,6 +267,41 @@ describe("resolveHookFileRefs", () => {
     });
   });
 
+  it("emits the same canonical shell metadata for Codex Bash", () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-codex-bash-")));
+    const repository = { repoRoot: root, repoKey: "repo_v1_test" };
+
+    const readOnly = enrichHookPayloadWithFileRefs({
+      parsed: {
+        hook_event_name: "PostToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "cat README.md" },
+      },
+      agent: "codex",
+      cwd: root,
+      repository,
+    });
+    const mutation = enrichHookPayloadWithFileRefs({
+      parsed: {
+        hook_event_name: "PostToolUse",
+        tool_name: "Bash",
+        tool_input: { command: "printf x > src/a.ts" },
+      },
+      agent: "codex",
+      cwd: root,
+      repository,
+    });
+
+    expect(readOnly.parsed).toHaveProperty("primitive", {
+      fileRefs: [],
+      shellMutation: "none",
+    });
+    expect(mutation.parsed).toHaveProperty("primitive", {
+      fileRefs: ["src/a.ts"],
+      shellMutation: "resolved",
+    });
+  });
+
   it("bounds literal targets and marks the omitted tail unverified", () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-cap-")));
     const targets = Array.from(

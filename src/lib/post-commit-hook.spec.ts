@@ -392,6 +392,7 @@ common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
   it("snapshots rapid sequential commits before launching background capture", async () => {
     const root = repository("rapid-commits");
     const cacheRoot = temp("rapid-cache");
+    const observedRoot = temp("rapid-observed");
     const bin = join(cacheRoot, "prim", "bin");
     const output = join(temp("rapid-output"), "captures");
     const capture = join(bin, "capture.sh");
@@ -401,10 +402,13 @@ common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
     writeFileSync(
       capture,
       `files=$(git diff-tree --no-commit-id --name-only -r --root "$PRIM_COMMIT_SHA")
-printf '%s|%s\\n' "$PRIM_COMMIT_SHA" "$files" >> "$PRIM_CAPTURE_OUTPUT"
+marker=missing
+if [ -f "$PRIM_COMMIT_OBSERVED_FILE" ]; then marker=present; fi
+printf '%s|%s|%s\\n' "$PRIM_COMMIT_SHA" "$files" "$marker" >> "$PRIM_CAPTURE_OUTPUT"
 `,
     );
     vi.stubEnv("XDG_CACHE_HOME", cacheRoot);
+    vi.stubEnv("TMPDIR", observedRoot);
     vi.stubEnv("PRIM_CAPTURE_OUTPUT", output);
     git(root, "config", "--local", "prim.active", "true");
     ensureEffectivePostCommitHook(root);
@@ -430,7 +434,13 @@ printf '%s|%s\\n' "$PRIM_COMMIT_SHA" "$files" >> "$PRIM_CAPTURE_OUTPUT"
       },
       { timeout: 5_000, interval: 20 },
     );
-    expect(lines.sort()).toEqual([`${firstSha}|first.ts`, `${secondSha}|second.ts`].sort());
+    expect(lines.sort()).toEqual(
+      [`${firstSha}|first.ts|present`, `${secondSha}|second.ts|present`].sort(),
+    );
+    await vi.waitFor(() => expect(readdirSync(observedRoot)).toEqual([]), {
+      timeout: 5_000,
+      interval: 20,
+    });
   });
 
   it("uninstall removes only the marked block or a proven Prim-created file", () => {
@@ -651,6 +661,12 @@ printf 'foreign tail\\n'
     );
     expect(postCommitHookBlock()).toContain(
       'export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch"',
+    );
+    expect(postCommitHookBlock()).toContain(
+      'PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"',
+    );
+    expect(postCommitHookBlock()).toContain(
+      'mktemp "${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX"',
     );
     expect(postCommitHookBlock()).toContain(
       '"$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &',

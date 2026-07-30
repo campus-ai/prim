@@ -9,12 +9,7 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import {
-  isRepoActiveForCapture,
-  repoActiveFlag,
-  repoSyncId,
-  setRepoActive,
-} from "../lib/activation.js";
+import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
 import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
@@ -66,15 +61,16 @@ async function activeProjectRoot(cwd: string): Promise<string | null> {
         // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
       }
     }
-    if (!repoSyncId(root)) {
-      try {
-        await bindRepository(root, {
-          signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
-          quietRefresh: true,
-        });
-      } catch {
-        // Binding is opportunistic. A later enable/SessionStart retries it.
-      }
+    try {
+      // Re-resolve on every session: a syntactically valid cached id can become
+      // stale when the origin or the organization's connected repository
+      // changes. The server remains authoritative and the write is idempotent.
+      await bindRepository(root, {
+        signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
+        quietRefresh: true,
+      });
+    } catch {
+      // Binding is opportunistic. A later enable/SessionStart retries it.
     }
     return root;
   } catch {

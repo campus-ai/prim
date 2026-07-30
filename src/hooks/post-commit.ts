@@ -17,8 +17,8 @@
  * keeps shared-module resolution off the commit cold path.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { lstatSync, readFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
@@ -34,6 +34,44 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const GIT_TIMEOUT_MS = 1_000;
 const FULL_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const OBSERVATION_MARKER_RE = /^prim-post-commit-observed\.[A-Za-z0-9]+$/u;
+const MAX_OBSERVATION_MARKER_AGE_MS = 10 * 60 * 1_000;
+const MAX_OBSERVATION_MARKER_FUTURE_SKEW_MS = 5_000;
+
+/**
+ * Recover the timestamp of the synchronous hook launch from a private empty
+ * marker. The detached process treats this as a local timing hint only after
+ * validating its path, ownership, shape, permissions, and freshness.
+ */
+export function capturedAtFromLauncher(
+  env: NodeJS.ProcessEnv = process.env,
+  now: number = Date.now(),
+): number | undefined {
+  const path = env.PRIM_COMMIT_OBSERVED_FILE;
+  if (!path || !isAbsolute(path) || !OBSERVATION_MARKER_RE.test(basename(path))) return;
+  try {
+    const stat = lstatSync(path);
+    const capturedAt = Math.trunc(stat.mtimeMs);
+    const uid = process.getuid?.();
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.size !== 0 ||
+      stat.nlink !== 1 ||
+      (stat.mode & 0o077) !== 0 ||
+      (uid !== undefined && stat.uid !== uid) ||
+      !Number.isSafeInteger(capturedAt) ||
+      capturedAt <= 0 ||
+      capturedAt < now - MAX_OBSERVATION_MARKER_AGE_MS ||
+      capturedAt > now + MAX_OBSERVATION_MARKER_FUTURE_SKEW_MS
+    ) {
+      return;
+    }
+    return capturedAt;
+  } catch {
+    return;
+  }
+}
 
 function gitText(args: string[]): string | undefined {
   try {
@@ -143,6 +181,10 @@ export function runPostCommit(): void {
   if (!isRepoActiveForCapture(cwd)) {
     return;
   }
+  const capturedAt = capturedAtFromLauncher();
+  if (process.env.PRIM_COMMIT_OBSERVED_FILE !== undefined && capturedAt === undefined) {
+    return;
+  }
   const commit = readCommit();
   if (commit) {
     const repository = resolveRepositoryContext(cwd);
@@ -155,6 +197,7 @@ export function runPostCommit(): void {
       repoSyncId: repoSyncId(cwd),
       workspaceId,
       attribution,
+      ...(capturedAt === undefined ? {} : { capturedAt }),
     });
     const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
     appendMove(move, orgId);

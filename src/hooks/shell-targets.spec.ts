@@ -28,6 +28,60 @@ describe("analyzeShellTargets", () => {
   });
 
   it.each([
+    "rg -n --hidden needle src",
+    "grep -R -n --include '*.ts' needle src",
+    "head -n 20 README.md",
+    "tail --lines=20 --follow app.log",
+    "wc -l src/index.ts",
+    "ls -la --color=never src",
+    "sed -n '1,20p' README.md",
+    "sed -E 's/foo/bar/g' README.md",
+    "find src -type f -name '*.ts' -print",
+    "find . -maxdepth 2 -newermt '2026-01-01' -print0",
+    "rg needle src | head -n 5",
+  ])("recognizes a strictly parsed inspection command: %s", (source) => {
+    expect(analyzeShellTargets(source)).toEqual({
+      paths: [],
+      coverage: "complete",
+      mutation: "none",
+    });
+  });
+
+  it.each([
+    "git status --short",
+    "git --no-pager diff --cached --name-only",
+    "git -C repo log --oneline --max-count=10",
+    "git rev-parse --show-toplevel",
+    "git ls-files --cached --exclude-standard",
+    "git add -- src/a.ts",
+    "git commit -am 'record the fix'",
+    "git commit --amend --no-edit",
+    "git push --no-verify origin feature",
+    "git branch --show-current",
+    "git reset --mixed HEAD -- src/a.ts",
+    "git restore --staged -- src/a.ts",
+    "git rm --cached -- src/generated.ts",
+    "gh pr view 42 --json state,mergeCommit",
+    "gh pr create --title fix --body-file body.md --head feature",
+    "gh pr edit 42 --add-label bug",
+    "gh pr merge 42 --squash",
+  ])("does not call static Git/ref/index/PR metadata a worktree edit: %s", (source) => {
+    expect(analyzeShellTargets(source)).toEqual({
+      paths: [],
+      coverage: "complete",
+      mutation: "none",
+    });
+  });
+
+  it("still records output files produced by an otherwise read-only command", () => {
+    expect(analyzeShellTargets("rg needle src > reports/matches.txt")).toEqual({
+      paths: ["reports/matches.txt"],
+      coverage: "complete",
+      mutation: "present",
+    });
+  });
+
+  it.each([
     'printf x > "$OUT"',
     "touch *.ts",
     "touch {a,b}",
@@ -41,6 +95,54 @@ describe("analyzeShellTargets", () => {
     "cd src && touch a.ts",
     "for x in a; do touch $x; done",
   ])("marks the whole call unverified for unsupported or dynamic behavior: %s", (source) => {
+    expect(analyzeShellTargets(source)).toMatchObject({
+      coverage: "unverified",
+      mutation: "present",
+    });
+  });
+
+  it.each([
+    "rg --pre 'touch pwned.ts' needle src",
+    "rg --search-zip needle src",
+    "rg --future-option needle src",
+    "grep --unknown-option needle src",
+    "sed -i.bak 's/a/b/' governed.ts",
+    "sed 'w governed.ts' README.md",
+    "sed 's/a/b/e' README.md",
+    "find . -delete",
+    "find . -exec touch governed.ts ';'",
+    "find . -fprint governed.ts",
+    "git -c alias.status='!touch governed.ts' status",
+    "git diff --output=governed.patch",
+    "git grep --open-files-in-pager=less needle",
+    "git checkout -- governed.ts",
+    "git restore governed.ts",
+    "git reset --hard HEAD",
+    "git clean -fd",
+    "git stash push",
+    "git apply governed.patch",
+    "git commit --edit",
+    "git push --exec=governed origin main",
+    "gh pr checkout 42",
+    "gh pr merge 42 --squash --delete-branch",
+    "gh pr view 42 --web",
+    "gh pr view 42 --unknown-option",
+    "npm run build",
+    "pnpm exec prettier --write governed.ts",
+    "npx eslint --fix governed.ts",
+  ])("fails closed for commands that may write, execute, or are not allowlisted: %s", (source) => {
+    expect(analyzeShellTargets(source)).toMatchObject({
+      coverage: "unverified",
+      mutation: "present",
+    });
+  });
+
+  it.each([
+    'rg "$PATTERN" src',
+    'git commit -m "$MESSAGE"',
+    'gh pr create --title fix --body "$(touch governed.ts)"',
+    "PATH=./bin git status --short",
+  ])("fails closed for dynamic words and command prefixes: %s", (source) => {
     expect(analyzeShellTargets(source)).toMatchObject({
       coverage: "unverified",
       mutation: "present",

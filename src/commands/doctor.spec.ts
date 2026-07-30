@@ -255,6 +255,14 @@ describe("repository binding diagnostics", () => {
     });
   });
 
+  it("fails a locally valid binding that no longer matches the current origin", () => {
+    expect(classifyRepositoryBinding("repoSync123", "repoSync456")).toMatchObject({
+      name: "repo-binding",
+      status: "fail",
+      detail: expect.stringContaining("stale"),
+    });
+  });
+
   it.each([undefined, "", "-leading", "a".repeat(65), "bad\nid"])(
     "fails a missing or malformed local binding (%s)",
     (value) => {

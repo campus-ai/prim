@@ -44,7 +44,7 @@ describe("codex applyInstall", () => {
   it("matches apply_patch and writes shim commands that keep --agent codex", () => {
     const out = applyInstall(EMPTY);
     const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch");
-    const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch");
+    const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch|Bash");
     expect(preGate?.hooks?.[0].command).toBe(
       pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
     );
