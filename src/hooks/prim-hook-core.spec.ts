@@ -5,6 +5,7 @@ import {
   shouldFlushAfter,
   toCommitMove,
   toMove,
+  toolOutcomeFor,
 } from "./prim-hook-core.js";
 
 describe("toMove", () => {
@@ -20,6 +21,7 @@ describe("toMove", () => {
     expect(typeof move.moveId).toBe("string");
     expect(typeof move.capturedAt).toBe("number");
     expect(move.envelopeVersion).toBe(3);
+    expect(move.toolOutcome).toBe("succeeded");
   });
 
   it("stores the raw hook event verbatim as payload", () => {
@@ -96,6 +98,133 @@ describe("toMove", () => {
     const replay = toMove(parsed, "x", "claude_code", undefined, undefined, invocationId);
     expect(first.moveId).toBe(replay.moveId);
     expect(first.invocationId).toBe("tool-1");
+  });
+
+  it("makes correlated failure capture deterministic without colliding with success", () => {
+    const failure = {
+      session_id: "session-1",
+      hook_event_name: "PostToolUseFailure",
+      tool_use_id: "call-1",
+    };
+    const first = toMove(failure, "x", "claude_code", undefined, undefined, "call-1");
+    const replay = toMove(failure, "x", "claude_code", undefined, undefined, "call-1");
+    const success = toMove(
+      { ...failure, hook_event_name: "PostToolUse" },
+      "x",
+      "claude_code",
+      undefined,
+      undefined,
+      "call-1",
+    );
+    expect(first.moveId).toMatch(/^posttool:v1:/);
+    expect(first.moveId).toBe(replay.moveId);
+    expect(first.moveId).not.toBe(success.moveId);
+  });
+});
+
+describe("postToolInvocationId", () => {
+  it("extracts the same invocation identity used by each host capture path", () => {
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PostToolUse", tool_use_id: "claude-call" },
+        "claude_code",
+      ),
+    ).toBe("claude-call");
+    expect(
+      postToolInvocationId({ hook_event_name: "PostToolUse", tool_use_id: "codex-call" }, "codex"),
+    ).toBe("codex-call");
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PostToolUse", extra: { tool_call_id: "hermes-call" } },
+        "hermes",
+      ),
+    ).toBe("hermes-call");
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PostToolUseFailure", tool_use_id: "claude-failure" },
+        "claude_code",
+      ),
+    ).toBe("claude-failure");
+    expect(
+      postToolInvocationId(
+        { hook_event_name: "PreToolUse", tool_use_id: "not-post" },
+        "claude_code",
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("toolOutcomeFor", () => {
+  it("normalizes Claude success, failure, and interruption", () => {
+    expect(toolOutcomeFor({ hook_event_name: "PostToolUse" }, "claude_code")).toBe("succeeded");
+    expect(toolOutcomeFor({ hook_event_name: "PostToolUseFailure" }, "claude_code")).toBe("failed");
+    expect(
+      toolOutcomeFor({ hook_event_name: "PostToolUseFailure", is_interrupt: true }, "claude_code"),
+    ).toBe("interrupted");
+  });
+
+  it("treats Codex PostToolUse as returned without inventing success", () => {
+    expect(toolOutcomeFor({ hook_event_name: "PostToolUse" }, "codex")).toBe("returned");
+  });
+
+  it.each([
+    ["ok", "succeeded"],
+    ["success", "succeeded"],
+    ["error", "failed"],
+    ["timeout", "failed"],
+    ["cancelled", "interrupted"],
+    ["blocked", "prevented"],
+    ["newer_status", "unknown"],
+    [undefined, "unknown"],
+  ] as const)("maps Hermes post_tool_call status %s to %s", (status, expected) => {
+    expect(toolOutcomeFor({ hook_event_name: "PostToolUse", extra: { status } }, "hermes")).toBe(
+      expected,
+    );
+  });
+
+  it.each(["deny", "smart_deny", "timeout"])(
+    "records a correlated Hermes %s approval as prevention",
+    (choice) => {
+      expect(
+        toolOutcomeFor(
+          {
+            hook_event_name: "post_approval_response",
+            extra: {
+              choice,
+              session_key: "session-1",
+              tool_call_id: "call-1",
+            },
+          },
+          "hermes",
+        ),
+      ).toBe("prevented");
+    },
+  );
+
+  it("requires invocation correlation for Hermes approval prevention", () => {
+    expect(
+      toolOutcomeFor(
+        { hook_event_name: "post_approval_response", extra: { choice: "deny" } },
+        "hermes",
+      ),
+    ).toBeUndefined();
+    for (const choice of ["once", "session", "always", "smart_approve"]) {
+      expect(
+        toolOutcomeFor(
+          {
+            hook_event_name: "post_approval_response",
+            extra: { choice, tool_call_id: "call-1" },
+          },
+          "hermes",
+        ),
+      ).toBeUndefined();
+    }
+  });
+
+  it("omits toolOutcome from unrelated moves", () => {
+    expect(toMove({ session_id: "s", hook_event_name: "PreToolUse" }, "x")).not.toHaveProperty(
+      "toolOutcome",
+    );
   });
 });
 

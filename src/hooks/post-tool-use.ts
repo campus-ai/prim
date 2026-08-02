@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * prim PostToolUse hook for Claude Code and Codex.
+ * prim post-tool outcome hook for Claude Code, Codex, and Hermes.
  *
- * Captures edit-tool completions — Claude Code Edit/Write/MultiEdit/NotebookEdit or Codex
- * apply_patch (selected by `--agent`) — as `moves` rows by POSTing them to the
- * server's ingest endpoint, where the extractor / classifier /
- * linker pipeline turns them into decisions. It writes the Move to the same
- * durable journal first, then attempts synchronous ingest so the server can
- * return an immediate verdict footer without making recovery depend on HTTP.
+ * Captures edit-tool completions and failures — Claude Code
+ * Edit/Write/MultiEdit/NotebookEdit (including PostToolUseFailure), Codex
+ * apply_patch, and Hermes write_file/patch plus approval denials (selected by
+ * `--agent`) — as `moves` rows by POSTing them to the server's ingest endpoint,
+ * where the extractor / classifier / linker pipeline turns them into decisions.
+ * It writes the Move to the same durable journal first, then attempts
+ * synchronous ingest so the server can return an immediate verdict footer
+ * without making recovery depend on HTTP.
  *
  * The move carries the canonical envelope — including env.cwd — so the server
  * can relativize the edited file into the repository-relative key its
@@ -35,7 +37,7 @@ import { type Agent, parseAgent } from "./agent.js";
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
-import { postToolInvocationId, toMove } from "./prim-hook-core.js";
+import { postToolInvocationId, toMove, toolOutcomeFor } from "./prim-hook-core.js";
 import { scrubFromCwd } from "./redact.js";
 import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js";
 
@@ -74,6 +76,11 @@ interface PostToolUseEnvelope {
   hook_event_name?: string;
   tool_name?: string;
   tool_input?: unknown;
+  tool_use_id?: string;
+  extra?: {
+    tool_call_id?: unknown;
+    session_key?: unknown;
+  };
   cwd?: string;
 }
 
@@ -122,16 +129,36 @@ async function main(): Promise<void> {
     emit();
     return;
   }
-  const envelope = parsed as PostToolUseEnvelope;
-  if (envelope.hook_event_name !== "PostToolUse") {
+  let envelope = parsed as PostToolUseEnvelope;
+  const isToolResult =
+    envelope.hook_event_name === "PostToolUse" ||
+    (agent === "claude_code" && envelope.hook_event_name === "PostToolUseFailure");
+  const isHermesDenial =
+    agent === "hermes" &&
+    envelope.hook_event_name === "post_approval_response" &&
+    toolOutcomeFor(parsed, agent) === "prevented";
+  if (!isToolResult && !isHermesDenial) {
+    emit();
+    return;
+  }
+  const invocationId = postToolInvocationId(parsed, agent);
+  if (isHermesDenial && !invocationId) {
     emit();
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
-  const editingTools = editingToolsFor(agent);
-  if (!editingTools.has(toolName)) {
+  if (!isHermesDenial && !editingToolsFor(agent).has(toolName)) {
     emit();
     return;
+  }
+  if (
+    isHermesDenial &&
+    (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) &&
+    typeof envelope.extra?.session_key === "string" &&
+    envelope.extra.session_key.length > 0
+  ) {
+    parsed = { ...parsed, session_id: envelope.extra.session_key };
+    envelope = parsed as PostToolUseEnvelope;
   }
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
     emit();
@@ -159,20 +186,28 @@ async function main(): Promise<void> {
     repository,
   });
   const { resolution } = enrichment;
-  if (resolution.shellMutation === "none") {
-    emit();
-    return;
-  }
-  if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
-    emit();
-    return;
+  // A Hermes approval denial carries no edited file or shell command, so it has
+  // no file-refs and no shell mutation. Exempt it from the enrichment gate that
+  // drops non-mutating tool results — otherwise the prevented-outcome move it
+  // exists to produce would never be emitted. The gate still applies to every
+  // real tool-result path.
+  if (!isHermesDenial) {
+    if (resolution.shellMutation === "none") {
+      emit();
+      return;
+    }
+    if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
+      emit();
+      return;
+    }
   }
   const enriched = enrichment.parsed;
   // Stamp the same worktree provenance as passive prim-hook. The classifier
   // may collapse these duplicate PostToolUse observations and keep either one.
   const identity = getOrCreateWorkspaceId(cwd);
   const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
-  const invocationId = postToolInvocationId(enriched, agent);
+  // Reuse the invocationId declared above (the Hermes-denial guard needs it
+  // early); toMove derives toolOutcome from the enriched envelope internally.
   const base = toMove(enriched, resolveCliVersion(), agent, workspaceId, repository, invocationId);
   const scrubbed = scrubFromCwd(enriched, cwd);
   const move: Move = {

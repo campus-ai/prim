@@ -35,6 +35,7 @@ const CAPTURE_EVENTS = [
   "UserPromptSubmit",
   "PreToolUse",
   "PostToolUse",
+  "PostToolUseFailure",
   "Stop",
   "SessionEnd",
   "SubagentStop",
@@ -457,6 +458,15 @@ describe("post-tool-use, session hooks, statusline install", () => {
   it("registers the post-tool-use ingest hook on PostToolUse at the edit matcher", () => {
     const out = applyInstall(EMPTY);
     const entry = out.hooks?.PostToolUse?.find((e) =>
+      e.hooks?.some((h) => commandMatchesBin(h.command, "prim-post-tool-use")),
+    );
+    expect(entry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
+  });
+
+  it("registers capture and outcome ingest on PostToolUseFailure", () => {
+    const out = applyInstall(EMPTY);
+    expect(hasBin(out, "PostToolUseFailure", "prim-hook")).toBe(true);
+    const entry = out.hooks?.PostToolUseFailure?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-post-tool-use")),
     );
     expect(entry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");

@@ -41,6 +41,12 @@ describe("applyInstall", () => {
     expect(gate?.command).toContain("--agent hermes");
     expect(hooks.on_session_start.some((e) => e.command.includes("prim-session-start"))).toBe(true);
     expect(hooks.on_session_end.some((e) => e.command.includes("prim-session-end"))).toBe(true);
+    expect(hooks.post_approval_response).toEqual([
+      expect.objectContaining({
+        command: expect.stringContaining("prim-post-tool-use --agent hermes"),
+      }),
+    ]);
+    expect(hooks.post_approval_response[0]).not.toHaveProperty("matcher");
     // Capture rides pre_tool_call alongside the gate (two entries on that event).
     expect(hooks.pre_tool_call.some((e) => e.command.includes('prim-shim.sh" prim-hook '))).toBe(
       true,

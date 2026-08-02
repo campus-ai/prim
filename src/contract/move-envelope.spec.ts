@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_ENVELOPE_VERSION,
+  type AgentMoveV3,
   LEGACY_ENVELOPE_VERSION,
   type Move,
   type MoveV1,
@@ -134,5 +135,18 @@ describe("Move envelope contract", () => {
     expect(wire.producer).toBe("hermes");
     expect(wire).not.toHaveProperty("workspaceId");
     expect(wire).toHaveProperty("env.workspaceId", "123e4567-e89b-42d3-a456-426614174000");
+  });
+
+  it("carries an optional normalized tool outcome only on the agent envelope", () => {
+    const move: AgentMoveV3 = {
+      ...withAgentProvenance(sample(), "codex", "123e4567-e89b-42d3-a456-426614174000"),
+      invocationId: "call-1",
+      toolOutcome: "returned",
+    };
+    expect(JSON.parse(JSON.stringify(move))).toMatchObject({
+      envelopeVersion: 3,
+      invocationId: "call-1",
+      toolOutcome: "returned",
+    });
   });
 });

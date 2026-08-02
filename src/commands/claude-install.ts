@@ -6,8 +6,8 @@
  *   - prim-hook (passive capture) at matcher "*" on every hook event, so the
  *     decision journal sees the full session.
  *   - prim-pre-tool-use (the conflict gate) on PreToolUse, and
- *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse,
- *     both at matcher "Edit|Write|MultiEdit".
+ *     prim-post-tool-use (server move ingest + verdict footer) on PostToolUse
+ *     and PostToolUseFailure, both at the edit-tool matcher.
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live sessions. SessionEnd entries use the
  *     detached shim: Claude Code cancels hooks still running at teardown.
@@ -83,14 +83,15 @@ export function projectRoot(): string {
 const projectScopePath = (): string => join(projectRoot(), ".claude", "settings.json");
 
 // Capture rides every hook event at the wildcard matcher; the gate and the
-// PostToolUse ingest hook ride their edit tools; the session hooks notify the
-// daemon on session boundaries. PreToolUse and PostToolUse each carry two prim
-// entries (capture + their dedicated hook), which is intended.
+// Post-tool outcome ingest hooks ride their edit tools; the session hooks
+// notify the daemon on session boundaries. Each outcome event carries two prim
+// entries (capture + its dedicated hook), which is intended.
 const CAPTURE_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
   "PreToolUse",
   "PostToolUse",
+  "PostToolUseFailure",
   "Stop",
   "SessionEnd",
   "SubagentStop",
@@ -161,6 +162,11 @@ const REGISTRATIONS: Registration[] = [
   ),
   makeRegistration("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", GATE_BIN),
   makeRegistration("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash", POST_TOOL_USE_BIN),
+  makeRegistration(
+    "PostToolUseFailure",
+    "Edit|Write|MultiEdit|NotebookEdit|Bash",
+    POST_TOOL_USE_BIN,
+  ),
   makeRegistration("SessionStart", "*", SESSION_START_BIN),
   makeDetachedRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
