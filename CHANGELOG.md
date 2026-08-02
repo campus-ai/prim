@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.64](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.63...v0.1.0-alpha.64) (2026-08-02)
+
+
+### Features
+
+* report enforcement conflict outcomes from agent hooks ([#211](https://github.com/campus-ai/prim/issues/211)) ([08dfae8](https://github.com/campus-ai/prim/commit/08dfae88e94170e52706ed7360f7411270000be3))
+
+
+### Bug Fixes
+
+* preserve complete passive lifecycle evidence ([#210](https://github.com/campus-ai/prim/issues/210)) ([25184bb](https://github.com/campus-ai/prim/commit/25184bb1c77eb580f52fe60b99dce2e7fdf794de))
+
 ## [0.1.0-alpha.63](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.62...v0.1.0-alpha.63) (2026-07-29)
 
 
