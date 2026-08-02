@@ -66,7 +66,7 @@ export function resolveHookFileRefs(args: {
   repository: RepositoryContext;
 }): HookFileResolution {
   const command =
-    args.agent === "claude_code" &&
+    (args.agent === "claude_code" || args.agent === "codex") &&
     args.toolName === "Bash" &&
     args.toolInput &&
     typeof args.toolInput === "object" &&

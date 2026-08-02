@@ -41,8 +41,8 @@ import { isVerdictFooterContext, renderVerdictFooter } from "./verdict-footer.js
 
 const STDIN_TIMEOUT_MS = 1_000;
 const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"]);
-// Codex routes file edits through apply_patch (its single edit tool).
-const CODEX_EDITING_TOOLS = new Set(["apply_patch"]);
+// Codex exposes both apply_patch and shell commands through tool hooks.
+const CODEX_EDITING_TOOLS = new Set(["apply_patch", "Bash"]);
 // Hermes routes file edits through write_file and patch.
 const HERMES_EDITING_TOOLS = new Set(["write_file", "patch"]);
 

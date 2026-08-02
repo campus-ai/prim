@@ -39,6 +39,7 @@ import {
   type PostCommitHookInspection,
   inspectEffectivePostCommitHook,
 } from "../lib/post-commit-hook.js";
+import { resolveRepositoryBinding } from "../lib/repository-binding.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
@@ -330,22 +331,53 @@ function checkWorkspaceIdentity(): Check {
   }
 }
 
-export function classifyRepositoryBinding(value: string | undefined): Check {
-  return isValidRepoSyncId(value)
-    ? {
-        name: "repo-binding",
-        status: "ok",
-        detail: "valid local repository binding ready",
-      }
-    : {
-        name: "repo-binding",
-        status: "fail",
-        detail: "missing or invalid local prim.repoSyncId — run `prim enable`",
-      };
+export function classifyRepositoryBinding(
+  value: string | undefined,
+  currentServerValue?: string,
+): Check {
+  if (!isValidRepoSyncId(value)) {
+    return {
+      name: "repo-binding",
+      status: "fail",
+      detail: "missing or invalid local prim.repoSyncId — run `prim enable`",
+    };
+  }
+  if (currentServerValue !== undefined && value !== currentServerValue) {
+    return {
+      name: "repo-binding",
+      status: "fail",
+      detail: "local repository binding is stale for the current origin — run `prim enable`",
+    };
+  }
+  return {
+    name: "repo-binding",
+    status: "ok",
+    detail:
+      currentServerValue === undefined
+        ? "valid local repository binding ready"
+        : "local repository binding matches the current server binding",
+  };
 }
 
-function checkRepositoryBinding(): Check {
-  return classifyRepositoryBinding(repoSyncId(process.cwd()));
+async function checkRepositoryBinding(): Promise<Check> {
+  const root = process.cwd();
+  const local = repoSyncId(root);
+  const localCheck = classifyRepositoryBinding(local);
+  if (localCheck.status === "fail") return localCheck;
+  try {
+    const current = await resolveRepositoryBinding(root, {
+      signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
+      quietRefresh: true,
+    });
+    return classifyRepositoryBinding(local, current.repoSyncId);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      name: "repo-binding",
+      status: "fail",
+      detail: `could not verify the current repository binding — ${detail.slice(0, 80)}`,
+    };
+  }
 }
 
 export function classifyPostCommitHook(inspection: PostCommitHookInspection): Check {
@@ -537,7 +569,7 @@ async function collectChecks(): Promise<Check[]> {
     checkStranded(),
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
-    checkRepositoryBinding(),
+    await checkRepositoryBinding(),
     checkPostCommitHook(),
     ...backend,
     await checkFeedbackCapability(),

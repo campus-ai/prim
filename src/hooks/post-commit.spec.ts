@@ -1,19 +1,19 @@
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
-import { runPostCommit } from "./post-commit.js";
+import { capturedAtFromLauncher, runPostCommit } from "./post-commit.js";
 import { commitAttributionFromEnvironment, toCommitMove } from "./prim-hook-core.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
   spawn: vi.fn(),
 }));
-vi.mock("node:fs", () => ({ readFileSync: vi.fn() }));
+vi.mock("node:fs", () => ({ lstatSync: vi.fn(), readFileSync: vi.fn() }));
 vi.mock("../binding.js", () => ({ resolveOrg: vi.fn() }));
 vi.mock("../journal.js", () => ({ appendMove: vi.fn() }));
 vi.mock("../lib/activation.js", () => ({
@@ -32,6 +32,7 @@ vi.mock("./prim-hook-core.js", () => ({
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedSpawn = vi.mocked(spawn);
+const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedResolveOrg = vi.mocked(resolveOrg);
 const mockedAppendMove = vi.mocked(appendMove);
@@ -59,6 +60,29 @@ const move = {
   env: { cwd: "/repo", cliVersion: "1.2.3", osPlatform: "darwin" },
   envelopeVersion: 1,
 } as Move;
+
+function launcherMarkerStat(
+  overrides: Partial<{
+    isFile: () => boolean;
+    isSymbolicLink: () => boolean;
+    size: number;
+    nlink: number;
+    mode: number;
+    uid: number;
+    mtimeMs: number;
+  }> = {},
+): ReturnType<typeof lstatSync> {
+  return {
+    isFile: () => true,
+    isSymbolicLink: () => false,
+    size: 0,
+    nlink: 1,
+    mode: 0o100600,
+    uid: process.getuid?.() ?? 501,
+    mtimeMs: 1_785_000_000_123.75,
+    ...overrides,
+  } as ReturnType<typeof lstatSync>;
+}
 
 function gitOutput(args: readonly string[]): string | Buffer {
   switch (args.join(" ")) {
@@ -138,6 +162,39 @@ describe("runPostCommit", () => {
     for (const call of mockedExecFileSync.mock.calls) {
       expect(call[2]).toEqual(expect.objectContaining({ timeout: 1_000 }));
     }
+  });
+
+  it("passes a strictly validated synchronous launcher timestamp to the move", () => {
+    mockedIsRepoActiveForCapture.mockReturnValue(true);
+    vi.stubEnv("PRIM_COMMIT_OBSERVED_FILE", "/tmp/prim-post-commit-observed.ABC123");
+    mockedLstatSync.mockReturnValue(launcherMarkerStat());
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_785_000_000_456);
+
+    try {
+      runPostCommit();
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(mockedToCommitMove).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ capturedAt: 1_785_000_000_123 }),
+    );
+  });
+
+  it("fails closed when a launcher marker was supplied but is invalid", () => {
+    mockedIsRepoActiveForCapture.mockReturnValue(true);
+    vi.stubEnv("PRIM_COMMIT_OBSERVED_FILE", "/tmp/prim-post-commit-observed.ABC123");
+    mockedLstatSync.mockReturnValue(launcherMarkerStat({ size: 1 }));
+
+    runPostCommit();
+
+    expect(mockedToCommitMove).not.toHaveBeenCalled();
+    expect(mockedResolveOrg).not.toHaveBeenCalled();
+    expect(mockedAppendMove).not.toHaveBeenCalled();
+    expect(mockedSpawn).not.toHaveBeenCalled();
   });
 
   it("does no capture work when its repository is inactive", () => {
@@ -276,5 +333,37 @@ describe("runPostCommit", () => {
         ([, args]) => (args as string[]).join(" ") === "rev-parse HEAD",
       ),
     ).toBe(false);
+  });
+});
+
+describe("capturedAtFromLauncher", () => {
+  const now = 1_785_000_000_456;
+  const path = "/tmp/prim-post-commit-observed.ABC123";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLstatSync.mockReturnValue(launcherMarkerStat());
+  });
+
+  it("accepts only a private, fresh, owned empty marker", () => {
+    expect(capturedAtFromLauncher({ PRIM_COMMIT_OBSERVED_FILE: path }, now)).toBe(
+      1_785_000_000_123,
+    );
+  });
+
+  it.each([
+    ["relative path", "prim-post-commit-observed.ABC123", undefined],
+    ["unexpected basename", "/tmp/other.ABC123", undefined],
+    ["symlink", path, { isSymbolicLink: () => true }],
+    ["non-file", path, { isFile: () => false }],
+    ["nonempty file", path, { size: 1 }],
+    ["multiple links", path, { nlink: 2 }],
+    ["group-readable", path, { mode: 0o100640 }],
+    ["wrong owner", path, { uid: (process.getuid?.() ?? 501) + 1 }],
+    ["stale marker", path, { mtimeMs: now - 10 * 60 * 1_000 - 1 }],
+    ["future marker", path, { mtimeMs: now + 5_001 }],
+  ])("rejects a %s", (_label, markerPath, overrides) => {
+    if (overrides) mockedLstatSync.mockReturnValue(launcherMarkerStat(overrides));
+    expect(capturedAtFromLauncher({ PRIM_COMMIT_OBSERVED_FILE: markerPath }, now)).toBeUndefined();
   });
 });

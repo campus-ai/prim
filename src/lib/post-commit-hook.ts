@@ -92,6 +92,7 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   case "$prim_commit_sha" in *[!0-9a-f]*|"") prim_commit_sha= ;; esac
   case "\${#prim_commit_sha}" in 40|64) ;; *) prim_commit_sha= ;; esac
   if [ -n "$prim_commit_sha" ]; then
+    prim_commit_observed_file=$(mktemp "\${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX" 2>/dev/null) || prim_commit_observed_file=
     prim_commit_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_commit_branch=
     prim_cache_dir="\${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"
     prim_post_commit_ran=0
@@ -99,18 +100,23 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
       prim_node=$(cat "$prim_cache_dir/node")
       prim_entry=$(cat "$prim_cache_dir/prim-post-commit")
       if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then
-        ( trap '' HUP; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch"; "$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; "$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &
         prim_post_commit_ran=1
       fi
     fi
     if [ "$prim_post_commit_ran" -eq 0 ]; then
       if [ -x "./node_modules/.bin/prim-post-commit" ]; then
-        ( trap '' HUP; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch"; ./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &
+        prim_post_commit_ran=1
       elif command -v npx >/dev/null 2>&1; then
-        ( trap '' HUP; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch"; npx --yes -p @primitive.ai/prim@latest prim-post-commit ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; npx --yes -p @primitive.ai/prim@latest prim-post-commit ) </dev/null >/dev/null 2>&1 &
+        prim_post_commit_ran=1
       fi
     fi
-    unset prim_cache_dir prim_post_commit_ran prim_node prim_entry prim_commit_branch
+    if [ "$prim_post_commit_ran" -eq 0 ] && [ -n "$prim_commit_observed_file" ]; then
+      rm -f "$prim_commit_observed_file"
+    fi
+    unset prim_cache_dir prim_post_commit_ran prim_node prim_entry prim_commit_branch prim_commit_observed_file
   fi
   unset prim_commit_sha
 fi

@@ -9,12 +9,7 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import {
-  isRepoActiveForCapture,
-  repoActiveFlag,
-  repoSyncId,
-  setRepoActive,
-} from "../lib/activation.js";
+import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
 import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
@@ -47,7 +42,6 @@ vi.mock("../decisions/feedback.js", () => ({
 vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: vi.fn(),
   repoActiveFlag: vi.fn(),
-  repoSyncId: vi.fn(),
   setRepoActive: vi.fn(),
 }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn() }));
@@ -75,7 +69,6 @@ beforeEach(() => {
   vi.mocked(leaseDecisionFeedback).mockResolvedValue(undefined);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
   vi.mocked(repoActiveFlag).mockReturnValue("true");
-  vi.mocked(repoSyncId).mockReturnValue("repoSync123");
   vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
     path: "/repo/.git/hooks/post-commit",
     changed: false,
@@ -431,9 +424,8 @@ describe("processSessionStart", () => {
     );
   });
 
-  it("repairs an active repository hook and opportunistically binds it once", async () => {
+  it("repairs an active repository hook and refreshes its binding every session", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(repoSyncId).mockReturnValue(undefined);
     vi.mocked(bindRepository).mockResolvedValue({
       repoSyncId: "repoSync123",
       repositoryFullName: "campus-ai/primitive",

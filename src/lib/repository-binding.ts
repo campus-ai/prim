@@ -4,8 +4,8 @@ import { githubRepositoryFullName } from "./git.js";
 
 type BindResponse = { repoSyncId?: unknown };
 
-/** Bind a GitHub checkout and persist only the opaque id returned by Prim. */
-export async function bindRepository(
+/** Resolve the active server binding for the checkout's current GitHub origin. */
+export async function resolveRepositoryBinding(
   root: string,
   options?: RequestOptions,
 ): Promise<{ repoSyncId: string; repositoryFullName: string }> {
@@ -21,6 +21,15 @@ export async function bindRepository(
   if (!isValidRepoSyncId(response.repoSyncId)) {
     throw new Error("server returned no repository binding");
   }
-  setRepoSyncId(root, response.repoSyncId);
   return { repoSyncId: response.repoSyncId, repositoryFullName };
+}
+
+/** Bind a GitHub checkout and persist only the opaque id returned by Prim. */
+export async function bindRepository(
+  root: string,
+  options?: RequestOptions,
+): Promise<{ repoSyncId: string; repositoryFullName: string }> {
+  const binding = await resolveRepositoryBinding(root, options);
+  setRepoSyncId(root, binding.repoSyncId);
+  return binding;
 }
