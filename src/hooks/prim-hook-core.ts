@@ -17,19 +17,85 @@ import {
   type AgentProducer,
   ENVELOPE_VERSION,
   type Move,
+  type ToolOutcome,
 } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
+
+const CORRELATED_TOOL_EVENTS = new Set([
+  "PostToolUse",
+  "PostToolUseFailure",
+  "post_tool_call",
+  "post_approval_response",
+]);
 
 export function postToolInvocationId(
   parsed: Record<string, unknown>,
   agent: Agent,
 ): string | undefined {
-  if (parsed.hook_event_name !== "PostToolUse") return undefined;
+  if (
+    typeof parsed.hook_event_name !== "string" ||
+    !CORRELATED_TOOL_EVENTS.has(parsed.hook_event_name)
+  ) {
+    return undefined;
+  }
   const raw =
     agent === "hermes"
       ? (parsed.extra as { tool_call_id?: unknown } | undefined)?.tool_call_id
       : parsed.tool_use_id;
   return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
+function lowerString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.toLowerCase() : undefined;
+}
+
+/**
+ * Normalize only outcome claims each host's hook contract can actually make.
+ * In particular, Codex's post hook says a result returned but does not certify
+ * success, and a Hermes approval is not a tool result.
+ */
+export function toolOutcomeFor(
+  parsed: Record<string, unknown>,
+  agent: Agent,
+): ToolOutcome | undefined {
+  const event = parsed.hook_event_name;
+  if (agent === "claude_code") {
+    if (event === "PostToolUseFailure") {
+      return parsed.is_interrupt === true ? "interrupted" : "failed";
+    }
+    return event === "PostToolUse" ? "succeeded" : undefined;
+  }
+  if (agent === "codex") {
+    return event === "PostToolUse" ? "returned" : undefined;
+  }
+
+  const extra = parsed.extra as Record<string, unknown> | undefined;
+  if (event === "post_approval_response") {
+    const choice = lowerString(extra?.choice);
+    return (choice === "deny" || choice === "smart_deny" || choice === "timeout") &&
+      postToolInvocationId(parsed, agent)
+      ? "prevented"
+      : undefined;
+  }
+  if (event !== "PostToolUse" && event !== "post_tool_call") {
+    return undefined;
+  }
+  const status = lowerString(extra?.status);
+  if (status === "ok" || status === "success") {
+    return "succeeded";
+  }
+  if (status === "error" || status === "timeout") {
+    return "failed";
+  }
+  if (status === "cancelled") {
+    return "interrupted";
+  }
+  if (status === "blocked") {
+    return "prevented";
+  }
+  // Hermes post-tool delivery proves a callback occurred, but an absent or
+  // newer status cannot be promoted to success (Codex alone uses "returned").
+  return "unknown";
 }
 
 export function toMove(
@@ -42,8 +108,9 @@ export function toMove(
 ): Move {
   const sessionId = (parsed.session_id as string | undefined) ?? "";
   const eventType = (parsed.hook_event_name as string | undefined) ?? "unknown";
+  const toolOutcome = toolOutcomeFor(parsed, agent);
   const moveId =
-    eventType === "PostToolUse" && sessionId && invocationId
+    CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && invocationId
       ? `posttool:v1:${createHash("sha256")
           .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
           .digest("hex")}`
@@ -72,6 +139,7 @@ export function toMove(
     envelopeVersion: AGENT_ENVELOPE_VERSION,
     producer: agent,
     ...(invocationId ? { invocationId } : {}),
+    ...(toolOutcome ? { toolOutcome } : {}),
   };
 }
 

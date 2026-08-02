@@ -11,8 +11,8 @@
  * It drives the same prim binaries Claude Code and Codex do, under
  * `--agent hermes`:
  *   - prim-hook (capture) on every Hermes lifecycle event prim observes.
- *   - prim-pre-tool-use (gate) and prim-post-tool-use (ingest) on Hermes's
- *     edit tools, matched by the regex `write_file|patch`.
+ *   - prim-pre-tool-use (gate) and prim-post-tool-use (outcome ingest) on
+ *     Hermes's edit tools, plus correlated approval denials.
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live Hermes sessions.
  *
@@ -130,6 +130,7 @@ const REGISTRATIONS: HermesReg[] = [
   ...CAPTURE_EVENTS.map((event) => ({ event, bin: CAPTURE_BIN })),
   { event: "pre_tool_call", matcher: EDIT_MATCHER, bin: GATE_BIN, timeout: GATE_TIMEOUT_SECONDS },
   { event: "post_tool_call", matcher: EDIT_MATCHER, bin: POST_TOOL_USE_BIN },
+  { event: "post_approval_response", bin: POST_TOOL_USE_BIN },
   { event: "on_session_start", bin: SESSION_START_BIN },
   { event: "on_session_end", bin: SESSION_END_BIN },
 ];

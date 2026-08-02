@@ -25,6 +25,14 @@ export const ENVELOPE_VERSION = LEGACY_ENVELOPE_VERSION;
 
 export type AgentProducer = "claude_code" | "codex" | "hermes";
 
+export type ToolOutcome =
+  | "succeeded"
+  | "returned"
+  | "failed"
+  | "interrupted"
+  | "prevented"
+  | "unknown";
+
 export type MoveEnvironment = {
   cwd: string;
   cliVersion: string;
@@ -76,6 +84,7 @@ export type AgentMoveV3 = MoveFields & {
   envelopeVersion: typeof AGENT_ENVELOPE_VERSION;
   producer: AgentProducer;
   invocationId?: string;
+  toolOutcome?: ToolOutcome;
 };
 
 export type Move = MoveV1 | AgentMoveV3;

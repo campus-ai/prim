@@ -17,6 +17,7 @@ import {
 import {
   MAX_PROPOSAL_BYTES,
   PREFLIGHT_TIMEOUT_MS,
+  boundedClientVersion,
   parsePreflightResponse,
   proposalFor,
   requestPreflight,
@@ -114,6 +115,8 @@ describe("v3 wire helpers", () => {
     const pending = requestPreflight({
       protocolVersion: 3,
       agent: "claude_code",
+      clientMode: "warn",
+      clientVersion: "1.2.3",
       sessionId: "session-1",
       invocationId: "invocation-1",
       repoSyncId: "repo-1",
@@ -128,7 +131,12 @@ describe("v3 wire helpers", () => {
     expect(mockPost).toHaveBeenCalledOnce();
     expect(mockPost).toHaveBeenCalledWith(
       "/api/cli/decisions/conflict-check",
-      expect.objectContaining({ invocationId: "invocation-1", paths: ["src/a.ts"] }),
+      expect.objectContaining({
+        clientMode: "warn",
+        clientVersion: "1.2.3",
+        invocationId: "invocation-1",
+        paths: ["src/a.ts"],
+      }),
       { signal: expect.any(AbortSignal), quietRefresh: true },
     );
   });
@@ -150,6 +158,8 @@ describe("v3 wire helpers", () => {
     const pending = requestPreflight({
       protocolVersion: 3,
       agent: "claude_code",
+      clientMode: "block",
+      clientVersion: "1.2.3",
       sessionId: "session-1",
       invocationId: "invocation-1",
       repoSyncId: "repo-1",
@@ -225,5 +235,23 @@ describe("v3 wire helpers", () => {
     expect(claude.hookSpecificOutput.permissionDecision).toBe("allow");
     expect(codex.systemMessage).toContain("enforcement not verified");
     expect(codex.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+});
+
+describe("boundedClientVersion", () => {
+  it("passes a bounded, safe-charset version through unchanged", () => {
+    expect(boundedClientVersion("0.1.0-alpha.63")).toBe("0.1.0-alpha.63");
+    expect(boundedClientVersion("x".repeat(32))).toBe("x".repeat(32));
+  });
+
+  it("falls back to unknown rather than sending a value the server would drop", () => {
+    // Empty, missing, over-length, and out-of-charset versions must never
+    // reach the wire as-is — the server treats an invalid clientVersion as an
+    // absent annotation, and a clean 'unknown' keeps analytics honest.
+    expect(boundedClientVersion(undefined)).toBe("unknown");
+    expect(boundedClientVersion("")).toBe("unknown");
+    expect(boundedClientVersion("x".repeat(33))).toBe("unknown");
+    expect(boundedClientVersion("0.0.0-pr.1234.g1a2b3c4d+ci.20260802")).toBe("unknown");
+    expect(boundedClientVersion("bad version")).toBe("unknown");
   });
 });

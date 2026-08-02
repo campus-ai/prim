@@ -29,6 +29,7 @@
 
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { packageVersion } from "../lib/bin-path.js";
 import { parseAgent } from "./agent.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
@@ -49,6 +50,7 @@ import {
 import {
   PREFLIGHT_PROTOCOL_VERSION,
   type PreflightRequest,
+  boundedClientVersion,
   proposalFor,
   requestPreflight,
   resolvePreflightTargets,
@@ -178,6 +180,8 @@ async function main(): Promise<void> {
   const request: PreflightRequest = {
     protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
     agent,
+    clientMode: mode,
+    clientVersion: boundedClientVersion(packageVersion()),
     sessionId,
     invocationId: callId,
     repoSyncId: binding,

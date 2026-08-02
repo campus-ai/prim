@@ -9,9 +9,28 @@ export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
 export const PREFLIGHT_TIMEOUT_MS = 6_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
+export const MAX_CLIENT_VERSION_CHARS = 32;
+const CLIENT_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+/**
+ * Bound the client version to the server's validated token — at most 32
+ * characters of its safe charset — or fall back to "unknown". The server
+ * degrades an out-of-contract clientVersion to an absent annotation rather
+ * than 400ing the request, so this only keeps the correlation field clean;
+ * it can never affect whether the enforcement check runs.
+ */
+export function boundedClientVersion(raw: string | null | undefined): string {
+  return typeof raw === "string" &&
+    raw.length <= MAX_CLIENT_VERSION_CHARS &&
+    CLIENT_VERSION_RE.test(raw)
+    ? raw
+    : "unknown";
+}
+
 export type Coverage = "complete" | "unverified";
+export type PreflightClientMode = "block" | "warn";
 // biome-ignore format: keep the small wire contract compact
-export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; proposal: string };
+export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; proposal: string };
 // biome-ignore format: keep the small wire contract compact
 export type PreflightResponse = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; verdict: "allow" | "warn" | "ask" | "block" | "unavailable"; reasonCode: string; message: string; conflicts: unknown[]; bypassed: unknown[] };
 // biome-ignore format: compact internal shapes keep this boundary auditable
