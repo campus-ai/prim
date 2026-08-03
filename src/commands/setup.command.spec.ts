@@ -122,7 +122,7 @@ describe("planSetupSteps", () => {
     expect(enable?.required).toBe(true);
   });
 
-  it("project scope: enable is required so coverage and repository binding are verified", () => {
+  it("project scope: enable is required so local coverage and activation are verified", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "project" });
     expect(steps.find((s) => s.key === "enable")).toMatchObject({
       args: ["enable"],
@@ -347,6 +347,47 @@ describe("registerSetupCommand", () => {
       ["enable"],
       ["welcome", "--agent", "codex"],
     ]);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("completes when the repository connection is pending after local activation", async () => {
+    const calls: string[][] = [];
+    const note = vi.fn();
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        if (args[0] === "codex" && args[1] === "status") {
+          return { code: 0, stdout: '{"project":{"capture":false}}' };
+        }
+        if (args[0] === "skill" && args[1] === "status") {
+          return { code: 0, stdout: '{"installed":false}' };
+        }
+        if (args[0] === "enable") {
+          return { code: 0, stdout: '{"active":true,"bindingStatus":"pending"}' };
+        }
+        if (args[0] === "doctor") {
+          return { code: 0, stdout: '{"ok":true,"status":"warn"}' };
+        }
+        return { code: 0, stdout: "" };
+      },
+      note,
+      exit,
+    });
+
+    await program.parseAsync(["setup", "--agent", "codex", "--scope", "project"], {
+      from: "user",
+    });
+
+    expect(calls.filter((args) => args[0] === "enable")).toHaveLength(1);
+    expect(calls.filter((args) => args[0] === "doctor")).toHaveLength(1);
+    expect(note).toHaveBeenCalledWith(
+      expect.stringMatching(/setup complete.*enable:ok.*health:ok/u),
+    );
     expect(exit).toHaveBeenCalledWith(0);
   });
 

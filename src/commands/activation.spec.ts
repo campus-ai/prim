@@ -44,6 +44,7 @@ beforeEach(() => {
     kind: "direct",
   });
   vi.mocked(bindRepository).mockResolvedValue({
+    status: "connected",
     repoSyncId: "repoSync123",
     repositoryFullName: "campus-ai/primitive",
   });
@@ -73,7 +74,68 @@ describe("prim enable / disable", () => {
     expect(daemonRequest).toHaveBeenCalledWith("statusline_invalidate", {}, { timeoutMs: 250 });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"repoSyncId": "repoSync123"'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"bindingStatus": "connected"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("enable succeeds locally with a clear degraded warning while connection is pending", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "pending",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", "prim.active", "true"],
+      expect.anything(),
+    );
+    const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(output).toMatchObject({
+      active: true,
+      repo: "/repo",
+      bindingStatus: "pending",
+      repositoryFullName: "campus-ai/primitive",
+      postCommitHook: "/repo/.git/hooks/post-commit",
+    });
+    expect(output).not.toHaveProperty("repoSyncId");
+    const warning = errSpy.mock.calls.map(([message]) => String(message)).join("");
+    expect(warning).toContain("Prim is enabled locally in /repo");
+    expect(warning).toContain("repository campus-ai/primitive is not connected");
+    expect(warning).toContain("Moves still ingest into the team graph");
+    expect(warning).toContain("repository-specific file attribution");
+    expect(warning).toContain("Conflict Gate verification");
+    expect(warning).toContain("commit correlation");
+    expect(warning).toContain("organization owner or administrator");
+    expect(warning).toContain("retries automatically at the next agent SessionStart");
+    expect(warning).not.toContain("server sync is pending");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("repairs coverage and resolves binding before activating", async () => {
+    inRepo("/repo");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    const activeWriteIndex = mockedExecFileSync.mock.calls.findIndex(
+      (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
+    );
+    expect(activeWriteIndex).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(bindRepository).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(bindRepository).mock.invocationCallOrder[0]).toBeLessThan(
+      mockedExecFileSync.mock.invocationCallOrder[activeWriteIndex],
+    );
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -129,6 +191,65 @@ describe("prim enable / disable", () => {
         (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
       ),
     ).toBe(false);
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "failed to enable prim during post-commit hook coverage: malformed Prim hook markers",
+      ),
+    );
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("never activates when repository binding fails and surfaces that phase", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockRejectedValue(new Error("Authentication expired"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
+
+    expect(
+      mockedExecFileSync.mock.calls.some(
+        (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
+      ),
+    ).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "failed to enable prim during repository binding: Authentication expired",
+      ),
+    );
+    expect(logSpy).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("surfaces local activation write failures after a successful binding", async () => {
+    mockedExecFileSync.mockImplementation(((_git: string, args: string[]): string => {
+      if (args[0] === "rev-parse") return "/repo\n";
+      if (args.join(" ") === "config --local prim.active true") {
+        throw new Error("could not lock .git/config");
+      }
+      return "";
+    }) as unknown as typeof execFileSync);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "failed to enable prim during local activation: could not lock .git/config",
+      ),
+    );
     expect(logSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();
     errSpy.mockRestore();

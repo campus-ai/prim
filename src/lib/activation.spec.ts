@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import {
   PRIM_ACTIVE_KEY,
   PRIM_REPO_SYNC_ID_KEY,
+  clearRepoSyncId,
   decisionIngestionStatus,
   hasProjectPrimInstall,
   isRepoActive,
@@ -118,6 +119,36 @@ describe("repository binding", () => {
       expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
     );
   });
+
+  it("clears every cached local binding", () => {
+    clearRepoSyncId("/repo");
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", "--unset-all", PRIM_REPO_SYNC_ID_KEY],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
+  });
+
+  it("is idempotent when the cached binding does not exist", () => {
+    stubGit(() => {
+      throw Object.assign(new Error("key does not exist"), { status: 5 });
+    });
+    expect(() => clearRepoSyncId("/repo")).not.toThrow();
+  });
+
+  it.each([1, 3, 4, 6, undefined])(
+    "propagates a git failure with status %s while clearing",
+    (status) => {
+      const error = Object.assign(
+        new Error("git config failed"),
+        status === undefined ? {} : { status },
+      );
+      stubGit(() => {
+        throw error;
+      });
+      expect(() => clearRepoSyncId("/repo")).toThrow(error);
+    },
+  );
 });
 
 describe("setRepoActive", () => {

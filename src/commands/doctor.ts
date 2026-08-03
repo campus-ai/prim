@@ -33,13 +33,21 @@ import {
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { pendingJournalStats } from "../journal.js";
-import { decisionIngestionStatus, isValidRepoSyncId, repoSyncId } from "../lib/activation.js";
+import {
+  decisionIngestionStatus,
+  isRepoActiveForCapture,
+  isValidRepoSyncId,
+  repoSyncId,
+} from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import {
   type PostCommitHookInspection,
   inspectEffectivePostCommitHook,
 } from "../lib/post-commit-hook.js";
-import { resolveRepositoryBinding } from "../lib/repository-binding.js";
+import {
+  type RepositoryBindingResult,
+  resolveRepositoryBinding,
+} from "../lib/repository-binding.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
 
@@ -333,8 +341,30 @@ function checkWorkspaceIdentity(): Check {
 
 export function classifyRepositoryBinding(
   value: string | undefined,
-  currentServerValue?: string,
+  current: RepositoryBindingResult,
+  active: boolean,
 ): Check {
+  if (current.status === "pending") {
+    if (value !== undefined) {
+      return {
+        name: "repo-binding",
+        status: "fail",
+        detail: `local repository binding is stale for ${current.repositoryFullName} — run \`prim enable\``,
+      };
+    }
+    if (!active) {
+      return {
+        name: "repo-binding",
+        status: "fail",
+        detail: "passive capture is inactive — run `prim enable`",
+      };
+    }
+    return {
+      name: "repo-binding",
+      status: "warn",
+      detail: `${current.repositoryFullName} is not connected to Primitive — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
+    };
+  }
   if (!isValidRepoSyncId(value)) {
     return {
       name: "repo-binding",
@@ -342,7 +372,7 @@ export function classifyRepositoryBinding(
       detail: "missing or invalid local prim.repoSyncId — run `prim enable`",
     };
   }
-  if (currentServerValue !== undefined && value !== currentServerValue) {
+  if (value !== current.repoSyncId) {
     return {
       name: "repo-binding",
       status: "fail",
@@ -352,30 +382,28 @@ export function classifyRepositoryBinding(
   return {
     name: "repo-binding",
     status: "ok",
-    detail:
-      currentServerValue === undefined
-        ? "valid local repository binding ready"
-        : "local repository binding matches the current server binding",
+    detail: "local repository binding matches the current server binding",
   };
 }
 
-async function checkRepositoryBinding(): Promise<Check> {
+export async function checkRepositoryBinding(): Promise<Check> {
   const root = process.cwd();
   const local = repoSyncId(root);
-  const localCheck = classifyRepositoryBinding(local);
-  if (localCheck.status === "fail") return localCheck;
   try {
     const current = await resolveRepositoryBinding(root, {
       signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
       quietRefresh: true,
     });
-    return classifyRepositoryBinding(local, current.repoSyncId);
+    return classifyRepositoryBinding(local, current, isRepoActiveForCapture(root));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const detail =
+      boundedHealthError(`could not verify the current repository binding — ${message}`) ??
+      "could not verify the current repository binding";
     return {
       name: "repo-binding",
       status: "fail",
-      detail: `could not verify the current repository binding — ${detail.slice(0, 80)}`,
+      detail,
     };
   }
 }

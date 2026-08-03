@@ -248,15 +248,27 @@ describe("effective post-commit diagnostics", () => {
 });
 
 describe("repository binding diagnostics", () => {
-  it("requires a valid server-issued local binding", () => {
-    expect(classifyRepositoryBinding("repoSync123")).toMatchObject({
+  const connected = {
+    status: "connected",
+    repoSyncId: "repoSync123",
+    repositoryFullName: "campus-ai/primitive",
+  } as const;
+  const pending = {
+    status: "pending",
+    repositoryFullName: "campus-ai/primitive",
+  } as const;
+
+  it("accepts a local binding that matches the authoritative server binding", () => {
+    expect(classifyRepositoryBinding("repoSync123", connected, true)).toMatchObject({
       name: "repo-binding",
       status: "ok",
     });
   });
 
   it("fails a locally valid binding that no longer matches the current origin", () => {
-    expect(classifyRepositoryBinding("repoSync123", "repoSync456")).toMatchObject({
+    expect(
+      classifyRepositoryBinding("repoSync456", { ...connected, repoSyncId: "repoSync789" }, true),
+    ).toMatchObject({
       name: "repo-binding",
       status: "fail",
       detail: expect.stringContaining("stale"),
@@ -266,9 +278,45 @@ describe("repository binding diagnostics", () => {
   it.each([undefined, "", "-leading", "a".repeat(65), "bad\nid"])(
     "fails a missing or malformed local binding (%s)",
     (value) => {
-      expect(classifyRepositoryBinding(value)).toMatchObject({
+      expect(classifyRepositoryBinding(value, connected, true)).toMatchObject({
         name: "repo-binding",
         status: "fail",
+      });
+    },
+  );
+
+  it("degrades without an enable loop when local capture is active but connection is pending", () => {
+    const check = classifyRepositoryBinding(undefined, pending, true);
+
+    expect(check).toMatchObject({
+      name: "repo-binding",
+      status: "warn",
+      detail: expect.stringContaining("campus-ai/primitive"),
+    });
+    expect(check.detail).toContain("organization owner/admin");
+    expect(check.detail).toContain("retried automatically next SessionStart");
+    expect(check.detail).not.toContain("prim enable");
+    expect(classifyDoctor([check])).toMatchObject({
+      json: { ok: true, status: "warn" },
+      exitCode: 0,
+    });
+  });
+
+  it("still requires enable when connection is pending and local capture is inactive", () => {
+    expect(classifyRepositoryBinding(undefined, pending, false)).toMatchObject({
+      name: "repo-binding",
+      status: "fail",
+      detail: expect.stringContaining("prim enable"),
+    });
+  });
+
+  it.each(["repoSync123", "malformed id"])(
+    "fails a stale local binding while connection is pending (%s)",
+    (value) => {
+      expect(classifyRepositoryBinding(value, pending, true)).toMatchObject({
+        name: "repo-binding",
+        status: "fail",
+        detail: expect.stringContaining("stale"),
       });
     },
   );

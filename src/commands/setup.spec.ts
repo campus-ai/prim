@@ -30,6 +30,13 @@ const SETUP = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "../../setup.md"),
   "utf-8",
 );
+const README = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../README.md"),
+  "utf-8",
+);
+
+const AGENT_PROMPT =
+  "Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and surface its output. Drive it yourself; I'll only click Authorize in the browser. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.";
 
 const welcomeSection = (): string =>
   SETUP.slice(SETUP.indexOf("## 2."), SETUP.indexOf("## Appendix"));
@@ -47,6 +54,11 @@ describe("setup.md onboarding flow", () => {
     expect(head).toContain("npx --yes @primitive.ai/prim@latest setup");
     expect(head.toLowerCase()).toContain("originates from");
     expect(head.toLowerCase()).toContain("classifier");
+  });
+
+  it("synchronizes explicit current-repository activation and approval boundaries", () => {
+    expect(SETUP).toContain(`> ${AGENT_PROMPT}`);
+    expect(README).toContain(AGENT_PROMPT);
   });
 
   it("leads with the single `prim setup` command, before the fallback appendix", () => {
