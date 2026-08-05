@@ -105,6 +105,22 @@ export function setRepoSyncId(cwd: string, value: string): void {
   });
 }
 
+/** Remove the checkout's cached server binding. Missing keys are already clear. */
+export function clearRepoSyncId(cwd: string): void {
+  try {
+    execFileSync("git", ["config", "--local", "--unset-all", PRIM_REPO_SYNC_ID_KEY], {
+      cwd,
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 5) {
+      return;
+    }
+    throw error;
+  }
+}
+
 /**
  * Self-heal for pre-existing project-scope installs. A repo whose project agent
  * config already registers a prim hook wanted prim BEFORE this version's flag

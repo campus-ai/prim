@@ -427,6 +427,7 @@ describe("processSessionStart", () => {
   it("repairs an active repository hook and refreshes its binding every session", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(bindRepository).mockResolvedValue({
+      status: "connected",
       repoSyncId: "repoSync123",
       repositoryFullName: "campus-ai/primitive",
     });
@@ -438,6 +439,27 @@ describe("processSessionStart", () => {
       "/repo",
       expect.objectContaining({ quietRefresh: true }),
     );
+  });
+
+  it("retries a pending repository connection on the next active session", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(bindRepository)
+      .mockResolvedValueOnce({
+        status: "pending",
+        repositoryFullName: "campus-ai/primitive",
+      })
+      .mockResolvedValueOnce({
+        status: "connected",
+        repoSyncId: "repoSync123",
+        repositoryFullName: "campus-ai/primitive",
+      });
+
+    const pendingResult = await processSessionStart(ENVELOPE, "codex");
+    const connectedResult = await processSessionStart(ENVELOPE, "codex");
+
+    expect(pendingResult.output).toEqual({});
+    expect(connectedResult.output).toEqual({});
+    expect(bindRepository).toHaveBeenCalledTimes(2);
   });
 
   it("persists legacy project-install activation before refreshing the shell-gated hook", async () => {

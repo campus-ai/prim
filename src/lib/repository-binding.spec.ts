@@ -1,11 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getClient } from "../client.js";
-import { setRepoSyncId } from "./activation.js";
+import { HttpError, getClient } from "../client.js";
+import { clearRepoSyncId, setRepoSyncId } from "./activation.js";
 import { githubRepositoryFullName } from "./git.js";
 import { bindRepository, resolveRepositoryBinding } from "./repository-binding.js";
 
-vi.mock("../client.js", () => ({ getClient: vi.fn() }));
+vi.mock("../client.js", () => ({
+  getClient: vi.fn(),
+  HttpError: class HttpError extends Error {
+    readonly status: number;
+
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+}));
 vi.mock("./activation.js", () => ({
+  clearRepoSyncId: vi.fn(),
   isValidRepoSyncId: (value: unknown) =>
     typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u.test(value),
   setRepoSyncId: vi.fn(),
@@ -24,6 +35,7 @@ beforeEach(() => {
 describe("bindRepository", () => {
   it("can verify the current binding without mutating local Git config", async () => {
     await expect(resolveRepositoryBinding("/repo")).resolves.toEqual({
+      status: "connected",
       repoSyncId: "repoSync123",
       repositoryFullName: "campus-ai/primitive",
     });
@@ -33,6 +45,7 @@ describe("bindRepository", () => {
   it("persists only the authenticated server-issued binding", async () => {
     const signal = AbortSignal.timeout(1_000);
     await expect(bindRepository("/repo", { signal, quietRefresh: true })).resolves.toEqual({
+      status: "connected",
       repoSyncId: "repoSync123",
       repositoryFullName: "campus-ai/primitive",
     });
@@ -42,6 +55,31 @@ describe("bindRepository", () => {
       { signal, quietRefresh: true },
     );
     expect(setRepoSyncId).toHaveBeenCalledWith("/repo", "repoSync123");
+    expect(clearRepoSyncId).not.toHaveBeenCalled();
+  });
+
+  it("reports an authoritative 404 as pending without mutating during resolution", async () => {
+    vi.mocked(getClient)().post = vi
+      .fn()
+      .mockRejectedValue(new HttpError(404, "Repository is not connected"));
+    await expect(resolveRepositoryBinding("/repo")).resolves.toEqual({
+      status: "pending",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    expect(setRepoSyncId).not.toHaveBeenCalled();
+    expect(clearRepoSyncId).not.toHaveBeenCalled();
+  });
+
+  it("clears a stale local binding when the server reports pending", async () => {
+    vi.mocked(getClient)().post = vi
+      .fn()
+      .mockRejectedValue(new HttpError(404, "Repository is not connected"));
+    await expect(bindRepository("/repo")).resolves.toEqual({
+      status: "pending",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    expect(clearRepoSyncId).toHaveBeenCalledWith("/repo");
+    expect(setRepoSyncId).not.toHaveBeenCalled();
   });
 
   it("rejects a non-GitHub origin before the request", async () => {
@@ -58,6 +96,34 @@ describe("bindRepository", () => {
         "server returned no repository binding",
       );
       expect(setRepoSyncId).not.toHaveBeenCalled();
+      expect(clearRepoSyncId).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    new HttpError(401, "Authentication expired"),
+    new HttpError(403, "Forbidden"),
+    new HttpError(500, "Internal server error"),
+    new Error("network unavailable"),
+    Object.assign(new Error("untyped failure"), { status: 404 }),
+  ])(
+    "propagates every non-authoritative-404 failure without changing local state",
+    async (error) => {
+      vi.mocked(getClient)().post = vi.fn().mockRejectedValue(error);
+      await expect(bindRepository("/repo")).rejects.toBe(error);
+      expect(setRepoSyncId).not.toHaveBeenCalled();
+      expect(clearRepoSyncId).not.toHaveBeenCalled();
+    },
+  );
+
+  it("propagates a pending-state clear failure", async () => {
+    const clearError = new Error("could not write .git/config");
+    vi.mocked(getClient)().post = vi
+      .fn()
+      .mockRejectedValue(new HttpError(404, "Repository is not connected"));
+    vi.mocked(clearRepoSyncId).mockImplementation(() => {
+      throw clearError;
+    });
+    await expect(bindRepository("/repo")).rejects.toBe(clearError);
+  });
 });

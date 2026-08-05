@@ -11,7 +11,7 @@ import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
 import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
-import { bindRepository } from "../lib/repository-binding.js";
+import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 
 async function applyActivation(active: boolean): Promise<void> {
@@ -22,21 +22,47 @@ async function applyActivation(active: boolean): Promise<void> {
     );
     process.exit(1);
   }
+  let phase = active ? "post-commit hook coverage" : "local deactivation";
   try {
-    let bound: { repoSyncId: string; repositoryFullName: string } | undefined;
+    let binding: RepositoryBindingResult | undefined;
     let postCommitHook: string | undefined;
     if (active) {
       postCommitHook = ensureEffectivePostCommitHook(root).path;
-      bound = await bindRepository(root);
+      phase = "repository binding";
+      binding = await bindRepository(root);
+      phase = "local activation";
     }
     setRepoActive(root, active);
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
-    process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
-    printJson({ active, repo: root, ...bound, ...(postCommitHook ? { postCommitHook } : {}) });
+    if (binding?.status === "pending") {
+      process.stderr.write(`[prim] Prim is enabled locally in ${root}\n`);
+      process.stderr.write(
+        `[prim] repository ${binding.repositoryFullName} is not connected to Primitive; Moves still ingest into the team graph without repository-specific file attribution, Conflict Gate verification, or commit correlation\n`,
+      );
+      process.stderr.write(
+        `[prim] ask an organization owner or administrator to grant Primitive's GitHub App access to this repository through Primitive's GitHub App onboarding; binding retries automatically at the next agent SessionStart\n`,
+      );
+    } else {
+      process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
+    }
+    printJson({
+      active,
+      repo: root,
+      ...(binding
+        ? {
+            bindingStatus: binding.status,
+            repositoryFullName: binding.repositoryFullName,
+            ...(binding.status === "connected" ? { repoSyncId: binding.repoSyncId } : {}),
+          }
+        : {}),
+      ...(postCommitHook ? { postCommitHook } : {}),
+    });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[prim] failed to ${active ? "cover, bind, and enable" : "disable"} prim: ${detail}\n`,
+      active
+        ? `[prim] failed to enable prim during ${phase}: ${detail}\n`
+        : `[prim] failed to disable prim: ${detail}\n`,
     );
     process.exit(1);
   }

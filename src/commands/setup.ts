@@ -115,8 +115,8 @@ export function planSetupSteps(opts: {
   const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
   // Activation also verifies the effective post-commit destination and
-  // persists the server-issued repository binding. It is required at both
-  // scopes: setup must not claim success for an uncovered checkout.
+  // resolves the repository binding when one is available. It is required at
+  // both scopes: setup must not claim success for an uncovered checkout.
   steps.push({
     key: "enable",
     label: "Activate this repo",
