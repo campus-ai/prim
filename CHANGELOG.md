@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.65](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.64...v0.1.0-alpha.65) (2026-08-05)
+
+
+### Bug Fixes
+
+* allow local activation before repository connection ([9f23e5b](https://github.com/campus-ai/prim/commit/9f23e5b610be2229535758a9370d35cd82c4acb9))
+
 ## [0.1.0-alpha.64](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.63...v0.1.0-alpha.64) (2026-08-02)
 
 
