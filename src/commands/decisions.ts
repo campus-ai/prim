@@ -6,6 +6,7 @@
  *   prim decisions show <idOrShortId>
  *   prim decisions cascade <idOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
+ *   prim decisions repairs [list|confirm <id> <sha>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
  *                          --confidence|--reversibility|--files]
@@ -15,8 +16,8 @@
  * machine-readable JSON, STDERR is verdict-first human text, exit 0 on
  * success (including an idempotent no-op such as already-acknowledged);
  * non-zero only on auth/network failure or not-found for show/cascade/
- * confirm. The `checkAffectedDecisions` helper backs both `check` and the
- * pre-commit hook (src/hooks/pre-commit.ts).
+ * confirm/repairs. The `checkAffectedDecisions` helper backs both `check` and
+ * the pre-commit hook (src/hooks/pre-commit.ts).
  */
 import { type Command, Option } from "commander";
 import { HttpError } from "../client.js";
@@ -43,6 +44,16 @@ import {
   isRelateRejection,
 } from "../decisions/link.js";
 import { fetchRecent, formatRecentHuman, formatRecentJson } from "../decisions/recent.js";
+import {
+  RepairProposalNotFoundError,
+  type RepairResolutionAction,
+  fetchRepairs,
+  formatRepairResolutionHuman,
+  formatRepairResolutionJson,
+  formatRepairsHuman,
+  formatRepairsJson,
+  resolveRepair,
+} from "../decisions/repairs.js";
 import {
   DecisionNotFoundError,
   fetchShow,
@@ -194,6 +205,51 @@ export function registerDecisionsCommands(program: Command): void {
         throw err;
       }
     });
+
+  const repairs = decisions
+    .command("repairs")
+    .description("Review human-gated commit rewrite repair proposals")
+    .action(async () => {
+      const result = await fetchRepairs();
+      console.error(formatRepairsHuman(result));
+      console.log(formatRepairsJson(result));
+    });
+
+  repairs
+    .command("list")
+    .description("List commit rewrite repair proposals awaiting review")
+    .action(async () => {
+      const result = await fetchRepairs();
+      console.error(formatRepairsHuman(result));
+      console.log(formatRepairsJson(result));
+    });
+
+  const registerRepairResolution = (action: RepairResolutionAction): void => {
+    repairs
+      .command(`${action} <proposalId> <proposedSha>`)
+      .description(
+        action === "confirm"
+          ? "Confirm a proposal and queue fresh landing verification"
+          : "Reject a proposal and remember its proposed SHA",
+      )
+      .action(async (proposalId: string, proposedSha: string) => {
+        try {
+          const result = await resolveRepair(proposalId, proposedSha, action);
+          console.error(formatRepairResolutionHuman(result));
+          console.log(formatRepairResolutionJson(result));
+        } catch (error) {
+          if (error instanceof RepairProposalNotFoundError) {
+            console.error(`[prim] ${error.message}`);
+            process.exitCode = EXIT_NOT_FOUND;
+            return;
+          }
+          throw error;
+        }
+      });
+  };
+
+  registerRepairResolution("confirm");
+  registerRepairResolution("reject");
 
   decisions
     .command("create")
