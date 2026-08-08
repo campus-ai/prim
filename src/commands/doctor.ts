@@ -41,8 +41,9 @@ import {
 } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import {
-  type PostCommitHookInspection,
+  type ManagedHookInspection,
   inspectEffectivePostCommitHook,
+  inspectEffectivePostRewriteHook,
 } from "../lib/post-commit-hook.js";
 import {
   type RepositoryBindingResult,
@@ -408,28 +409,38 @@ export async function checkRepositoryBinding(): Promise<Check> {
   }
 }
 
-export function classifyPostCommitHook(inspection: PostCommitHookInspection): Check {
+export function classifyManagedHook(
+  hookName: "post-commit" | "post-rewrite",
+  inspection: ManagedHookInspection,
+): Check {
   if (inspection.covered) {
     return {
-      name: "post-commit",
+      name: hookName,
       status: "ok",
       detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
     };
   }
   return {
-    name: "post-commit",
+    name: hookName,
     status: "fail",
     detail: `${inspection.reason ?? "uncovered"} · ${inspection.hookPath}`,
   };
 }
 
-function checkPostCommitHook(): Check {
+export function classifyPostCommitHook(inspection: ManagedHookInspection): Check {
+  return classifyManagedHook("post-commit", inspection);
+}
+
+function checkManagedHook(
+  hookName: "post-commit" | "post-rewrite",
+  inspect: () => ManagedHookInspection,
+): Check {
   try {
-    return classifyPostCommitHook(inspectEffectivePostCommitHook());
+    return classifyManagedHook(hookName, inspect());
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
-      name: "post-commit",
+      name: hookName,
       status: /not a git repository/iu.test(detail) ? "warn" : "fail",
       detail: detail.slice(0, 120),
     };
@@ -598,7 +609,8 @@ async function collectChecks(): Promise<Check[]> {
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
     await checkRepositoryBinding(),
-    checkPostCommitHook(),
+    checkManagedHook("post-commit", inspectEffectivePostCommitHook),
+    checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
     ...backend,
     await checkFeedbackCapability(),
   ];

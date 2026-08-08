@@ -10,7 +10,10 @@ import type { Command } from "commander";
 import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
-import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
+import {
+  ensureEffectivePostCommitHook,
+  ensureEffectivePostRewriteHook,
+} from "../lib/post-commit-hook.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 
@@ -26,8 +29,15 @@ async function applyActivation(active: boolean): Promise<void> {
   try {
     let binding: RepositoryBindingResult | undefined;
     let postCommitHook: string | undefined;
+    let postRewriteHook: string | undefined;
     if (active) {
       postCommitHook = ensureEffectivePostCommitHook(root).path;
+      try {
+        postRewriteHook = ensureEffectivePostRewriteHook(root).path;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[prim] post-rewrite hook coverage is degraded: ${detail}\n`);
+      }
       phase = "repository binding";
       binding = await bindRepository(root);
       phase = "local activation";
@@ -56,6 +66,7 @@ async function applyActivation(active: boolean): Promise<void> {
           }
         : {}),
       ...(postCommitHook ? { postCommitHook } : {}),
+      ...(postRewriteHook ? { postRewriteHook } : {}),
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

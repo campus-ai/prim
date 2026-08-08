@@ -21,6 +21,9 @@ import { gitToplevel } from "./git.js";
 export const PRIM_POST_COMMIT_BLOCK_START = "# >>> prim post-commit hook >>>";
 export const PRIM_POST_COMMIT_BLOCK_END = "# <<< prim post-commit hook <<<";
 const PRIM_CREATED_MARK = "prim-created-post-commit-hook";
+export const PRIM_POST_REWRITE_BLOCK_START = "# >>> prim post-rewrite hook >>>";
+export const PRIM_POST_REWRITE_BLOCK_END = "# <<< prim post-rewrite hook <<<";
+const PRIM_POST_REWRITE_CREATED_MARK = "prim-created-post-rewrite-hook";
 const LEGACY_PRIM_CREATED_MARK = "prim-created-hook";
 const LEGACY_PRIM_OWNED_HEADER =
   "# prim post-commit hook — installed by: prim hooks install (prim-managed-hook)";
@@ -91,6 +94,8 @@ export type ManagedHookInspection = EffectiveManagedHook & {
 
 export type EffectivePostCommitHook = EffectiveManagedHook;
 export type PostCommitHookInspection = ManagedHookInspection;
+export type EffectivePostRewriteHook = EffectiveManagedHook;
+export type PostRewriteHookInspection = ManagedHookInspection;
 
 function currentPostCommitBlock(): string {
   // This block is intentionally machine-independent. It uses the cache warmed
@@ -138,12 +143,74 @@ export function postCommitHookBlock(): string {
   return currentPostCommitBlock();
 }
 
+/**
+ * Capture post-rewrite stdin before detaching the Node driver. Reopening the
+ * private pairs file on fd 0 is load-bearing: any foreign hook body after
+ * Prim's block still receives Git's original rewrite mapping even after the
+ * detached driver unlinks the pathname.
+ */
+export function postRewriteHookBlock(): string {
+  return `${PRIM_POST_REWRITE_BLOCK_START}
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+  case "$1" in amend|rebase) prim_rewrite_source="$1" ;; *) prim_rewrite_source= ;; esac
+  if [ -n "$prim_rewrite_source" ]; then
+    prim_rewrite_pairs_file=$(mktemp "\${TMPDIR:-/tmp}/prim-post-rewrite-pairs.XXXXXXXX" 2>/dev/null) || prim_rewrite_pairs_file=
+    if [ -n "$prim_rewrite_pairs_file" ] && ! chmod 600 "$prim_rewrite_pairs_file" 2>/dev/null; then
+      rm -f "$prim_rewrite_pairs_file"
+      prim_rewrite_pairs_file=
+    fi
+    if [ -n "$prim_rewrite_pairs_file" ]; then
+      if cat > "$prim_rewrite_pairs_file"; then
+        exec < "$prim_rewrite_pairs_file"
+        prim_rewrite_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_rewrite_branch=
+        prim_cache_dir="\${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"
+        prim_post_rewrite_ran=0
+        if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-rewrite" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-rewrite" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; then
+          prim_node=$(cat "$prim_cache_dir/node")
+          prim_entry=$(cat "$prim_cache_dir/prim-post-rewrite")
+          if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then
+            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; "$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &
+            prim_post_rewrite_ran=1
+          fi
+        fi
+        if [ "$prim_post_rewrite_ran" -eq 0 ]; then
+          if [ -x "./node_modules/.bin/prim-post-rewrite" ]; then
+            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ./node_modules/.bin/prim-post-rewrite ) </dev/null >/dev/null 2>&1 &
+            prim_post_rewrite_ran=1
+          elif command -v npx >/dev/null 2>&1; then
+            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; npx --yes -p @primitive.ai/prim@latest prim-post-rewrite ) </dev/null >/dev/null 2>&1 &
+            prim_post_rewrite_ran=1
+          fi
+        fi
+        if [ "$prim_post_rewrite_ran" -eq 0 ]; then
+          rm -f "$prim_rewrite_pairs_file"
+        fi
+        unset prim_cache_dir prim_post_rewrite_ran prim_node prim_entry prim_rewrite_branch
+      else
+        rm -f "$prim_rewrite_pairs_file"
+      fi
+      unset prim_rewrite_pairs_file
+    fi
+  fi
+  unset prim_rewrite_source
+fi
+${PRIM_POST_REWRITE_BLOCK_END}`;
+}
+
 export const POST_COMMIT_MANAGED_HOOK: ManagedHookSpec = {
   hookName: "post-commit",
   blockStart: PRIM_POST_COMMIT_BLOCK_START,
   blockEnd: PRIM_POST_COMMIT_BLOCK_END,
   createdMark: PRIM_CREATED_MARK,
   block: postCommitHookBlock,
+};
+
+export const POST_REWRITE_MANAGED_HOOK: ManagedHookSpec = {
+  hookName: "post-rewrite",
+  blockStart: PRIM_POST_REWRITE_BLOCK_START,
+  blockEnd: PRIM_POST_REWRITE_BLOCK_END,
+  createdMark: PRIM_POST_REWRITE_CREATED_MARK,
+  block: postRewriteHookBlock,
 };
 
 function legacyFloatingInvocation(): string {
@@ -261,6 +328,12 @@ export function resolveEffectivePostCommitHook(
   cwd: string = process.cwd(),
 ): EffectivePostCommitHook {
   return resolveEffectiveManagedHook(POST_COMMIT_MANAGED_HOOK, cwd);
+}
+
+export function resolveEffectivePostRewriteHook(
+  cwd: string = process.cwd(),
+): EffectivePostRewriteHook {
+  return resolveEffectiveManagedHook(POST_REWRITE_MANAGED_HOOK, cwd);
 }
 
 function assertSafeFile(path: string, spec: ManagedHookSpec): Stats | undefined {
@@ -550,6 +623,15 @@ export function ensureEffectivePostCommitHook(cwd: string = process.cwd()): {
   return ensureTarget(target, POST_COMMIT_MANAGED_HOOK);
 }
 
+export function ensureEffectivePostRewriteHook(cwd: string = process.cwd()): {
+  path: string;
+  changed: boolean;
+  kind: EffectivePostRewriteHook["kind"];
+} {
+  const target = resolveEffectivePostRewriteHook(cwd);
+  return ensureTarget(target, POST_REWRITE_MANAGED_HOOK);
+}
+
 function ensureTarget(
   target: EffectiveManagedHook,
   spec: ManagedHookSpec,
@@ -606,11 +688,39 @@ export function ensurePostCommitHookAtPath(
   return { ...result, kind: "direct" };
 }
 
+export function ensurePostRewriteHookAtPath(
+  hookPath: string,
+  initialContent?: string,
+): {
+  path: string;
+  changed: boolean;
+  kind: "direct";
+} {
+  const absolute = resolve(hookPath);
+  const result = ensureTarget(
+    {
+      gitRoot: dirname(dirname(absolute)),
+      hooksDir: dirname(absolute),
+      hookPath: absolute,
+      kind: "direct",
+    },
+    POST_REWRITE_MANAGED_HOOK,
+    initialContent,
+  );
+  return { ...result, kind: "direct" };
+}
+
 /** Read-only effective coverage check used by doctor and setup verification. */
 export function inspectEffectivePostCommitHook(
   cwd: string = process.cwd(),
 ): PostCommitHookInspection {
   return inspectEffectiveManagedHook(POST_COMMIT_MANAGED_HOOK, cwd);
+}
+
+export function inspectEffectivePostRewriteHook(
+  cwd: string = process.cwd(),
+): PostRewriteHookInspection {
+  return inspectEffectiveManagedHook(POST_REWRITE_MANAGED_HOOK, cwd);
 }
 
 function inspectEffectiveManagedHook(spec: ManagedHookSpec, cwd: string): ManagedHookInspection {
@@ -700,6 +810,15 @@ export function uninstallEffectivePostCommitHook(cwd: string = process.cwd()): {
   return uninstallTarget(target, POST_COMMIT_MANAGED_HOOK);
 }
 
+export function uninstallEffectivePostRewriteHook(cwd: string = process.cwd()): {
+  path: string;
+  changed: boolean;
+  removedFile: boolean;
+} {
+  const target = resolveEffectivePostRewriteHook(cwd);
+  return uninstallTarget(target, POST_REWRITE_MANAGED_HOOK);
+}
+
 function projectHooksPathIsConfigured(gitRoot: string): boolean {
   for (const scope of ["--worktree", "--local"]) {
     try {
@@ -743,6 +862,27 @@ export function uninstallProjectPostCommitHook(cwd: string = process.cwd()): {
   }).replace(/\r?\n$/u, "");
   return uninstallPostCommitHookAtPath(
     resolve(safeGitPath(gitRoot, commonDir), "hooks", "post-commit"),
+  );
+}
+
+export function uninstallProjectPostRewriteHook(cwd: string = process.cwd()): {
+  path: string;
+  changed: boolean;
+  removedFile: boolean;
+} {
+  const gitRoot = gitToplevel(cwd);
+  if (!gitRoot) throw new Error("not a git repository");
+  if (projectHooksPathIsConfigured(gitRoot)) {
+    return uninstallEffectivePostRewriteHook(gitRoot);
+  }
+  const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd: gitRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: GIT_TIMEOUT_MS,
+  }).replace(/\r?\n$/u, "");
+  return uninstallPostRewriteHookAtPath(
+    resolve(safeGitPath(gitRoot, commonDir), "hooks", POST_REWRITE_MANAGED_HOOK.hookName),
   );
 }
 
@@ -850,5 +990,22 @@ export function uninstallPostCommitHookAtPath(hookPath: string): {
       kind: "direct",
     },
     POST_COMMIT_MANAGED_HOOK,
+  );
+}
+
+export function uninstallPostRewriteHookAtPath(hookPath: string): {
+  path: string;
+  changed: boolean;
+  removedFile: boolean;
+} {
+  const absolute = resolve(hookPath);
+  return uninstallTarget(
+    {
+      gitRoot: dirname(dirname(absolute)),
+      hooksDir: dirname(absolute),
+      hookPath: absolute,
+      kind: "direct",
+    },
+    POST_REWRITE_MANAGED_HOOK,
   );
 }

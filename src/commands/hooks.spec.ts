@@ -35,7 +35,17 @@ vi.mock("../lib/post-commit-hook.js", () => ({
     changed: true,
     kind: "direct",
   })),
+  ensureEffectivePostRewriteHook: vi.fn(() => ({
+    path: "/fake/root/.git/hooks/post-rewrite",
+    changed: true,
+    kind: "direct",
+  })),
   ensurePostCommitHookAtPath: vi.fn((path: string) => ({
+    path,
+    changed: true,
+    kind: "direct",
+  })),
+  ensurePostRewriteHookAtPath: vi.fn((path: string) => ({
     path,
     changed: true,
     kind: "direct",
@@ -44,12 +54,26 @@ vi.mock("../lib/post-commit-hook.js", () => ({
     () =>
       '# >>> prim post-commit hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  prim-post-commit\nfi\n# <<< prim post-commit hook <<<',
   ),
+  postRewriteHookBlock: vi.fn(
+    () =>
+      '# >>> prim post-rewrite hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  exec < "$prim_rewrite_pairs_file"\n  prim-post-rewrite\nfi\n# <<< prim post-rewrite hook <<<',
+  ),
   uninstallProjectPostCommitHook: vi.fn(() => ({
     path: "/fake/root/.git/hooks/post-commit",
     changed: true,
     removedFile: true,
   })),
+  uninstallProjectPostRewriteHook: vi.fn(() => ({
+    path: "/fake/root/.git/hooks/post-rewrite",
+    changed: true,
+    removedFile: true,
+  })),
   uninstallPostCommitHookAtPath: vi.fn((path: string) => ({
+    path,
+    changed: true,
+    removedFile: false,
+  })),
+  uninstallPostRewriteHookAtPath: vi.fn((path: string) => ({
     path,
     changed: true,
     removedFile: false,
@@ -69,8 +93,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   ensureEffectivePostCommitHook,
+  ensureEffectivePostRewriteHook,
   ensurePostCommitHookAtPath,
+  ensurePostRewriteHookAtPath,
   uninstallProjectPostCommitHook,
+  uninstallProjectPostRewriteHook,
 } from "../lib/post-commit-hook.js";
 import {
   PRIM_BLOCK_END,
@@ -93,8 +120,11 @@ const mockedMkdirSync = vi.mocked(mkdirSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedExecFileSync = vi.mocked(execFileSync);
 const mockedEnsureEffectivePostCommitHook = vi.mocked(ensureEffectivePostCommitHook);
+const mockedEnsureEffectivePostRewriteHook = vi.mocked(ensureEffectivePostRewriteHook);
 const mockedEnsurePostCommitHookAtPath = vi.mocked(ensurePostCommitHookAtPath);
+const mockedEnsurePostRewriteHookAtPath = vi.mocked(ensurePostRewriteHookAtPath);
 const mockedUninstallProjectPostCommitHook = vi.mocked(uninstallProjectPostCommitHook);
+const mockedUninstallProjectPostRewriteHook = vi.mocked(uninstallProjectPostRewriteHook);
 
 // core.hooksPath read for a given config level; `git config <level> --get …`.
 const isGet = (args: readonly string[], level: string): boolean =>
@@ -139,6 +169,7 @@ describe("registerHooksCommands", () => {
     await program.parseAsync(["hooks", "uninstall"], { from: "user" });
 
     expect(mockedUninstallProjectPostCommitHook).toHaveBeenCalledWith("/fake/root");
+    expect(mockedUninstallProjectPostRewriteHook).toHaveBeenCalledWith("/fake/root");
   });
 
   it("project uninstall removes pre-commit from a linked worktree's common Git directory", async () => {
@@ -156,6 +187,7 @@ describe("registerHooksCommands", () => {
 
     expect(mockedUnlinkSync).toHaveBeenCalledWith("/fake/main/.git/hooks/pre-commit");
     expect(mockedUninstallProjectPostCommitHook).toHaveBeenCalledWith("/fake/worktree");
+    expect(mockedUninstallProjectPostRewriteHook).toHaveBeenCalledWith("/fake/worktree");
   });
 });
 
@@ -398,13 +430,29 @@ describe("hooks install action", () => {
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
-  it("installs both pre-commit and post-commit hooks to .git/hooks", async () => {
+  it("installs pre-commit, post-commit, and post-rewrite hooks to .git/hooks", async () => {
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
       from: "user",
     });
     const paths = mockedWriteFileSync.mock.calls.map((c) => c[0]);
     expect(paths).toContain("/fake/root/.git/hooks/pre-commit");
     expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/root");
+    expect(mockedEnsureEffectivePostRewriteHook).toHaveBeenCalledWith("/fake/root");
+  });
+
+  it("keeps install fail-soft when only post-rewrite dispatcher coverage is unavailable", async () => {
+    mockedEnsureEffectivePostRewriteHook.mockImplementation(() => {
+      throw new Error("Husky post-rewrite dispatcher is missing");
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await buildProgram().parseAsync(["hooks", "install", "--target=husky"], { from: "user" });
+
+    expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/root");
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("post-rewrite hook coverage is degraded"),
+    );
+    errSpy.mockRestore();
   });
 
   it("installs from a linked worktree without treating its .git file as a directory", async () => {
@@ -420,6 +468,7 @@ describe("hooks install action", () => {
 
     expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/main/.git/hooks/pre-commit");
     expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/worktree");
+    expect(mockedEnsureEffectivePostRewriteHook).toHaveBeenCalledWith("/fake/worktree");
   });
 
   it("does not activate an unbound repo after a project install", async () => {
@@ -459,6 +508,7 @@ describe("installGlobalHooks (user scope)", () => {
       join(PRIM_GIT_HOOKS_DIR, "post-commit"),
       expect.any(String),
     );
+    expect(paths).toContain(join(PRIM_GIT_HOOKS_DIR, "post-rewrite"));
     expect(mockedMkdirSync).toHaveBeenCalledWith(PRIM_GIT_HOOKS_DIR, { recursive: true });
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
@@ -477,6 +527,7 @@ describe("installGlobalHooks (user scope)", () => {
       (mockedEnsurePostCommitHookAtPath.mock.calls.find(
         ([path]) => path === join(PRIM_GIT_HOOKS_DIR, "post-commit"),
       )?.[1] as string | undefined) ?? "";
+    const rewrite = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-rewrite")) ?? "";
     // Opt-in gate: prim runs only where prim.active is true.
     expect(pre).toContain("git config --get prim.active");
     // --git-common-dir is NOT core.hooksPath-aware, so the chain never points at
@@ -491,6 +542,11 @@ describe("installGlobalHooks (user scope)", () => {
     expect(pre).not.toContain("./node_modules");
     expect(pre).not.toMatch(/@latest|@primitive\.ai\/prim\s/);
     expect(post).toContain('"$repo_hook" "$@" || true'); // post-commit cannot block
+    expect(rewrite).toContain('exec < "$prim_rewrite_pairs_file"');
+    expect(rewrite).toContain('"$repo_hook" "$@" || true');
+    expect(rewrite.indexOf("# >>> prim post-rewrite hook >>>")).toBeLessThan(
+      rewrite.indexOf("# prim global post-rewrite hook"),
+    );
     // STRUCTURAL: the prim invocation must be NESTED inside the gate — between
     // the `prim.active` check and the chain — not merely present somewhere.
     // Independent `toContain`s would pass on an ungated invocation (the H2 bug).
@@ -500,6 +556,66 @@ describe("installGlobalHooks (user scope)", () => {
     expect(gateAt).toBeGreaterThan(-1);
     expect(binAt).toBeGreaterThan(gateAt); // invocation is after the gate opens
     expect(binAt).toBeLessThan(chainAt); // and before the chain — i.e. inside the gate
+  });
+
+  it("does not chain a project-managed post-rewrite hook after a user-scope migration", async () => {
+    installGlobalHooks();
+    const rewrite = String(
+      mockedWriteFileSync.mock.calls.find(
+        ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "post-rewrite"),
+      )?.[1] ?? "",
+    );
+    const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const actualChildProcess =
+      await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const actualOs = await vi.importActual<typeof import("node:os")>("node:os");
+    const directory = actualFs.mkdtempSync(join(actualOs.tmpdir(), "prim-global-rewrite-"));
+
+    try {
+      const binDirectory = join(directory, "bin");
+      const hooksDirectory = join(directory, "common", "hooks");
+      const chainLog = join(directory, "repo-hook-ran");
+      actualFs.mkdirSync(binDirectory, { recursive: true });
+      actualFs.mkdirSync(hooksDirectory, { recursive: true });
+      actualFs.writeFileSync(
+        join(binDirectory, "git"),
+        `#!/bin/sh
+if [ "$1" = "config" ]; then exit 0; fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--git-common-dir" ]; then
+  echo "$PRIM_TEST_COMMON_DIR"
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+      actualFs.writeFileSync(
+        join(hooksDirectory, "post-rewrite"),
+        `#!/bin/sh
+# >>> prim post-rewrite hook >>>
+touch "$PRIM_TEST_REPO_CHAIN_LOG"
+# <<< prim post-rewrite hook <<<
+`,
+        { mode: 0o755 },
+      );
+      const globalHook = join(directory, "post-rewrite");
+      actualFs.writeFileSync(globalHook, rewrite, { mode: 0o755 });
+
+      actualChildProcess.execFileSync(globalHook, ["rebase"], {
+        env: {
+          ...process.env,
+          PATH: `${binDirectory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+          PRIM_TEST_COMMON_DIR: join(directory, "common"),
+          PRIM_TEST_REPO_CHAIN_LOG: chainLog,
+        },
+        input: `${"a".repeat(40)} ${"b".repeat(40)}\n`,
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+
+      expect(actualFs.existsSync(chainLog)).toBe(false);
+    } finally {
+      actualFs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("writes a pass-through stub for every non-prim client-side hook type (no shadowing)", () => {
@@ -522,6 +638,11 @@ describe("installGlobalHooks (user scope)", () => {
     installGlobalHooks();
     expect(mockedWriteFileSync).toHaveBeenCalled();
     expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalled();
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      join(PRIM_GIT_HOOKS_DIR, "post-rewrite"),
+      expect.stringContaining("prim post-rewrite hook"),
+      { mode: 0o755 },
+    );
     expect(setCalls()).toHaveLength(0);
   });
 
@@ -532,6 +653,7 @@ describe("installGlobalHooks (user scope)", () => {
     const paths = mockedWriteFileSync.mock.calls.map((c) => String(c[0]));
     expect(paths).toContain(join(existing, "pre-commit"));
     expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalledWith(join(existing, "post-commit"));
+    expect(mockedEnsurePostRewriteHookAtPath).toHaveBeenCalledWith(join(existing, "post-rewrite"));
     expect(setCalls()).toHaveLength(0); // pointer left untouched
     const pre = mockedWriteFileSync.mock.calls.find(
       (c) => String(c[0]) === join(existing, "pre-commit"),
@@ -551,6 +673,9 @@ describe("installGlobalHooks (user scope)", () => {
     expect(paths.some((p) => p.includes("~"))).toBe(false); // no literal tilde reached fs
     expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalledWith(
       join(homedir(), ".config", "git", "hooks", "post-commit"),
+    );
+    expect(mockedEnsurePostRewriteHookAtPath).toHaveBeenCalledWith(
+      join(homedir(), ".config", "git", "hooks", "post-rewrite"),
     );
   });
 
@@ -581,6 +706,7 @@ describe("uninstallGlobalHooks (user scope)", () => {
     const unlinked = mockedUnlinkSync.mock.calls.map((c) => String(c[0]));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "post-commit"));
+    expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "post-rewrite"));
     // the pass-through stubs prim wrote are removed too, not orphaned
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "commit-msg"));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-push"));

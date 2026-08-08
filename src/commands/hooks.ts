@@ -1,7 +1,7 @@
 /**
  * Hook management commands for the prim CLI.
  *
- * prim hooks install   — Install the prim git hooks (pre-commit + post-commit)
+ * prim hooks install   — Install the prim git hooks (pre-commit + post-commit + post-rewrite)
  * prim hooks uninstall — Remove the prim git hooks
  *
  * Two scopes:
@@ -31,18 +31,24 @@ import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
+  ensureEffectivePostRewriteHook,
   ensurePostCommitHookAtPath,
+  ensurePostRewriteHookAtPath,
   postCommitHookBlock,
+  postRewriteHookBlock,
   uninstallPostCommitHookAtPath,
+  uninstallPostRewriteHookAtPath,
   uninstallProjectPostCommitHook,
+  uninstallProjectPostRewriteHook,
 } from "../lib/post-commit-hook.js";
 
 type HookSpec = { hookName: string; binName: string };
 
 const PRE_COMMIT: HookSpec = { hookName: "pre-commit", binName: "prim-pre-commit" };
 const POST_COMMIT: HookSpec = { hookName: "post-commit", binName: "prim-post-commit" };
+const POST_REWRITE: HookSpec = { hookName: "post-rewrite", binName: "prim-post-rewrite" };
 // Pre-commit first: install order is asserted by hooks.spec.ts (calls[0]).
-const HOOKS: HookSpec[] = [PRE_COMMIT, POST_COMMIT];
+const HOOKS: HookSpec[] = [PRE_COMMIT, POST_COMMIT, POST_REWRITE];
 const GIT_TIMEOUT_MS = 1_000;
 
 function blockMarkers(spec: HookSpec): { start: string; end: string } {
@@ -89,6 +95,7 @@ ${hookShim(spec.binName)}
 
 function huskyBlock(spec: HookSpec): string {
   if (spec.hookName === POST_COMMIT.hookName) return postCommitHookBlock();
+  if (spec.hookName === POST_REWRITE.hookName) return postRewriteHookBlock();
   const { start, end } = blockMarkers(spec);
   return `${start}
 ${hookShim(spec.binName)}
@@ -100,6 +107,7 @@ ${end}`;
 // core.hooksPath dir. Same markers, so stripPrimBlock removes it identically.
 function gatedBlock(spec: HookSpec): string {
   if (spec.hookName === POST_COMMIT.hookName) return postCommitHookBlock();
+  if (spec.hookName === POST_REWRITE.hookName) return postRewriteHookBlock();
   const { start, end } = blockMarkers(spec);
   return `${start}
 ${gatedShim(spec.binName)}
@@ -269,7 +277,7 @@ function gitConfigGet(level: "--global" | "--system"): string {
 // every hook type, so without a stub for these, a repo's own commit-msg /
 // pre-push / git-lfs / pre-commit-framework hooks silently stop firing. We
 // write a pass-through stub for each so they still reach the repo's real hook.
-// (pre-commit / post-commit are prim's own — see HOOKS — and are not here.)
+// (pre-commit / post-commit / post-rewrite are prim's own — see HOOKS.)
 const PASSTHROUGH_HOOKS = [
   "applypatch-msg",
   "pre-applypatch",
@@ -281,7 +289,6 @@ const PASSTHROUGH_HOOKS = [
   "post-checkout",
   "post-merge",
   "pre-push",
-  "post-rewrite",
   "pre-auto-gc",
   "push-to-checkout",
   "sendemail-validate",
@@ -296,16 +303,25 @@ const PASSTHROUGH_HOOKS = [
 // --git-common-dir is NOT core.hooksPath-aware, so the chained path is always
 // the repo's real .git/hooks — never this script (no recursion). --git-path
 // hooks/… IS core.hooksPath-aware and would self-reference, so it must not be
-// used. The chain guard matches prim's managed-hook SENTINEL (not the bare bin
-// name, which a user's own hook might mention) to avoid double-invoking prim.
+// used. The chain guard matches the legacy managed-hook sentinel or the current
+// managed block marker (not the bare bin name, which a user's own hook might
+// mention) to avoid double-invoking prim across project-to-user migrations.
 function globalHookScript(spec: HookSpec): string {
   // pre-commit may legitimately block the commit — propagate the repo hook's
-  // exit; post-commit runs after the commit and cannot block, so ignore it.
-  const chainExit = spec.hookName === "pre-commit" ? "|| exit $?" : "|| true";
-  const invocation =
-    spec.hookName === POST_COMMIT.hookName ? postCommitHookBlock() : gatedShim(spec.binName);
-  const beforeComments = spec.hookName === POST_COMMIT.hookName ? `${invocation}\n` : "";
-  const afterComments = spec.hookName === POST_COMMIT.hookName ? "" : `${invocation}\n`;
+  // exit; post-commit/post-rewrite run after mutation and cannot block it.
+  const chainExit = spec.hookName === PRE_COMMIT.hookName ? "|| exit $?" : "|| true";
+  const managedBlock =
+    spec.hookName === POST_COMMIT.hookName
+      ? postCommitHookBlock()
+      : spec.hookName === POST_REWRITE.hookName
+        ? postRewriteHookBlock()
+        : undefined;
+  const invocation = managedBlock ?? gatedShim(spec.binName);
+  const managedRepoGuard = managedBlock
+    ? ` && ! grep -Fq '${blockMarkers(spec).start}' "$repo_hook" 2>/dev/null`
+    : "";
+  const beforeComments = managedBlock ? `${invocation}\n` : "";
+  const afterComments = managedBlock ? "" : `${invocation}\n`;
   return `#!/bin/sh
 ${beforeComments}# prim global ${spec.hookName} hook (core.hooksPath) — managed by prim; do not edit.
 # Install/uninstall: prim hooks install|uninstall --scope user
@@ -314,7 +330,7 @@ ${beforeComments}# prim global ${spec.hookName} hook (core.hooksPath) — manage
 # hook regardless, so inactive repos are unaffected.
 ${afterComments}common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
 repo_hook="$common_dir/hooks/${spec.hookName}"
-if [ -x "$repo_hook" ] && ! grep -q '${PRIM_MANAGED_MARK}' "$repo_hook" 2>/dev/null; then
+if [ -x "$repo_hook" ] && ! grep -q '${PRIM_MANAGED_MARK}' "$repo_hook" 2>/dev/null${managedRepoGuard}; then
   "$repo_hook" "$@" ${chainExit}
 fi
 exit 0
@@ -333,7 +349,7 @@ exit 0
 `;
 }
 
-// The complete set of files prim owns in PRIM_GIT_HOOKS_DIR: its two real hooks
+// The complete set of files prim owns in PRIM_GIT_HOOKS_DIR: its real hooks
 // plus a pass-through stub for every other client-side hook type.
 function ownedHookNames(): string[] {
   return [...HOOKS.map((s) => s.hookName), ...PASSTHROUGH_HOOKS];
@@ -347,6 +363,11 @@ function writeOwnHooks(): void {
     const path = resolve(PRIM_GIT_HOOKS_DIR, spec.hookName);
     if (spec.hookName === POST_COMMIT.hookName) {
       ensurePostCommitHookAtPath(path, globalHookScript(spec));
+    } else if (spec.hookName === POST_REWRITE.hookName) {
+      // This directory is wholly Prim-owned. Replace the previous release's
+      // post-rewrite pass-through stub instead of merging into it, which would
+      // retain its unguarded chain and could double-fire a project Prim hook.
+      writeFileSync(path, globalHookScript(spec), { mode: 0o755 });
     } else {
       writeFileSync(path, globalHookScript(spec), { mode: 0o755 });
     }
@@ -365,12 +386,20 @@ function appendPrimBlock(hookPath: string, spec: HookSpec): void {
     ensurePostCommitHookAtPath(hookPath);
     return;
   }
+  if (spec.hookName === POST_REWRITE.hookName) {
+    ensurePostRewriteHookAtPath(hookPath);
+    return;
+  }
   mergePrimBlock(hookPath, gatedBlock(spec), spec.binName);
 }
 
 function stripPrimBlock(hookPath: string, spec: HookSpec): void {
   if (spec.hookName === POST_COMMIT.hookName) {
     uninstallPostCommitHookAtPath(hookPath);
+    return;
+  }
+  if (spec.hookName === POST_REWRITE.hookName) {
+    uninstallPostRewriteHookAtPath(hookPath);
     return;
   }
   if (!existsSync(hookPath)) return;
@@ -465,20 +494,27 @@ export function uninstallGlobalHooks(): void {
   console.log("No prim global git hooks found.");
 }
 
-// Install every prim git hook (pre-commit + post-commit) to the chosen
+// Install every prim git hook (pre-commit + post-commit + post-rewrite) to the chosen
 // destination, pre-commit first so its write is calls[0] in tests.
 function installHooks(gitRoot: string, target: "husky" | "git-hooks"): void {
-  for (const spec of HOOKS.filter((candidate) => candidate !== POST_COMMIT)) {
-    if (target === "husky") {
-      installToHusky(gitRoot, spec);
-    } else {
-      installToDotGit(gitRoot, spec);
-    }
+  if (target === "husky") {
+    installToHusky(gitRoot, PRE_COMMIT);
+  } else {
+    installToDotGit(gitRoot, PRE_COMMIT);
   }
   const postCommit = ensureEffectivePostCommitHook(gitRoot);
   console.log(
     `${postCommit.changed ? "Installed" : "Refreshed"} effective post-commit hook at ${postCommit.path}.`,
   );
+  try {
+    const postRewrite = ensureEffectivePostRewriteHook(gitRoot);
+    console.log(
+      `${postRewrite.changed ? "Installed" : "Refreshed"} effective post-rewrite hook at ${postRewrite.path}.`,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[prim] post-rewrite hook coverage is degraded: ${detail}`);
+  }
 }
 
 export function registerHooksCommands(program: Command) {
@@ -487,7 +523,7 @@ export function registerHooksCommands(program: Command) {
   hooks
     .command("install")
     .description(
-      "Install the prim git hooks — pre-commit + post-commit (auto-detects Husky; use --target to override)",
+      "Install the prim git hooks — pre-commit + post-commit + post-rewrite (auto-detects Husky; use --target to override)",
     )
     .addOption(
       new Option("--target <where>", "install destination; bypasses Husky detection").choices([
@@ -568,26 +604,29 @@ export function registerHooksCommands(program: Command) {
       }
       const gitRoot = getGitRoot();
       const hooksDir = projectHooksDir(gitRoot);
-      for (const spec of HOOKS.filter((candidate) => candidate !== POST_COMMIT)) {
-        const hookPath = resolve(hooksDir, spec.hookName);
-        if (!existsSync(hookPath)) {
-          console.log(`No ${spec.hookName} hook found.`);
-          continue;
-        }
-        if (containsPrimHook(readFileSync(hookPath, "utf-8"), spec.binName)) {
-          unlinkSync(hookPath);
-          console.log(`Removed ${spec.hookName} hook at ${hookPath}`);
-        } else {
-          console.log(`Left ${spec.hookName} hook at ${hookPath} untouched (not a prim hook).`);
-        }
-      }
-      const postCommit = uninstallProjectPostCommitHook(gitRoot);
-      if (!postCommit.changed) {
-        console.log(`No Prim post-commit block found at ${postCommit.path}.`);
-      } else if (postCommit.removedFile) {
-        console.log(`Removed Prim-created post-commit hook at ${postCommit.path}.`);
+      const preCommitPath = resolve(hooksDir, PRE_COMMIT.hookName);
+      if (!existsSync(preCommitPath)) {
+        console.log(`No ${PRE_COMMIT.hookName} hook found.`);
+      } else if (containsPrimHook(readFileSync(preCommitPath, "utf-8"), PRE_COMMIT.binName)) {
+        unlinkSync(preCommitPath);
+        console.log(`Removed ${PRE_COMMIT.hookName} hook at ${preCommitPath}`);
       } else {
-        console.log(`Removed the Prim post-commit block from ${postCommit.path}.`);
+        console.log(
+          `Left ${PRE_COMMIT.hookName} hook at ${preCommitPath} untouched (not a prim hook).`,
+        );
+      }
+      for (const [hookName, uninstall] of [
+        [POST_COMMIT.hookName, uninstallProjectPostCommitHook],
+        [POST_REWRITE.hookName, uninstallProjectPostRewriteHook],
+      ] as const) {
+        const result = uninstall(gitRoot);
+        if (!result.changed) {
+          console.log(`No Prim ${hookName} block found at ${result.path}.`);
+        } else if (result.removedFile) {
+          console.log(`Removed Prim-created ${hookName} hook at ${result.path}.`);
+        } else {
+          console.log(`Removed the Prim ${hookName} block from ${result.path}.`);
+        }
       }
     });
 }

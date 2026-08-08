@@ -30,6 +30,7 @@ const CACHED_BINS = [
   "prim-pre-tool-use",
   "prim-post-tool-use",
   "prim-post-commit",
+  "prim-post-rewrite",
 ] as const;
 
 /**
