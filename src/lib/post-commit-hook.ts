@@ -55,7 +55,15 @@ const HUSKY_V9_RUNTIME_HASHES = new Set([
   "70200b200ca709b0622784f93839a5b2872333a917a09afddefd7dc2d8cdc680",
 ]);
 
-export type EffectivePostCommitHook = {
+export type ManagedHookSpec = {
+  hookName: string;
+  blockStart: string;
+  blockEnd: string;
+  createdMark: string;
+  block: () => string;
+};
+
+export type EffectiveManagedHook = {
   gitRoot: string;
   hooksDir: string;
   hookPath: string;
@@ -64,7 +72,7 @@ export type EffectivePostCommitHook = {
   dispatcherPath?: string;
 };
 
-export type PostCommitHookInspection = EffectivePostCommitHook & {
+export type ManagedHookInspection = EffectiveManagedHook & {
   covered: boolean;
   executable: boolean;
   current: boolean;
@@ -80,6 +88,9 @@ export type PostCommitHookInspection = EffectivePostCommitHook & {
     | "unreachable_block"
     | "not_executable";
 };
+
+export type EffectivePostCommitHook = EffectiveManagedHook;
+export type PostCommitHookInspection = ManagedHookInspection;
 
 function currentPostCommitBlock(): string {
   // This block is intentionally machine-independent. It uses the cache warmed
@@ -126,6 +137,14 @@ ${PRIM_POST_COMMIT_BLOCK_END}`;
 export function postCommitHookBlock(): string {
   return currentPostCommitBlock();
 }
+
+export const POST_COMMIT_MANAGED_HOOK: ManagedHookSpec = {
+  hookName: "post-commit",
+  blockStart: PRIM_POST_COMMIT_BLOCK_START,
+  blockEnd: PRIM_POST_COMMIT_BLOCK_END,
+  createdMark: PRIM_CREATED_MARK,
+  block: postCommitHookBlock,
+};
 
 function legacyFloatingInvocation(): string {
   return `if command -v prim-post-commit >/dev/null 2>&1; then
@@ -190,8 +209,8 @@ function isKnownLegacyGlobalGate(value: Buffer): boolean {
   );
 }
 
-function createdScaffold(): Buffer {
-  return Buffer.from(`#!/bin/sh\n${currentPostCommitBlock()}\n# ${PRIM_CREATED_MARK}\n`);
+function createdScaffold(spec: ManagedHookSpec): Buffer {
+  return Buffer.from(`#!/bin/sh\n${spec.block()}\n# ${spec.createdMark}\n`);
 }
 
 function safeGitPath(root: string, value: string): string {
@@ -208,9 +227,10 @@ function safeGitPath(root: string, value: string): string {
 }
 
 /** Resolve the destination Git actually invokes, including worktrees/overrides. */
-export function resolveEffectivePostCommitHook(
+function resolveEffectiveManagedHook(
+  spec: ManagedHookSpec,
   cwd: string = process.cwd(),
-): EffectivePostCommitHook {
+): EffectiveManagedHook {
   const gitRoot = gitToplevel(cwd);
   if (!gitRoot) throw new Error("not a git repository");
   const value = execFileSync("git", ["rev-parse", "--git-path", "hooks"], {
@@ -224,44 +244,51 @@ export function resolveEffectivePostCommitHook(
     return {
       gitRoot,
       hooksDir,
-      hookPath: resolve(dirname(hooksDir), "post-commit"),
+      hookPath: resolve(dirname(hooksDir), spec.hookName),
       kind: "husky_v9",
-      dispatcherPath: resolve(hooksDir, "post-commit"),
+      dispatcherPath: resolve(hooksDir, spec.hookName),
     };
   }
   return {
     gitRoot,
     hooksDir,
-    hookPath: resolve(hooksDir, "post-commit"),
+    hookPath: resolve(hooksDir, spec.hookName),
     kind: "direct",
   };
 }
 
-function assertSafeFile(path: string): Stats | undefined {
+export function resolveEffectivePostCommitHook(
+  cwd: string = process.cwd(),
+): EffectivePostCommitHook {
+  return resolveEffectiveManagedHook(POST_COMMIT_MANAGED_HOOK, cwd);
+}
+
+function assertSafeFile(path: string, spec: ManagedHookSpec): Stats | undefined {
   if (!existsSync(path)) return undefined;
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_HOOK_BYTES) {
-    throw new Error(`unsafe post-commit hook target: ${path}`);
+    throw new Error(`unsafe ${spec.hookName} hook target: ${path}`);
   }
   return stat;
 }
 
-function assertUsableHuskyDispatcher(target: EffectivePostCommitHook): void {
+function assertUsableHuskyDispatcher(target: EffectiveManagedHook, spec: ManagedHookSpec): void {
   if (!target.dispatcherPath) return;
-  const stat = assertSafeFile(target.dispatcherPath);
+  const stat = assertSafeFile(target.dispatcherPath, spec);
   if (!stat || (stat.mode & 0o100) === 0) {
     throw new Error(
-      `Husky post-commit dispatcher is missing or not executable: ${target.dispatcherPath}`,
+      `Husky ${spec.hookName} dispatcher is missing or not executable: ${target.dispatcherPath}`,
     );
   }
-  const dispatcher = decodeHookText(readHookFile(target.dispatcherPath));
-  if (dispatcher === HUSKY_DIRECT_DISPATCHER) return;
+  const dispatcher = decodeHookText(readHookFile(target.dispatcherPath), spec);
+  const directDispatcher = HUSKY_DIRECT_DISPATCHER.replaceAll("post-commit", spec.hookName);
+  if (dispatcher === directDispatcher) return;
   const normalizedDispatcher = dispatcher.endsWith("\n") ? dispatcher.slice(0, -1) : dispatcher;
   if (!HUSKY_V9_DISPATCHERS.has(normalizedDispatcher)) {
-    throw new Error(`unrecognized Husky post-commit dispatcher: ${target.dispatcherPath}`);
+    throw new Error(`unrecognized Husky ${spec.hookName} dispatcher: ${target.dispatcherPath}`);
   }
   const huskyRuntime = resolve(dirname(target.dispatcherPath), "h");
-  const runtimeStat = assertSafeFile(huskyRuntime);
+  const runtimeStat = assertSafeFile(huskyRuntime, spec);
   const runtime = runtimeStat ? readHookFile(huskyRuntime) : undefined;
   const runtimeHash = runtime ? createHash("sha256").update(runtime).digest("hex") : undefined;
   if (!runtimeHash || !HUSKY_V9_RUNTIME_HASHES.has(runtimeHash)) {
@@ -274,30 +301,34 @@ function readHookFile(path: string): Buffer {
   return Buffer.isBuffer(value) ? value : Buffer.from(value as unknown as string);
 }
 
-function decodeHookText(content: Buffer): string {
-  if (content.includes(0)) throw new Error("binary post-commit hook");
+function decodeHookText(content: Buffer, spec: ManagedHookSpec): string {
+  if (content.includes(0)) throw new Error(`binary ${spec.hookName} hook`);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(content);
   } catch {
-    throw new Error("binary post-commit hook");
+    throw new Error(`binary ${spec.hookName} hook`);
   }
 }
 
-function supportedShebangEnd(content: Buffer): number {
-  const text = decodeHookText(content);
+function supportedShebangEnd(content: Buffer, spec: ManagedHookSpec): number {
+  const text = decodeHookText(content, spec);
   const newline = text.indexOf("\n");
   const shebang = newline === -1 ? text : text.slice(0, newline);
   if (!SUPPORTED_SHEBANGS.has(shebang) || newline === -1) {
-    throw new Error("unsupported post-commit hook interpreter");
+    throw new Error(`unsupported ${spec.hookName} hook interpreter`);
   }
   return Buffer.byteLength(text.slice(0, newline + 1), "utf8");
 }
 
-function shellInsertionPoint(content: Buffer, allowShebangless: boolean): number {
-  const text = decodeHookText(content);
-  if (text.startsWith("#!")) return supportedShebangEnd(content);
+function shellInsertionPoint(
+  content: Buffer,
+  allowShebangless: boolean,
+  spec: ManagedHookSpec,
+): number {
+  const text = decodeHookText(content, spec);
+  if (text.startsWith("#!")) return supportedShebangEnd(content, spec);
   if (allowShebangless) return 0;
-  throw new Error("unsupported post-commit hook interpreter");
+  throw new Error(`unsupported ${spec.hookName} hook interpreter`);
 }
 
 type BlockRange =
@@ -317,31 +348,36 @@ function allIndexes(haystack: Buffer, needle: Buffer): number[] {
   return indexes;
 }
 
-function blockRange(content: Buffer): BlockRange {
-  decodeHookText(content);
-  const startMarker = Buffer.from(PRIM_POST_COMMIT_BLOCK_START);
-  const endMarker = Buffer.from(PRIM_POST_COMMIT_BLOCK_END);
+function blockRange(content: Buffer, spec: ManagedHookSpec): BlockRange {
+  decodeHookText(content, spec);
+  const startMarker = Buffer.from(spec.blockStart);
+  const endMarker = Buffer.from(spec.blockEnd);
   const starts = allIndexes(content, startMarker);
   const ends = allIndexes(content, endMarker);
   if (starts.length === 0 && ends.length === 0) return { kind: "absent" };
   if (starts.length !== 1 || ends.length !== 1 || ends[0] < starts[0]) {
-    throw new Error("malformed Prim post-commit markers");
+    throw new Error(`malformed Prim ${spec.hookName} markers`);
   }
   const start = starts[0];
   const end = ends[0] + endMarker.length;
-  const current = Buffer.from(currentPostCommitBlock());
+  const current = Buffer.from(spec.block());
   return content.subarray(start, end).equals(current)
     ? { kind: "current", start, end }
     : { kind: "stale", start, end };
 }
 
-function mergedContent(existing: Buffer | undefined, allowShebangless: boolean): Buffer {
-  const block = Buffer.from(currentPostCommitBlock());
+function mergedContent(
+  existing: Buffer | undefined,
+  allowShebangless: boolean,
+  spec: ManagedHookSpec,
+): Buffer {
+  const block = Buffer.from(spec.block());
   if (!existing) {
-    return createdScaffold();
+    return createdScaffold(spec);
   }
-  const range = blockRange(existing);
+  const range = blockRange(existing, spec);
   if (
+    spec.hookName === POST_COMMIT_MANAGED_HOOK.hookName &&
     range.kind === "absent" &&
     existing.toString("utf8").startsWith(`#!/bin/sh\n${LEGACY_GLOBAL_OWNED_HEADER}\n`)
   ) {
@@ -357,7 +393,7 @@ function mergedContent(existing: Buffer | undefined, allowShebangless: boolean):
       existing.subarray(0, gateAt),
       existing.subarray(chainAt),
     ]);
-    const shebangEnd = shellInsertionPoint(withoutLegacyGate, allowShebangless);
+    const shebangEnd = shellInsertionPoint(withoutLegacyGate, allowShebangless, spec);
     return Buffer.concat([
       withoutLegacyGate.subarray(0, shebangEnd),
       block,
@@ -366,6 +402,7 @@ function mergedContent(existing: Buffer | undefined, allowShebangless: boolean):
     ]);
   }
   if (
+    spec.hookName === POST_COMMIT_MANAGED_HOOK.hookName &&
     range.kind === "absent" &&
     existing.toString("utf8").startsWith(`#!/bin/sh\n${LEGACY_PRIM_OWNED_HEADER}\n`)
   ) {
@@ -373,12 +410,14 @@ function mergedContent(existing: Buffer | undefined, allowShebangless: boolean):
     if (prefixLength === undefined) {
       throw new Error("unrecognized legacy Prim post-commit invocation");
     }
-    return Buffer.concat([createdScaffold(), existing.subarray(prefixLength)]);
+    return Buffer.concat([createdScaffold(spec), existing.subarray(prefixLength)]);
   }
   if (range.kind !== "absent") {
     const oldCreatedPrefixes = [
-      Buffer.from(`#!/bin/sh\n# ${PRIM_CREATED_MARK}\n\n`),
-      Buffer.from(`#!/bin/sh\n# ${LEGACY_PRIM_CREATED_MARK}\n\n`),
+      Buffer.from(`#!/bin/sh\n# ${spec.createdMark}\n\n`),
+      ...(spec.hookName === POST_COMMIT_MANAGED_HOOK.hookName
+        ? [Buffer.from(`#!/bin/sh\n# ${LEGACY_PRIM_CREATED_MARK}\n\n`)]
+        : []),
     ];
     const oldCreated = oldCreatedPrefixes.some(
       (prefix) =>
@@ -387,10 +426,10 @@ function mergedContent(existing: Buffer | undefined, allowShebangless: boolean):
     if (oldCreated) {
       const suffix = existing.subarray(range.end);
       const tail = suffix.at(0) === 10 ? suffix.subarray(1) : suffix;
-      return Buffer.concat([createdScaffold(), tail]);
+      return Buffer.concat([createdScaffold(spec), tail]);
     }
   }
-  const shebangEnd = shellInsertionPoint(existing, allowShebangless);
+  const shebangEnd = shellInsertionPoint(existing, allowShebangless, spec);
   if (range.kind === "current" && range.start === shebangEnd) return existing;
   let withoutBlock = existing;
   if (range.kind !== "absent") {
@@ -414,16 +453,21 @@ function errorCode(error: unknown): unknown {
     : undefined;
 }
 
-function assertTargetUnchanged(path: string, expected: Buffer | undefined, stat?: Stats): void {
+function assertTargetUnchanged(
+  path: string,
+  expected: Buffer | undefined,
+  spec: ManagedHookSpec,
+  stat?: Stats,
+): void {
   let current: Stats;
   try {
     current = lstatSync(path);
   } catch (error) {
     if (expected === undefined && errorCode(error) === "ENOENT") return;
-    throw new Error(`post-commit hook changed concurrently: ${path}`);
+    throw new Error(`${spec.hookName} hook changed concurrently: ${path}`);
   }
   if (expected === undefined) {
-    throw new Error(`post-commit hook appeared concurrently: ${path}`);
+    throw new Error(`${spec.hookName} hook appeared concurrently: ${path}`);
   }
   if (
     !current.isFile() ||
@@ -434,7 +478,7 @@ function assertTargetUnchanged(path: string, expected: Buffer | undefined, stat?
     (current.mode & 0o7777) !== ((stat?.mode ?? 0) & 0o7777) ||
     !readHookFile(path).equals(expected)
   ) {
-    throw new Error(`post-commit hook changed concurrently: ${path}`);
+    throw new Error(`${spec.hookName} hook changed concurrently: ${path}`);
   }
 }
 
@@ -442,6 +486,7 @@ function rewriteHookAtomically(
   path: string,
   next: Buffer,
   expected: Buffer | undefined,
+  spec: ManagedHookSpec,
   stat?: Stats,
 ): void {
   const parent = dirname(path);
@@ -464,7 +509,7 @@ function rewriteHookAtomically(
     fd = undefined;
     // The same-directory rename is atomic; this last-moment identity+content
     // guard prevents a concurrent editor from being silently overwritten.
-    assertTargetUnchanged(path, expected, stat);
+    assertTargetUnchanged(path, expected, spec, stat);
     renameSync(temporary, path);
   } finally {
     if (fd !== undefined) {
@@ -485,8 +530,13 @@ function rewriteHookAtomically(
   }
 }
 
-function unlinkHookUnchanged(path: string, expected: Buffer, stat: Stats): void {
-  assertTargetUnchanged(path, expected, stat);
+function unlinkHookUnchanged(
+  path: string,
+  expected: Buffer,
+  stat: Stats,
+  spec: ManagedHookSpec,
+): void {
+  assertTargetUnchanged(path, expected, spec, stat);
   unlinkSync(path);
 }
 
@@ -497,37 +547,38 @@ export function ensureEffectivePostCommitHook(cwd: string = process.cwd()): {
   kind: EffectivePostCommitHook["kind"];
 } {
   const target = resolveEffectivePostCommitHook(cwd);
-  return ensureTarget(target);
+  return ensureTarget(target, POST_COMMIT_MANAGED_HOOK);
 }
 
 function ensureTarget(
-  target: EffectivePostCommitHook,
+  target: EffectiveManagedHook,
+  spec: ManagedHookSpec,
   initialContent?: string,
 ): {
   path: string;
   changed: boolean;
-  kind: EffectivePostCommitHook["kind"];
+  kind: EffectiveManagedHook["kind"];
 } {
-  assertUsableHuskyDispatcher(target);
-  const stat = assertSafeFile(target.hookPath);
+  assertUsableHuskyDispatcher(target, spec);
+  const stat = assertSafeFile(target.hookPath, spec);
   if (stat && target.kind === "direct" && (stat.mode & 0o100) === 0) {
-    throw new Error(`existing post-commit hook is not executable: ${target.hookPath}`);
+    throw new Error(`existing ${spec.hookName} hook is not executable: ${target.hookPath}`);
   }
   const existing = stat ? readHookFile(target.hookPath) : undefined;
   const next =
     !existing && initialContent !== undefined
       ? Buffer.from(initialContent)
-      : mergedContent(existing, target.kind === "husky_v9");
+      : mergedContent(existing, target.kind === "husky_v9", spec);
   if (!existing && initialContent !== undefined) {
-    const shebangEnd = shellInsertionPoint(next, target.kind === "husky_v9");
-    const range = blockRange(next);
+    const shebangEnd = shellInsertionPoint(next, target.kind === "husky_v9", spec);
+    const range = blockRange(next, spec);
     if (range.kind !== "current" || range.start !== shebangEnd) {
-      throw new Error("invalid initial Prim post-commit scaffold");
+      throw new Error(`invalid initial Prim ${spec.hookName} scaffold`);
     }
   }
   const contentChanged = !existing || !next.equals(existing);
   if (contentChanged) {
-    rewriteHookAtomically(target.hookPath, next, existing, stat);
+    rewriteHookAtomically(target.hookPath, next, existing, spec, stat);
   }
   return { path: target.hookPath, changed: contentChanged || !stat, kind: target.kind };
 }
@@ -549,6 +600,7 @@ export function ensurePostCommitHookAtPath(
       hookPath: absolute,
       kind: "direct",
     },
+    POST_COMMIT_MANAGED_HOOK,
     initialContent,
   );
   return { ...result, kind: "direct" };
@@ -558,9 +610,13 @@ export function ensurePostCommitHookAtPath(
 export function inspectEffectivePostCommitHook(
   cwd: string = process.cwd(),
 ): PostCommitHookInspection {
-  const target = resolveEffectivePostCommitHook(cwd);
+  return inspectEffectiveManagedHook(POST_COMMIT_MANAGED_HOOK, cwd);
+}
+
+function inspectEffectiveManagedHook(spec: ManagedHookSpec, cwd: string): ManagedHookInspection {
+  const target = resolveEffectiveManagedHook(spec, cwd);
   try {
-    assertUsableHuskyDispatcher(target);
+    assertUsableHuskyDispatcher(target, spec);
   } catch (error) {
     const missing =
       error instanceof Error &&
@@ -575,7 +631,7 @@ export function inspectEffectivePostCommitHook(
   }
   let stat: Stats | undefined;
   try {
-    stat = assertSafeFile(target.hookPath);
+    stat = assertSafeFile(target.hookPath, spec);
   } catch {
     return {
       ...target,
@@ -595,12 +651,12 @@ export function inspectEffectivePostCommitHook(
     };
   }
   // Husky invokes its public script through the executable generated
-  // dispatcher (`sh ../post-commit`), so a tracked 100644 public file is valid.
+  // dispatcher (`sh ../<hook>`), so a tracked 100644 public file is valid.
   const executable = target.kind === "husky_v9" || (stat.mode & 0o100) !== 0;
   try {
     const content = readHookFile(target.hookPath);
-    const shebangEnd = shellInsertionPoint(content, target.kind === "husky_v9");
-    const range = blockRange(content);
+    const shebangEnd = shellInsertionPoint(content, target.kind === "husky_v9", spec);
+    const range = blockRange(content, spec);
     const positioned = range.kind !== "absent" && range.start === shebangEnd;
     const current = range.kind === "current" && positioned;
     return {
@@ -619,7 +675,7 @@ export function inspectEffectivePostCommitHook(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const reason: PostCommitHookInspection["reason"] = message.includes("binary")
+    const reason: ManagedHookInspection["reason"] = message.includes("binary")
       ? "binary"
       : message.includes("unsupported")
         ? "unsupported_interpreter"
@@ -641,7 +697,7 @@ export function uninstallEffectivePostCommitHook(cwd: string = process.cwd()): {
   removedFile: boolean;
 } {
   const target = resolveEffectivePostCommitHook(cwd);
-  return uninstallTarget(target);
+  return uninstallTarget(target, POST_COMMIT_MANAGED_HOOK);
 }
 
 function projectHooksPathIsConfigured(gitRoot: string): boolean {
@@ -690,59 +746,69 @@ export function uninstallProjectPostCommitHook(cwd: string = process.cwd()): {
   );
 }
 
-function uninstallTarget(target: EffectivePostCommitHook): {
+function uninstallTarget(
+  target: EffectiveManagedHook,
+  spec: ManagedHookSpec,
+): {
   path: string;
   changed: boolean;
   removedFile: boolean;
 } {
-  const stat = assertSafeFile(target.hookPath);
+  const stat = assertSafeFile(target.hookPath, spec);
   if (!stat) return { path: target.hookPath, changed: false, removedFile: false };
   const existing = readHookFile(target.hookPath);
-  const range = blockRange(existing);
+  const range = blockRange(existing, spec);
   if (range.kind === "absent") {
-    if (existing.toString("utf8").startsWith(`#!/bin/sh\n${LEGACY_PRIM_OWNED_HEADER}\n`)) {
+    if (
+      spec.hookName === POST_COMMIT_MANAGED_HOOK.hookName &&
+      existing.toString("utf8").startsWith(`#!/bin/sh\n${LEGACY_PRIM_OWNED_HEADER}\n`)
+    ) {
       const prefixLength = legacyProjectPrefixLength(existing);
       if (prefixLength === undefined) {
         throw new Error("unrecognized legacy Prim post-commit invocation");
       }
       const tail = existing.subarray(prefixLength);
       if (tail.length === 0) {
-        unlinkHookUnchanged(target.hookPath, existing, stat);
+        unlinkHookUnchanged(target.hookPath, existing, stat, spec);
         return { path: target.hookPath, changed: true, removedFile: true };
       }
       rewriteHookAtomically(
         target.hookPath,
         Buffer.concat([Buffer.from("#!/bin/sh\n"), tail]),
         existing,
+        spec,
         stat,
       );
       return { path: target.hookPath, changed: true, removedFile: false };
     }
     return { path: target.hookPath, changed: false, removedFile: false };
   }
-  const shebangEnd = shellInsertionPoint(existing, target.kind === "husky_v9");
+  const shebangEnd = shellInsertionPoint(existing, target.kind === "husky_v9", spec);
   const suffix = existing.subarray(range.end);
-  const createdSuffix = Buffer.from(`\n# ${PRIM_CREATED_MARK}\n`);
+  const createdSuffix = Buffer.from(`\n# ${spec.createdMark}\n`);
   if (
     range.start === shebangEnd &&
     suffix.subarray(0, createdSuffix.length).equals(createdSuffix)
   ) {
     const tail = suffix.subarray(createdSuffix.length);
     if (tail.length === 0) {
-      unlinkHookUnchanged(target.hookPath, existing, stat);
+      unlinkHookUnchanged(target.hookPath, existing, stat, spec);
       return { path: target.hookPath, changed: true, removedFile: true };
     }
     rewriteHookAtomically(
       target.hookPath,
       Buffer.concat([existing.subarray(0, shebangEnd), tail]),
       existing,
+      spec,
       stat,
     );
     return { path: target.hookPath, changed: true, removedFile: false };
   }
   const createdPrefixes = [
-    Buffer.from(`#!/bin/sh\n# ${PRIM_CREATED_MARK}\n\n`),
-    Buffer.from(`#!/bin/sh\n# ${LEGACY_PRIM_CREATED_MARK}\n\n`),
+    Buffer.from(`#!/bin/sh\n# ${spec.createdMark}\n\n`),
+    ...(spec.hookName === POST_COMMIT_MANAGED_HOOK.hookName
+      ? [Buffer.from(`#!/bin/sh\n# ${LEGACY_PRIM_CREATED_MARK}\n\n`)]
+      : []),
   ];
   const createdPrefix = createdPrefixes.find(
     (prefix) => range.start === prefix.length && existing.subarray(0, prefix.length).equals(prefix),
@@ -750,13 +816,14 @@ function uninstallTarget(target: EffectivePostCommitHook): {
   if (createdPrefix) {
     const tail = suffix.at(0) === 10 ? suffix.subarray(1) : suffix;
     if (tail.length === 0) {
-      unlinkHookUnchanged(target.hookPath, existing, stat);
+      unlinkHookUnchanged(target.hookPath, existing, stat, spec);
       return { path: target.hookPath, changed: true, removedFile: true };
     }
     rewriteHookAtomically(
       target.hookPath,
       Buffer.concat([Buffer.from("#!/bin/sh\n"), tail]),
       existing,
+      spec,
       stat,
     );
     return { path: target.hookPath, changed: true, removedFile: false };
@@ -765,7 +832,7 @@ function uninstallTarget(target: EffectivePostCommitHook): {
     existing.subarray(0, range.start),
     range.start === shebangEnd && suffix.at(0) === 10 ? suffix.subarray(1) : suffix,
   ]);
-  rewriteHookAtomically(target.hookPath, next, existing, stat);
+  rewriteHookAtomically(target.hookPath, next, existing, spec, stat);
   return { path: target.hookPath, changed: true, removedFile: false };
 }
 
@@ -775,10 +842,13 @@ export function uninstallPostCommitHookAtPath(hookPath: string): {
   removedFile: boolean;
 } {
   const absolute = resolve(hookPath);
-  return uninstallTarget({
-    gitRoot: dirname(dirname(absolute)),
-    hooksDir: dirname(absolute),
-    hookPath: absolute,
-    kind: "direct",
-  });
+  return uninstallTarget(
+    {
+      gitRoot: dirname(dirname(absolute)),
+      hooksDir: dirname(absolute),
+      hookPath: absolute,
+      kind: "direct",
+    },
+    POST_COMMIT_MANAGED_HOOK,
+  );
 }
