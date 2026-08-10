@@ -6,6 +6,7 @@
  *   prim decisions show <idOrShortId>
  *   prim decisions cascade <idOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
+ *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
  *                          --confidence|--reversibility|--files]
@@ -14,9 +15,10 @@
  * attaches to this same group. AX contract throughout: STDOUT is always
  * machine-readable JSON, STDERR is verdict-first human text, exit 0 on
  * success (including an idempotent no-op such as already-acknowledged);
- * non-zero only on auth/network failure or not-found for show/cascade/
- * confirm. The `checkAffectedDecisions` helper backs both `check` and the
- * pre-commit hook (src/hooks/pre-commit.ts).
+ * non-zero on auth/network/contract failure, caller-invalid repair review,
+ * or not-found for show/cascade/confirm/repairs. The `checkAffectedDecisions`
+ * helper backs both `check` and the pre-commit hook
+ * (src/hooks/pre-commit.ts).
  */
 import { type Command, Option } from "commander";
 import { HttpError } from "../client.js";
@@ -44,6 +46,20 @@ import {
 } from "../decisions/link.js";
 import { fetchRecent, formatRecentHuman, formatRecentJson } from "../decisions/recent.js";
 import {
+  RepairAuthorizationError,
+  RepairEndpointVersionError,
+  RepairListContractError,
+  RepairProposalNotFoundError,
+  type RepairResolutionAction,
+  RepairResolutionInputError,
+  fetchRepairs,
+  formatRepairResolutionHuman,
+  formatRepairResolutionJson,
+  formatRepairsHuman,
+  formatRepairsJson,
+  resolveRepair,
+} from "../decisions/repairs.js";
+import {
   DecisionNotFoundError,
   fetchShow,
   formatShowHuman,
@@ -56,11 +72,41 @@ import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
+const EXIT_FAILURE = 1;
 // A caller-actionable 4xx from a write → exit 2: `create`/`reconcile` map any
 // 4xx (bad enum, org-unbound) here, while `link`/`unlink`/`confirm` map only the
 // specific rejections (self-loop, cycle, ambiguous) and let an org-unbound 403
 // fall through to the global handler as an auth failure (exit 1).
 const EXIT_USAGE = 2;
+
+function handleRepairCommandError(error: unknown): boolean {
+  if (error instanceof RepairProposalNotFoundError) {
+    console.error(`[prim] ${error.message}`);
+    process.exitCode = EXIT_NOT_FOUND;
+    return true;
+  }
+  if (error instanceof RepairResolutionInputError) {
+    console.error(`[prim] ${error.message}`);
+    process.exitCode = EXIT_USAGE;
+    return true;
+  }
+  if (
+    error instanceof RepairAuthorizationError ||
+    (error instanceof HttpError && error.status === 403)
+  ) {
+    console.error(
+      `[prim] ${error instanceof RepairAuthorizationError ? error.message : "Not authorized to review commit repairs; active organization membership and current repository authorization are required"}`,
+    );
+    process.exitCode = EXIT_FAILURE;
+    return true;
+  }
+  if (error instanceof RepairEndpointVersionError || error instanceof RepairListContractError) {
+    console.error(`[prim] ${error.message}`);
+    process.exitCode = EXIT_FAILURE;
+    return true;
+  }
+  return false;
+}
 
 const CREATE_INACTIVE_PROMPT =
   "[prim] Decision ingestion is disabled here. Create this one Decision without enabling passive ingestion?";
@@ -194,6 +240,64 @@ export function registerDecisionsCommands(program: Command): void {
         throw err;
       }
     });
+
+  const repairs = decisions
+    .command("repairs")
+    .description("Review human-gated commit rewrite repair proposals")
+    .action(runRepairsList);
+
+  async function runRepairsList(): Promise<void> {
+    try {
+      const result = await fetchRepairs();
+      console.error(formatRepairsHuman(result));
+      console.log(formatRepairsJson(result));
+    } catch (error) {
+      if (handleRepairCommandError(error)) return;
+      throw error;
+    }
+  }
+
+  repairs
+    .command("list")
+    .description("List review-visible commit rewrite repair proposals")
+    .action(runRepairsList);
+
+  const registerRepairResolution = (action: RepairResolutionAction): void => {
+    const resolution = repairs
+      .command(`${action} <proposalId> <proposedSha>`)
+      .description(
+        action === "confirm"
+          ? "Confirm the exact reviewed decision set and queue fresh landing verification"
+          : "Reject a proposal and remember its proposed SHA",
+      );
+    if (action === "confirm") {
+      resolution.option(
+        "--review-token <token>",
+        "64-character token printed with the complete reviewed decision set (required)",
+      );
+    }
+    resolution.action(
+      async (proposalId: string, proposedSha: string, options: { reviewToken?: string }) => {
+        try {
+          const result = await resolveRepair(proposalId, proposedSha, action, options.reviewToken);
+          console.error(formatRepairResolutionHuman(result));
+          console.log(formatRepairResolutionJson(result));
+          if (
+            result.outcome.status === "review_too_large" ||
+            result.outcome.status === "stale_review"
+          ) {
+            process.exitCode = EXIT_USAGE;
+          }
+        } catch (error) {
+          if (handleRepairCommandError(error)) return;
+          throw error;
+        }
+      },
+    );
+  };
+
+  registerRepairResolution("confirm");
+  registerRepairResolution("reject");
 
   decisions
     .command("create")
