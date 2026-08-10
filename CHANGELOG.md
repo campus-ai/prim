@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.67](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.66...v0.1.0-alpha.67) (2026-08-10)
+
+
+### Features
+
+* add decisions repair commands ([#217](https://github.com/campus-ai/prim/issues/217)) ([6ad3611](https://github.com/campus-ai/prim/commit/6ad3611bb2980d54b25d30b45e32433923453145))
+
 ## [0.1.0-alpha.66](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.65...v0.1.0-alpha.66) (2026-08-10)
 
 
