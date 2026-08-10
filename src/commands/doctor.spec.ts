@@ -14,6 +14,7 @@ import {
   classifyAuthCredential,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
   classifyRepositoryBinding,
@@ -243,6 +244,42 @@ describe("effective post-commit diagnostics", () => {
       name: "post-commit",
       status: "fail",
       detail: expect.stringContaining("not_executable"),
+    });
+  });
+});
+
+describe("effective post-rewrite diagnostics", () => {
+  const inspection = {
+    gitRoot: "/repo",
+    hooksDir: "/repo/.git/hooks",
+    hookPath: "/repo/.git/hooks/post-rewrite",
+    kind: "direct" as const,
+    covered: true,
+    executable: true,
+    current: true,
+  };
+
+  it("reports independent healthy coverage", () => {
+    expect(classifyManagedHook("post-rewrite", inspection)).toMatchObject({
+      name: "post-rewrite",
+      status: "ok",
+      detail: expect.stringContaining("post-rewrite"),
+    });
+  });
+
+  it("fails independently when the effective dispatcher is missing", () => {
+    expect(
+      classifyManagedHook("post-rewrite", {
+        ...inspection,
+        covered: false,
+        executable: false,
+        current: false,
+        reason: "husky_dispatcher_missing",
+      }),
+    ).toMatchObject({
+      name: "post-rewrite",
+      status: "fail",
+      detail: expect.stringContaining("husky_dispatcher_missing"),
     });
   });
 });

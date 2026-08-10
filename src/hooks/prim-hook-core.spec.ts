@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  canonicalRewritePairs,
   commitAttributionFromEnvironment,
   postToolInvocationId,
   shouldFlushAfter,
   toCommitMove,
   toMove,
+  toRewriteMove,
   toolOutcomeFor,
 } from "./prim-hook-core.js";
 
@@ -393,5 +395,124 @@ describe("toCommitMove", () => {
     expect(move.envelopeVersion).toBe(1);
     expect(move.sessionId).toBe("");
     expect("producer" in move).toBe(false);
+  });
+});
+
+describe("toRewriteMove", () => {
+  const workspaceId = "d84b97dc-b69f-4b59-9d0a-f6b3436239a4";
+  const repoSyncId = "repoSync123";
+  const oldA = "a".repeat(40);
+  const oldB = "b".repeat(40);
+  const landed = "c".repeat(40);
+  const context = {
+    repository: { repoRoot: "/repo", repoKey: "repo_v1_key" },
+    repoFullName: "campus-ai/primitive",
+    repoSyncId,
+    workspaceId,
+    capturedAt: 1_785_000_000_123,
+  };
+
+  it("canonicalizes case/order, drops self-pairs, and preserves many-to-one rewrites", () => {
+    expect(
+      canonicalRewritePairs([
+        { oldSha: oldB.toUpperCase(), newSha: landed.toUpperCase() },
+        { oldSha: landed, newSha: landed },
+        { oldSha: oldA, newSha: landed },
+        { oldSha: oldB, newSha: landed },
+      ]),
+    ).toEqual([
+      { oldSha: oldA, newSha: landed },
+      { oldSha: oldB, newSha: landed },
+    ]);
+  });
+
+  it("pins the V1 envelope and deterministic move identity contract", () => {
+    const [move] = toRewriteMove(
+      { source: "rebase", pairs: [{ oldSha: oldA, newSha: landed }], branch: "feature" },
+      "1.2.3",
+      "/repo",
+      context,
+    );
+    expect(move).toEqual({
+      moveId: "rewrite:v1:7ee2319a14e49373591561f4ced6145141ccaa919571774d6de76a9627cba8c5",
+      capturedAt: 1_785_000_000_123,
+      sessionId: "",
+      eventType: "git.rewrite",
+      payload: {
+        kind: "git.rewrite",
+        source: "rebase",
+        pairs: [{ oldSha: oldA, newSha: landed }],
+        branch: "feature",
+      },
+      env: {
+        cwd: "/repo",
+        cliVersion: "1.2.3",
+        osPlatform: process.platform,
+        repoRoot: "/repo",
+        repoKey: "repo_v1_key",
+        gitRoot: "/repo",
+        repoFullName: "campus-ai/primitive",
+        repoSyncId,
+        workspaceId,
+      },
+      envelopeVersion: 1,
+    });
+    expect(move).not.toHaveProperty("producer");
+  });
+
+  it("excludes branch and capture time while including source and pair identity", () => {
+    const rewrite = { source: "amend" as const, pairs: [{ oldSha: oldA, newSha: landed }] };
+    const [first] = toRewriteMove(rewrite, "1.2.3", "/repo", context);
+    const [replay] = toRewriteMove({ ...rewrite, branch: "renamed" }, "9.9.9", "/different-cwd", {
+      ...context,
+      capturedAt: 1_785_000_999_999,
+    });
+    const [differentSource] = toRewriteMove(
+      { ...rewrite, source: "rebase" },
+      "1.2.3",
+      "/repo",
+      context,
+    );
+    expect(replay.moveId).toBe(first.moveId);
+    expect(differentSource.moveId).not.toBe(first.moveId);
+  });
+
+  it("chunks 40 pairs per move after deterministic sorting", () => {
+    const pairs = Array.from({ length: 81 }, (_, index) => ({
+      oldSha: index.toString(16).padStart(40, "0"),
+      newSha: (index + 1_000).toString(16).padStart(40, "0"),
+    })).reverse();
+    const moves = toRewriteMove({ source: "rebase", pairs }, "1.2.3", "/repo", context);
+    expect(moves).toHaveLength(3);
+    expect((moves[0].payload as { pairs: unknown[] }).pairs).toHaveLength(40);
+    expect((moves[1].payload as { pairs: unknown[] }).pairs).toHaveLength(40);
+    expect((moves[2].payload as { pairs: unknown[] }).pairs).toHaveLength(1);
+    expect(moves.map((move) => move.moveId)).toEqual([
+      ...new Set(moves.map((move) => move.moveId)),
+    ]);
+  });
+
+  it("truncates canonically to 2,000 pairs independent of input order", () => {
+    const pairs = Array.from({ length: 2_005 }, (_, index) => ({
+      oldSha: index.toString(16).padStart(40, "0"),
+      newSha: (index + 10_000).toString(16).padStart(40, "0"),
+    }));
+    const forward = toRewriteMove({ source: "rebase", pairs }, "x", "/repo", context);
+    const reverse = toRewriteMove(
+      { source: "rebase", pairs: [...pairs].reverse() },
+      "x",
+      "/repo",
+      context,
+    );
+    expect(forward).toHaveLength(50);
+    expect(reverse.map((move) => move.moveId)).toEqual(forward.map((move) => move.moveId));
+  });
+
+  it("fails closed without both repository and worktree identities", () => {
+    const rewrite = { source: "amend" as const, pairs: [{ oldSha: oldA, newSha: landed }] };
+    expect(toRewriteMove(rewrite, "x", "/repo", { ...context, repoSyncId: undefined })).toEqual([]);
+    expect(toRewriteMove(rewrite, "x", "/repo", { ...context, workspaceId: undefined })).toEqual(
+      [],
+    );
   });
 });

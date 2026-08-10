@@ -11,7 +11,10 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
-import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
+import {
+  ensureEffectivePostCommitHook,
+  ensureEffectivePostRewriteHook,
+} from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
@@ -59,6 +62,11 @@ async function activeProjectRoot(cwd: string): Promise<string | null> {
         ensureEffectivePostCommitHook(root);
       } catch {
         // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
+      }
+      try {
+        ensureEffectivePostRewriteHook(root);
+      } catch {
+        // Husky may not dispatch post-rewrite; doctor reports the degradation.
       }
     }
     try {

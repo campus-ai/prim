@@ -11,7 +11,10 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { gitToplevel } from "../lib/git.js";
-import { ensureEffectivePostCommitHook } from "../lib/post-commit-hook.js";
+import {
+  ensureEffectivePostCommitHook,
+  ensureEffectivePostRewriteHook,
+} from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { REAUTH_NOTICE } from "./reauth-notice.js";
@@ -45,7 +48,10 @@ vi.mock("../lib/activation.js", () => ({
   setRepoActive: vi.fn(),
 }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn() }));
-vi.mock("../lib/post-commit-hook.js", () => ({ ensureEffectivePostCommitHook: vi.fn() }));
+vi.mock("../lib/post-commit-hook.js", () => ({
+  ensureEffectivePostCommitHook: vi.fn(),
+  ensureEffectivePostRewriteHook: vi.fn(),
+}));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../lib/workspace-id.js", () => ({ getOrCreateWorkspaceId: vi.fn() }));
 
@@ -71,6 +77,11 @@ beforeEach(() => {
   vi.mocked(repoActiveFlag).mockReturnValue("true");
   vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
     path: "/repo/.git/hooks/post-commit",
+    changed: false,
+    kind: "direct",
+  });
+  vi.mocked(ensureEffectivePostRewriteHook).mockReturnValue({
+    path: "/repo/.git/hooks/post-rewrite",
     changed: false,
     kind: "direct",
   });
@@ -129,6 +140,7 @@ describe("processSessionStart", () => {
     });
     expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
     expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
     expect(gitToplevel).toHaveBeenCalledWith("/repo");
     expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", {
       includeProject: true,
@@ -498,6 +510,19 @@ describe("processSessionStart", () => {
 
     expect(result.output).toEqual({});
     expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
+  });
+
+  it("repairs post-rewrite independently when post-commit refresh fails", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
+      throw new Error("malformed markers");
+    });
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output).toEqual({});
+    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
   });
 
   it.each(["not json", "null", "[]", '"scalar"'])(
