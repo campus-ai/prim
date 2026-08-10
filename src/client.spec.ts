@@ -122,6 +122,36 @@ describe("client credential store", () => {
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/mcp/broker/refresh");
   });
 
+  it("preserves a structured non-2xx response body on HttpError", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse({ status: "stale_review" }, 409))),
+    );
+    const { getClient } = await import("./client.js");
+
+    await expect(getClient().post("/api/cli/decisions/repairs/resolve", {})).rejects.toMatchObject({
+      status: 409,
+      message: "HTTP 409",
+      body: { status: "stale_review" },
+    });
+  });
+
+  it("uses a generic message and null body for a non-JSON HTTP failure", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("upstream unavailable", { status: 502 }))),
+    );
+    const { getClient } = await import("./client.js");
+
+    await expect(getClient().get("/api/cli/decisions/repairs")).rejects.toMatchObject({
+      status: 502,
+      message: "HTTP 502",
+      body: null,
+    });
+  });
+
   it("returns undefined when no expiry metadata exists", async () => {
     const { getTokenExpiresAt } = await import("./client.js");
     expect(getTokenExpiresAt()).toBeUndefined();

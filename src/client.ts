@@ -413,11 +413,13 @@ export function refreshToken(options: RefreshOptions = {}): Promise<string | und
 
 export class HttpError extends Error {
   readonly status: number;
+  readonly body: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = "HttpError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -508,8 +510,14 @@ async function request(
     if (response.status === 401) {
       throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
     }
-    const errorBody = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new HttpError(response.status, errorBody?.error ?? `HTTP ${response.status}`);
+    const errorBody: unknown = await response.json().catch(() => null);
+    const errorRecord =
+      typeof errorBody === "object" && errorBody !== null && !Array.isArray(errorBody)
+        ? (errorBody as Record<string, unknown>)
+        : undefined;
+    const message =
+      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
+    throw new HttpError(response.status, message, errorBody);
   }
   return response.json();
 }
