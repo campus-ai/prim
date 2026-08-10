@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.66](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.65...v0.1.0-alpha.66) (2026-08-10)
+
+
+### Features
+
+* capture git rewrite lineage ([b759998](https://github.com/campus-ai/prim/commit/b759998e7fbd598b60d5e19989595bdfcca67a95))
+
 ## [0.1.0-alpha.65](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.64...v0.1.0-alpha.65) (2026-08-05)
 
 
