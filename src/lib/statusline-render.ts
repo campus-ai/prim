@@ -20,31 +20,50 @@ export interface StatusSnapshot {
 
 const STATUSLINE_NAME_CAP = 3;
 
+export interface StatuslineRenderOptions {
+  /**
+   * Codex has no persistent statusline surface, so its hook-delivered report
+   * keeps the repo activation state visible even while daemon health is down.
+   * The Claude statusline and daemon raw protocol retain their historical
+   * output when this is omitted.
+   */
+  includeIngestionWhenUnavailable?: boolean;
+}
+
 /** Render a status snapshot without performing socket, filesystem, or Git I/O. */
 export function formatStatusline(
   version: string,
   snapshot: StatusSnapshot | null,
   resolveIngestionStatus: () => DecisionIngestionStatus,
+  options: StatuslineRenderOptions = {},
 ): string {
+  const ingestionSuffix = (status: DecisionIngestionStatus | undefined): string =>
+    status === undefined ? "" : ` · Decision ingestion ${status}`;
+  const ingestionStatus =
+    snapshot === null || snapshot.healthy === false
+      ? options.includeIngestionWhenUnavailable
+        ? resolveIngestionStatus()
+        : undefined
+      : resolveIngestionStatus();
+
   if (!snapshot) {
-    return `primitive ${version} (daemon: down)`;
+    return `primitive ${version} (daemon: down${ingestionSuffix(ingestionStatus)})`;
   }
   if (snapshot.healthy === false) {
     if (snapshot.needsReauth) {
-      return `primitive ${version} (daemon: paused · run \`prim auth login\`)`;
+      return `primitive ${version} (daemon: paused · run \`prim auth login\`${ingestionSuffix(ingestionStatus)})`;
     }
     if (snapshot.ingestion?.healthy === false) {
       const pending = snapshot.ingestion.pendingCount;
       const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
-      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""})`;
+      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""}${ingestionSuffix(ingestionStatus)})`;
     }
     if (snapshot.heartbeat?.healthy === false) {
-      return `primitive ${version} (daemon: degraded · presence: unavailable)`;
+      return `primitive ${version} (daemon: degraded · presence: unavailable${ingestionSuffix(ingestionStatus)})`;
     }
-    return `primitive ${version} (daemon: starting)`;
+    return `primitive ${version} (daemon: starting${ingestionSuffix(ingestionStatus)})`;
   }
 
-  const ingestionStatus = resolveIngestionStatus();
   if (snapshot.envMismatch) {
     return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other env)`;
   }

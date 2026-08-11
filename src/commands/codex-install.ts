@@ -21,11 +21,12 @@
  *   - prim-session-start on SessionStart, so the daemon's presence reflects it.
  *
  * Codex divergences from the Claude surface:
- *   - the target is a dedicated `.codex/hooks.json` (not a settings.json; no statusLine).
+ *   - the target is a dedicated `.codex/hooks.json` (not a settings.json); the
+ *     status report is delivered through supported hook context fields.
  *   - the edit tool is `apply_patch`, so the gate/ingest hooks match it (not
  *     Edit|Write|MultiEdit).
- *   - no SessionEnd (Codex fires no such event) and no statusLine (Codex has no
- *     statusLine hook — SessionStart developer-context is the analog).
+ *   - no SessionEnd (Codex fires no such event) and no native status footer;
+ *     SessionStart/Decision-hook context carries the live report instead.
  *   - Codex requires `/hooks` trust review before non-managed hooks fire.
  *
  * AX contract (matches `prim claude`): STDOUT is the JSON result; STDERR is the

@@ -34,6 +34,7 @@ import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
+import { appendCodexContext, prepareCodexContext } from "./codex-context.js";
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
@@ -102,8 +103,30 @@ function readStdin(): Promise<string> {
   });
 }
 
-function emit(): void {
-  process.stdout.write("{}\n");
+export type PostToolUseHookOutput = {
+  systemMessage?: string;
+  hookSpecificOutput?: {
+    hookEventName: "PostToolUse";
+    additionalContext?: string;
+  };
+};
+
+async function emit(output: PostToolUseHookOutput = {}): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    try {
+      process.stdout.write(`${JSON.stringify(output)}\n`, (error) => resolve(!error));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function emitWithAcknowledgment(
+  output: PostToolUseHookOutput,
+  acknowledge?: (handedOff: boolean) => Promise<void>,
+): Promise<void> {
+  const handedOff = await emit(output);
+  await acknowledge?.(handedOff);
 }
 
 function debug(msg: string): void {
@@ -119,14 +142,14 @@ async function main(): Promise<void> {
   try {
     raw = await readStdin();
   } catch {
-    emit();
+    await emit();
     return;
   }
   let parsed: Record<string, unknown>;
   try {
     parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   } catch {
-    emit();
+    await emit();
     return;
   }
   let envelope = parsed as PostToolUseEnvelope;
@@ -138,17 +161,17 @@ async function main(): Promise<void> {
     envelope.hook_event_name === "post_approval_response" &&
     toolOutcomeFor(parsed, agent) === "prevented";
   if (!isToolResult && !isHermesDenial) {
-    emit();
+    await emit();
     return;
   }
   const invocationId = postToolInvocationId(parsed, agent);
   if (isHermesDenial && !invocationId) {
-    emit();
+    await emit();
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   if (!isHermesDenial && !editingToolsFor(agent).has(toolName)) {
-    emit();
+    await emit();
     return;
   }
   if (
@@ -161,7 +184,7 @@ async function main(): Promise<void> {
     envelope = parsed as PostToolUseEnvelope;
   }
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
-    emit();
+    await emit();
     return;
   }
   // Derive identity + env.cwd from the ORIGINAL envelope, then scrub only the
@@ -169,12 +192,12 @@ async function main(): Promise<void> {
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
   if (!isRepoActiveForCapture(cwd)) {
-    emit();
+    await emit();
     return;
   }
   const resolvedRepository = resolveRepositoryContext(cwd);
   if (!resolvedRepository) {
-    emit();
+    await emit();
     return;
   }
   const repository = { ...resolvedRepository, repoSyncId: repoSyncId(cwd) };
@@ -193,11 +216,11 @@ async function main(): Promise<void> {
   // real tool-result path.
   if (!isHermesDenial) {
     if (resolution.shellMutation === "none") {
-      emit();
+      await emit();
       return;
     }
     if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
-      emit();
+      await emit();
       return;
     }
   }
@@ -219,6 +242,7 @@ async function main(): Promise<void> {
   // ingestion gap and a successful direct delivery deduplicates safely when
   // the daemon eventually drains the journal.
   const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
+  let verdictFooter = false;
   try {
     const result = await deliverPostToolMove(move, orgId);
     debug(`durably ingested ${move.moveId} (${toolName})`);
@@ -226,14 +250,27 @@ async function main(): Promise<void> {
     // bypass-correlation context (the user just completed a reconcile within
     // the server-side footer window). It rides STDERR as a human signal.
     if (isVerdictFooterContext(result.verdictFooter)) {
+      verdictFooter = true;
       process.stderr.write(`${renderVerdictFooter(result.verdictFooter)}\n`);
     }
   } catch (err) {
     debug(`ingest failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  emit();
+  if (agent === "codex" && verdictFooter) {
+    try {
+      const context = await prepareCodexContext({
+        cwd,
+        sessionId: envelope.session_id,
+      });
+      await emitWithAcknowledgment(appendCodexContext({}, context.context), context.acknowledge);
+      return;
+    } catch {
+      // The existing STDERR verdict remains the authoritative user signal.
+    }
+  }
+  await emit();
 }
 
-main().catch(() => {
-  emit();
+main().catch(async () => {
+  await emit();
 });

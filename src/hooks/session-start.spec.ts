@@ -20,7 +20,6 @@ describe("SessionStart entrypoint", () => {
   it("lets the core start its feedback deadline after stdin collection", async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     vi.mocked(parseAgent).mockReturnValue("claude_code");
-    vi.mocked(processSessionStart).mockResolvedValue({ output: {}, acknowledge: undefined });
 
     const handlers = new Map<string, (...args: unknown[]) => void>();
     vi.spyOn(process.stdin, "on").mockImplementation(((event: string, listener: () => void) => {
@@ -34,6 +33,8 @@ describe("SessionStart entrypoint", () => {
       return process.stdin;
     }) as typeof process.stdin.on);
 
+    const acknowledge = vi.fn();
+    vi.mocked(processSessionStart).mockResolvedValue({ output: {}, acknowledge });
     await import("./session-start.js");
     await vi.waitFor(() => expect(handoffHookOutput).toHaveBeenCalledOnce());
 
@@ -42,5 +43,6 @@ describe("SessionStart entrypoint", () => {
       '{"hook_event_name":"SessionStart"}',
       "claude_code",
     );
+    expect(handoffHookOutput).toHaveBeenCalledWith({}, acknowledge);
   });
 });

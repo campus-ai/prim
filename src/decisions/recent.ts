@@ -31,6 +31,8 @@ export interface DecisionFeedRow {
   id: string;
   shortId: string | undefined;
   intent: string;
+  /** Present on newer feeds; older feeds contain only change Decisions. */
+  intentKind?: string;
   rationale: string | undefined;
   area: string | undefined;
   producerKind: string | undefined;
@@ -112,6 +114,8 @@ export const RECENT_TIMEOUT_MS = 10_000;
 
 export interface RecentDeps {
   getClient: () => CliClient;
+  /** Override the direct HTTP deadline for latency-sensitive hook callers. */
+  timeoutMs?: number;
 }
 
 const defaultDeps: RecentDeps = { getClient };
@@ -155,7 +159,7 @@ export async function fetchRecent(
       "decisions_recent",
       `/api/cli/decisions/recent?${params.toString()}`,
       client,
-      RECENT_TIMEOUT_MS,
+      deps.timeoutMs ?? RECENT_TIMEOUT_MS,
     );
     // Version-skew guard: a backend that predates author filtering ignores
     // the unknown param and returns the UNFILTERED team feed. The new server

@@ -110,6 +110,16 @@ describe("fetchRecent", () => {
     expect(result.unavailable).toBeUndefined();
   });
 
+  it("allows latency-sensitive callers to shorten the direct HTTP timeout", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await fetchRecent({}, { ...depsReturning({ decisions: [] }), timeoutMs: 123 });
+      expect(timeout).toHaveBeenCalledWith(123);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("reads the server's viewerHasDecisions flag through when present", async () => {
     const has = await fetchRecent(
       {},

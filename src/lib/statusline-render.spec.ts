@@ -61,4 +61,66 @@ describe("formatStatusline I/O boundary", () => {
     ).toContain("presence: unavailable");
     expect(resolve).not.toHaveBeenCalled();
   });
+
+  it("can include repo ingestion state on every Codex health branch", () => {
+    const resolve = vi.fn(() => "enabled" as const);
+    expect(
+      formatStatusline("1.2.3", null, resolve, { includeIngestionWhenUnavailable: true }),
+    ).toBe("primitive 1.2.3 (daemon: down · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          needsReauth: true,
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe("primitive 1.2.3 (daemon: paused · run `prim auth login` · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        { pid: 1, uptimeMs: 1, sessionId: "session", healthy: false },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe("primitive 1.2.3 (daemon: starting · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          ingestion: { healthy: false, pendingCount: 4 },
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe(
+      "primitive 1.2.3 (daemon: degraded · delivery: stalled · 4 pending · Decision ingestion enabled)",
+    );
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          heartbeat: { healthy: false },
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe(
+      "primitive 1.2.3 (daemon: degraded · presence: unavailable · Decision ingestion enabled)",
+    );
+    expect(resolve).toHaveBeenCalledTimes(5);
+  });
 });
