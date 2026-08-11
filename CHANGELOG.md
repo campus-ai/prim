@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.68](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.67...v0.1.0-alpha.68) (2026-08-11)
+
+
+### Features
+
+* surface Primitive status and Decision digests in Codex ([#225](https://github.com/campus-ai/prim/issues/225)) ([e897cdf](https://github.com/campus-ai/prim/commit/e897cdf02b1511e6bb533ede576bc4d7db3c39c7))
+
 ## [0.1.0-alpha.67](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.66...v0.1.0-alpha.67) (2026-08-10)
 
 
