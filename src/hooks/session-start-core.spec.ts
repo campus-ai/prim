@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
 import { hasUsableCodexGuidance, loadSkill } from "../commands/skill.js";
@@ -77,7 +80,23 @@ const CODEX_VERSION = packageVersion() ?? "0.0.0";
 const CODEX_DOWN_REPORT = `primitive ${CODEX_VERSION} (daemon: down · Decision ingestion disabled)`;
 const CODEX_LIVE_REPORT = `primitive ${CODEX_VERSION} (daemon: live, Decision ingestion disabled · team: 3 online)`;
 
+// The codex branch runs prepareCodexContext for real (its transport
+// collaborators are mocked above), and its status/digest state lives under $HOME —
+// stub it so no test can touch the developer's real state directory.
+let temporaryHome = "";
+
+function codexStateDirectory(): string {
+  return join(temporaryHome, ".config", "prim", "codex", "decision-digests");
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(temporaryHome, { recursive: true, force: true });
+});
+
 beforeEach(() => {
+  temporaryHome = mkdtempSync(join(tmpdir(), "prim-session-start-core-"));
+  vi.stubEnv("HOME", temporaryHome);
   vi.resetAllMocks();
   vi.mocked(getSiteUrl).mockReturnValue("https://app.getprimitive.ai");
   vi.mocked(isSessionEnded).mockReturnValue(false);
@@ -323,6 +342,22 @@ describe("processSessionStart", () => {
     const snapshotOrder = vi.mocked(daemonRequest).mock.invocationCallOrder[1];
     const gitOrder = vi.mocked(gitToplevel).mock.invocationCallOrder[0];
     expect(gitOrder).toBeLessThan(snapshotOrder);
+  });
+
+  it("commits Codex context state only through the returned acknowledge", async () => {
+    vi.mocked(daemonRequest).mockImplementation(async (method) =>
+      method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
+    );
+
+    const result = await processSessionStart(ENVELOPE, "codex");
+
+    expect(result.output.hookSpecificOutput?.additionalContext).toBe(CODEX_LIVE_REPORT);
+    expect(existsSync(codexStateDirectory())).toBe(false);
+
+    await result.acknowledge?.();
+
+    const files = readdirSync(codexStateDirectory()).filter((name) => name.endsWith(".json"));
+    expect(files).toHaveLength(1);
   });
 
   it("composes the Codex reminder before fresh presence", async () => {

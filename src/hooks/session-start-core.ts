@@ -164,15 +164,23 @@ export async function processSessionStart(
     }
   }
 
-  // Codex has no useful live statusline footer. Supply the status report and
-  // Decision digest through SessionStart context, alongside the proactive
-  // trigger only when its already-loaded guidance contains Prim.
+  // Codex has no scriptable statusline footer. Supply the startup status report
+  // here, alongside the proactive trigger when its already-loaded guidance
+  // contains Prim. UserPromptSubmit owns Decision digest delivery so the first
+  // real message — not SessionStart — advances the feed cursor.
   if (agent === "codex") {
-    const context = await prepareCodexContext({
-      cwd,
-      sessionId: envelope.session_id,
-      startup: true,
-    });
+    let context: Awaited<ReturnType<typeof prepareCodexContext>> | undefined;
+    try {
+      context = await prepareCodexContext({
+        cwd,
+        sessionId: envelope.session_id,
+        startup: true,
+        includeDigest: false,
+      });
+    } catch {
+      // Same rule as the pre/post-tool-use call sites: a failed report loses
+      // only the report — the reminder below must still reach the session.
+    }
 
     projectRoot = await activeProjectRoot(cwd);
     active = projectRoot !== null;
@@ -182,13 +190,13 @@ export async function processSessionStart(
     } catch {
       // Guidance detection must never suppress otherwise-valid presence.
     }
-    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, context.context]
+    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, context?.context]
       .filter((value): value is string => value !== undefined)
       .join("\n\n");
     return {
       output: buildHookOutput({ additionalContext }),
       acknowledge: async () => {
-        await context.acknowledge(true);
+        await context?.acknowledge(true);
       },
     };
   }

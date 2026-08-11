@@ -105,6 +105,21 @@ async function eventually(
   }
 }
 
+async function eventuallyValue<T>(
+  read: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  failure: () => string,
+  timeoutMs = 5_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const value = await read();
+    if (predicate(value)) return value;
+    if (Date.now() >= deadline) throw new Error(failure());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function runDaemonProcess(moduleUrl: string, home: string, apiUrl: string): RunningChild {
   const source = `
     const nativeSetTimeout = globalThis.setTimeout;
@@ -337,6 +352,28 @@ describe("daemon terminal-auth lifecycle", () => {
         );
         return;
       }
+      if (
+        request.method === "GET" &&
+        request.url === "/api/cli/decisions/recent?limit=100&since=24h"
+      ) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            decisions: [
+              {
+                id: "cached-decision",
+                intent: "Read Decisions from the daemon cache",
+                userId: "user-kasey",
+                authorName: "Kasey",
+                authorIsSelf: false,
+                classifiedAt: 1_000,
+                status: "active",
+              },
+            ],
+          }),
+        );
+        return;
+      }
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "not_found" }));
     });
@@ -457,6 +494,28 @@ describe("daemon raw statusline socket", () => {
         );
         return;
       }
+      if (
+        request.method === "GET" &&
+        request.url === "/api/cli/decisions/recent?limit=100&since=24h"
+      ) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            decisions: [
+              {
+                id: "cached-decision",
+                intent: "Read Decisions from the daemon cache",
+                userId: "user-kasey",
+                authorName: "Kasey",
+                authorIsSelf: false,
+                classifiedAt: 1_000,
+                status: "active",
+              },
+            ],
+          }),
+        );
+        return;
+      }
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "not_found" }));
     });
@@ -496,6 +555,17 @@ describe("daemon raw statusline socket", () => {
       );
 
       await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
+
+      const digestSnapshot = await eventuallyValue(
+        async () =>
+          await daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }),
+        (value) => Array.isArray(value.decisions) && value.decisions.length === 1,
+        () => `daemon Decision cache did not warm: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(digestSnapshot).toMatchObject({
+        decisions: [{ id: "cached-decision" }],
+        cachedAt: expect.any(Number),
+      });
 
       const raw = statuslineRequest(activeRepo, apiUrl);
       const fragmented = await rawStatuslineRequest(

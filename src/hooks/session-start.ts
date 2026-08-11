@@ -5,12 +5,13 @@
  * Reads the SessionStart JSON envelope from stdin, notifies the prim daemon
  * over its Unix socket so presence reflects the new session, and emits stdout.
  *
- * Under `--agent codex` it injects the Primitive situation report and bounded
- * Decision digest as SessionStart developer context
+ * Under `--agent codex` it injects the Primitive situation report as
+ * SessionStart developer context
  * (`hookSpecificOutput.additionalContext`) — the best-available analog to
- * Claude Code's statusLine, which Codex has no native live footer for. Claude
- * Code instead uses SessionStart for skill refresh, proactive decision
- * guidance, and decision feedback.
+ * Claude Code's statusLine: Codex's own `tui.status_line` renders built-in
+ * items only, with no scriptable hook. Decision digests ride UserPromptSubmit
+ * with Stop as a backstop. Claude Code instead uses SessionStart
+ * for skill refresh, proactive decision guidance, and decision feedback.
  *
  * Fail-soft: daemon down / socket missing / malformed envelope never blocks
  * the hook. Claude keeps its historical empty fallback; Codex reports the

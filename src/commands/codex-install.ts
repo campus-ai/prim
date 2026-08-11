@@ -14,8 +14,9 @@
  * only the registration table, the target file, and the absent surfaces differ.
  *
  * It drives the same prim binaries Claude Code does, under `--agent codex`:
- *   - prim-hook (passive capture) at matcher "*" on every Codex hook event, so
- *     the decision journal sees the full session.
+ *   - prim-hook at matcher "*" on every Codex hook event, so the decision
+ *     journal sees the full session; on UserPromptSubmit it also injects the
+ *     daemon-cached Decision digest, with Stop as a continuation backstop.
  *   - prim-pre-tool-use (the conflict gate) and prim-post-tool-use (server move
  *     ingest + verdict footer) on `apply_patch`, Codex's edit tool.
  *   - prim-session-start on SessionStart, so the daemon's presence reflects it.
@@ -25,8 +26,9 @@
  *     status report is delivered through supported hook context fields.
  *   - the edit tool is `apply_patch`, so the gate/ingest hooks match it (not
  *     Edit|Write|MultiEdit).
- *   - no SessionEnd (Codex fires no such event) and no native status footer;
- *     SessionStart/Decision-hook context carries the live report instead.
+ *   - no SessionEnd (Codex fires no such event) and no scriptable status
+ *     footer (Codex's `tui.status_line` renders built-in items only);
+ *     SessionStart/UserPromptSubmit context carries the live report instead.
  *   - Codex requires `/hooks` trust review before non-managed hooks fire.
  *
  * AX contract (matches `prim claude`): STDOUT is the JSON result; STDERR is the

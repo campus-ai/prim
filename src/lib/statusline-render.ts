@@ -28,6 +28,13 @@ export interface StatuslineRenderOptions {
    * output when this is omitted.
    */
   includeIngestionWhenUnavailable?: boolean;
+  /**
+   * Render teammate labels bare, without the OSC 8 hyperlink + SGR styling.
+   * The Claude statusline is a terminal surface, so it keeps the styled links;
+   * hook JSON context fields are not, so escape bytes would reach the
+   * consuming agent verbatim.
+   */
+  plainLinks?: boolean;
 }
 
 /** Render a status snapshot without performing socket, filesystem, or Git I/O. */
@@ -73,7 +80,7 @@ export function formatStatusline(
 
   let team: string;
   if (snapshot.onlineTeammates !== undefined) {
-    team = `team: ${formatTeammatesWithArea(snapshot.onlineTeammates, STATUSLINE_NAME_CAP)}`;
+    team = `team: ${formatTeammatesWithArea(snapshot.onlineTeammates, STATUSLINE_NAME_CAP, options.plainLinks === true)}`;
   } else if (snapshot.onlineNames !== undefined) {
     team = `team: ${formatTeammates(snapshot.onlineNames, STATUSLINE_NAME_CAP)}`;
   } else if (typeof snapshot.onlineCount === "number") {

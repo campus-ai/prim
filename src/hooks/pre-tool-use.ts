@@ -6,7 +6,7 @@
  * conflict-check endpoint once for the proposed tool invocation,
  * and emits the agent's contract JSON document on stdout that either allows,
  * asks, or denies the tool call. Visible Codex verdicts also carry the
- * Primitive situation report and Decision digest.
+ * Primitive situation report; Decision digests have a dedicated prompt path.
  *
  * Three load-bearing invariants:
  *   1. STDOUT is exclusively the hook output JSON. Anything else lives on
@@ -141,6 +141,7 @@ async function emitUnverified(message: string, envelope?: PreToolUseInput): Prom
         const context = await prepareCodexContext({
           cwd: envelope.cwd ?? process.cwd(),
           sessionId: envelope.session_id,
+          includeDigest: false,
         });
         output = appendCodexContext(output, context.context);
         await emitWithAcknowledgment(output, context.acknowledge);
@@ -257,12 +258,12 @@ async function main(): Promise<void> {
     sessionId.length > 0
   ) {
     try {
-      const context = await prepareCodexContext({ cwd, sessionId });
+      const context = await prepareCodexContext({ cwd, sessionId, includeDigest: false });
       output = appendCodexContext(output, context.context);
       await emitWithAcknowledgment(output, context.acknowledge);
       return;
     } catch {
-      // The conflict verdict remains authoritative if status/digest context fails.
+      // The conflict verdict remains authoritative if status context fails.
     }
   }
   await emit(output);

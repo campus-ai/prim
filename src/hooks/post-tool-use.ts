@@ -20,8 +20,12 @@
  *
  * Fail-soft: every failure path exits 0 with empty JSON on stdout.
  *
- * AX contract: STDOUT is `{}\n`. STDERR is silent unless PRIM_HOOK_VERBOSE=1,
- * except for the verdict footer (a deliberate human signal on STDERR).
+ * AX contract: STDOUT is `{}\n`, with one exception — under `--agent codex`,
+ * when the server returned a verdict footer, stdout carries the footer's
+ * status context as `{"systemMessage": …}` so the visible Decision
+ * moment also reaches the Codex transcript. STDERR is silent unless
+ * PRIM_HOOK_VERBOSE=1, except for the verdict footer (a deliberate human
+ * signal on STDERR).
  */
 
 import { readFileSync } from "node:fs";
@@ -261,6 +265,7 @@ async function main(): Promise<void> {
       const context = await prepareCodexContext({
         cwd,
         sessionId: envelope.session_id,
+        includeDigest: false,
       });
       await emitWithAcknowledgment(appendCodexContext({}, context.context), context.acknowledge);
       return;

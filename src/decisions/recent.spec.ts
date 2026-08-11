@@ -6,7 +6,7 @@
  *      `renderIdentifier` helper.
  *   2. The `fetchRecent` error/unknown contract — the org-unbound 200 and the
  *      thrown-error path must surface as UNKNOWN (`unavailable`), never as a
- *      clean empty feed. (Previously these paths were unexercised — F5.)
+ *      clean empty feed.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";

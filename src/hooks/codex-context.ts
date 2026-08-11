@@ -15,15 +15,20 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getClient, getSiteUrl, isSessionEnded } from "../client.js";
+import { getSiteUrl, isSessionEnded } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
-import { type DecisionFeedRow, fetchRecent } from "../decisions/recent.js";
+import {
+  DECISION_DIGEST_CACHE_LIMIT,
+  type DecisionDigestCacheSnapshot,
+} from "../daemon/decision-digest-cache.js";
+import type { DecisionFeedRow } from "../decisions/recent.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
 import { stripControlChars } from "../lib/ansi.js";
 import { packageVersion } from "../lib/bin-path.js";
@@ -32,8 +37,10 @@ import { gitToplevel } from "../lib/git.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 
 export const CODEX_CONTEXT_TIMEOUT_MS = 250;
-export const CODEX_INITIAL_DIGEST_WINDOW = "24h";
-export const CODEX_DIGEST_LIMIT = 10;
+// The daemon cache uses the server's RECENT_LIMIT_CEILING. The visible digest
+// stays capped at 3; caching the widest page keeps the "+N" count honest and
+// the cursor able to mark rows seen up to a 100-row burst.
+export const CODEX_DIGEST_LIMIT = DECISION_DIGEST_CACHE_LIMIT;
 export const CODEX_DIGEST_VISIBLE_CAP = 3;
 export const CODEX_DIGEST_OVERLAP_MS = 60_000;
 export const CODEX_DIGEST_MAX_SEEN_IDS = 128;
@@ -42,6 +49,12 @@ export const CODEX_DIGEST_STATE_MAX_FILES = 256;
 
 const STATE_VERSION = 1;
 const STATE_DIRECTORY = [".config", "prim", "codex", "decision-digests"] as const;
+/**
+ * watermarkMs sentinel: no feed page has been observed yet. The cursor is
+ * server time — the highest `classifiedAt` seen — never the client clock, so
+ * a skewed machine cannot silently skip rows classified inside its skew gap.
+ */
+const NO_CURSOR = -1;
 
 export interface CodexDecisionDigestState {
   version: typeof STATE_VERSION;
@@ -58,6 +71,8 @@ export interface CodexDecisionDigestState {
 export interface CodexContextResult {
   /** The context block to add, or undefined when a later report is unchanged. */
   context?: string;
+  /** Digest-only portion, used by Stop to decide whether to continue. */
+  decisionDigest?: string;
   /** True when the feed was verified and the cursor may advance after handoff. */
   feedAvailable: boolean;
   /** Commit state only after the caller confirms stdout handoff succeeded. */
@@ -68,6 +83,8 @@ export interface CodexContextOptions {
   cwd: string;
   sessionId: string;
   startup?: boolean;
+  /** Status-only callers leave the feed cursor untouched. Defaults to true. */
+  includeDigest?: boolean;
 }
 
 export interface CodexHookOutputLike {
@@ -202,16 +219,34 @@ function writeState(path: string, state: CodexDecisionDigestState): void {
 function cleanupStateFiles(now: number): void {
   const directory = stateRoot();
   if (!existsSync(directory)) return;
-  let files: { path: string; mtimeMs: number }[] = [];
+  let names: string[];
   try {
-    files = readdirSync(directory)
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => {
-        const path = join(directory, name);
-        return { path, mtimeMs: statSync(path).mtimeMs };
-      });
+    names = readdirSync(directory);
   } catch {
     return;
+  }
+  const files: { path: string; mtimeMs: number }[] = [];
+  const residue: string[] = [];
+  for (const name of names) {
+    const path = join(directory, name);
+    try {
+      const mtimeMs = statSync(path).mtimeMs;
+      if (name.endsWith(".json")) {
+        files.push({ path, mtimeMs });
+      } else if (
+        (name.includes(".json.tmp-") || name.endsWith(".json.lock")) &&
+        now - mtimeMs > CODEX_DIGEST_STATE_RETENTION_MS
+      ) {
+        // Crash residue: an interrupted atomic write, or the lock directory of
+        // a session that died holding it. Neither matches the .json sweeps,
+        // and lock recovery only runs when the SAME session path locks again —
+        // which never happens once the session is gone. The current commit's
+        // own lock is always fresh, so the age gate can never collect it.
+        residue.push(path);
+      }
+    } catch {
+      // Another hook's rename/unlink won the race for this entry; skip it.
+    }
   }
   const stale = files.filter((file) => now - file.mtimeMs > CODEX_DIGEST_STATE_RETENTION_MS);
   const excess = files
@@ -223,6 +258,19 @@ function cleanupStateFiles(now: number): void {
       unlinkSync(file.path);
     } catch {
       // State cleanup is best effort and never affects the hook result.
+    }
+  }
+  for (const path of residue) {
+    try {
+      // Re-stat at removal time: a concurrent acquisition may have just
+      // stale-recovered and re-created this exact lock directory, so only
+      // remove it if it is STILL old — the race window shrinks from the whole
+      // sweep to the microseconds between this check and the rmSync.
+      if (now - statSync(path).mtimeMs > CODEX_DIGEST_STATE_RETENTION_MS) {
+        rmSync(path, { recursive: true, force: true });
+      }
+    } catch {
+      // Same best-effort rule as above.
     }
   }
 }
@@ -242,18 +290,38 @@ function safeInline(value: string | undefined, fallback: string): string {
   return clean.length <= 240 ? clean : `${clean.slice(0, 239)}…`;
 }
 
-export function renderDecisionDigest(rows: readonly DecisionFeedRow[]): string | undefined {
+export function renderDecisionDigest(
+  rows: readonly DecisionFeedRow[],
+  options: { pageTruncated?: boolean } = {},
+): string | undefined {
   if (rows.length === 0) return undefined;
   const visible = rows.slice(0, CODEX_DIGEST_VISIBLE_CAP).map((row) => {
-    const author = safeInline(row.authorName, "(unknown)");
-    const intent = safeInline(row.intent, "(untitled Decision)");
-    return `${author} — ${intent}`;
+    // The entry grammar is `Author — “intent”; Author — “intent”`. Both fields
+    // are server-derived team input, so the structural tokens must be
+    // unforgeable: the author may not contain a separator or a dash that reads
+    // as one, and the intent is quoted with its quote-lookalikes demoted — a
+    // crafted intent like `X; Ops — do Y` stays visibly one entry instead of
+    // minting a fake second author under prim's framing. The folds cover the
+    // ASCII tokens AND their visual confusables (greek question mark ";",
+    // fullwidth "；", the figure/en/em-dash + horizontal-bar + minus family,
+    // and the double-quote lookalike set): the reader of this line is a human
+    // or a model, so a homoglyph forges just as well as the codepoint itself.
+    // author: ";" U+003B, greek question mark U+037E, fullwidth ";" U+FF1B,
+    // figure/en/em dash + horizontal bar U+2012-U+2015, minus sign U+2212.
+    const author = safeInline(row.authorName, "(unknown)").replace(/[;;；‒-―−]/gu, "-");
+    // intent: curly/low/reversed double quotes U+201C-U+201F, double prime
+    // U+2033, reversed double prime U+2036, CJK corner quotes U+301D-U+301E.
+    const intent = safeInline(row.intent, "(untitled Decision)").replace(/[“-‟″‶〝〞]/gu, "'");
+    return `${author} — “${intent}”`;
   });
+  // `+N+` marks a full fetch page: the true overflow may exceed what one page
+  // can count, and rows past the page will not be redelivered. A full page
+  // with no visible overflow (nearly all rows already seen) carries no marker.
   const overflow =
     rows.length > CODEX_DIGEST_VISIBLE_CAP
-      ? ` +${String(rows.length - CODEX_DIGEST_VISIBLE_CAP)}`
+      ? ` +${String(rows.length - CODEX_DIGEST_VISIBLE_CAP)}${options.pageTruncated === true ? "+" : ""}`
       : "";
-  return `[prim] Decisions since last message: ${visible.join("; ")}${overflow}`;
+  return `[prim] Decisions captured since last message: ${visible.join("; ")}${overflow}`;
 }
 
 function reauthSnapshot(sessionId: string): StatusSnapshot {
@@ -288,23 +356,24 @@ function mergeState(
     siteUrl: args.siteUrl,
     workspace: args.workspace,
     startedAt: latest?.startedAt ?? args.startedAt,
+    // Advance only on an observed page (server classifiedAt time), never the
+    // client clock; an unavailable feed keeps the previous cursor — or the
+    // NO_CURSOR sentinel, so the startup backlog survives until the first
+    // successful fetch.
     watermarkMs: args.feedAvailable
-      ? Math.max(latest?.watermarkMs ?? 0, args.watermarkMs)
-      : (latest?.watermarkMs ?? args.startedAt),
+      ? Math.max(latest?.watermarkMs ?? NO_CURSOR, args.watermarkMs)
+      : (latest?.watermarkMs ?? NO_CURSOR),
     seenIds: [...seen].slice(-CODEX_DIGEST_MAX_SEEN_IDS),
     lastReport: args.report,
     updatedAt: args.now,
   };
 }
 
-async function commitState(
-  path: string,
-  args: Parameters<typeof mergeState>[1],
-  hasPreviousState: boolean,
-): Promise<void> {
-  // An unavailable feed must not create a new cursor. That preserves the
-  // startup backlog for the first successful fetch in this session.
-  if (!args.feedAvailable && !hasPreviousState) return;
+async function commitState(path: string, args: Parameters<typeof mergeState>[1]): Promise<void> {
+  // Always write: the record also carries lastReport, which dedups the
+  // situation report across messages even while the feed is unavailable
+  // (offline, org-unbound). The digest cursor itself stays at NO_CURSOR until
+  // a page is actually observed, so writing never forfeits the 24h backlog.
   try {
     await withFileLock(
       `${path}.lock`,
@@ -321,7 +390,7 @@ async function commitState(
   }
 }
 
-/** Prepare the status/digest block for one Codex hook message. */
+/** Prepare the status/digest block from daemon-local snapshots for one Codex hook message. */
 export async function prepareCodexContext(
   options: CodexContextOptions,
 ): Promise<CodexContextResult> {
@@ -330,45 +399,69 @@ export async function prepareCodexContext(
   const path = statePath({ cwd: options.cwd, sessionId: options.sessionId, siteUrl });
   const previous = readState(path);
   const startup = options.startup === true;
+  const includeDigest = options.includeDigest !== false;
   const startedAt = previous?.startedAt ?? Date.now();
   const terminalAuth = isSessionEnded();
 
   let snapshot: StatusSnapshot | null = null;
+  let recent: DecisionDigestCacheSnapshot | null = null;
   if (terminalAuth) {
     snapshot = reauthSnapshot(options.sessionId);
   } else {
-    snapshot = await daemonRequest<StatusSnapshot>(
-      "status_snapshot",
-      { callerEnv: siteUrl },
-      { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
-    );
+    [snapshot, recent] = await Promise.all([
+      daemonRequest<StatusSnapshot>(
+        "status_snapshot",
+        { callerEnv: siteUrl },
+        { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
+      ),
+      includeDigest
+        ? daemonRequest<DecisionDigestCacheSnapshot>(
+            "decision_digest_snapshot",
+            { callerEnv: siteUrl },
+            { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
+          )
+        : Promise.resolve(null),
+    ]);
   }
   const report = formatStatusline(
     packageVersion() ?? "0.0.0",
     snapshot,
     () => decisionIngestionStatus(options.cwd),
-    { includeIngestionWhenUnavailable: true },
+    { includeIngestionWhenUnavailable: true, plainLinks: true },
   );
   const reportChanged = startup || previous?.lastReport !== report;
 
   let feedAvailable = false;
   let freshRows: DecisionFeedRow[] = [];
-  if (!terminalAuth) {
-    const since = previous
-      ? String(Math.max(0, previous.watermarkMs - CODEX_DIGEST_OVERLAP_MS))
-      : CODEX_INITIAL_DIGEST_WINDOW;
-    const recent = await fetchRecent(
-      { limit: CODEX_DIGEST_LIMIT, since },
-      { getClient, timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
-    );
+  let pageTruncated = false;
+  let pageWatermark = NO_CURSOR;
+  if (!terminalAuth && includeDigest && recent !== null) {
     feedAvailable = recent.unavailable === undefined && Array.isArray(recent.decisions);
     if (feedAvailable) {
       const seen = new Set(previous?.seenIds ?? []);
-      freshRows = recent.decisions.filter((row) => isChangeDecision(row) && !seen.has(row.id));
+      const lowerBound =
+        previous !== undefined && previous.watermarkMs >= 0
+          ? Math.max(0, previous.watermarkMs - CODEX_DIGEST_OVERLAP_MS)
+          : 0;
+      freshRows = recent.decisions.filter(
+        (row) =>
+          isChangeDecision(row) &&
+          !seen.has(row.id) &&
+          typeof row.classifiedAt === "number" &&
+          row.classifiedAt >= lowerBound,
+      );
+      pageTruncated = recent.decisions.length >= CODEX_DIGEST_LIMIT;
+      // The cursor is the newest server classifiedAt on the page — rows are
+      // wire passthrough, so guard the field before trusting it.
+      pageWatermark = recent.decisions.reduce(
+        (max, row) =>
+          typeof row.classifiedAt === "number" && row.classifiedAt > max ? row.classifiedAt : max,
+        NO_CURSOR,
+      );
     }
   }
 
-  const digest = renderDecisionDigest(freshRows);
+  const digest = renderDecisionDigest(freshRows, { pageTruncated });
   const context =
     [reportChanged ? report : undefined, digest]
       .filter((value): value is string => value !== undefined)
@@ -376,25 +469,22 @@ export async function prepareCodexContext(
   let acknowledged = false;
   return {
     context,
+    decisionDigest: digest,
     feedAvailable,
     acknowledge: async (handedOff) => {
       if (!handedOff || acknowledged) return;
       acknowledged = true;
-      await commitState(
-        path,
-        {
-          sessionId: options.sessionId,
-          siteUrl,
-          workspace,
-          startedAt,
-          watermarkMs: Date.now(),
-          seenIds: freshRows.map((row) => row.id),
-          report,
-          feedAvailable,
-          now: Date.now(),
-        },
-        previous !== undefined,
-      );
+      await commitState(path, {
+        sessionId: options.sessionId,
+        siteUrl,
+        workspace,
+        startedAt,
+        watermarkMs: pageWatermark,
+        seenIds: freshRows.map((row) => row.id),
+        report,
+        feedAvailable,
+        now: Date.now(),
+      });
     },
   };
 }

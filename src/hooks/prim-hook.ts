@@ -6,7 +6,9 @@
  * Move envelope, resolves its owning org, appends to that org's local
  * NDJSON journal, exits 0. On Claude Stop it also leases any eventual
  * same-worktree Decision feedback and returns it as a human-visible
- * systemMessage. Capture and feedback fail independently.
+ * systemMessage. For Codex, UserPromptSubmit also injects the daemon-cached
+ * organization Decision digest on every message, with Stop as a guarded
+ * continuation backstop. Capture and delivery fail independently.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
@@ -33,6 +35,7 @@ import { warmBinCache } from "../lib/bin-cache.js";
 import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
+import { processCodexMessageContext } from "./codex-message-context.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -42,10 +45,7 @@ import { scrubFromCwd } from "./redact.js";
 const here = dirname(fileURLToPath(import.meta.url));
 let outputAttempted = false;
 
-function emitOutput(
-  output: ReturnType<typeof buildHookOutput>,
-  acknowledge?: () => Promise<unknown>,
-): Promise<boolean> {
+function emitOutput(output: object, acknowledge?: () => Promise<unknown>): Promise<boolean> {
   outputAttempted = true;
   return handoffHookOutput(output, acknowledge);
 }
@@ -103,8 +103,11 @@ async function main(): Promise<void> {
   // Inactive repos short-circuit here — nothing is built, journaled, or flushed
   // — so a machine-wide (user-scope) install never captures where unwanted.
   const isClaudeStop = agent === "claude_code" && parsed.hook_event_name === "Stop";
+  const isCodexContextEvent =
+    agent === "codex" &&
+    (parsed.hook_event_name === "UserPromptSubmit" || parsed.hook_event_name === "Stop");
   if (!isRepoActiveForCapture(cwd)) {
-    if (isClaudeStop) await emitOutput(buildHookOutput({}));
+    if (isClaudeStop || isCodexContextEvent) await emitOutput(buildHookOutput({}));
     return;
   }
 
@@ -150,6 +153,12 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     debug("capture", error);
+  }
+
+  if (isCodexContextEvent) {
+    const result = await processCodexMessageContext(parsed);
+    await emitOutput(result.output, result.acknowledge);
+    return;
   }
 
   if (!isClaudeStop) return;

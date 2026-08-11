@@ -197,4 +197,40 @@ describe("formatTeammatesWithArea", () => {
       ),
     ).toBe("Maya - infra, Alex");
   });
+
+  describe("plainLinks (non-TTY hook surfaces)", () => {
+    it("renders bare labels with zero escape bytes even for valid Decision URLs", () => {
+      const rendered = formatTeammatesWithArea(
+        [
+          {
+            name: "Kasey",
+            area: "auth",
+            decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+          },
+          { name: "Sam", area: "data" },
+        ],
+        3,
+        true,
+      );
+      expect(rendered).toBe("Kasey - auth, Sam - data");
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting escape-byte absence.
+      expect(rendered).not.toMatch(/[\x00-\x1f\x7f]/u);
+    });
+
+    it("still strips injected control bytes from name and area", () => {
+      expect(
+        formatTeammatesWithArea(
+          [
+            {
+              name: "Ka\x1bsey",
+              area: "au\x07th",
+              decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+            },
+          ],
+          3,
+          true,
+        ),
+      ).toBe("Kasey - auth");
+    });
+  });
 });

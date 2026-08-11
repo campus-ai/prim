@@ -6,7 +6,8 @@
  * SessionStart / SessionEnd hooks proxy through; amortizes the token-refresh
  * check; and heartbeats `agentPresence` every 30s, caching the online count
  * and the teammate-name roster the ack returns so a statusline can render
- * "team: Maya, Alex +2" (and `daemon status` the full list).
+ * "team: Maya, Alex +2" (and `daemon status` the full list). It also maintains
+ * the local Decision-feed snapshot consumed by latency-sensitive Codex hooks.
  *
  * Lifecycle: `prim daemon start` spawns this bin detached. SIGTERM (or
  * `prim daemon stop`) cleans up the socket + pidfile. Refuses to start if an
@@ -40,6 +41,7 @@ import {
   formatStatusline,
 } from "../lib/statusline-render.js";
 import { daemonRequest } from "./client.js";
+import { DECISION_DIGEST_CACHE_PATH, DecisionDigestCache } from "./decision-digest-cache.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 import {
   createDaemonHealthState,
@@ -69,6 +71,7 @@ const SOCK_PATH = join(CONFIG_DIR, "sock");
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const INGESTION_POLL_INTERVAL_MS = 15_000;
+const DECISION_DIGEST_POLL_INTERVAL_MS = 5_000;
 const TOKEN_CHECK_INTERVAL_MS = 60_000;
 const TOKEN_REFRESH_THRESHOLD_MS = 90_000;
 const HTTP_PROXY_TIMEOUT_MS = 10_000;
@@ -97,6 +100,12 @@ const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
 const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
 const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus);
+const decisionDigestCache = new DecisionDigestCache(
+  async () =>
+    await client.get(DECISION_DIGEST_CACHE_PATH, {
+      signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
+    }),
+);
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 let lastHeartbeatAt: number | undefined;
 // From the last accepted heartbeat ack, cached for the statusline /
@@ -113,6 +122,7 @@ let lastOnlineTeammates: Teammate[] | undefined;
 let lastOkAtLocal: number | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let ingestionTimer: NodeJS.Timeout | undefined;
+let decisionDigestTimer: NodeJS.Timeout | undefined;
 let tokenCheckTimer: NodeJS.Timeout | undefined;
 let heartbeatInFlight: Promise<void> | undefined;
 let heartbeatRerunRequested = false;
@@ -163,7 +173,7 @@ function updatePendingHealth(): void {
 }
 
 /**
- * Halt the heartbeat + ingestion loops after the broker has terminally ended
+ * Halt the heartbeat, ingestion, and Decision-cache loops after the broker has terminally ended
  * the session. Retrying can't help — only `prim auth login` can — so replaying
  * the dead token every poll just floods the server with 401s (previously 500s)
  * and feeds the broker's reuse detection. Captures still accrue to the journal
@@ -183,10 +193,14 @@ function enterReauthHold(): void {
     clearTimeout(ingestionTimer);
     ingestionTimer = undefined;
   }
+  if (decisionDigestTimer) {
+    clearTimeout(decisionDigestTimer);
+    decisionDigestTimer = undefined;
+  }
   persistHealth();
   // One line, not one per poll: the whole point is to stop the spam.
   process.stderr.write(
-    "[prim-daemon] authentication ended — halting heartbeat + ingestion until `prim auth login` (captures continue to the journal)\n",
+    "[prim-daemon] authentication ended — halting heartbeat + ingestion + Decision cache until `prim auth login` (captures continue to the journal)\n",
   );
 }
 
@@ -207,10 +221,11 @@ function exitReauthHold(): void {
   daemonHealth.ingestion.lastError = undefined;
   persistHealth();
   process.stderr.write(
-    "[prim-daemon] re-authentication detected — resuming heartbeat + ingestion\n",
+    "[prim-daemon] re-authentication detected — resuming heartbeat + ingestion + Decision cache\n",
   );
   void sendHeartbeat();
   void runIngestionLoop();
+  void runDecisionDigestLoop();
 }
 
 async function takeOwnership(): Promise<void> {
@@ -475,6 +490,23 @@ async function runIngestionLoop(): Promise<void> {
   }
 }
 
+function scheduleDecisionDigestRefresh(): void {
+  if (shuttingDown || reauthHold) return;
+  decisionDigestTimer = setTimeout(() => {
+    decisionDigestTimer = undefined;
+    void runDecisionDigestLoop();
+  }, DECISION_DIGEST_POLL_INTERVAL_MS);
+}
+
+function refreshDecisionDigest(): Promise<void> {
+  return shuttingDown || reauthHold ? Promise.resolve() : decisionDigestCache.refresh();
+}
+
+async function runDecisionDigestLoop(): Promise<void> {
+  await refreshDecisionDigest();
+  scheduleDecisionDigestRefresh();
+}
+
 function pathParam(params: Record<string, unknown>): string {
   if (typeof params.path !== "string" || !params.path.startsWith("/api/cli/")) {
     throw new Error("proxy request requires `path: string` under /api/cli/");
@@ -582,6 +614,10 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
           activeSessionId = sid;
         }
         await sendHeartbeat();
+        // Warm the local feed snapshot for the first UserPromptSubmit. This is
+        // deliberately detached from the response: SessionStart latency must
+        // not depend on the Decision API.
+        void refreshDecisionDigest();
         return { id, ok: true, result: { sessionId: activeSessionId } };
       }
       case "session_end": {
@@ -591,6 +627,15 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
       }
       case "status_snapshot":
         return { id, ok: true, result: handleStatusSnapshot(req.params ?? {}) };
+      case "decision_digest_snapshot": {
+        // Unlike the generic read proxy, this never waits on HTTP. Prompt hooks
+        // receive the daemon-owned page immediately; the read itself requests
+        // an asynchronous refresh that Stop can observe as a backstop.
+        assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
+        const result = decisionDigestCache.read();
+        void refreshDecisionDigest();
+        return { id, ok: true, result };
+      }
       case "statusline_invalidate":
         statuslineIngestionCache.clear();
         return { id, ok: true, result: { ack: true } };
@@ -736,6 +781,7 @@ function startTimers(): void {
     persistHealth();
     void sendHeartbeat();
     void runIngestionLoop();
+    void runDecisionDigestLoop();
   }
   void runTokenCheckLoop();
 }
@@ -770,6 +816,9 @@ function stopTimers(): void {
   }
   if (ingestionTimer) {
     clearTimeout(ingestionTimer);
+  }
+  if (decisionDigestTimer) {
+    clearTimeout(decisionDigestTimer);
   }
   if (tokenCheckTimer) {
     clearTimeout(tokenCheckTimer);
