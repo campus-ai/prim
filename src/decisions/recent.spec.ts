@@ -6,7 +6,7 @@
  *      `renderIdentifier` helper.
  *   2. The `fetchRecent` error/unknown contract — the org-unbound 200 and the
  *      thrown-error path must surface as UNKNOWN (`unavailable`), never as a
- *      clean empty feed. (Previously these paths were unexercised — F5.)
+ *      clean empty feed.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -108,6 +108,16 @@ describe("fetchRecent", () => {
     expect(result.decisions).toHaveLength(1);
     expect(result.decisions[0].shortId).toBe(SELF_ROW.shortId);
     expect(result.unavailable).toBeUndefined();
+  });
+
+  it("allows latency-sensitive callers to shorten the direct HTTP timeout", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await fetchRecent({}, { ...depsReturning({ decisions: [] }), timeoutMs: 123 });
+      expect(timeout).toHaveBeenCalledWith(123);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("reads the server's viewerHasDecisions flag through when present", async () => {

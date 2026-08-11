@@ -5,15 +5,17 @@
  * Reads the SessionStart JSON envelope from stdin, notifies the prim daemon
  * over its Unix socket so presence reflects the new session, and emits stdout.
  *
- * Under `--agent codex` it also injects the team presence count as SessionStart
- * developer context (`hookSpecificOutput.additionalContext`) — the
- * best-available analog to Claude Code's statusLine, which Codex has no hook
- * for. Claude Code instead uses SessionStart for skill refresh, proactive
- * decision guidance, and decision feedback. The count is injected only when
- * the daemon returns a live value; it is never fabricated.
+ * Under `--agent codex` it injects the Primitive situation report as
+ * SessionStart developer context
+ * (`hookSpecificOutput.additionalContext`) — the best-available analog to
+ * Claude Code's statusLine: Codex's own `tui.status_line` renders built-in
+ * items only, with no scriptable hook. Decision digests ride UserPromptSubmit
+ * with Stop as a backstop. Claude Code instead uses SessionStart
+ * for skill refresh, proactive decision guidance, and decision feedback.
  *
- * Fail-soft: daemon down / socket missing / malformed envelope all silently
- * emit `{}` and exit 0. Hooks must never block.
+ * Fail-soft: daemon down / socket missing / malformed envelope never blocks
+ * the hook. Claude keeps its historical empty fallback; Codex reports the
+ * unavailable daemon state when it can identify the session.
  */
 
 import { warmBinCache } from "../lib/bin-cache.js";

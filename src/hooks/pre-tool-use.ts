@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * prim PreToolUse hook for Claude Code.
+ * prim PreToolUse hook for Claude Code and Codex.
  *
  * Reads the PreToolUse JSON envelope from stdin, calls the server-side
  * conflict-check endpoint once for the proposed tool invocation,
- * and emits a Claude-Code-contract JSON document on stdout that either
- * allows, asks, or denies the tool call.
+ * and emits the agent's contract JSON document on stdout that either allows,
+ * asks, or denies the tool call. Visible Codex verdicts also carry the
+ * Primitive situation report; Decision digests have a dedicated prompt path.
  *
  * Three load-bearing invariants:
  *   1. STDOUT is exclusively the hook output JSON. Anything else lives on
@@ -31,6 +32,11 @@ import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { parseAgent } from "./agent.js";
+import {
+  appendCodexContext,
+  hasVisibleCodexMessage,
+  prepareCodexContext,
+} from "./codex-context.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
   type CodexHookOutput,
@@ -92,8 +98,22 @@ async function readStdin(): Promise<string> {
 // resolve it once — both main() and its catch handler emit through it.
 const agent = parseAgent(process.argv);
 
-function emit(output: HookOutput | CodexHookOutput | HermesHookOutput): void {
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+async function emit(output: HookOutput | CodexHookOutput | HermesHookOutput): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    try {
+      process.stdout.write(`${JSON.stringify(output)}\n`, (error) => resolve(!error));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function emitWithAcknowledgment(
+  output: HookOutput | CodexHookOutput | HermesHookOutput,
+  acknowledge?: (handedOff: boolean) => Promise<void>,
+): Promise<void> {
+  const handedOff = await emit(output);
+  await acknowledge?.(handedOff);
 }
 
 // The silent fail-open shaped for the active agent: Claude explicitly allows;
@@ -108,15 +128,29 @@ function invocationId(envelope: PreToolUseInput): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function emitUnverified(message: string): void {
+async function emitUnverified(message: string, envelope?: PreToolUseInput): Promise<void> {
   const result = unverifiedResult(message);
   if (agent === "hermes") {
     process.stderr.write(`[primitive] ${message}\n`);
-    emit(failOpenHermes());
+    await emit(failOpenHermes());
   } else {
-    emit(
-      agent === "codex" ? buildCodexOutput("allow", [result]) : buildHookOutput("allow", [result]),
-    );
+    let output =
+      agent === "codex" ? buildCodexOutput("allow", [result]) : buildHookOutput("allow", [result]);
+    if (agent === "codex" && typeof envelope?.session_id === "string" && envelope.session_id) {
+      try {
+        const context = await prepareCodexContext({
+          cwd: envelope.cwd ?? process.cwd(),
+          sessionId: envelope.session_id,
+          includeDigest: false,
+        });
+        output = appendCodexContext(output, context.context);
+        await emitWithAcknowledgment(output, context.acknowledge);
+        return;
+      } catch {
+        // Preserve the existing unverified message if context augmentation fails.
+      }
+    }
+    await emit(output);
   }
 }
 
@@ -126,7 +160,7 @@ async function main(): Promise<void> {
   try {
     raw = await readStdin();
   } catch {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   let envelope: PreToolUseInput;
@@ -136,17 +170,17 @@ async function main(): Promise<void> {
       agent,
     ) as PreToolUseInput;
   } catch {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   if (envelope.hook_event_name !== "PreToolUse") {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   const env = process.env as HookEnv;
   const mode = readHookMode(env);
   if (mode === "off") {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
@@ -159,22 +193,25 @@ async function main(): Promise<void> {
     cwd,
   });
   if (targets.mutation === "none") {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   if (!isRepoActive(cwd)) {
-    emit(failOpen());
+    await emit(failOpen());
     return;
   }
   if (targets.paths.length === 0) {
-    emitUnverified("mutation targets could not be determined; enforcement not verified");
+    await emitUnverified(
+      "mutation targets could not be determined; enforcement not verified",
+      envelope,
+    );
     return;
   }
   const binding = repoSyncId(cwd);
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
-    emitUnverified("repository binding or tool invocation identity is unavailable");
+    await emitUnverified("repository binding or tool invocation identity is unavailable", envelope);
     return;
   }
   const request: PreflightRequest = {
@@ -193,12 +230,12 @@ async function main(): Promise<void> {
   try {
     const response = await requestPreflight(request);
     if (!response) {
-      emitUnverified("enforcement service returned an incompatible response");
+      await emitUnverified("enforcement service returned an incompatible response", envelope);
       return;
     }
     result = resultForPreflight(response);
   } catch {
-    emitUnverified("enforcement service unavailable; change was not verified");
+    await emitUnverified("enforcement service unavailable; change was not verified", envelope);
     return;
   }
   const aggregate = demoteForMode(
@@ -208,15 +245,30 @@ async function main(): Promise<void> {
   if (agent === "hermes" && (aggregate === "warn" || result.verdict === "unavailable")) {
     process.stderr.write(`[primitive] ${result.reason || result.unavailable}\n`);
   }
-  emit(
+  let output =
     agent === "hermes"
       ? buildHermesOutput(aggregate, [result])
       : agent === "codex"
         ? buildCodexOutput(aggregate, [result])
-        : buildHookOutput(aggregate, [result]),
-  );
+        : buildHookOutput(aggregate, [result]);
+  if (
+    agent === "codex" &&
+    hasVisibleCodexMessage(output) &&
+    typeof sessionId === "string" &&
+    sessionId.length > 0
+  ) {
+    try {
+      const context = await prepareCodexContext({ cwd, sessionId, includeDigest: false });
+      output = appendCodexContext(output, context.context);
+      await emitWithAcknowledgment(output, context.acknowledge);
+      return;
+    } catch {
+      // The conflict verdict remains authoritative if status context fails.
+    }
+  }
+  await emit(output);
 }
 
-main().catch(() => {
-  emit(failOpen());
+main().catch(async () => {
+  await emit(failOpen());
 });

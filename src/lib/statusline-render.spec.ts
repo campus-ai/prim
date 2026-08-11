@@ -43,6 +43,36 @@ describe("StatuslineIngestionCache", () => {
 });
 
 describe("formatStatusline I/O boundary", () => {
+  it("keeps styled Decision links by default and renders them bare under plainLinks", () => {
+    const resolve = vi.fn(() => "enabled" as const);
+    const snapshot = {
+      pid: 1,
+      uptimeMs: 1,
+      sessionId: "session",
+      healthy: true,
+      onlineTeammates: [
+        {
+          name: "Kasey",
+          area: "auth",
+          decisionUrl: "https://app.getprimitive.ai/decisions/kasey-decision",
+        },
+      ],
+    };
+
+    // The Claude statusline and daemon raw protocol are terminal surfaces —
+    // the OSC 8 hyperlink must survive there.
+    expect(formatStatusline("1.2.3", snapshot, resolve)).toContain("\x1b]8;;");
+
+    // Hook JSON context fields are not terminals: the same roster must render
+    // with zero escape bytes.
+    const plain = formatStatusline("1.2.3", snapshot, resolve, { plainLinks: true });
+    expect(plain).toBe(
+      "primitive 1.2.3 (daemon: live, Decision ingestion enabled · team: Kasey - auth)",
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting escape-byte absence.
+    expect(plain).not.toMatch(/[\x1b\x07]/u);
+  });
+
   it("does not resolve Git-backed state for down or unhealthy snapshots", () => {
     const resolve = vi.fn(() => "enabled" as const);
     expect(formatStatusline("1.2.3", null, resolve)).toContain("daemon: down");
@@ -60,5 +90,67 @@ describe("formatStatusline I/O boundary", () => {
       ),
     ).toContain("presence: unavailable");
     expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("can include repo ingestion state on every Codex health branch", () => {
+    const resolve = vi.fn(() => "enabled" as const);
+    expect(
+      formatStatusline("1.2.3", null, resolve, { includeIngestionWhenUnavailable: true }),
+    ).toBe("primitive 1.2.3 (daemon: down · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          needsReauth: true,
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe("primitive 1.2.3 (daemon: paused · run `prim auth login` · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        { pid: 1, uptimeMs: 1, sessionId: "session", healthy: false },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe("primitive 1.2.3 (daemon: starting · Decision ingestion enabled)");
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          ingestion: { healthy: false, pendingCount: 4 },
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe(
+      "primitive 1.2.3 (daemon: degraded · delivery: stalled · 4 pending · Decision ingestion enabled)",
+    );
+    expect(
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          heartbeat: { healthy: false },
+        },
+        resolve,
+        { includeIngestionWhenUnavailable: true },
+      ),
+    ).toBe(
+      "primitive 1.2.3 (daemon: degraded · presence: unavailable · Decision ingestion enabled)",
+    );
+    expect(resolve).toHaveBeenCalledTimes(5);
   });
 });

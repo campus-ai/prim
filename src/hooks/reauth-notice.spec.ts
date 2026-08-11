@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { REAUTH_NOTICE, reauthNoticeFields } from "./reauth-notice.js";
 
 describe("reauthNoticeFields", () => {
-  it("routes the notice to Codex developer context (no statusline)", () => {
-    expect(reauthNoticeFields("codex")).toEqual({ additionalContext: REAUTH_NOTICE });
+  it("returns nothing for Codex — terminal auth renders inside its status report", () => {
+    expect(reauthNoticeFields("codex")).toBeUndefined();
   });
 
   it("routes the notice to Claude Code's systemMessage", () => {

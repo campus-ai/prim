@@ -1,4 +1,4 @@
-import { getSiteUrl, isSessionEnded } from "../client.js";
+import { isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
 import { hasUsableCodexGuidance } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
@@ -18,6 +18,7 @@ import {
 import { bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
+import { prepareCodexContext } from "./codex-context.js";
 import { type HookOutput, buildHookOutput } from "./decision-feedback-core.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { reauthNoticeFields } from "./reauth-notice.js";
@@ -152,9 +153,9 @@ export async function processSessionStart(
     }
   }
 
-  // A terminal auth notice remains the only human-facing payload; a silent
-  // reload request rides the same builder call when the skill was refreshed.
-  if (isSessionEnded()) {
+  // Claude retains its existing terminal-auth notice; Codex renders the same
+  // condition in its status report below so the report is the only auth line.
+  if (isSessionEnded() && agent !== "codex") {
     const notice = reauthNoticeFields(agent);
     if (notice) {
       return {
@@ -163,20 +164,23 @@ export async function processSessionStart(
     }
   }
 
-  // Codex has no statusLine or live skill-reload field. Supply the proactive
-  // trigger as context only when its already-loaded guidance contains Prim.
+  // Codex has no scriptable statusline footer. Supply the startup status report
+  // here, alongside the proactive trigger when its already-loaded guidance
+  // contains Prim. UserPromptSubmit owns Decision digest delivery so the first
+  // real message — not SessionStart — advances the feed cursor.
   if (agent === "codex") {
-    const snapshot = await daemonRequest<{ onlineCount?: number; presenceStale?: boolean }>(
-      "status_snapshot",
-      // callerEnv: a cross-env daemon withholds onlineCount, so a prod Codex
-      // session never gets a staging daemon's team count injected.
-      { callerEnv: getSiteUrl() },
-      { timeoutMs: DAEMON_TIMEOUT_MS },
-    );
-    const presence =
-      snapshot && !snapshot.presenceStale && typeof snapshot.onlineCount === "number"
-        ? `[prim] team: ${snapshot.onlineCount} online`
-        : undefined;
+    let context: Awaited<ReturnType<typeof prepareCodexContext>> | undefined;
+    try {
+      context = await prepareCodexContext({
+        cwd,
+        sessionId: envelope.session_id,
+        startup: true,
+        includeDigest: false,
+      });
+    } catch {
+      // Same rule as the pre/post-tool-use call sites: a failed report loses
+      // only the report — the reminder below must still reach the session.
+    }
 
     projectRoot = await activeProjectRoot(cwd);
     active = projectRoot !== null;
@@ -186,10 +190,15 @@ export async function processSessionStart(
     } catch {
       // Guidance detection must never suppress otherwise-valid presence.
     }
-    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, presence]
+    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, context?.context]
       .filter((value): value is string => value !== undefined)
       .join("\n\n");
-    return { output: buildHookOutput({ additionalContext }) };
+    return {
+      output: buildHookOutput({ additionalContext }),
+      acknowledge: async () => {
+        await context?.acknowledge(true);
+      },
+    };
   }
 
   if (agent === "claude_code") {

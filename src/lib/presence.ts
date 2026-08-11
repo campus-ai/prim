@@ -30,13 +30,16 @@ function validDecisionUrl(value: string | undefined): string | undefined {
   }
 }
 
-function decisionLink(label: string, decisionUrl: string | undefined): string {
+function decisionLink(label: string, decisionUrl: string | undefined, plain: boolean): string {
   const url = validDecisionUrl(decisionUrl);
+  if (plain || !url) {
+    return label;
+  }
   // Style the visible label blue + underlined — a web-style link — so it reads
   // as clickable. Emitted unconditionally, like the OSC 8 escapes: Claude Code
   // renders the statusline, so there is no TTY to gate on. The reset lands
   // before the OSC 8 close, keeping the style off the ", " separator.
-  return url ? `\x1b]8;;${url}\x07\x1b[34;4m${label}\x1b[0m\x1b]8;;\x07` : label;
+  return `\x1b]8;;${url}\x07\x1b[34;4m${label}\x1b[0m\x1b]8;;\x07`;
 }
 
 /**
@@ -79,8 +82,16 @@ export function formatTeammates(names: string[] | undefined, cap: number): strin
  * area render bare ("Sam"), so the line stays readable on a mixed team. Same
  * undefined/[]/cap/overflow semantics — length is preserved, so "+N" still
  * counts teammates, not labels.
+ *
+ * `plainLinks` renders bare labels with no OSC 8/SGR styling — required for
+ * non-TTY surfaces (hook JSON context fields), where escape bytes would reach
+ * the consuming agent verbatim instead of a terminal that interprets them.
  */
-export function formatTeammatesWithArea(teammates: Teammate[] | undefined, cap: number): string {
+export function formatTeammatesWithArea(
+  teammates: Teammate[] | undefined,
+  cap: number,
+  plainLinks = false,
+): string {
   return formatLabeled(
     teammates?.map((t) => {
       // Strip control bytes from the server-derived name/area before they
@@ -91,7 +102,7 @@ export function formatTeammatesWithArea(teammates: Teammate[] | undefined, cap: 
       const name = stripControlChars(t.name);
       const area = stripControlChars(t.area ?? "").trim();
       const label = area ? `${name} - ${area}` : name;
-      return decisionLink(label, t.decisionUrl);
+      return decisionLink(label, t.decisionUrl, plainLinks);
     }),
     cap,
   );

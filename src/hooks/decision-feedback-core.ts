@@ -33,7 +33,7 @@ type WritableOutput = {
 
 /** Resolve only after the hook protocol payload has reached the stdout stream. */
 export function writeHookOutput(
-  output: HookOutput,
+  output: object,
   stream: WritableOutput = process.stdout,
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -64,7 +64,7 @@ export function writeHookOutput(
 
 /** Keep deletion causally after stdout; acknowledgment failure stays fail-soft. */
 export async function handoffHookOutput(
-  output: HookOutput,
+  output: object,
   acknowledge?: () => Promise<unknown>,
   stream: WritableOutput = process.stdout,
 ): Promise<boolean> {
