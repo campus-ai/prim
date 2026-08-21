@@ -20,7 +20,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
@@ -34,6 +33,7 @@ import { stripControlChars } from "../lib/ansi.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
+import { primConfigDirectory } from "../lib/paths.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 
 export const CODEX_CONTEXT_TIMEOUT_MS = 250;
@@ -48,7 +48,7 @@ export const CODEX_DIGEST_STATE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const CODEX_DIGEST_STATE_MAX_FILES = 256;
 
 const STATE_VERSION = 1;
-const STATE_DIRECTORY = [".config", "prim", "codex", "decision-digests"] as const;
+const STATE_DIRECTORY = ["codex", "decision-digests"] as const;
 /**
  * watermarkMs sentinel: no feed page has been observed yet. The cursor is
  * server time — the highest `classifiedAt` seen — never the client clock, so
@@ -136,7 +136,7 @@ export function appendCodexContext<T>(output: T, context: string | undefined): T
 }
 
 function stateRoot(): string {
-  return join(homedir(), ...STATE_DIRECTORY);
+  return join(primConfigDirectory(), ...STATE_DIRECTORY);
 }
 
 function workspaceFor(cwd: string): string {
