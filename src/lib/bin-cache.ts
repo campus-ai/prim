@@ -1,29 +1,27 @@
 /**
- * Resolved-path cache for the session hooks — the write side of the shim's
- * branch-0 (see hookShimCommand in bin-path.ts for the read side).
+ * Resolved-path cache warmed by SessionStart and consumed by the portable Git
+ * post-commit/post-rewrite blocks.
  *
  * Without it, every hook fire on an un-installed host re-resolves the CLI
- * through `npx --yes -p @primitive.ai/prim@latest`: a full npm process +
- * registry round-trip per Edit (×2 with the gate) + per statusline refresh,
- * which pegs CPU. This records each hook bin's resolved absolute entry (and the
- * node runtime that resolved it) so the shim can `exec node <entry>` directly.
+ * through the exact-version `npx --ignore-scripts` fallback: a full npm
+ * process + registry round-trip after each commit/rewrite. This records each
+ * hook bin's resolved absolute entry (and the node runtime that resolved it)
+ * so the Git hooks can `exec node <entry>` directly.
  *
- * Freshness model: a cache HIT execs the cached (possibly older) binary and so
- * cannot discover a newer @latest — only a MISS runs npx. SessionStart is held
- * to the bare ladder (cacheRead:false), so it re-resolves @latest and rewrites
- * this cache once per session; the TTL in the shim is only a backstop for
- * long-lived / SessionStart-less sessions. To keep that working, warmBinCache()
- * MUST NOT run on the hit path (it would bump mtime and freeze the TTL) — hence
- * the PRIM_BIN_CACHE_HIT guard the shim sets before exec.
+ * Freshness model: SessionStart rewrites the cache from the exact package that
+ * executed it. The TTL is only a backstop for long-lived / SessionStart-less
+ * sessions. A cache-hit process must not warm it again (that would bump mtime
+ * and freeze the TTL), hence the PRIM_BIN_CACHE_HIT guard retained for older
+ * shim callers.
  */
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { binFile } from "./bin-path.js";
 
-// The bins the shim execs directly on a hit — mirrors the cacheRead:true shims
-// (capture, gate, ingest, statusline). Any single warm pass writes them all,
-// since binFile() reads the whole bin map regardless of which one is running.
+// Keep the historical cache inventory during the compatibility horizon. The
+// live Git blocks consume post-commit/post-rewrite; older installed shims may
+// still consume the other entries. Any warm pass writes them all.
 const CACHED_BINS = [
   "prim",
   "prim-hook",

@@ -1,6 +1,7 @@
 import { type SpawnOptions, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pinnedNpxArgs } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 
 const LATEST_BOOTSTRAP_TIMEOUT_MS = 45_000;
@@ -26,7 +27,7 @@ export interface CurrentDaemonEnsureResult {
   disabled: boolean;
 }
 
-async function runLatestEnsure(options: LatestDaemonBootstrapOptions): Promise<boolean> {
+async function runPinnedEnsure(options: LatestDaemonBootstrapOptions): Promise<boolean> {
   const env = {
     ...(options.env ?? process.env),
     npm_config_prefer_online: "true",
@@ -42,7 +43,7 @@ async function runLatestEnsure(options: LatestDaemonBootstrapOptions): Promise<b
     try {
       child = (options.spawnProcess ?? (spawn as unknown as SpawnLatest))(
         "npx",
-        ["--yes", "--prefer-online", "-p", "@primitive.ai/prim@latest", "prim", "daemon", "ensure"],
+        pinnedNpxArgs("prim", ["daemon", "ensure"], { preferOnline: true }),
         { env, stdio: "ignore" },
       );
     } catch {
@@ -69,8 +70,8 @@ async function runLatestEnsure(options: LatestDaemonBootstrapOptions): Promise<b
 /**
  * Serialize the SessionStart updater across all clients. The installed package
  * heals the daemon first so offline starts still work; only then does npm
- * revalidate `latest` and run that exact package's normal (non-recursive)
- * `daemon ensure`.
+ * revalidate the exact running package version and run its normal
+ * (non-recursive) `daemon ensure`.
  */
 export async function runLatestDaemonBootstrap(
   ensureCurrent: () => Promise<CurrentDaemonEnsureResult>,
@@ -85,7 +86,7 @@ export async function runLatestDaemonBootstrap(
       async () => {
         const current = await ensureCurrent();
         if (current.disabled) return true;
-        return await runLatestEnsure(options);
+        return await runPinnedEnsure(options);
       },
       // A concurrent SessionStart already owns the complete bootstrap. Do not
       // queue another npm lookup behind it; the short window only permits one

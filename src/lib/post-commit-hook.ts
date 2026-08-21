@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import type { Stats } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { BIN_CACHE_DIR_SH, BIN_CACHE_TTL_MIN_DEFAULT, pinnedNpxCommand } from "./bin-path.js";
 import { gitToplevel } from "./git.js";
 
 export const PRIM_POST_COMMIT_BLOCK_START = "# >>> prim post-commit hook >>>";
@@ -99,9 +100,9 @@ export type PostRewriteHookInspection = ManagedHookInspection;
 
 function currentPostCommitBlock(): string {
   // This block is intentionally machine-independent. It uses the cache warmed
-  // by SessionStart first, then a checkout-local bin, then a floating @latest
-  // resolution. Every invocation is fail-soft and the block itself never exits
-  // the surrounding foreign hook.
+  // by SessionStart first, then a checkout-local bin, then the exact package
+  // version that installed it. Every invocation is fail-soft and the block
+  // itself never exits the surrounding foreign hook.
   return `${PRIM_POST_COMMIT_BLOCK_START}
 if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null) || prim_commit_sha=
@@ -110,9 +111,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   if [ -n "$prim_commit_sha" ]; then
     prim_commit_observed_file=$(mktemp "\${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX" 2>/dev/null) || prim_commit_observed_file=
     prim_commit_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_commit_branch=
-    prim_cache_dir="\${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"
+    prim_cache_dir="${BIN_CACHE_DIR_SH}"
     prim_post_commit_ran=0
-    if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-commit" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-commit" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; then
+    if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-commit" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-commit" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then
       prim_node=$(cat "$prim_cache_dir/node")
       prim_entry=$(cat "$prim_cache_dir/prim-post-commit")
       if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then
@@ -125,7 +126,7 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
         ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &
         prim_post_commit_ran=1
       elif command -v npx >/dev/null 2>&1; then
-        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; npx --yes -p @primitive.ai/prim@latest prim-post-commit ) </dev/null >/dev/null 2>&1 &
+        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ${pinnedNpxCommand("prim-post-commit")} ) </dev/null >/dev/null 2>&1 &
         prim_post_commit_ran=1
       fi
     fi
@@ -163,9 +164,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
       if cat > "$prim_rewrite_pairs_file"; then
         exec < "$prim_rewrite_pairs_file"
         prim_rewrite_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_rewrite_branch=
-        prim_cache_dir="\${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"
+        prim_cache_dir="${BIN_CACHE_DIR_SH}"
         prim_post_rewrite_ran=0
-        if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-rewrite" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-rewrite" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; then
+        if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-rewrite" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-rewrite" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then
           prim_node=$(cat "$prim_cache_dir/node")
           prim_entry=$(cat "$prim_cache_dir/prim-post-rewrite")
           if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then
@@ -178,7 +179,7 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
             ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ./node_modules/.bin/prim-post-rewrite ) </dev/null >/dev/null 2>&1 &
             prim_post_rewrite_ran=1
           elif command -v npx >/dev/null 2>&1; then
-            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; npx --yes -p @primitive.ai/prim@latest prim-post-rewrite ) </dev/null >/dev/null 2>&1 &
+            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ${pinnedNpxCommand("prim-post-rewrite")} ) </dev/null >/dev/null 2>&1 &
             prim_post_rewrite_ran=1
           fi
         fi
