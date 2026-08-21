@@ -13,14 +13,12 @@ import { fileURLToPath } from "node:url";
 
 const PKG_NAME = "@primitive.ai/prim";
 const ROOT_WALK_LIMIT = 6;
-// The npx fallback pins @latest so an un-installed host always resolves the
-// newest CLI; the PATH / node_modules branches are taken first when present.
-const NPX_FALLBACK = `npx --yes -p ${PKG_NAME}@latest`;
 // Branch-0 resolved-path cache. The shell dir expression MUST mirror
 // binCacheDir() in bin-cache.ts byte-for-byte (a spec pins the pair). TTL is a
-// backstop only — SessionStart (cacheRead:false) refreshes @latest per session.
-const BIN_CACHE_DIR_SH = "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";
-const BIN_CACHE_TTL_MIN_DEFAULT = 1440;
+// backstop only — SessionStart (cacheRead:false) refreshes the exact runtime
+// version per session.
+export const BIN_CACHE_DIR_SH = "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";
+export const BIN_CACHE_TTL_MIN_DEFAULT = 1440;
 
 type PackageManifest = { name?: string; version?: string; bin?: Record<string, string> };
 
@@ -78,11 +76,53 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function pinnedHookCommand(bin: string, args = ""): string {
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(value) ? value : shellQuote(value);
+}
+
+export type PinnedNpxOptions = {
+  preferOnline?: boolean;
+};
+
+/**
+ * Build the one npx argv used for an uninstalled Primitive runtime.
+ *
+ * The package is always the exact version of the code constructing the
+ * command. `--ignore-scripts` prevents package lifecycle scripts from running
+ * on these unattended hook/daemon paths. Callers that need a registry
+ * revalidation may opt into npm's bounded `--prefer-online` behavior without
+ * changing the package-selection rule.
+ */
+export function pinnedNpxArgs(
+  bin: string,
+  args: readonly string[] = [],
+  options: PinnedNpxOptions = {},
+): string[] {
   const version = packageVersion();
   if (!version) throw new Error("cannot determine Primitive package version");
+  return [
+    "--yes",
+    "--ignore-scripts",
+    ...(options.preferOnline ? ["--prefer-online"] : []),
+    "-p",
+    `${PKG_NAME}@${version}`,
+    bin,
+    ...args,
+  ];
+}
+
+/** Shell rendering of pinnedNpxArgs for generated POSIX hook blocks. */
+export function pinnedNpxCommand(
+  bin: string,
+  args: readonly string[] = [],
+  options: PinnedNpxOptions = {},
+): string {
+  return ["npx", ...pinnedNpxArgs(bin, args, options)].map(shellWord).join(" ");
+}
+
+export function pinnedHookCommand(bin: string, args = ""): string {
   const suffix = args ? ` ${args}` : "";
-  const fallback = `npx --yes -p ${PKG_NAME}@${version} ${bin}${suffix}`;
+  const fallback = `${pinnedNpxCommand(bin)}${suffix}`;
   const file = binFile(bin);
   if (!file) return fallback;
   return `if [ -x ${shellQuote(process.execPath)} ] && [ -f ${shellQuote(file)} ]; then ${shellQuote(process.execPath)} ${shellQuote(file)}${suffix}; else ${fallback}; fi`;
@@ -90,7 +130,8 @@ export function pinnedHookCommand(bin: string, args = ""): string {
 
 /**
  * A self-resolving shell command for a settings.json hook: try the bin on PATH,
- * then a local `node_modules/.bin`, then `npx --yes @latest`. Mirrors the
+ * then a local `node_modules/.bin`, then the exact runtime version through
+ * `npx --ignore-scripts`. Mirrors the
  * git-hook resolver (hooks.ts:hookShim) but — unlike it — adds no
  * `2>/dev/null || true`: a Claude Code / Codex hook's STDOUT (e.g. the gate's
  * permissionDecision) and exit code are load-bearing and must pass through.
@@ -103,13 +144,13 @@ export function pinnedHookCommand(bin: string, args = ""): string {
  *
  * cacheRead (default true) prepends branch-0: if the hooks have cached this
  * bin's resolved entry within TTL, `exec` it directly — turning a per-fire
- * npx@latest resolution into a `cat` + exec (see lib/bin-cache.ts). It marks
+ * npx resolution into a `cat` + exec (see lib/bin-cache.ts). It marks
  * the exec with PRIM_BIN_CACHE_HIT (so the warmer does not bump mtime and
  * freeze the TTL) and `exec` both preserves the hook's stdout/exit code AND
  * stops fallthrough to the ladder. Any doubt — kill switch (PRIM_BIN_CACHE=0),
  * missing/expired entry, an npx-GC'd target — fails open to the unchanged
- * ladder. Pass cacheRead:false to emit the bare ladder (SessionStart, which
- * must re-resolve @latest each session, and the detached wrapper).
+ * ladder. Pass cacheRead:false to emit the bare ladder (SessionStart and the
+ * detached wrapper).
  */
 export function hookShimCommand(
   bin: string,
@@ -120,7 +161,7 @@ export function hookShimCommand(
   const ladder =
     `if command -v ${bin} >/dev/null 2>&1; then ${invoke(bin)}; ` +
     `elif [ -f "./node_modules/.bin/${bin}" ]; then ${invoke(`./node_modules/.bin/${bin}`)}; ` +
-    `else ${invoke(`${NPX_FALLBACK} ${bin}`)}; fi`;
+    `else ${invoke(pinnedNpxCommand(bin))}; fi`;
   if (opts.cacheRead === false) {
     return ladder;
   }

@@ -20,7 +20,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { binCacheDir, warmBinCache } from "./bin-cache.js";
-import { binFile } from "./bin-path.js";
+import { BIN_CACHE_DIR_SH, binFile } from "./bin-path.js";
+import { postCommitHookBlock, postRewriteHookBlock } from "./post-commit-hook.js";
 
 const ENV_KEYS = ["XDG_CACHE_HOME", "HOME", "PRIM_BIN_CACHE", "PRIM_BIN_CACHE_HIT"] as const;
 
@@ -80,6 +81,12 @@ describe("binCacheDir", () => {
       expect(binCacheDir()).toBe(shellCacheDir(process.env));
     } finally {
       restoreEnv(saved);
+    }
+  });
+
+  it("keeps both live Git hook cache readers on the canonical shell expression", () => {
+    for (const block of [postCommitHookBlock(), postRewriteHookBlock()]) {
+      expect(block).toContain(`prim_cache_dir="${BIN_CACHE_DIR_SH}"`);
     }
   });
 });

@@ -27,6 +27,8 @@ import {
   hookShimCommand,
   packageVersion,
   pinnedHookCommand,
+  pinnedNpxArgs,
+  pinnedNpxCommand,
 } from "./bin-path.js";
 
 describe("binFile", () => {
@@ -48,11 +50,14 @@ describe("binFile", () => {
 });
 
 describe("hookShimCommand", () => {
-  it("emits a PATH -> node_modules -> npx@latest resolution ladder", () => {
+  it("emits a PATH -> node_modules -> exact-version npx resolution ladder", () => {
     const cmd = hookShimCommand("prim-hook");
     expect(cmd).toContain("command -v prim-hook >/dev/null 2>&1");
     expect(cmd).toContain('elif [ -f "./node_modules/.bin/prim-hook" ]');
-    expect(cmd).toContain("npx --yes -p @primitive.ai/prim@latest prim-hook");
+    expect(cmd).toContain(
+      `npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} prim-hook`,
+    );
+    expect(cmd).not.toContain("@latest");
     // No stdio/exit suppression — the hook's STDOUT + exit code must pass through.
     expect(cmd).not.toContain("|| true");
     expect(cmd).not.toContain("2>/dev/null; ");
@@ -62,7 +67,7 @@ describe("hookShimCommand", () => {
     const codex = hookShimCommand("prim-hook", "--agent codex");
     expect(codex).toContain("then prim-hook --agent codex;");
     expect(codex).toContain("./node_modules/.bin/prim-hook --agent codex;");
-    expect(codex).toContain("@primitive.ai/prim@latest prim-hook --agent codex;");
+    expect(codex).toContain(`@primitive.ai/prim@${packageVersion()} prim-hook --agent codex;`);
 
     const status = hookShimCommand("prim", "statusline");
     expect(status).toContain("command -v prim >/dev/null 2>&1");
@@ -97,12 +102,32 @@ describe("hookShimCommand", () => {
   });
 });
 
+describe("pinned npx runtime", () => {
+  it("centralizes the exact package, lifecycle-script guard, and argv", () => {
+    expect(pinnedNpxArgs("prim", ["daemon", "ensure"], { preferOnline: true })).toEqual([
+      "--yes",
+      "--ignore-scripts",
+      "--prefer-online",
+      "-p",
+      `@primitive.ai/prim@${packageVersion()}`,
+      "prim",
+      "daemon",
+      "ensure",
+    ]);
+    expect(pinnedNpxCommand("prim-post-commit")).toBe(
+      `npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} prim-post-commit`,
+    );
+    expect(pinnedNpxCommand("prim-post-commit")).not.toContain("@latest");
+  });
+});
+
 describe("pinnedHookCommand", () => {
   it("uses this package entrypoint with an exact-version npx fallback", () => {
     const command = pinnedHookCommand("prim-pre-tool-use", "--agent codex");
     expect(command).toContain("dist/hooks/pre-tool-use.js");
     expect(command).toContain(`@primitive.ai/prim@${packageVersion()}`);
     expect(command).not.toContain("@latest");
+    expect(command).toContain("--ignore-scripts");
     expect(command).not.toContain("command -v prim-pre-tool-use");
     expect(command).toMatch(/\[ -x '.+node' \] && \[ -f '.+pre-tool-use\.js' \]/);
     expect(command).toContain("--agent codex");
@@ -211,21 +236,11 @@ describe("canonical command strings (golden)", () => {
   // rewrites it back (form ping-pong in a committed project file). The
   // fragment tests above explain WHY each piece exists; these goldens make
   // changing the bytes a deliberate act.
-  const primHookLadder =
-    "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
-    'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
-    "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi";
+  const primHookLadder = `if command -v prim-hook >/dev/null 2>&1; then prim-hook; elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; else npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} prim-hook; fi`;
 
   it("pins the cache-enabled synchronous shim byte-for-byte", () => {
     expect(hookShimCommand("prim-hook")).toBe(
-      'd="${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"; if [ "${PRIM_BIN_CACHE:-1}" != "0" ] && ' +
-        '[ -f "$d/prim-hook" ] && [ -f "$d/node" ] && ' +
-        '[ -n "$(find "$d/prim-hook" -mmin "-${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; ' +
-        'then n=$(cat "$d/node"); p=$(cat "$d/prim-hook"); ' +
-        'if [ -x "$n" ] && [ -f "$p" ]; then export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p"; fi; fi; ' +
-        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
-        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
-        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi",
+      `d="\${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"; if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$d/prim-hook" ] && [ -f "$d/node" ] && [ -n "$(find "$d/prim-hook" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; then n=$(cat "$d/node"); p=$(cat "$d/prim-hook"); if [ -x "$n" ] && [ -f "$p" ]; then export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p"; fi; fi; if command -v prim-hook >/dev/null 2>&1; then prim-hook; elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; else npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} prim-hook; fi`,
     );
   });
 
