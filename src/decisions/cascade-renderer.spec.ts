@@ -148,6 +148,36 @@ describe("renderCascade", () => {
     expect(out).toContain("reason: edit invalidates the Redis latency assumption");
   });
 
+  it("sanitizes every server-controlled label before rendering the graph", () => {
+    const esc = String.fromCharCode(0x1b);
+    const out = renderCascade(
+      baseResult({
+        decision: nodeFixture({
+          shortId: "14c2\u200b038c",
+          intent: `Use\nRedis${esc}[2J`,
+          area: "au\u202eth",
+          authorName: "Tay\u200blor",
+        }),
+        upstream: {
+          files: [`src/auth.ts${esc}[H`],
+          contexts: [{ id: "ctx", name: "auth\u202e.spec" }],
+        },
+        downstream: [nodeFixture({ intent: "Logout\u200b flow", area: "da\u202eta" })],
+        trigger: triggerFixture({
+          file: `src/auth.ts${esc}[H`,
+          authorName: "Ri\u200bley",
+          reason: `unsafe\nreason${esc}]52;c;payload\u0007`,
+        }),
+      }),
+    );
+    expect(out).toContain("dec_14c2038c");
+    expect(out).toContain("Use Redis[2J");
+    expect(out).toContain("reason: unsafe reason]52;c;payload");
+    expect(out).not.toContain(esc);
+    expect(out).not.toContain("\u200b");
+    expect(out).not.toContain("\u202e");
+  });
+
   it("omits the author and reason lines when the server projects neither", () => {
     const out = renderCascade(
       baseResult({

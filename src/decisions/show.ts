@@ -21,18 +21,20 @@
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
 const NOT_FOUND_RE = /not found/i;
 
 function colorStatus(status: "active" | "superseded" | "under_review"): string {
+  const safeStatus = terminalSafeLine(status);
   if (status === "under_review") {
-    return color(status, "orange");
+    return color(safeStatus, "orange");
   }
   if (status === "active") {
-    return color(status, "green");
+    return color(safeStatus, "green");
   }
-  return color(status, "gray");
+  return color(safeStatus, "gray");
 }
 
 /** Lean projection of a related decision (dependency edge endpoint). */
@@ -124,24 +126,26 @@ export async function fetchShow(
 const GATED_FLAG_KINDS = new Set(["file_edit", "supersession", "context_edit"]);
 
 function describeFlag(flag: DecisionFlagSummary): string {
-  const detail = flag.reason ? ` — ${flag.reason}` : "";
+  const type = terminalSafeLine(flag.type);
+  const detail = flag.reason ? ` — ${terminalSafeLine(flag.reason)}` : "";
   if (flag.acknowledgedAt !== undefined) {
-    return `acknowledged ${flag.type}${detail}`;
+    return `acknowledged ${type}${detail}`;
   }
   if (flag.type === "confirmation_request") {
     return `pending confirmation request${detail}`;
   }
   if (GATED_FLAG_KINDS.has(flag.type)) {
-    const verdict = flag.gateVerdict ?? "unknown";
-    return `pending ${flag.type} (verdict: ${verdict})${detail}`;
+    const verdict = terminalSafeLine(flag.gateVerdict ?? "unknown");
+    return `pending ${type} (verdict: ${verdict})${detail}`;
   }
-  return `pending ${flag.type}${detail}`;
+  return `pending ${type}${detail}`;
 }
 
 function describeNode(node: DecisionNode): string {
   const id = renderIdentifier({ shortId: node.shortId, id: node.id });
-  const area = node.area ? ` • ${node.area}` : "";
-  return `${id}${area}  ${node.intent}  (${node.authorName})`;
+  const safeArea = terminalSafeLine(node.area ?? "");
+  const area = safeArea ? ` • ${safeArea}` : "";
+  return `${id}${area}  ${terminalSafeLine(node.intent)}  (${terminalSafeLine(node.authorName)})`;
 }
 
 function pushFiles(lines: string[], files: string[]): void {
@@ -150,7 +154,7 @@ function pushFiles(lines: string[], files: string[]): void {
   }
   lines.push(`  files (${String(files.length)}):`);
   for (const file of files) {
-    lines.push(`    - ${file}`);
+    lines.push(`    - ${terminalSafeLine(file)}`);
   }
 }
 
@@ -160,7 +164,7 @@ function pushContexts(lines: string[], contexts: { id: string; name: string }[])
   }
   lines.push(`  contexts (${String(contexts.length)}):`);
   for (const ctx of contexts) {
-    lines.push(`    - ${ctx.name}`);
+    lines.push(`    - ${terminalSafeLine(ctx.name)}`);
   }
 }
 
@@ -179,14 +183,15 @@ export function formatShowHuman(result: DecisionShowResult): string {
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
   const confidence = d.confidence ?? "(unset)";
   const lines = [
-    `[prim] ${id} — ${d.intent}`,
-    `  status: ${colorStatus(d.status)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${confidence}  ·  reversibility: ${d.reversibility ?? "(unset)"}`,
+    `[prim] ${id} — ${terminalSafeLine(d.intent)}`,
+    `  status: ${colorStatus(d.status)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
   ];
   if (d.supersededBy) {
-    lines.push(`  superseded by: ${d.supersededBy}`);
+    lines.push(`  superseded by: ${terminalSafeLine(d.supersededBy)}`);
   }
   if (d.area) {
-    lines.push(`  area: ${color(d.area, colorForArea(d.area))}`);
+    const area = terminalSafeLine(d.area);
+    lines.push(`  area: ${color(area, colorForArea(area))}`);
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);
@@ -195,16 +200,16 @@ export function formatShowHuman(result: DecisionShowResult): string {
     lines.push(`  responded at: ${new Date(d.respondedAt).toISOString()}`);
   }
   if (d.rationale) {
-    lines.push(`  rationale: ${d.rationale}`);
+    lines.push(`  rationale: ${terminalSafeLine(d.rationale)}`);
   }
   if (d.decided && d.decided.length > 0) {
     lines.push(`  decided (${String(d.decided.length)}):`);
     for (const point of d.decided) {
-      lines.push(`    - ${point}`);
+      lines.push(`    - ${terminalSafeLine(point)}`);
     }
   }
   if (d.alternatives.length > 0) {
-    lines.push(`  alternatives: ${d.alternatives.join(" | ")}`);
+    lines.push(`  alternatives: ${d.alternatives.map(terminalSafeLine).join(" | ")}`);
   }
   pushFiles(lines, result.files);
   pushContexts(lines, result.contexts);

@@ -62,6 +62,15 @@ describe("renderVerdictFooter", () => {
     const out = renderVerdictFooter(footer({ decisionsSaved: 1 }));
     expect(out).toContain("1 decisions saved");
   });
+
+  it("sanitizes the server-controlled author before styling", () => {
+    const esc = String.fromCharCode(0x1b);
+    const out = renderVerdictFooter(footer({ author: `Ma\n${esc}[2Jya\u202e\u200b` }));
+    expect(out).toContain("Ma [2Jya's intent preserved");
+    expect(out).not.toContain(esc);
+    expect(out).not.toContain("\u200b");
+    expect(out).not.toContain("\u202e");
+  });
 });
 
 describe("isVerdictFooterContext", () => {

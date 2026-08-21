@@ -30,11 +30,11 @@ import {
 } from "../daemon/decision-digest-cache.js";
 import type { DecisionFeedRow } from "../decisions/recent.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
-import { stripControlChars } from "../lib/ansi.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
+import { terminalSafeText } from "../lib/terminal-safe.js";
 
 export const CODEX_CONTEXT_TIMEOUT_MS = 250;
 // The daemon cache uses the server's RECENT_LIMIT_CEILING. The visible digest
@@ -283,7 +283,7 @@ function isChangeDecision(row: DecisionFeedRow): boolean {
 }
 
 function safeInline(value: string | undefined, fallback: string): string {
-  const clean = stripControlChars(value ?? "")
+  const clean = terminalSafeText(value ?? "")
     .replace(/\s+/gu, " ")
     .trim();
   if (!clean) return fallback;

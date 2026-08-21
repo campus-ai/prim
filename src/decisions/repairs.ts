@@ -12,7 +12,7 @@
  */
 
 import { type CliClient, HttpError, getClient } from "../client.js";
-import { stripControlChars } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
 export type CommitRepairMatchTier = "exact_patch_body" | "exact_file_set";
@@ -603,7 +603,7 @@ function tierLabel(tier: CommitRepairMatchTier | undefined): string {
 }
 
 function oneLine(value: string): string {
-  return stripControlChars(value.replace(/\s+/gu, " ")).trim();
+  return terminalSafeLine(value);
 }
 
 function timestampLabel(value: number): string {

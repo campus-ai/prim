@@ -476,6 +476,23 @@ describe("formatRecentRow", () => {
     expect(out).toContain("• billing");
     expect(out).toContain(TEAMMATE_ROW.intent);
   });
+
+  it("neutralizes terminal controls, bidi overrides, and zero-width text in every server field", () => {
+    const esc = String.fromCharCode(0x1b);
+    const unsafe = {
+      ...TEAMMATE_ROW,
+      authorName: `Ma${esc}[2Jya\u202e`,
+      area: "bill\u200bing",
+      intent: `Use safe\noutput${esc}]52;c;payload\u0007`,
+    };
+    const out = formatRecentRow(unsafe);
+    expect(out).toContain("Ma[2Jya");
+    expect(out).toContain("• billing");
+    expect(out).toContain("Use safe output]52;c;payload");
+    expect(out).not.toContain(esc);
+    expect(out).not.toContain("\u200b");
+    expect(out).not.toContain("\u202e");
+  });
 });
 
 describe("formatRecentJson", () => {
@@ -484,6 +501,13 @@ describe("formatRecentJson", () => {
     const parsed = JSON.parse(out);
     expect(parsed.decisions).toHaveLength(1);
     expect(parsed.decisions[0].shortId).toBe(SELF_ROW.shortId);
+  });
+
+  it("preserves unsafe display bytes in machine-readable output", () => {
+    const result = {
+      decisions: [{ ...SELF_ROW, intent: "raw\u001b[2J\u202e\u200b" }],
+    };
+    expect(formatRecentJson(result)).toBe(JSON.stringify(result, null, 2));
   });
 
   it("emits an empty decisions array verbatim", () => {
