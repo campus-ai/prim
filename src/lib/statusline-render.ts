@@ -12,6 +12,7 @@ export interface StatusSnapshot {
   onlineTeammates?: Teammate[];
   presenceStale?: boolean;
   envMismatch?: boolean;
+  principalMismatch?: boolean;
   healthy?: boolean;
   heartbeat?: { healthy?: boolean };
   ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
@@ -73,6 +74,9 @@ export function formatStatusline(
 
   if (snapshot.envMismatch) {
     return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other env)`;
+  }
+  if (snapshot.principalMismatch) {
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other account)`;
   }
   if (snapshot.presenceStale) {
     return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: stale)`;
