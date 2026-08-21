@@ -65,8 +65,10 @@ describe("client credential store", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     process.env = { ...originalEnv };
-    process.env.PRIM_TOKEN = undefined;
-    process.env.PRIM_API_URL = undefined;
+    Reflect.deleteProperty(process.env, "PRIM_TOKEN");
+    Reflect.deleteProperty(process.env, "PRIM_API_URL");
+    Reflect.deleteProperty(process.env, "PRIM_CONFIG_DIR");
+    Reflect.deleteProperty(process.env, "XDG_CONFIG_HOME");
     renamedCredentialPaths.length = 0;
     home = mkdtempSync(join(tmpdir(), "prim-client-test-"));
     mockedHome.value = home;

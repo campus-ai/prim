@@ -97,6 +97,7 @@ afterEach(() => {
 beforeEach(() => {
   temporaryHome = mkdtempSync(join(tmpdir(), "prim-session-start-core-"));
   vi.stubEnv("HOME", temporaryHome);
+  vi.stubEnv("PRIM_CONFIG_DIR", join(temporaryHome, ".config", "prim"));
   vi.resetAllMocks();
   vi.mocked(getSiteUrl).mockReturnValue("https://app.getprimitive.ai");
   vi.mocked(isSessionEnded).mockReturnValue(false);

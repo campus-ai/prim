@@ -35,8 +35,10 @@ describe("flush lock", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     process.env = { ...originalEnv };
-    process.env.PRIM_TOKEN = undefined;
-    process.env.PRIM_API_URL = undefined;
+    Reflect.deleteProperty(process.env, "PRIM_TOKEN");
+    Reflect.deleteProperty(process.env, "PRIM_API_URL");
+    Reflect.deleteProperty(process.env, "PRIM_CONFIG_DIR");
+    Reflect.deleteProperty(process.env, "XDG_CONFIG_HOME");
     home = mkdtempSync(join(tmpdir(), "prim-flush-lock-"));
     mockedHome.value = home;
     config = join(home, ".config", "prim");
