@@ -27,8 +27,8 @@ const CONNECTED = {
   repoSyncId: "repoSync123",
   repositoryFullName: "campus-ai/primitive",
 } as const;
-const PENDING = {
-  status: "pending",
+const UNBOUND = {
+  status: "unbound",
   repositoryFullName: "campus-ai/primitive",
 } as const;
 
@@ -39,19 +39,19 @@ beforeEach(() => {
 });
 
 describe("checkRepositoryBinding wiring", () => {
-  it("degrades an active checkout with a pending connection to warn", async () => {
-    vi.mocked(resolveRepositoryBinding).mockResolvedValue(PENDING);
+  it("degrades an active checkout with an unbound server connection to warn", async () => {
+    vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
 
     await expect(checkRepositoryBinding()).resolves.toMatchObject({
       name: "repo-binding",
       status: "warn",
-      detail: expect.stringContaining("campus-ai/primitive"),
+      detail: expect.stringContaining("repository is unbound"),
     });
   });
 
-  it("fails an inactive checkout with a pending connection and asks for enable", async () => {
-    vi.mocked(resolveRepositoryBinding).mockResolvedValue(PENDING);
+  it("fails an inactive checkout with an unbound server connection and asks for enable", async () => {
+    vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
 
     await expect(checkRepositoryBinding()).resolves.toMatchObject({

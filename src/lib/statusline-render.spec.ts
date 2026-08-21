@@ -15,7 +15,7 @@ describe("StatuslineIngestionCache", () => {
   it("coalesces Git-backed state for 30 seconds and refreshes on expiry", () => {
     let now = 1_000;
     const resolve = vi.fn(() => "enabled" as const);
-    const cache = new StatuslineIngestionCache(resolve, () => now);
+    const cache = new StatuslineIngestionCache(resolve, { now: () => now });
 
     expect(cache.get("/repo")).toBe("enabled");
     now += 29_999;
@@ -28,7 +28,7 @@ describe("StatuslineIngestionCache", () => {
 
   it("is bounded and can be invalidated eagerly", () => {
     const resolve = vi.fn(() => "disabled" as const);
-    const cache = new StatuslineIngestionCache(resolve, Date.now, 30_000, 2);
+    const cache = new StatuslineIngestionCache(resolve, { maxEntries: 2 });
 
     cache.get("/one");
     cache.get("/two");
@@ -40,9 +40,68 @@ describe("StatuslineIngestionCache", () => {
     cache.get("/one");
     expect(resolve).toHaveBeenCalledTimes(5);
   });
+
+  it("co-caches the binding diagnostic only for enabled repositories", () => {
+    let enabled = true;
+    const resolveBinding = vi.fn(() => "unbound" as const);
+    const cache = new StatuslineIngestionCache(() => (enabled ? "enabled" : "disabled"), {
+      resolveRepositoryBindingState: resolveBinding,
+    });
+
+    expect(cache.get("/enabled")).toBe("enabled");
+    expect(cache.getRepositoryBindingState("/enabled")).toBe("unbound");
+    expect(resolveBinding).toHaveBeenCalledOnce();
+
+    enabled = false;
+    expect(cache.get("/disabled")).toBe("disabled");
+    expect(cache.getRepositoryBindingState("/disabled")).toBeUndefined();
+    expect(resolveBinding).toHaveBeenCalledOnce();
+  });
 });
 
 describe("formatStatusline I/O boundary", () => {
+  it("surfaces only closed binding-state labels and never caller-provided text", () => {
+    const snapshot = {
+      pid: 1,
+      uptimeMs: 1,
+      sessionId: "session",
+      healthy: true,
+      onlineCount: 1,
+    };
+    expect(
+      formatStatusline("1.2.3", snapshot, () => "enabled", {
+        resolveRepositoryBindingState: () => "unbound",
+      }),
+    ).toContain("repository: unbound (enforcement not evaluating)");
+
+    const forged = "unbound\u001b]52;c;secret\u0007";
+    const line = formatStatusline("1.2.3", snapshot, () => "enabled", {
+      resolveRepositoryBindingState: () => forged as "unbound",
+    });
+    expect(line).not.toContain("secret");
+    expect(line).not.toContain("\u001b");
+    expect(line).not.toContain("repository:");
+  });
+
+  it("prioritizes reauth hold without resolving or rendering repository state", () => {
+    const resolveBinding = vi.fn(() => "unbound" as const);
+    const line = formatStatusline(
+      "1.2.3",
+      {
+        pid: 1,
+        uptimeMs: 1,
+        sessionId: "session",
+        healthy: false,
+        needsReauth: true,
+      },
+      () => "enabled",
+      { resolveRepositoryBindingState: resolveBinding },
+    );
+    expect(line).toContain("prim auth login");
+    expect(line).not.toContain("repository:");
+    expect(resolveBinding).not.toHaveBeenCalled();
+  });
+
   it("keeps styled Decision links by default and renders them bare under plainLinks", () => {
     const resolve = vi.fn(() => "enabled" as const);
     const snapshot = {

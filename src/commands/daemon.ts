@@ -37,11 +37,15 @@ import {
   setDaemonExplicitlyDisabled,
   withDaemonLifecycleLock,
 } from "../daemon/launchd.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
+import {
+  type RepositoryBindingDiagnosticState,
+  repositoryBindingDiagnosticLabel,
+} from "../lib/statusline-render.js";
 
 const DAEMON_BIN = "prim-daemon-server";
 const CONFIG_DIR = primConfigDirectory();
@@ -634,11 +638,16 @@ export function formatDaemonSnapshotMessage(
   snapshot: StatusSnapshot | null,
   supervised: boolean,
   decisionIngestion: DecisionIngestionStatus,
+  bindingState?: RepositoryBindingDiagnosticState,
 ): string {
+  const bindingLabel = snapshot?.needsReauth
+    ? undefined
+    : repositoryBindingDiagnosticLabel(bindingState);
+  const bindingSuffix = bindingLabel ? ` · ${bindingLabel}` : "";
   if (!snapshot) {
     return supervised
-      ? `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion} under launchd (no snapshot)`
-      : `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}`;
+      ? `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion} under launchd (no snapshot)${bindingSuffix}`
+      : `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}${bindingSuffix}`;
   }
   const team =
     snapshot.onlineNames !== undefined
@@ -648,15 +657,26 @@ export function formatDaemonSnapshotMessage(
     const reason = daemonDegradedReason(snapshot);
     return `[prim] ✗ daemon unhealthy${supervised ? " under launchd" : ""} · pid=${snapshot.pid}${team}${reason ? ` · ${reason}` : ""}`;
   }
-  return `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}${supervised ? " under launchd" : ""} · pid=${snapshot.pid} · uptime=${Math.round(
+  return `[prim] ✓ daemon live, Decision ingestion ${decisionIngestion}${supervised ? " under launchd" : ""}${bindingSuffix} · pid=${snapshot.pid} · uptime=${Math.round(
     snapshot.uptimeMs / 1000,
   )}s · session=${snapshot.sessionId}${team}`;
+}
+
+function localRepositoryBindingDiagnostic(
+  decisionIngestion: DecisionIngestionStatus,
+): RepositoryBindingDiagnosticState | undefined {
+  if (decisionIngestion !== "enabled") return undefined;
+  const state = repositoryBindingState(process.cwd());
+  return state === "unbound" || state === "invalid" ? state : undefined;
 }
 
 function writeLiveSnapshot(snapshot: StatusSnapshot | null, supervised = false): void {
   const decisionIngestion =
     snapshot?.healthy === false ? "disabled" : decisionIngestionStatus(process.cwd());
-  process.stderr.write(`${formatDaemonSnapshotMessage(snapshot, supervised, decisionIngestion)}\n`);
+  const bindingState = localRepositoryBindingDiagnostic(decisionIngestion);
+  process.stderr.write(
+    `${formatDaemonSnapshotMessage(snapshot, supervised, decisionIngestion, bindingState)}\n`,
+  );
 }
 
 async function detachedDaemonStatus(): Promise<void> {
