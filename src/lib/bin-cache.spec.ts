@@ -109,7 +109,9 @@ describe("warmBinCache", () => {
     expect(readFileSync(join(cacheDir, "node"), "utf-8")).toBe(process.execPath);
     for (const bin of ["prim", "prim-hook", "prim-pre-tool-use", "prim-post-tool-use"]) {
       expect(readFileSync(join(cacheDir, bin), "utf-8")).toBe(binFile(bin));
+      expect(statSync(join(cacheDir, bin)).mode & 0o777).toBe(0o600);
     }
+    expect(statSync(join(cacheDir, "node")).mode & 0o777).toBe(0o600);
   });
 
   it("tightens the cache dir to 0o700 even if a lax-umask run left it 0o755", () => {
