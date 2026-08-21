@@ -1,12 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +20,7 @@ import { pathToFileURL } from "node:url";
 import { build } from "tsup";
 import { describe, expect, it } from "vitest";
 import { stageRuntime } from "./daemon/launchd.js";
+import type { DaemonPrincipal } from "./daemon/principal.js";
 
 type ChildResult = { code: number | null; stdout: string; stderr: string };
 type RunningChild = {
@@ -25,6 +28,26 @@ type RunningChild = {
   exited: Promise<number | null>;
   stderr: () => string;
 };
+
+const TEST_ISSUER = "https://issuer.test";
+
+function testJwt(subject: string, organizationId: string, generation: string): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+    Buffer.from(
+      JSON.stringify({ iss: TEST_ISSUER, sub: subject, org_id: organizationId, generation }),
+    ).toString("base64url"),
+    "signature",
+  ].join(".");
+}
+
+function daemonCaller(token: string, subject: string, organizationId: string): DaemonPrincipal {
+  return {
+    principalId: createHash("sha256").update(`${TEST_ISSUER}\0${subject}`).digest("hex"),
+    organizationId,
+    credentialFingerprint: createHash("sha256").update(token).digest("hex"),
+  };
+}
 
 function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Promise<ChildResult> {
   const source = `
@@ -161,6 +184,7 @@ function daemonRequest(
   socketPath: string,
   method: string,
   params: Record<string, unknown> = {},
+  caller?: DaemonPrincipal,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
@@ -174,7 +198,7 @@ function daemonRequest(
       reject(error);
     });
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ id: 1, method, params })}\n`);
+      socket.write(`${JSON.stringify({ id: 1, method, params, ...(caller ? { caller } : {}) })}\n`);
     });
     socket.on("data", (chunk) => {
       response += chunk.toString();
@@ -415,6 +439,8 @@ describe("daemon terminal-auth lifecycle", () => {
         () => existsSync(socketPath),
         () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
       );
+      expect(statSync(config).mode & 0o777).toBe(0o700);
+      expect(statSync(socketPath).mode & 0o777).toBe(0o600);
 
       const held = await daemonRequest(socketPath, "status_snapshot");
       expect(held.needsReauth).toBe(true);
@@ -464,6 +490,10 @@ describe("daemon raw statusline socket", () => {
     const activeRepo = join(home, "active repo");
     const inactiveRepo = join(home, "inactive");
     const otherEnvRepo = join(home, "other-env");
+    const tokenA = testJwt("user-a", "org-a", "1");
+    const tokenB = testJwt("user-b", "org-b", "1");
+    const callerA = daemonCaller(tokenA, "user-a", "org-a");
+    const callerB = daemonCaller(tokenB, "user-b", "org-b");
     for (const repo of [activeRepo, inactiveRepo, otherEnvRepo]) {
       mkdirSync(repo, { recursive: true });
       execFileSync("git", ["init", "--quiet"], { cwd: repo });
@@ -473,7 +503,8 @@ describe("daemon raw statusline socket", () => {
     execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: otherEnvRepo });
     writeFileSync(join(otherEnvRepo, ".env"), "PRIM_API_URL=https://other.example.test\n");
     mkdirSync(config, { recursive: true });
-    writeFileSync(join(config, "token"), "test-token\n");
+    chmodSync(config, 0o777);
+    writeFileSync(join(config, "token"), `${tokenB}\n`);
 
     const server = createServer((request, response) => {
       request.resume();
@@ -500,12 +531,16 @@ describe("daemon raw statusline socket", () => {
         request.method === "GET" &&
         request.url === "/api/cli/decisions/recent?limit=100&since=24h"
       ) {
+        const decisionId =
+          request.headers.authorization === `Bearer ${tokenA}`
+            ? "cached-decision-a"
+            : "cached-decision-b";
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
             decisions: [
               {
-                id: "cached-decision",
+                id: decisionId,
                 intent: "Read Decisions from the daemon cache",
                 userId: "user-kasey",
                 authorName: "Kasey",
@@ -558,14 +593,26 @@ describe("daemon raw statusline socket", () => {
 
       await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
 
+      await expect(
+        daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }),
+      ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }, callerA),
+      ).rejects.toThrow("principal or organization mismatch");
+
       const digestSnapshot = await eventuallyValue(
         async () =>
-          await daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }),
+          await daemonRequest(
+            socketPath,
+            "decision_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerB,
+          ),
         (value) => Array.isArray(value.decisions) && value.decisions.length === 1,
         () => `daemon Decision cache did not warm: ${daemon?.stderr() ?? ""}`,
       );
       expect(digestSnapshot).toMatchObject({
-        decisions: [{ id: "cached-decision" }],
+        decisions: [{ id: "cached-decision-b" }],
         cachedAt: expect.any(Number),
       });
 
@@ -655,6 +702,39 @@ describe("daemon raw statusline socket", () => {
         Buffer.alloc(65_536, "x"),
       ]);
       await expect(rawStatuslineRequest(socketPath, [oversized])).resolves.toEqual(Buffer.alloc(0));
+
+      // Rotate from org B to org A. The first org-A read may see only the
+      // warming sentinel; it must never see the retained org-B page.
+      writeFileSync(join(config, "token"), `${tokenA}\n`);
+      const afterRotation = await daemonRequest(
+        socketPath,
+        "decision_digest_snapshot",
+        { callerEnv: apiUrl },
+        callerA,
+      );
+      expect(afterRotation).not.toMatchObject({ decisions: [{ id: "cached-decision-b" }] });
+      const rotatedDigest = await eventuallyValue(
+        async () =>
+          await daemonRequest(
+            socketPath,
+            "decision_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerA,
+          ),
+        (value) =>
+          Array.isArray(value.decisions) &&
+          (value.decisions as Array<{ id?: string }>).some(
+            (decision) => decision.id === "cached-decision-a",
+          ),
+        () => `daemon Decision cache did not re-key: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(rotatedDigest).toMatchObject({ decisions: [{ id: "cached-decision-a" }] });
+
+      // The JSON protocol has its own byte budget and a bad client cannot
+      // wedge the listener for subsequent calls.
+      await expect(
+        rawStatuslineRequest(socketPath, [Buffer.alloc(64 * 1024 + 1, "x")]),
+      ).resolves.toEqual(Buffer.alloc(0));
       await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
     } finally {
       if (daemon) {

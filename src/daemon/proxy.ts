@@ -5,15 +5,11 @@
  * cascade / affecting) through the long-lived prim-daemon's warm connection
  * when it's up, falling back to a direct HTTP call when it isn't.
  *
- * Reads only, by design. The daemon authorizes every proxied call with its
- * OWN process token — the socket envelope carries no per-request caller token
- * — so routing a WRITE through it could attribute a mutation to the wrong org
- * when one user drives several org-bound sessions under a single daemon.
- * Writes (moves ingest, reconcile issue, confirm) therefore stay on the
- * direct, per-invocation client, which resolves the caller's token itself.
- * The same single-token caveat permits a cross-org READ, but a read is
- * non-mutating; tightening it to a per-request principal is a tracked
- * follow-up.
+ * Reads only, by design. Each socket envelope carries a non-secret proof of
+ * the caller's current principal, organization, and credential generation;
+ * the daemon serves a read only when that proof matches its current bearer.
+ * Missing, opaque, stale, or cross-org proofs fail soft into the direct path.
+ * Writes remain direct so their bearer is resolved in the invoking process.
  */
 import { type CliClient, getSiteUrl } from "../client.js";
 import { daemonRequest } from "./client.js";
