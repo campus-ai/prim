@@ -7,8 +7,9 @@
  * NDJSON journal, exits 0. On Claude Stop it also leases any eventual
  * same-worktree Decision feedback and returns it as a human-visible
  * systemMessage. For Codex, UserPromptSubmit also injects the daemon-cached
- * organization Decision digest on every message, with Stop as a guarded
- * continuation backstop. Capture and delivery fail independently.
+ * organization Decision digest on every message. Codex Stop remains capture-
+ * only so a digest cannot displace a completed assistant handoff. Capture and
+ * delivery fail independently.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
