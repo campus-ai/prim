@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   gitToplevel: vi.fn(),
   isSessionEnded: vi.fn(),
   packageVersion: vi.fn(),
+  repositoryBindingState: vi.fn(),
   statusSnapshot: vi.fn(),
 }));
 
@@ -31,6 +32,7 @@ vi.mock("../client.js", () => ({
 vi.mock("../daemon/client.js", () => ({ daemonRequest: mocks.daemonRequest }));
 vi.mock("../lib/activation.js", () => ({
   decisionIngestionStatus: mocks.decisionIngestionStatus,
+  repositoryBindingState: mocks.repositoryBindingState,
 }));
 vi.mock("../lib/bin-path.js", () => ({ packageVersion: mocks.packageVersion }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: mocks.gitToplevel }));
@@ -172,6 +174,27 @@ describe("renderDecisionDigest", () => {
 });
 
 describe("Codex hook context", () => {
+  it("surfaces repository-unbound once through the existing deduped status report", async () => {
+    mocks.repositoryBindingState.mockReturnValue("unbound");
+
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-unbound",
+      startup: true,
+      includeDigest: false,
+    });
+    expect(first.context).toContain("repository: unbound (enforcement not evaluating)");
+    expect(first.context).not.toContain("repoSync");
+    await first.acknowledge(true);
+
+    const repeated = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-unbound",
+      includeDigest: false,
+    });
+    expect(repeated.context).toBeUndefined();
+  });
+
   it("includes the daemon's initial all-change snapshot and advances only after handoff", async () => {
     const rows = [
       row("1", {
