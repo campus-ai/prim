@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { pinnedNpxCommand } from "./bin-path.js";
 import {
   PRIM_POST_REWRITE_BLOCK_END,
   PRIM_POST_REWRITE_BLOCK_START,
@@ -156,7 +157,9 @@ describe("post-rewrite managed hook", () => {
     expect(block).toContain("chmod 600");
     expect(block).toContain('"$prim_cache_dir/prim-post-rewrite"');
     expect(block).toContain("./node_modules/.bin/prim-post-rewrite");
-    expect(block).toContain("@primitive.ai/prim@latest prim-post-rewrite");
+    expect(block).toContain(pinnedNpxCommand("prim-post-rewrite"));
+    expect(block).toContain("--ignore-scripts");
+    expect(block).not.toContain("@latest");
     expect(block).toContain("rm -f");
   });
 
