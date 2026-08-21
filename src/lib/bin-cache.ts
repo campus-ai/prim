@@ -16,9 +16,10 @@
  * MUST NOT run on the hit path (it would bump mtime and freeze the TTL) — hence
  * the PRIM_BIN_CACHE_HIT guard the shim sets before exec.
  */
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteFile } from "./atomic-file.js";
 import { binFile } from "./bin-path.js";
 
 // The bins the shim execs directly on a hit — mirrors the cacheRead:true shims
@@ -42,13 +43,8 @@ export function binCacheDir(): string {
   return join(base, "prim", "bin");
 }
 
-// write-then-rename so a concurrent reader never sees a half-written path; a
-// per-pid tmp name keeps two warmers (SessionStart + prim-hook@SessionStart)
-// from colliding on the same temp file.
 function writeAtomic(path: string, content: string): void {
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, content, { mode: 0o600 });
-  renameSync(tmp, path);
+  atomicWriteFile(path, content, { mode: 0o600 });
 }
 
 /**
