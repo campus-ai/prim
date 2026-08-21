@@ -6,7 +6,7 @@
  *   prim session drop <sessionId>
  *
  * Writes an explicit session marker file at
- * `~/.config/prim/sessions/<sessionId>.json`. The highest-priority tier of
+ * `<prim-config>/sessions/<sessionId>.json`. The highest-priority tier of
  * the org-binding chain (`src/binding.ts`) reads this file to attribute
  * moves to a specific org, overriding the cwd-derived defaults.
  *

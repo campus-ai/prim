@@ -92,15 +92,28 @@ describe("client credential store", () => {
     });
   });
 
-  it("resolves a supplied cwd and raw API URL with the existing env-file precedence", async () => {
+  it("uses only an explicit API URL and ignores repository dotenv files", async () => {
     const repo = join(home, "repo");
     mkdirSync(repo);
     writeFileSync(join(repo, ".env.local"), "PRIM_API_URL=https://local.example.test\n");
     writeFileSync(join(repo, ".env"), "PRIM_API_URL=https://env.example.test\n");
-    const { getSiteUrlForCwd } = await import("./client.js");
+    const { getSiteUrlForEnvironment } = await import("./client.js");
 
-    expect(getSiteUrlForCwd(repo, "https://shell.example.test")).toBe("https://shell.example.test");
-    expect(getSiteUrlForCwd(repo, "")).toBe("https://env.example.test");
+    expect(getSiteUrlForEnvironment("https://shell.example.test")).toBe(
+      "https://shell.example.test",
+    );
+    expect(getSiteUrlForEnvironment("")).toBe("https://api.getprimitive.ai");
+  });
+
+  it("uses PRIM_CONFIG_DIR for every credential artifact", async () => {
+    const explicitConfig = join(home, "private-config");
+    process.env.PRIM_CONFIG_DIR = explicitConfig;
+    vi.resetModules();
+    const client = await import("./client.js");
+
+    expect(client.TOKEN_FILE_PATH).toBe(join(explicitConfig, "token"));
+    expect(client.REFRESH_TOKEN_PATH).toBe(join(explicitConfig, "refresh_token"));
+    expect(client.CREDENTIAL_LOCK_PATH).toBe(join(explicitConfig, "credentials.lock"));
   });
 
   it("does not use disk refresh state for an environment credential", async () => {
