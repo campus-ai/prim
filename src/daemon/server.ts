@@ -32,7 +32,7 @@ import {
 } from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import type { Teammate } from "../lib/presence.js";
 import {
@@ -107,7 +107,9 @@ const startedAt = Date.now();
 const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
 const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
-const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus);
+const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus, {
+  resolveRepositoryBindingState: repositoryBindingState,
+});
 const decisionDigestCache = new DecisionDigestCache(
   async () =>
     await client.get(DECISION_DIGEST_CACHE_PATH, {
@@ -805,8 +807,14 @@ function handleConnection(conn: Socket): void {
     try {
       const callerEnv = getSiteUrlForEnvironment(parsed.request.primApiUrl || undefined);
       const snapshot = handleStatusSnapshot({ callerEnv });
-      const line = formatStatusline(runtimeVersion, snapshot, () =>
-        statuslineIngestionCache.get(parsed.request.cwd),
+      const line = formatStatusline(
+        runtimeVersion,
+        snapshot,
+        () => statuslineIngestionCache.get(parsed.request.cwd),
+        {
+          resolveRepositoryBindingState: () =>
+            statuslineIngestionCache.getRepositoryBindingState(parsed.request.cwd),
+        },
       );
       conn.end(line);
     } catch {

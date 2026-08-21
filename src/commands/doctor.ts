@@ -345,14 +345,7 @@ export function classifyRepositoryBinding(
   current: RepositoryBindingResult,
   active: boolean,
 ): Check {
-  if (current.status === "pending") {
-    if (value !== undefined) {
-      return {
-        name: "repo-binding",
-        status: "fail",
-        detail: `local repository binding is stale for ${current.repositoryFullName} — run \`prim enable\``,
-      };
-    }
+  if (current.status === "unbound") {
     if (!active) {
       return {
         name: "repo-binding",
@@ -360,10 +353,16 @@ export function classifyRepositoryBinding(
         detail: "passive capture is inactive — run `prim enable`",
       };
     }
+    const localDetail =
+      value === undefined
+        ? "repository is unbound"
+        : isValidRepoSyncId(value)
+          ? "server reports this repository unbound; the last binding is retained locally for recovery"
+          : "server reports this repository unbound; the local cached binding is invalid";
     return {
       name: "repo-binding",
       status: "warn",
-      detail: `${current.repositoryFullName} is not connected to Primitive — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
+      detail: `${localDetail} — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
     };
   }
   if (!isValidRepoSyncId(value)) {

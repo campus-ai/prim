@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 
@@ -65,6 +65,12 @@ function debug(msg: string): void {
 
 export async function renderStatusline(): Promise<string> {
   const version = readPackageVersion();
+  const cwd = process.cwd();
+  let ingestion: ReturnType<typeof decisionIngestionStatus> | undefined;
+  const resolveIngestion = () => {
+    ingestion ??= decisionIngestionStatus(cwd);
+    return ingestion;
+  };
   const snapshot = await daemonRequest<StatusSnapshot>(
     "status_snapshot",
     // callerEnv lets the daemon withhold presence when it is bound to a different
@@ -75,7 +81,10 @@ export async function renderStatusline(): Promise<string> {
   if (!snapshot) {
     debug("daemon snapshot missing");
   }
-  return formatStatusline(version, snapshot, () => decisionIngestionStatus(process.cwd()));
+  return formatStatusline(version, snapshot, resolveIngestion, {
+    resolveRepositoryBindingState: () =>
+      resolveIngestion() === "enabled" ? repositoryBindingState(cwd) : undefined,
+  });
 }
 
 export function registerStatuslineCommands(program: Command): void {

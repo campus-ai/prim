@@ -350,7 +350,7 @@ describe("registerSetupCommand", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
-  it("completes when the repository connection is pending after local activation", async () => {
+  it("completes when the repository is unbound after local activation", async () => {
     const calls: string[][] = [];
     const note = vi.fn();
     const exit = vi.fn();
@@ -368,7 +368,7 @@ describe("registerSetupCommand", () => {
           return { code: 0, stdout: '{"installed":false}' };
         }
         if (args[0] === "enable") {
-          return { code: 0, stdout: '{"active":true,"bindingStatus":"pending"}' };
+          return { code: 0, stdout: '{"active":true,"bindingStatus":"unbound"}' };
         }
         if (args[0] === "doctor") {
           return { code: 0, stdout: '{"ok":true,"status":"warn"}' };
