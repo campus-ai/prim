@@ -4,7 +4,7 @@
  * Used by every hook (pre-tool-use, post-tool-use, session-start,
  * session-end) and every CLI subcommand (`prim statusline`,
  * `prim reconcile`, `prim daemon status`) to talk to the long-lived
- * `prim-daemon-server` over ~/.config/prim/sock.
+ * `prim-daemon-server` over the socket in Primitive's resolved config directory.
  *
  * Failure model: returns `null` on any socket-side error (daemon down,
  * socket missing, timeout, malformed reply). Callers must treat null as
@@ -13,10 +13,10 @@
  */
 
 import { type Socket, createConnection } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { primConfigDirectory } from "../lib/paths.js";
 
-const SOCK_PATH = join(homedir(), ".config", "prim", "sock");
+const SOCK_PATH = join(primConfigDirectory(), "sock");
 const DEFAULT_TIMEOUT_MS = 250;
 
 let nextRequestId = 1;

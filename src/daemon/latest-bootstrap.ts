@@ -1,7 +1,7 @@
 import { type SpawnOptions, spawn } from "node:child_process";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { withFileLock } from "../lib/file-lock.js";
+import { primConfigDirectory } from "../lib/paths.js";
 
 const LATEST_BOOTSTRAP_TIMEOUT_MS = 45_000;
 const LATEST_BOOTSTRAP_LOCK_NAME = "daemon-latest.lock";
@@ -78,7 +78,10 @@ export async function runLatestDaemonBootstrap(
 ): Promise<boolean> {
   const lockPath =
     options.lockPath ??
-    join(options.homeDir ?? homedir(), ".config", "prim", LATEST_BOOTSTRAP_LOCK_NAME);
+    join(
+      primConfigDirectory({ env: options.env, homeDir: options.homeDir }),
+      LATEST_BOOTSTRAP_LOCK_NAME,
+    );
   try {
     return await withFileLock(
       lockPath,
