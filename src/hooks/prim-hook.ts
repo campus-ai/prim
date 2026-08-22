@@ -31,7 +31,6 @@ import {
 } from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
-import { warmBinCache } from "../lib/bin-cache.js";
 import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
@@ -80,9 +79,6 @@ async function main(): Promise<void> {
   // point. It cannot preempt Node startup or synchronous filesystem work; see
   // the README's explicit timeout boundary.
   const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
-  // Refresh the resolved-path cache so subsequent hook fires skip npx (no-op on
-  // the cache-hit path and under the kill switch; never throws).
-  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   let parsed: Record<string, unknown>;

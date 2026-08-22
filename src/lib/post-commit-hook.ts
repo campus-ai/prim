@@ -16,7 +16,8 @@ import {
 } from "node:fs";
 import type { Stats } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { BIN_CACHE_DIR_SH, BIN_CACHE_TTL_MIN_DEFAULT, pinnedNpxCommand } from "./bin-path.js";
+import { GIT_HOOK_CACHE_SHELL_DIR, GIT_HOOK_CACHE_TTL_MINUTES } from "./bin-cache.js";
+import { pinnedNpxCommand } from "./bin-path.js";
 import { gitToplevel } from "./git.js";
 
 export const PRIM_POST_COMMIT_BLOCK_START = "# >>> prim post-commit hook >>>";
@@ -111,9 +112,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   if [ -n "$prim_commit_sha" ]; then
     prim_commit_observed_file=$(mktemp "\${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX" 2>/dev/null) || prim_commit_observed_file=
     prim_commit_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_commit_branch=
-    prim_cache_dir="${BIN_CACHE_DIR_SH}"
+    prim_cache_dir="${GIT_HOOK_CACHE_SHELL_DIR}"
     prim_post_commit_ran=0
-    if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-commit" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-commit" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then
+    if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-commit" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-commit" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${GIT_HOOK_CACHE_TTL_MINUTES}}" 2>/dev/null)" ]; then
       prim_node=$(cat "$prim_cache_dir/node")
       prim_entry=$(cat "$prim_cache_dir/prim-post-commit")
       if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then
@@ -164,9 +165,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
       if cat > "$prim_rewrite_pairs_file"; then
         exec < "$prim_rewrite_pairs_file"
         prim_rewrite_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || prim_rewrite_branch=
-        prim_cache_dir="${BIN_CACHE_DIR_SH}"
+        prim_cache_dir="${GIT_HOOK_CACHE_SHELL_DIR}"
         prim_post_rewrite_ran=0
-        if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-rewrite" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-rewrite" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then
+        if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$prim_cache_dir/prim-post-rewrite" ] && [ -f "$prim_cache_dir/node" ] && [ -n "$(find "$prim_cache_dir/prim-post-rewrite" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${GIT_HOOK_CACHE_TTL_MINUTES}}" 2>/dev/null)" ]; then
           prim_node=$(cat "$prim_cache_dir/node")
           prim_entry=$(cat "$prim_cache_dir/prim-post-rewrite")
           if [ -x "$prim_node" ] && [ -f "$prim_entry" ]; then

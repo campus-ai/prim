@@ -33,7 +33,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
-import { warmBinCache } from "../lib/bin-cache.js";
 import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
@@ -140,7 +139,6 @@ function debug(msg: string): void {
 }
 
 async function main(): Promise<void> {
-  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   try {
