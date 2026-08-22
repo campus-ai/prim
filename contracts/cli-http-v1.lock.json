@@ -1,0 +1,9 @@
+{
+  "sourceRepository": "campus-ai/primitive",
+  "sourceCommit": "dd4efd90bff89593040f1de9b890fd120931f17b",
+  "sourcePath": "contracts/cli-http-v1.schema.json",
+  "sha256": "aaa5f46d51df693e58f84b7d20294b3c515ca5c179c8b728e95a07ceae7bb6d0",
+  "artifactId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
+  "contractVersion": 1,
+  "scope": "request-core"
+}
