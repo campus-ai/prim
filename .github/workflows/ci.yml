@@ -30,6 +30,8 @@ jobs:
 
       - run: pnpm install
 
+      - run: pnpm contracts:check
+
       - run: pnpm lint
 
       - run: pnpm format:check
