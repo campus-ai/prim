@@ -109,12 +109,30 @@ export function toMove(
   const sessionId = (parsed.session_id as string | undefined) ?? "";
   const eventType = (parsed.hook_event_name as string | undefined) ?? "unknown";
   const toolOutcome = toolOutcomeFor(parsed, agent);
-  const moveId =
-    CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && invocationId
-      ? `posttool:v1:${createHash("sha256")
-          .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
-          .digest("hex")}`
-      : randomUUID();
+  let moveId: string;
+  if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && invocationId) {
+    moveId = `posttool:v1:${createHash("sha256")
+      .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
+      .digest("hex")}`;
+  } else if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId) {
+    // Malformed/older host envelopes can omit the invocation id. Keep the two
+    // independent capture paths idempotent by hashing the stable tool facts;
+    // the dedicated prefix cannot collide with a host-provided identity.
+    moveId = `posttool:fallback:v1:${createHash("sha256")
+      .update(
+        JSON.stringify([
+          agent,
+          sessionId,
+          eventType,
+          parsed.turn_id ?? null,
+          parsed.tool_name ?? null,
+          parsed.tool_input ?? null,
+        ]),
+      )
+      .digest("hex")}`;
+  } else {
+    moveId = randomUUID();
+  }
   return {
     moveId,
     capturedAt: Date.now(),

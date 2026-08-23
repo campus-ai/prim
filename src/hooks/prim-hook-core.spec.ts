@@ -122,6 +122,22 @@ describe("toMove", () => {
     expect(first.moveId).toBe(replay.moveId);
     expect(first.moveId).not.toBe(success.moveId);
   });
+
+  it("keeps duplicate post-tool capture deterministic when invocation identity is absent", () => {
+    const parsed = {
+      session_id: "session-1",
+      turn_id: "turn-1",
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { patch: "*** Begin Patch" },
+    };
+    const passive = toMove(parsed, "x", "codex");
+    const direct = toMove(parsed, "x", "codex");
+
+    expect(passive.moveId).toMatch(/^posttool:fallback:v1:[0-9a-f]{64}$/u);
+    expect(direct.moveId).toBe(passive.moveId);
+    expect(passive).not.toHaveProperty("invocationId");
+  });
 });
 
 describe("postToolInvocationId", () => {
