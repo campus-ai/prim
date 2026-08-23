@@ -145,11 +145,17 @@ unless Prim's global `--yes` is present.
 #### Claude decision feedback
 
 Claude Code receives eventual, human-visible feedback when automatic capture
-creates an accepted `change` Decision. A later Claude `Stop` or fresh
+creates a `change` Decision. A later Claude `Stop` or fresh
 `SessionStart` in the same Git worktree can display:
 
 ```text
 [prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q)
+```
+
+An author-private draft uses an actionable publish prompt instead:
+
+```text
+[prim] publish this Decision draft (dec_a1b2c3d4)? Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q) Run `prim decisions publish dec_a1b2c3d4` to share it with your team.
 ```
 
 This is a hook `systemMessage` for the person using Claude Code; it is not
