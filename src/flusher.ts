@@ -22,11 +22,20 @@
 
 import { createReadStream, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
-import { type CliClient, HttpError, getClient } from "./client.js";
-import { type DeadLetterReason, quarantineMove } from "./dead-letter.js";
+import { type CliClient, HttpError } from "./client.js";
+import {
+  type DeadLetterPersistenceOptions,
+  type DeadLetterReason,
+  quarantineMove,
+  quarantineRawLine,
+} from "./dead-letter.js";
 import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
-import { type RetainedJournalBucket, inspectJournalDelivery } from "./journal-organization.js";
+import {
+  type CurrentOrganizationBinding,
+  type RetainedJournalBucket,
+  buildOrganizationBoundMoveRequest,
+  inspectJournalDelivery,
+} from "./journal-organization.js";
 import {
   type FlushingFile,
   JOURNAL_DIR,
@@ -96,6 +105,42 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
   return undefined;
 }
 
+/** Stream exact NDJSON line bytes without lossy UTF-8 replacement. */
+async function* rawJournalLines(
+  input: ReturnType<typeof createReadStream>,
+): AsyncGenerator<Buffer> {
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
+  for await (const value of input) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    let start = 0;
+    let newline = chunk.indexOf(0x0a, start);
+    while (newline !== -1) {
+      // Include the LF delimiter so a syntax-invalid record preserves the
+      // exact source bytes (including CRLF vs LF) in its dead letter.
+      const tail = chunk.subarray(start, newline + 1);
+      if (pending.length === 0) {
+        yield tail;
+      } else {
+        pending.push(tail);
+        yield Buffer.concat(pending, pendingBytes + tail.length);
+        pending = [];
+        pendingBytes = 0;
+      }
+      start = newline + 1;
+      newline = chunk.indexOf(0x0a, start);
+    }
+    if (start < chunk.length) {
+      const tail = chunk.subarray(start);
+      pending.push(tail);
+      pendingBytes += tail.length;
+    }
+  }
+  if (pendingBytes > 0) {
+    yield pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
+  }
+}
+
 /**
  * Drain an already-rotated `.flushing` file: POST its moves in batches, then
  * unlink on success. On a POST failure it throws WITHOUT unlinking, so the
@@ -104,15 +149,16 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
  */
 export async function drainFlushingPath(
   flushingPath: string,
-  client: CliClient = getClient(),
+  client: CliClient,
+  binding: CurrentOrganizationBinding,
+  options: { deadLetterPersistence?: DeadLetterPersistenceOptions } = {},
 ): Promise<DrainCounts> {
   const postBatch = async (batch: Move[]): Promise<DrainCounts> => {
     try {
-      const response = await client.post(
-        "/api/cli/moves/ingest",
-        { batch },
-        { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-      );
+      const request = buildOrganizationBoundMoveRequest(batch, binding);
+      const response = await client.post("/api/cli/moves/ingest", request, {
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      });
       requireDurableIngestAcknowledgement(response, batch.length);
       return { flushed: batch.length, quarantined: 0 };
     } catch (error) {
@@ -130,7 +176,13 @@ export async function drainFlushingPath(
         return addDrainCounts(left, right);
       }
       const [move] = batch;
-      const quarantined = quarantineMove(flushingPath, move, reason);
+      const quarantined = quarantineMove(
+        flushingPath,
+        move,
+        reason,
+        Date.now,
+        options.deadLetterPersistence,
+      );
       process.stderr.write(
         `[prim] quarantined rejected move ${quarantined.quarantineId.slice(0, 12)} (${reason})\n`,
       );
@@ -138,20 +190,32 @@ export async function drainFlushingPath(
     }
   };
 
-  const input = createReadStream(flushingPath, { encoding: "utf-8" });
-  const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
+  const input = createReadStream(flushingPath);
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let batch: Move[] = [];
   let counts: DrainCounts = { flushed: 0, quarantined: 0 };
   try {
-    for await (const line of lines) {
-      if (line.length === 0) {
+    for await (const rawLine of rawJournalLines(input)) {
+      if (
+        (rawLine.length === 1 && rawLine[0] === 0x0a) ||
+        (rawLine.length === 2 && rawLine[0] === 0x0d && rawLine[1] === 0x0a)
+      ) {
         continue;
       }
       try {
+        const line = decoder.decode(rawLine);
         batch.push(JSON.parse(line) as Move);
       } catch {
-        // Preserve the journal's established malformed-line behavior: invalid
-        // records are skipped rather than blocking every valid Move behind it.
+        const quarantined = quarantineRawLine(
+          flushingPath,
+          rawLine,
+          Date.now,
+          options.deadLetterPersistence,
+        );
+        process.stderr.write(
+          `[prim] quarantined invalid journal line ${quarantined.quarantineId.slice(0, 12)} (invalid_move)\n`,
+        );
+        counts.quarantined += 1;
         continue;
       }
       if (batch.length === BATCH_SIZE) {
@@ -163,7 +227,6 @@ export async function drainFlushingPath(
       counts = addDrainCounts(counts, await postBatch(batch));
     }
   } finally {
-    lines.close();
     input.destroy();
   }
   unlinkSync(flushingPath);
@@ -172,7 +235,8 @@ export async function drainFlushingPath(
 
 async function drainPath(
   path: string,
-  client: CliClient = getClient(),
+  client: CliClient,
+  binding: CurrentOrganizationBinding,
 ): Promise<DrainCounts> {
   const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
   try {
@@ -185,7 +249,7 @@ async function drainPath(
     throw err;
   }
 
-  return drainFlushingPath(tmpPath, client);
+  return drainFlushingPath(tmpPath, client, binding);
 }
 
 export function processIsAlive(
@@ -243,8 +307,8 @@ export async function recoverOrphans(
     now?: number;
     ownerPid?: number;
     isAlive?: (pid: number) => boolean;
-    drain?: (path: string) => Promise<DrainCounts>;
-  } = {},
+    drain: (path: string) => Promise<DrainCounts>;
+  },
 ): Promise<DrainSummary> {
   const summary: DrainSummary = {
     flushed: 0,
@@ -256,7 +320,7 @@ export async function recoverOrphans(
     ownerPid: options.ownerPid ?? process.pid,
     isAlive: options.isAlive,
   }).sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path));
-  const drain = options.drain ?? drainFlushingPath;
+  const drain = options.drain;
   for (const file of recoverable) {
     if (summary.failedBuckets.has(file.bucket)) {
       continue;
@@ -287,7 +351,9 @@ export class FlushError extends Error {
 }
 
 async function flushOnce(): Promise<
-  DrainCounts & { retained?: RetainedJournalBucket[] }
+  DrainCounts & {
+    retained?: RetainedJournalBucket[];
+  }
 > {
   // Reclaim crash-stranded orphans first, then drain the live buckets.
   // Path-only enumeration (listBuckets does not stat/read), so the only
@@ -301,17 +367,14 @@ async function flushOnce(): Promise<
     ...orphanCandidates.map((file) => file.bucket),
     ...liveBuckets.map((bucket) => bucket.bucket),
   ]);
-  if (!inspection.client) {
-    return {
-      flushed: 0,
-      quarantined: 0,
-      retained: inspection.retainedBuckets,
-    };
+  if (!(inspection.client && inspection.binding)) {
+    return { flushed: 0, quarantined: 0, retained: inspection.retainedBuckets };
   }
   const client = inspection.client;
+  const binding = inspection.binding;
   const recovered = await recoverOrphans(
     orphanCandidates.filter((file) => inspection.deliverableBuckets.has(file.bucket)),
-    { drain: (path) => drainFlushingPath(path, client) },
+    { drain: (path) => drainFlushingPath(path, client, binding) },
   );
   let total = recovered.flushed;
   let quarantined = recovered.quarantined;
@@ -327,7 +390,7 @@ async function flushOnce(): Promise<
       continue;
     }
     try {
-      const counts = await drainPath(path, client);
+      const counts = await drainPath(path, client, binding);
       total += counts.flushed;
       quarantined += counts.quarantined;
     } catch (err) {

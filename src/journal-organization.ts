@@ -1,7 +1,10 @@
-import { type CliClient, getPinnedClient } from "./client.js";
+import { type CliClient, HttpError, getPinnedClient } from "./client.js";
+import { type MoveIngestRequest, isMoveIngestRequest } from "./contract/cli-http-v1.js";
+import { DECISION_LIFECYCLE_PROTOCOL_VERSION } from "./protocol/decision-lifecycle.js";
+import type { Move } from "./protocol/move.js";
 
 const ORGANIZATION_BINDING_VERSION = 1;
-const ORGANIZATION_ID_RE = /^[A-Za-z0-9_-]{1,256}$/;
+const ORGANIZATION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const UNBOUND_BUCKET = "_unbound";
 
 export type JournalRetentionReason =
@@ -31,6 +34,7 @@ type ParsedOrganizationBinding =
 
 export type JournalDeliveryInspection = {
   client?: CliClient;
+  binding?: CurrentOrganizationBinding;
   deliverableBuckets: Set<string>;
   retainedBuckets: RetainedJournalBucket[];
 };
@@ -98,6 +102,42 @@ export function classifyJournalBuckets(
 }
 
 /**
+ * Project a durable legacy journal batch into the current authority-bound wire
+ * envelope. The WAL is intentionally left untouched: a later retry must bind
+ * the same immutable event bytes to the credential generation that actually
+ * sends them.
+ */
+export function buildOrganizationBoundMoveRequest(
+  batch: Move[],
+  binding: CurrentOrganizationBinding,
+): MoveIngestRequest {
+  const capturedOrganizationId =
+    binding.captureAuthorityKind === "workos"
+      ? binding.workosOrganizationId
+      : binding.organizationId;
+  const request: unknown = {
+    batch: batch.map((move) => {
+      if (typeof move !== "object" || move === null || Array.isArray(move)) {
+        return move;
+      }
+      return {
+        ...move,
+        envelopeVersion: 4,
+        capturedOrganizationId,
+        captureAuthorityKind: binding.captureAuthorityKind,
+        decisionLifecycleProtocolVersion: DECISION_LIFECYCLE_PROTOCOL_VERSION,
+      };
+    }),
+  };
+  if (!isMoveIngestRequest(request)) {
+    throw new HttpError(400, "Invalid locally journaled move", {
+      error: "invalid_move",
+    });
+  }
+  return request;
+}
+
+/**
  * Resolve one bearer generation, fetch its exact tenant tuple, and classify
  * every bucket before any journal rotation or POST occurs.
  */
@@ -131,6 +171,7 @@ export async function inspectJournalDelivery(
   }
   return {
     client,
+    binding: parsed.binding,
     ...classifyJournalBuckets(bucketList, parsed.binding),
   };
 }

@@ -86,6 +86,7 @@ describe("credential-bound journal draining", () => {
 
     await expect(flush()).resolves.toEqual({
       flushed: 1,
+      quarantined: 0,
       retained: [{ bucket: "org_other", reason: "organization_mismatch" }],
     });
     expect(existsSync(matchingPath)).toBe(false);
@@ -104,6 +105,7 @@ describe("credential-bound journal draining", () => {
 
     await expect(flush()).resolves.toEqual({
       flushed: 0,
+      quarantined: 0,
       retained: [{ bucket: "org_local", reason: "server_contract_unavailable" }],
     });
     expect(existsSync(journal.journalPath("org_local"))).toBe(true);
