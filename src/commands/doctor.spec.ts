@@ -7,18 +7,22 @@
  * (actionable, not broken), and the checks pass through verbatim for machine
  * consumers.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type Check,
   type MovesStatus,
   classifyAuthCredential,
+  classifyCodexHooks,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyHermesHooks,
+  classifyHookRuntime,
   classifyJournalOrganization,
   classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
   classifyRepositoryBinding,
+  diagnoseHookRuntime,
 } from "./doctor.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
@@ -198,6 +202,140 @@ describe("daemon health diagnostics", () => {
         { service: { loaded: true, pid: 42 }, ingestionStatus: "enabled" },
       ),
     ).toEqual({ name: "daemon", status: "fail", detail: "health state is not ready" });
+  });
+
+  it("fails deployment, principal, and both daemon/package version skew directions", () => {
+    const service = { loaded: true, pid: 42 };
+    expect(classifyDaemonHealth({ ...healthy, envMismatch: true }, { service }).detail).toContain(
+      "deployment differs",
+    );
+    expect(
+      classifyDaemonHealth({ ...healthy, principalMismatch: true }, { service }).detail,
+    ).toContain("credential or organization");
+    expect(
+      classifyDaemonHealth({ ...healthy, version: "1.2.2" }, { service, expectedVersion: "1.2.3" })
+        .detail,
+    ).toContain("older");
+    expect(
+      classifyDaemonHealth({ ...healthy, version: "1.2.4" }, { service, expectedVersion: "1.2.3" })
+        .detail,
+    ).toContain("newer");
+    expect(
+      classifyDaemonHealth(
+        { ...healthy, version: "invalid" },
+        { service, expectedVersion: "1.2.3" },
+      ).detail,
+    ).toContain("malformed");
+    expect(
+      classifyDaemonHealth({ ...healthy, version: "1.2.3" }, { service, expectedVersion: null })
+        .detail,
+    ).toContain("package version is unavailable");
+  });
+});
+
+describe("agent hook diagnostics", () => {
+  it("keeps unused agents neutral and fails partial installs", () => {
+    expect(
+      classifyCodexHooks([{ present: false, gate: false, capture: false, complete: false }]).status,
+    ).toBe("ok");
+    expect(
+      classifyCodexHooks([{ present: true, gate: false, capture: false, complete: false }]).status,
+    ).toBe("fail");
+    expect(
+      classifyCodexHooks([
+        { present: true, gate: true, capture: true, complete: true },
+        { present: true, gate: false, capture: true, complete: false },
+      ]).status,
+    ).toBe("fail");
+    expect(
+      classifyHermesHooks({
+        gate: false,
+        capture: false,
+        present: false,
+        complete: false,
+        autoAccept: false,
+      }).status,
+    ).toBe("ok");
+    expect(
+      classifyHermesHooks({
+        gate: false,
+        capture: true,
+        present: true,
+        complete: false,
+        autoAccept: true,
+      }).status,
+    ).toBe("fail");
+  });
+
+  it("reports the exact trust guarantees each installed agent exposes", () => {
+    expect(
+      classifyCodexHooks([{ present: true, gate: true, capture: true, complete: true }]),
+    ).toMatchObject({ status: "warn", detail: expect.stringContaining("not machine-readable") });
+    expect(
+      classifyHermesHooks({
+        present: true,
+        gate: true,
+        capture: true,
+        complete: true,
+        autoAccept: false,
+      }),
+    ).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("not pre-authorized"),
+    });
+    expect(
+      classifyHermesHooks({
+        present: true,
+        gate: true,
+        capture: true,
+        complete: true,
+        autoAccept: true,
+      }).status,
+    ).toBe("ok");
+  });
+});
+
+describe("hook runtime diagnostics", () => {
+  it("accepts only the exact immutable runtime version", () => {
+    expect(
+      classifyHookRuntime({ state: "ready", version: "1.2.3" }, "1.2.3", "stable_launcher"),
+    ).toMatchObject({ status: "ok" });
+    expect(
+      classifyHookRuntime({ state: "ready", version: "1.2.2" }, "1.2.3", "stable_launcher"),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining("older") });
+    expect(
+      classifyHookRuntime({ state: "ready", version: "invalid" }, "1.2.3", "stable_launcher")
+        .status,
+    ).toBe("fail");
+  });
+
+  it("never claims npx can recover a stable launcher", () => {
+    const probe = vi.fn(() => true);
+    expect(
+      diagnoseHookRuntime({ state: "ready", version: "1.2.3" }, "1.2.3", "stable_launcher", probe)
+        .status,
+    ).toBe("ok");
+    expect(probe).not.toHaveBeenCalled();
+    expect(
+      diagnoseHookRuntime({ state: "missing" }, "1.2.3", "stable_launcher", probe),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining("no npx fallback") });
+    expect(probe).not.toHaveBeenCalled();
+    expect(diagnoseHookRuntime({ state: "missing" }, "1.2.3", "npx_fallback", probe).status).toBe(
+      "warn",
+    );
+    expect(probe).toHaveBeenCalledOnce();
+    expect(classifyHookRuntime({ state: "invalid" }, "1.2.3", "npx_fallback", false).status).toBe(
+      "fail",
+    );
+  });
+
+  it("fails when the local package version cannot be established", () => {
+    const probe = vi.fn(() => true);
+    expect(diagnoseHookRuntime({ state: "missing" }, null, "npx_fallback", probe)).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("package version is unavailable"),
+    });
+    expect(probe).not.toHaveBeenCalled();
   });
 });
 

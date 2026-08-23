@@ -30,7 +30,7 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { Document, isMap, isSeq, parseAllDocuments, stringify, visit } from "yaml";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { stableHookCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, stableHookCommand } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 
 const CAPTURE_BIN = "prim-hook";
@@ -193,6 +193,46 @@ export function isGateInstalled(hooks: HooksMap): boolean {
 export function isCaptureInstalled(hooks: HooksMap): boolean {
   return CAPTURE_EVENTS.some((event) =>
     (hooks[event] ?? []).some((e) => commandUsesBin(e.command, CAPTURE_BIN)),
+  );
+}
+
+type OwnedRegistrationEntry = Readonly<{ event: string; entry: HookEntry }>;
+
+function entryUsesOwnedBin(entry: HookEntry): boolean {
+  return PRIM_BINS.some(
+    (bin) => commandUsesBin(entry.command, bin) || commandMatchesBin(entry.command, bin),
+  );
+}
+
+function ownedRegistrationEntries(hooks: HooksMap): OwnedRegistrationEntry[] {
+  return Object.entries(hooks).flatMap(([event, entries]) =>
+    entries.filter(entryUsesOwnedBin).map((entry) => ({ event, entry })),
+  );
+}
+
+export function hasAnyHookRegistration(hooks: HooksMap): boolean {
+  return ownedRegistrationEntries(hooks).length > 0;
+}
+
+function entryMatchesRegistration(owned: OwnedRegistrationEntry, registration: HermesReg): boolean {
+  const expected = entryFor(registration);
+  return (
+    owned.event === registration.event &&
+    owned.entry.command === expected.command &&
+    (owned.entry.matcher ?? "") === (expected.matcher ?? "") &&
+    (owned.entry.timeout ?? null) === (expected.timeout ?? null)
+  );
+}
+
+/** Exact bijection over owned hooks; arbitrary foreign entries remain neutral. */
+export function hasCompleteHookRegistration(hooks: HooksMap): boolean {
+  const owned = ownedRegistrationEntries(hooks);
+  return (
+    owned.length === REGISTRATIONS.length &&
+    REGISTRATIONS.every(
+      (registration) =>
+        owned.filter((entry) => entryMatchesRegistration(entry, registration)).length === 1,
+    )
   );
 }
 
@@ -676,10 +716,25 @@ export function performUninstall(): InstallResult {
   };
 }
 
-export function performStatus(): { path: string; gate: boolean; capture: boolean } {
+export function performStatus(): {
+  path: string;
+  present: boolean;
+  gate: boolean;
+  capture: boolean;
+  complete: boolean;
+  autoAccept: boolean;
+} {
   const path = configPath();
-  const hooks = existsSync(path) ? readHooks(readDoc(path)) : {};
-  return { path, gate: isGateInstalled(hooks), capture: isCaptureInstalled(hooks) };
+  const raw = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const hooks = raw ? readHooks(parseHermesDocument(raw)) : {};
+  return {
+    path,
+    present: hasAnyHookRegistration(hooks),
+    gate: isGateInstalled(hooks),
+    capture: isCaptureInstalled(hooks),
+    complete: hasCompleteHookRegistration(hooks),
+    autoAccept: raw ? autoAcceptOf(raw) : false,
+  };
 }
 
 const TRUST_NOTICE =

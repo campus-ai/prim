@@ -18,11 +18,14 @@ import {
   type HooksMap,
   applyInstall,
   applyUninstall,
+  hasAnyHookRegistration,
+  hasCompleteHookRegistration,
   isCaptureInstalled,
   isGateInstalled,
   mergeKeepsYamlValid,
   mergePreservesHermesSemantics,
   performInstall,
+  performStatus,
   performUninstall,
   readHooks,
   spliceHooks,
@@ -118,6 +121,60 @@ describe("applyInstall", () => {
   it("is idempotent", () => {
     const once = applyInstall({}, false);
     expect(applyInstall(once, false)).toEqual(once);
+  });
+
+  it("requires every lifecycle entry with the exact matcher and timeout", () => {
+    process.env.HERMES_HOME = "/tmp/prim-hermes-bijection";
+    const installed = applyInstall({}, false);
+    expect(hasCompleteHookRegistration(installed)).toBe(true);
+
+    const missingLifecycle = structuredClone(installed);
+    missingLifecycle.on_session_end = missingLifecycle.on_session_end.filter(
+      (entry) => !entry.command.includes("prim-session-end"),
+    );
+    expect(hasAnyHookRegistration(missingLifecycle)).toBe(true);
+    expect(hasCompleteHookRegistration(missingLifecycle)).toBe(false);
+
+    const driftedMatcher = structuredClone(installed);
+    const matcherGate = driftedMatcher.pre_tool_call.find((entry) =>
+      entry.command.includes("prim-pre-tool-use"),
+    );
+    if (!matcherGate) throw new Error("Expected Hermes gate registration");
+    matcherGate.matcher = "patch";
+    expect(hasCompleteHookRegistration(driftedMatcher)).toBe(false);
+
+    const driftedTimeout = structuredClone(installed);
+    const timeoutGate = driftedTimeout.pre_tool_call.find((entry) =>
+      entry.command.includes("prim-pre-tool-use"),
+    );
+    if (!timeoutGate) throw new Error("Expected Hermes gate registration");
+    timeoutGate.timeout = 11;
+    expect(hasCompleteHookRegistration(driftedTimeout)).toBe(false);
+
+    const exactGate = installed.pre_tool_call.find(
+      (entry) => entry.command === stableHookCommand("prim-pre-tool-use", "--agent hermes"),
+    );
+    if (!exactGate) throw new Error("Expected exact Hermes gate registration");
+
+    const duplicate = structuredClone(installed);
+    duplicate.pre_tool_call.push(structuredClone(exactGate));
+    expect(hasCompleteHookRegistration(duplicate)).toBe(false);
+
+    const legacyTwin = structuredClone(installed);
+    legacyTwin.pre_tool_call.push({
+      ...structuredClone(exactGate),
+      command:
+        '"/tmp/prim-hermes-bijection/agent-hooks/prim-shim.sh" prim-pre-tool-use --agent hermes',
+    });
+    expect(hasCompleteHookRegistration(legacyTwin)).toBe(false);
+
+    const wrongTimeoutTwin = structuredClone(installed);
+    wrongTimeoutTwin.pre_tool_call.push({ ...structuredClone(exactGate), timeout: 11 });
+    expect(hasCompleteHookRegistration(wrongTimeoutTwin)).toBe(false);
+
+    const foreignSibling = structuredClone(installed);
+    foreignSibling.pre_tool_call.push({ command: "/usr/local/bin/unrelated-hook", timeout: 10 });
+    expect(hasCompleteHookRegistration(foreignSibling)).toBe(true);
   });
 
   it("preserves a user's non-prim hook under a shared event", () => {
@@ -409,6 +466,14 @@ describe("mergePreservesHermesSemantics", () => {
 });
 
 describe("performInstall", () => {
+  it("reports the durable Hermes trust setting with hook status", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-status-"));
+    process.env.HERMES_HOME = testHome;
+    expect(performStatus()).toMatchObject({ gate: false, capture: false, autoAccept: false });
+    performInstall({ force: false, autoAccept: true, stageRuntime: () => undefined });
+    expect(performStatus()).toMatchObject({ gate: true, capture: true, autoAccept: true });
+  });
+
   it("atomically writes config, removes the legacy shim, and preserves user comments", () => {
     testHome = mkdtempSync(join(tmpdir(), "prim-hermes-install-"));
     process.env.HERMES_HOME = testHome;
