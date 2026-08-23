@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CliClient } from "./client.js";
+import { type CliClient, HttpError } from "./client.js";
 import {
+  buildOrganizationBoundMoveRequest,
   classifyJournalBuckets,
   inspectJournalDelivery,
   parseOrganizationBinding,
 } from "./journal-organization.js";
+import type { Move } from "./protocol/move.js";
 
 const binding = {
   captureAuthorityKind: "workos" as const,
@@ -16,6 +18,18 @@ function client(response: unknown): CliClient {
   return {
     get: vi.fn().mockResolvedValue(response),
     post: vi.fn(),
+  };
+}
+
+function move(): Move {
+  return {
+    moveId: "move_1",
+    capturedAt: 1,
+    sessionId: "session_1",
+    eventType: "PostToolUse",
+    payload: { ok: true },
+    env: { cwd: "/repo", cliVersion: "test", osPlatform: "darwin" },
+    envelopeVersion: 1,
   };
 }
 
@@ -41,6 +55,15 @@ describe("journal organization binding", () => {
         workosOrganizationId: null,
       }),
     ).toEqual({ state: "organization_identity_unreconciled" });
+    expect(
+      parseOrganizationBinding({
+        authenticated: true,
+        organizationBindingVersion: 1,
+        captureAuthorityKind: "workos",
+        organizationId: "x".repeat(129),
+        workosOrganizationId: binding.workosOrganizationId,
+      }),
+    ).toEqual({ state: "server_contract_unavailable" });
   });
 
   it("sends exact local or WorkOS buckets and retains every other bucket", () => {
@@ -90,6 +113,37 @@ describe("journal organization binding", () => {
       client: pinned,
     });
     expect(result.client).toBe(pinned);
+    expect(result.binding).toEqual(binding);
     expect([...result.deliverableBuckets]).toEqual([binding.organizationId]);
+  });
+
+  it("projects immutable WAL events to v4 under the exact sending authority", () => {
+    const original = move();
+    const workos = buildOrganizationBoundMoveRequest([original], binding);
+    expect(workos.batch).toEqual([
+      expect.objectContaining({
+        moveId: original.moveId,
+        envelopeVersion: 4,
+        capturedOrganizationId: binding.workosOrganizationId,
+        captureAuthorityKind: "workos",
+        decisionLifecycleProtocolVersion: 2,
+      }),
+    ]);
+    expect(original.envelopeVersion).toBe(1);
+
+    const service = buildOrganizationBoundMoveRequest([original], {
+      ...binding,
+      captureAuthorityKind: "service_token",
+    });
+    expect(service.batch[0]).toMatchObject({
+      capturedOrganizationId: binding.organizationId,
+      captureAuthorityKind: "service_token",
+    });
+  });
+
+  it("fails a malformed local envelope before transport", () => {
+    expect(() => buildOrganizationBoundMoveRequest([null as unknown as Move], binding)).toThrow(
+      HttpError,
+    );
   });
 });

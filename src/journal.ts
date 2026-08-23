@@ -19,8 +19,9 @@
  *
  * Journals hold raw hook payloads (file contents, prompts, tool I/O), so
  * every file is created 0600 and its directory 0700 — the same posture the
- * CLI uses for its other credential-bearing files. Malformed lines are
- * skipped, never fatal.
+ * CLI uses for its other credential-bearing files. The delivery path durably
+ * quarantines malformed lines before retiring a rotation; read-only sampling
+ * ignores them.
  */
 
 import {
@@ -126,7 +127,8 @@ function parseMoves(content: string): Move[] {
     try {
       moves.push(JSON.parse(line) as Move);
     } catch {
-      // Skip malformed lines rather than abort the drain.
+      // Read-only sampling ignores malformed lines. The flusher consumes the
+      // exact bytes and durably quarantines them before retiring a rotation.
     }
   }
   return moves;
