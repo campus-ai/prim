@@ -199,6 +199,19 @@
         "$ref": "#/$defs/CliErrorResponse"
       }
     },
+    "decisionsRestore": {
+      "method": "POST",
+      "path": "/api/cli/decisions/restore",
+      "request": {
+        "$ref": "#/$defs/DecisionIdRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DecisionStageSuccessResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
     "decisionsRatify": {
       "method": "POST",
       "path": "/api/cli/decisions/ratify",
@@ -1559,6 +1572,10 @@
         "sessionId": {
           "type": "string",
           "pattern": "^[A-Za-z0-9._-]{1,128}$"
+        },
+        "clientInstanceId": {
+          "type": "string",
+          "pattern": "^pci_[A-Za-z0-9_-]{43}$"
         },
         "decisionLifecycleProtocolVersion": {
           "type": "integer",

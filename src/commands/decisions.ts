@@ -6,6 +6,7 @@
  *   prim decisions show <idOrShortId>
  *   prim decisions cascade <idOrShortId>
  *   prim decisions publish <idOrShortId>
+ *   prim decisions restore <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
@@ -38,7 +39,7 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
-import { publishDecision, supersedeDecision } from "../decisions/lifecycle.js";
+import { publishDecision, restoreDecision, supersedeDecision } from "../decisions/lifecycle.js";
 import {
   LinkNotFoundError,
   fetchLink,
@@ -229,6 +230,13 @@ export function registerDecisionsCommands(program: Command): void {
     .description("Publish an authored draft to the team as a provisional Decision")
     .action(async (idOrShortId: string) => {
       process.exitCode = await publishDecision(idOrShortId);
+    });
+
+  decisions
+    .command("restore <idOrShortId>")
+    .description("Restore an authored abandoned Decision to a private draft")
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await restoreDecision(idOrShortId);
     });
 
   decisions
