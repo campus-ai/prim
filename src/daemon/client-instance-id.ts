@@ -1,17 +1,7 @@
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { atomicWriteFile } from "../lib/atomic-file.js";
 import { type FileLockOptions, withFileLock } from "../lib/file-lock.js";
 
 const CONFIG_DIRECTORY_MODE = 0o700;
@@ -68,27 +58,6 @@ function readExisting(path: string): string | undefined {
   return value;
 }
 
-function atomicWrite(path: string, value: string): void {
-  const directory = dirname(path);
-  const temp = join(
-    directory,
-    `.client-instance.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
-  );
-  try {
-    const fd = openSync(temp, "wx", INSTANCE_FILE_MODE);
-    try {
-      writeFileSync(fd, `${value}\n`, { encoding: "utf8" });
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temp, path);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
-}
-
 /**
  * Return one install-scoped opaque identity, generating it exactly once under
  * a cross-process lock. Malformed state fails closed and is never rotated
@@ -115,7 +84,7 @@ export async function getOrCreateClientInstanceId(
       if (!isClientInstanceId(generated)) {
         throw new Error("generated client instance identity is invalid");
       }
-      atomicWrite(path, generated);
+      atomicWriteFile(path, `${generated}\n`, { mode: INSTANCE_FILE_MODE });
       return generated;
     },
     options.lockOptions,

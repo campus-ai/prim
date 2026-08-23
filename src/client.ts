@@ -1,17 +1,10 @@
 /** REST client and shared credential store for the prim CLI. */
 
-import { createHash, randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { atomicWriteFile } from "./lib/atomic-file.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
 
 const CONFIG_DIR_MODE = 0o700;
@@ -120,21 +113,7 @@ function ensureConfigDirectory(): void {
 
 function atomicWrite(path: string, content: string): void {
   ensureConfigDirectory();
-  const temp = join(
-    dirname(path),
-    `.${path.slice(dirname(path).length + 1)}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
-  );
-  try {
-    writeFileSync(temp, content, {
-      encoding: "utf8",
-      mode: CREDENTIAL_FILE_MODE,
-      flag: "wx",
-    });
-    renameSync(temp, path);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
+  atomicWriteFile(path, content, { mode: CREDENTIAL_FILE_MODE });
 }
 
 function removeCredentialFile(path: string): boolean {
