@@ -54,8 +54,8 @@ describe("decisions lifecycle command registration", () => {
     const names = decisions?.commands.map((command) => command.name()) ?? [];
 
     expect(names).toContain("publish");
+    expect(names).toContain("restore");
     expect(names).toContain("supersede");
-    expect(names).not.toContain("restore");
     expect(names).not.toContain("ratify");
     expect(names).not.toContain("delete");
     expect(names).not.toContain("edit");
@@ -88,6 +88,36 @@ describe("decisions lifecycle command registration", () => {
       decisionId: "decision-1",
       shortId: "0123abcd",
       stage: "provisional",
+    });
+  });
+
+  it("restores noninteractively without invoking a confirmation prompt", async () => {
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "draft",
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "restore", "decision-1"], {
+      from: "user",
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/restore",
+      { id: "decision-1" },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+    expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd restored as a private draft.");
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "draft",
     });
   });
 
