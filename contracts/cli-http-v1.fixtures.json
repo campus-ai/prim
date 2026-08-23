@@ -61,6 +61,7 @@
       "valid": true,
       "value": {
         "sessionId": "session-1",
+        "clientInstanceId": "pci_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "decisionLifecycleProtocolVersion": 2
       }
     },
@@ -79,6 +80,16 @@
       "value": {
         "sessionId": "session-1",
         "decisionLifecycleProtocolVersion": 0
+      }
+    },
+    {
+      "name": "heartbeat rejects malformed client instance id",
+      "definition": "PresenceHeartbeatRequest",
+      "valid": false,
+      "value": {
+        "sessionId": "session-1",
+        "clientInstanceId": "pci_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!",
+        "decisionLifecycleProtocolVersion": 2
       }
     },
     {

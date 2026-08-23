@@ -40,6 +40,7 @@ import {
   StatuslineIngestionCache,
   formatStatusline,
 } from "../lib/statusline-render.js";
+import { getOrCreateClientInstanceId } from "./client-instance-id.js";
 import { daemonRequest } from "./client.js";
 import { DECISION_DIGEST_CACHE_PATH, DecisionDigestCache } from "./decision-digest-cache.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
@@ -108,6 +109,9 @@ const decisionDigestCache = new DecisionDigestCache(
     }),
 );
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
+// Loaded from private install-scoped config before the socket or network loops
+// start. Never expose this opaque correlation key in status/log output.
+let clientInstanceId: string | undefined;
 let lastHeartbeatAt: number | undefined;
 // From the last accepted heartbeat ack, cached for the statusline /
 // daemon-status to render. The server owns identity + display names (derived
@@ -135,6 +139,13 @@ let shuttingDown = false;
 // server-side 500 flood — while the slower token-check loop keeps running to
 // auto-resume once `prim auth login` rotates in a fresh token.
 let reauthHold = false;
+
+function requiredClientInstanceId(): string {
+  if (clientInstanceId === undefined) {
+    throw new Error("client instance identity is unavailable");
+  }
+  return clientInstanceId;
+}
 
 function resolveRuntimeVersion(): string {
   if (process.env.PRIM_RUNTIME_VERSION) {
@@ -307,7 +318,7 @@ async function performHeartbeat(): Promise<void> {
     // solely from the authenticated token.
     const result = (await client.post(
       "/api/cli/presence/heartbeat",
-      buildPresenceHeartbeatRequest(activeSessionId),
+      buildPresenceHeartbeatRequest(activeSessionId, requiredClientInstanceId()),
       { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) },
     )) as {
       accepted?: boolean;
@@ -841,6 +852,9 @@ function installSignalHandlers(): void {
 
 async function main(): Promise<void> {
   try {
+    clientInstanceId = await getOrCreateClientInstanceId({
+      configDir: CONFIG_DIR,
+    });
     await takeOwnership();
   } catch (err) {
     process.stderr.write(`[prim-daemon] ${errorMessage(err)}\n`);
