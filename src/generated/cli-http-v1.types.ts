@@ -434,6 +434,7 @@ export interface PreflightResponseV3 {
 
 export interface PresenceHeartbeatRequest {
   sessionId: string;
+  clientInstanceId?: string;
   decisionLifecycleProtocolVersion?: number;
   [k: string]: unknown | undefined;
 }

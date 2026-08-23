@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "tsup";
 import { describe, expect, it } from "vitest";
+import { isClientInstanceId } from "./daemon/client-instance-id.js";
 import { stageRuntime } from "./daemon/launchd.js";
 import type { DaemonPrincipal } from "./daemon/principal.js";
 
@@ -441,6 +442,11 @@ describe("daemon terminal-auth lifecycle", () => {
       );
       expect(statSync(config).mode & 0o777).toBe(0o700);
       expect(statSync(socketPath).mode & 0o777).toBe(0o600);
+      const persistedClientInstanceId = readFileSync(
+        join(config, "client_instance_id"),
+        "utf8",
+      ).trim();
+      expect(isClientInstanceId(persistedClientInstanceId)).toBe(true);
 
       const held = await daemonRequest(socketPath, "status_snapshot");
       expect(held.needsReauth).toBe(true);
