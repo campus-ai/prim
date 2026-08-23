@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,9 +23,11 @@ import {
   mergeKeepsYamlValid,
   mergePreservesHermesSemantics,
   performInstall,
+  performUninstall,
   readHooks,
   spliceHooks,
   stripBin,
+  writeHermesConfigSnapshot,
 } from "./hermes-install.js";
 
 const userHook = { command: "/home/u/.hermes/agent-hooks/format.sh" };
@@ -114,18 +126,20 @@ describe("applyInstall", () => {
     expect(isGateInstalled(hooks)).toBe(true);
   });
 
-  it("replaces a drifted prim entry under --force without duplicating it", () => {
-    const drifted: HooksMap = {
+  it("keeps a foreign same-shape shim under --force and adds the owned entry", () => {
+    const foreign: HooksMap = {
       pre_tool_call: [
         {
           matcher: "write_file|patch",
-          command: "/old/agent-hooks/prim-shim.sh prim-pre-tool-use --agent hermes",
+          command: "/home/u/tools/agent-hooks/prim-shim.sh prim-pre-tool-use --agent hermes",
         },
       ],
     };
-    const hooks = applyInstall(drifted, true);
+    const hooks = applyInstall(foreign, true);
     const gates = hooks.pre_tool_call.filter((e) => e.command.includes("prim-pre-tool-use"));
-    expect(gates).toHaveLength(1);
+    expect(gates).toHaveLength(2);
+    expect(gates).toContainEqual(foreign.pre_tool_call[0]);
+    expect(gates.some((entry) => entry.command !== foreign.pre_tool_call[0].command)).toBe(true);
   });
 });
 
@@ -171,8 +185,24 @@ describe("readHooks", () => {
 
 describe("stripBin", () => {
   it("removes only entries that route through the bin", () => {
-    const list = [{ command: "/x/agent-hooks/prim-shim.sh prim-hook --agent hermes" }, userHook];
+    const owned = applyInstall({}, false).pre_tool_call.find((entry) =>
+      entry.command.includes("prim-hook"),
+    );
+    expect(owned).toBeDefined();
+    const list = [owned as { command: string }, userHook];
     expect(stripBin(list, "prim-hook")).toEqual([userHook]);
+  });
+
+  it("does not claim a user script that only shares the prim-shim filename", () => {
+    const lookalike = { command: "/home/u/tools/prim-shim.sh prim-hook --agent hermes" };
+    expect(stripBin([lookalike], "prim-hook")).toEqual([lookalike]);
+  });
+
+  it("does not claim a foreign shim with the exact agent-hooks path suffix", () => {
+    const foreign = {
+      command: "/home/u/tools/agent-hooks/prim-shim.sh prim-hook --agent hermes",
+    };
+    expect(stripBin([foreign], "prim-hook")).toEqual([foreign]);
   });
 });
 
@@ -266,6 +296,48 @@ describe("spliceHooks (byte-preserving)", () => {
     expect(readHooks(parseDocument(out))).toEqual(desired);
   });
 
+  it("preserves anchors, aliases outside hooks, unknown fields, and event order", () => {
+    const cfg = [
+      "provider: &provider",
+      '  model: "gpt-4"',
+      "hooks:",
+      "  custom_event: [] # user-owned empty event",
+      "  pre_tool_call:",
+      "    # anchored user formatter",
+      "    - &formatter",
+      '      command: "/my/format.sh"',
+      '      custom: { style: "strict" } # unknown field',
+      "formatter_copy: *formatter",
+      "provider_copy: *provider",
+      "",
+    ].join("\n");
+
+    const desired = applyInstall(readHooks(parseDocument(cfg)), false);
+    const out = spliceHooks(cfg, desired);
+    const parsed = parseDocument(out);
+    const value = parsed.toJS() as Record<string, Record<string, unknown>>;
+
+    expect(parsed.errors).toHaveLength(0);
+    expect(out).toContain("custom_event: [] # user-owned empty event");
+    expect(out).toContain("# anchored user formatter");
+    expect(out).toContain("&formatter");
+    expect(out).toContain("formatter_copy: *formatter");
+    expect(out).toContain('custom: { style: "strict" } # unknown field');
+    expect(out.indexOf("custom_event:")).toBeLessThan(out.indexOf("pre_tool_call:"));
+    expect(out.indexOf("pre_tool_call:")).toBeLessThan(out.indexOf("on_session_start:"));
+    expect(value.formatter_copy.command).toBe("/my/format.sh");
+    expect(value.provider_copy.model).toBe("gpt-4");
+  });
+
+  it("preserves CRLF outside and inside the rewritten hooks block", () => {
+    const cfg = "model: gpt-4\r\nhooks:\r\n  pre_tool_call:\r\n    - command: /my/hook.sh\r\n";
+    const desired = applyInstall(readHooks(parseDocument(cfg)), false);
+    const out = spliceHooks(cfg, desired);
+
+    expect(out.replaceAll("\r\n", "")).not.toContain("\n");
+    expect(out).toContain("model: gpt-4\r\nhooks:\r\n");
+  });
+
   it("refuses to overwrite a user-owned non-list event", () => {
     const cfg = "hooks:\n  pre_tool_call: /my/custom-dispatcher.sh\n";
     const desired = applyInstall(readHooks(parseDocument(cfg)), false);
@@ -273,12 +345,16 @@ describe("spliceHooks (byte-preserving)", () => {
   });
 
   it("preserves user hook comments while removing managed entries", () => {
+    const managed = applyInstall({}, false).pre_tool_call.find((entry) =>
+      entry.command.includes("prim-pre-tool-use"),
+    );
+    expect(managed).toBeDefined();
     const cfg = [
       "hooks:",
       "  pre_tool_call:",
       "    # user formatter survives uninstall",
       "    - command: /my/format.sh # keep inline note",
-      "    - command: /old/agent-hooks/prim-shim.sh prim-pre-tool-use --agent hermes",
+      `    - command: ${JSON.stringify(managed?.command)}`,
       "model: gpt-4",
       "",
     ].join("\n");
@@ -291,6 +367,14 @@ describe("spliceHooks (byte-preserving)", () => {
     expect(out).not.toContain("prim-pre-tool-use");
     expect(readHooks(parseDocument(out))).toEqual(remaining);
   });
+
+  it("keeps comments attached to the next key when the managed hooks block is removed", () => {
+    const managed = spliceHooks("", applyInstall({}, false));
+    const cfg = `${managed}# telemetry belongs to the next key\ntelemetry: on\n`;
+    const out = spliceHooks(cfg, applyUninstall(readHooks(parseDocument(cfg))));
+
+    expect(out).toBe("# telemetry belongs to the next key\ntelemetry: on\n");
+  });
 });
 
 describe("mergeKeepsYamlValid", () => {
@@ -300,9 +384,9 @@ describe("mergeKeepsYamlValid", () => {
     );
   });
 
-  it("does not flag a pre-existing duplicate top-level key (PyYAML reads it last-wins)", () => {
+  it("rejects a pre-existing duplicate top-level key instead of guessing last-wins semantics", () => {
     const dup = "model: a\nmodel: b\n";
-    expect(mergeKeepsYamlValid(dup, `${dup}hooks:\n  x:\n    - command: y\n`)).toBe(true);
+    expect(mergeKeepsYamlValid(dup, `${dup}hooks:\n  x:\n    - command: y\n`)).toBe(false);
   });
 
   it("flags a splice that INTRODUCES a new duplicate key", () => {
@@ -348,6 +432,156 @@ describe("performInstall", () => {
     expect(written).toContain("# user header");
     expect(written).toContain("# formatter");
     expect(written).toContain("/my/format.sh");
+    expect(existsSync(shim)).toBe(false);
+  });
+
+  it("is byte-idempotent and preserves the existing config mode", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-install-"));
+    process.env.HERMES_HOME = testHome;
+    const config = join(testHome, "config.yaml");
+    writeFileSync(config, "# owned by user\nmodel: gpt-4\n");
+    chmodSync(config, 0o640);
+
+    const first = performInstall({ force: false, autoAccept: false });
+    const once = readFileSync(config, "utf8");
+    const second = performInstall({ force: false, autoAccept: false });
+
+    expect(first.changed).toBe(true);
+    expect(second.changed).toBe(false);
+    expect(readFileSync(config, "utf8")).toBe(once);
+    expect(statSync(config).mode & 0o777).toBe(0o640);
+    expect(readdirSync(testHome).filter((name) => name.includes(".tmp"))).toEqual([]);
+  });
+
+  it("changes trust only when requested and preserves its inline comment and CRLF style", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-auto-accept-"));
+    process.env.HERMES_HOME = testHome;
+    const config = join(testHome, "config.yaml");
+    writeFileSync(config, "model: gpt-4\r\nhooks_auto_accept: false # user policy\r\n");
+
+    const withoutFlag = performInstall({ force: false, autoAccept: false });
+    expect(withoutFlag.autoAccept).toBe(false);
+    expect(readFileSync(config, "utf8")).toContain("hooks_auto_accept: false # user policy\r\n");
+
+    const withFlag = performInstall({ force: false, autoAccept: true });
+    const written = readFileSync(config, "utf8");
+    expect(withFlag.autoAccept).toBe(true);
+    expect(written).toContain("hooks_auto_accept: true # user policy\r\n");
+    expect(written.replaceAll("\r\n", "")).not.toContain("\n");
+  });
+
+  it.each([
+    ["multi-document", "model: first\n---\nmodel: second\n", "found 2 documents"],
+    ["malformed", "hooks:\n  pre_tool_call: [\n", "must be valid, single-document YAML"],
+    [
+      "alias inside hooks",
+      "entries: &entries\n  - command: /my/hook.sh\nhooks:\n  pre_tool_call: *entries\n",
+      "Hermes hook aliases are not supported",
+    ],
+  ])("leaves %s input and the shim untouched", (_name, raw, message) => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-invalid-"));
+    process.env.HERMES_HOME = testHome;
+    const config = join(testHome, "config.yaml");
+    const shim = join(testHome, "agent-hooks", "prim-shim.sh");
+    writeFileSync(config, raw);
+
+    expect(() => performInstall({ force: false, autoAccept: false })).toThrow(message);
+    expect(readFileSync(config, "utf8")).toBe(raw);
+    expect(existsSync(shim)).toBe(false);
+  });
+});
+
+describe("Hermes config commit safety", () => {
+  it("rejects an already-observed stale snapshot and cleans the temporary file", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-concurrent-"));
+    const config = join(testHome, "config.yaml");
+    const original = "model: original\n";
+    writeFileSync(config, original);
+    const desired = applyInstall({}, false);
+    const after = spliceHooks(original, desired);
+    const snapshot = {
+      exists: true,
+      mode: statSync(config).mode & 0o777,
+      raw: original,
+    };
+    const concurrent = "# concurrent user edit\nmodel: newer\n";
+    writeFileSync(config, concurrent);
+
+    expect(() => writeHermesConfigSnapshot(config, snapshot, after, desired)).toThrow(
+      "Hermes config changed during update",
+    );
+    expect(readFileSync(config, "utf8")).toBe(concurrent);
+    expect(readdirSync(testHome)).toEqual(["config.yaml"]);
+  });
+
+  it("does not overwrite a concurrent permission change", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-concurrent-mode-"));
+    const config = join(testHome, "config.yaml");
+    const original = "model: original\n";
+    writeFileSync(config, original);
+    chmodSync(config, 0o600);
+    const desired = applyInstall({}, false);
+    const snapshot = { exists: true, mode: 0o600, raw: original };
+    chmodSync(config, 0o640);
+
+    expect(() =>
+      writeHermesConfigSnapshot(config, snapshot, spliceHooks(original, desired), desired),
+    ).toThrow("Hermes config changed during update");
+    expect(readFileSync(config, "utf8")).toBe(original);
+    expect(statSync(config).mode & 0o777).toBe(0o640);
+  });
+
+  it("keeps the old target intact when flushed temporary content fails validation", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-partial-"));
+    const config = join(testHome, "config.yaml");
+    const original = "model: original\n";
+    writeFileSync(config, original);
+    const snapshot = {
+      exists: true,
+      mode: statSync(config).mode & 0o777,
+      raw: original,
+    };
+
+    expect(() =>
+      writeHermesConfigSnapshot(config, snapshot, "model: changed\n", applyInstall({}, false)),
+    ).toThrow("merge would change unrelated Hermes config");
+    expect(readFileSync(config, "utf8")).toBe(original);
+    expect(readdirSync(testHome)).toEqual(["config.yaml"]);
+  });
+});
+
+describe("performUninstall", () => {
+  it("removes only owned entries and keeps empty events, lookalikes, comments, and trust policy", () => {
+    testHome = mkdtempSync(join(tmpdir(), "prim-hermes-uninstall-"));
+    process.env.HERMES_HOME = testHome;
+    const config = join(testHome, "config.yaml");
+    writeFileSync(
+      config,
+      [
+        "hooks:",
+        "  custom_event: [] # user-owned empty event",
+        "  pre_tool_call:",
+        "    # unrelated same-name shim",
+        "    - command: /home/u/tools/agent-hooks/prim-shim.sh prim-hook --agent hermes",
+        "hooks_auto_accept: true # user trust policy",
+        "",
+      ].join("\n"),
+    );
+    performInstall({ force: false, autoAccept: false });
+    const shim = join(testHome, "agent-hooks", "prim-shim.sh");
+    expect(existsSync(shim)).toBe(false);
+
+    const result = performUninstall();
+    const written = readFileSync(config, "utf8");
+
+    expect(result.changed).toBe(true);
+    expect(result.gate).toBe(false);
+    expect(result.capture).toBe(false);
+    expect(written).toContain("custom_event: [] # user-owned empty event");
+    expect(written).toContain("# unrelated same-name shim");
+    expect(written).toContain("/home/u/tools/agent-hooks/prim-shim.sh prim-hook --agent hermes");
+    expect(written).toContain("hooks_auto_accept: true # user trust policy");
+    expect(written).not.toContain('/agent-hooks/prim-shim.sh" prim-');
     expect(existsSync(shim)).toBe(false);
   });
 });
