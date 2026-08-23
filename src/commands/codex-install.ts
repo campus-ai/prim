@@ -130,6 +130,45 @@ function captureInstalled(settings: ClaudeSettings): boolean {
   );
 }
 
+type OwnedRegistrationEntry = Readonly<{ event: string; entry: HookEntry }>;
+
+function ownedRegistrationEntries(settings: ClaudeSettings): OwnedRegistrationEntry[] {
+  return Object.entries(settings.hooks ?? {}).flatMap(([event, entries]) =>
+    (entries ?? [])
+      .filter((entry) => PRIM_BINS.some((bin) => entryHasCommand(entry, bin)))
+      .map((entry) => ({ event, entry })),
+  );
+}
+
+export function hasAnyHookRegistration(settings: ClaudeSettings): boolean {
+  return ownedRegistrationEntries(settings).length > 0;
+}
+
+function entryMatchesRegistration(
+  owned: OwnedRegistrationEntry,
+  registration: Registration,
+): boolean {
+  return (
+    owned.event === registration.event &&
+    owned.entry.matcher === registration.matcher &&
+    owned.entry.hooks?.length === 1 &&
+    owned.entry.hooks[0].type === "command" &&
+    owned.entry.hooks[0].command === registration.command
+  );
+}
+
+/** Exact bijection over owned hooks; arbitrary foreign entries remain neutral. */
+export function hasCompleteHookRegistration(settings: ClaudeSettings): boolean {
+  const owned = ownedRegistrationEntries(settings);
+  return (
+    owned.length === CODEX_REGISTRATIONS.length &&
+    CODEX_REGISTRATIONS.every(
+      (registration) =>
+        owned.filter((entry) => entryMatchesRegistration(entry, registration)).length === 1,
+    )
+  );
+}
+
 /**
  * The Codex surface is "installed" when the conflict GATE is present — capture
  * alone (passive telemetry) does not count. Mirrors `prim claude status`.
@@ -138,7 +177,13 @@ export function isGateInstalled(settings: ClaudeSettings): boolean {
   return (settings.hooks?.PreToolUse ?? []).some((e) => entryHasCommand(e, GATE_BIN));
 }
 
-export type ScopeStatus = { path: string; gate: boolean; capture: boolean };
+export type ScopeStatus = {
+  path: string;
+  present: boolean;
+  gate: boolean;
+  capture: boolean;
+  complete: boolean;
+};
 
 export type InstallResult = {
   scope: Scope;
@@ -189,7 +234,13 @@ export function performUninstall(scope: Scope): InstallResult {
 export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   const statusFor = (path: string): ScopeStatus => {
     const settings = readSettings(path);
-    return { path, gate: isGateInstalled(settings), capture: captureInstalled(settings) };
+    return {
+      path,
+      present: hasAnyHookRegistration(settings),
+      gate: isGateInstalled(settings),
+      capture: captureInstalled(settings),
+      complete: hasCompleteHookRegistration(settings),
+    };
   };
   return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
 }

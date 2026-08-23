@@ -14,6 +14,7 @@
  * AX contract: STDERR verdict-first; STDOUT machine-readable JSON.
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import {
@@ -21,6 +22,7 @@ import {
   HttpError,
   REFRESH_TOKEN_PATH,
   getClient,
+  getSiteUrl,
   getTokenExpiresAt,
   resolveAuthCredential,
 } from "../client.js";
@@ -41,6 +43,8 @@ import {
   repoSyncId,
 } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
+import { packageVersion } from "../lib/bin-path.js";
+import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ManagedHookInspection,
   inspectEffectivePostCommitHook,
@@ -50,11 +54,15 @@ import {
   type RepositoryBindingResult,
   resolveRepositoryBinding,
 } from "../lib/repository-binding.js";
+import { compareSemver } from "../lib/semver.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import { performStatus as claudeStatus } from "./claude-install.js";
+import { performStatus as codexStatus } from "./codex-install.js";
+import { performStatus as hermesStatus } from "./hermes-install.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
+const NPX_PROBE_TIMEOUT_MS = 1_000;
 const MS_PER_SECOND = 1000;
 // User-facing durability contract: a captured Move should be durably ingested
 // within 30 seconds. The daemon uses the same threshold in its health state.
@@ -74,6 +82,8 @@ export type DaemonDoctorSnapshot = {
   version?: string;
   healthy?: boolean;
   needsReauth?: boolean;
+  envMismatch?: boolean;
+  principalMismatch?: boolean;
   heartbeat?: DaemonHeartbeatHealth;
   ingestion?: DaemonIngestionHealth;
 };
@@ -155,6 +165,7 @@ export function classifyDaemonHealth(
     disabled?: boolean;
     service?: LaunchdService;
     ingestionStatus?: "enabled" | "disabled";
+    expectedVersion?: string | null;
   } = {},
 ): Check {
   if (options.disabled) {
@@ -191,6 +202,45 @@ export function classifyDaemonHealth(
       status: "fail",
       detail: `launchd does not own the daemon socket (launchd ${String(options.service.pid ?? "none")} · socket ${String(snapshot.pid ?? "none")})`,
     };
+  }
+  if (snapshot.envMismatch) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "daemon deployment differs from this CLI — run `prim daemon restart`",
+    };
+  }
+  if (snapshot.principalMismatch) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "daemon credential or organization differs from this CLI — run `prim daemon restart`",
+    };
+  }
+  if (options.expectedVersion === null) {
+    return {
+      name: "daemon",
+      status: "fail",
+      detail: "local Primitive package version is unavailable — reinstall the CLI",
+    };
+  }
+  if (options.expectedVersion !== undefined) {
+    const order = compareSemver(snapshot.version, options.expectedVersion);
+    if (order === undefined) {
+      return {
+        name: "daemon",
+        status: "fail",
+        detail: "daemon version is unavailable or malformed — run `prim daemon restart`",
+      };
+    }
+    if (snapshot.version !== options.expectedVersion) {
+      const relation = order === 0 ? "different from" : order < 0 ? "older than" : "newer than";
+      return {
+        name: "daemon",
+        status: "fail",
+        detail: `daemon is ${relation} this CLI — run \`prim daemon restart\``,
+      };
+    }
   }
   if (snapshot.needsReauth) {
     // The daemon is supervised and its socket is up; it has deliberately halted
@@ -247,12 +297,13 @@ async function checkDaemon(): Promise<Check> {
   }
   const snapshot = await daemonRequest<DaemonDoctorSnapshot>(
     "status_snapshot",
-    {},
+    { callerEnv: getSiteUrl() },
     { timeoutMs: DAEMON_PROBE_TIMEOUT_MS },
   );
   return classifyDaemonHealth(snapshot, {
     disabled: daemonExplicitlyDisabled(),
     service,
+    expectedVersion: packageVersion(),
   });
 }
 
@@ -513,6 +564,163 @@ function checkFeedbackHooks(): Check {
   }
 }
 
+type AgentHookSurface = Readonly<{
+  present: boolean;
+  gate: boolean;
+  capture: boolean;
+  complete: boolean;
+}>;
+
+export function classifyCodexHooks(statuses: readonly AgentHookSurface[]): Check {
+  const installed = statuses.filter((status) => status.present);
+  if (installed.length === 0) {
+    return { name: "codex-hooks", status: "ok", detail: "not installed" };
+  }
+  if (installed.some((status) => !status.complete)) {
+    return {
+      name: "codex-hooks",
+      status: "fail",
+      detail: "incomplete or drifted hook lifecycle — run `prim codex install --force`",
+    };
+  }
+  return {
+    name: "codex-hooks",
+    status: "warn",
+    detail: "installed; Codex trust is not machine-readable — verify with `/hooks`",
+  };
+}
+
+export function classifyHermesHooks(status: AgentHookSurface & { autoAccept: boolean }): Check {
+  if (!status.present) {
+    return { name: "hermes-hooks", status: "ok", detail: "not installed" };
+  }
+  if (!status.complete) {
+    return {
+      name: "hermes-hooks",
+      status: "fail",
+      detail: "incomplete or drifted hook lifecycle — run `prim hermes install --force`",
+    };
+  }
+  return status.autoAccept
+    ? { name: "hermes-hooks", status: "ok", detail: "installed and pre-authorized" }
+    : {
+        name: "hermes-hooks",
+        status: "warn",
+        detail:
+          "installed; hook consent is not pre-authorized — run `prim hermes install --auto-accept`",
+      };
+}
+
+function checkAgentHooks(): Check[] {
+  const checks: Check[] = [];
+  try {
+    const status = codexStatus();
+    checks.push(classifyCodexHooks([status.project, status.user]));
+  } catch (error) {
+    const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
+    checks.push({
+      name: "codex-hooks",
+      status: "fail",
+      detail: detail ?? "hook configuration is unreadable",
+    });
+  }
+  try {
+    checks.push(classifyHermesHooks(hermesStatus()));
+  } catch (error) {
+    const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
+    checks.push({
+      name: "hermes-hooks",
+      status: "fail",
+      detail: detail ?? "hook configuration is unreadable",
+    });
+  }
+  return checks;
+}
+
+export type HookRuntimeResolutionKind = "stable_launcher" | "npx_fallback";
+
+export function classifyHookRuntime(
+  inspection: HookRuntimeInspection,
+  expectedVersion: string | null,
+  resolutionKind: HookRuntimeResolutionKind,
+  fallbackReachable?: boolean,
+): Check {
+  if (expectedVersion === null) {
+    return {
+      name: "hook-runtime",
+      status: "fail",
+      detail: "local Primitive package version is unavailable — reinstall the CLI",
+    };
+  }
+  if (inspection.state === "ready") {
+    const order = compareSemver(inspection.version, expectedVersion);
+    if (order === undefined || inspection.version !== expectedVersion) {
+      const relation =
+        order === undefined || order === 0
+          ? "differs from"
+          : order < 0
+            ? "is older than"
+            : "is newer than";
+      return {
+        name: "hook-runtime",
+        status: "fail",
+        detail: `selected immutable runtime ${relation} this CLI — reinstall an agent integration`,
+      };
+    }
+    return {
+      name: "hook-runtime",
+      status: "ok",
+      detail: `immutable runtime ready · v${inspection.version}`,
+    };
+  }
+  const condition = inspection.state === "missing" ? "missing" : "invalid";
+  if (resolutionKind === "stable_launcher") {
+    return {
+      name: "hook-runtime",
+      status: "fail",
+      detail: `immutable runtime ${condition}; stable hooks have no npx fallback — reinstall an agent integration`,
+    };
+  }
+  return fallbackReachable
+    ? {
+        name: "hook-runtime",
+        status: "warn",
+        detail: `immutable runtime ${condition}; npx fallback is reachable`,
+      }
+    : {
+        name: "hook-runtime",
+        status: "fail",
+        detail: `immutable runtime ${condition} and npx fallback is unavailable — reinstall an agent integration`,
+      };
+}
+
+export function diagnoseHookRuntime(
+  inspection: HookRuntimeInspection,
+  expectedVersion: string | null,
+  resolutionKind: HookRuntimeResolutionKind,
+  probeFallback: () => boolean,
+): Check {
+  return classifyHookRuntime(
+    inspection,
+    expectedVersion,
+    resolutionKind,
+    inspection.state === "ready" || expectedVersion === null || resolutionKind === "stable_launcher"
+      ? undefined
+      : probeFallback(),
+  );
+}
+
+function checkHookRuntime(): Check {
+  return diagnoseHookRuntime(inspectHookRuntime(), packageVersion(), "stable_launcher", () => {
+    const result = spawnSync("npx", ["--version"], {
+      encoding: "utf8",
+      stdio: "ignore",
+      timeout: NPX_PROBE_TIMEOUT_MS,
+    });
+    return result.status === 0 && result.error === undefined;
+  });
+}
+
 function parseMovesStatus(value: unknown): MovesStatus {
   if (!value || typeof value !== "object") {
     throw new Error("moves status returned a non-object response");
@@ -653,6 +861,8 @@ async function collectChecks(): Promise<Check[]> {
     checkStranded(),
     await checkJournalOrganization(),
     checkFeedbackHooks(),
+    ...checkAgentHooks(),
+    checkHookRuntime(),
     checkWorkspaceIdentity(),
     await checkRepositoryBinding(),
     checkManagedHook("post-commit", inspectEffectivePostCommitHook),
