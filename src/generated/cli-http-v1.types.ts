@@ -439,6 +439,723 @@ export interface PreflightResponseV3 {
     shortId?: string;
     [k: string]: unknown | undefined;
   }[];
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  decisionDisclosures?:
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ];
   [k: string]: unknown | undefined;
 }
 

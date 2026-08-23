@@ -160,6 +160,140 @@
       }
     },
     {
+      "name": "preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "The proposed edit conflicts with a governing Decision.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": [
+          {
+            "decisionId": "decision-hidden-1",
+            "shortId": "0123abcd",
+            "participation": "candidate"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": false,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "allow",
+        "reasonCode": "semantically_compatible",
+        "message": "Compatible.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": []
+      }
+    },
+    {
+      "name": "over-cap preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": false,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "allow",
+        "reasonCode": "semantically_compatible",
+        "message": "Compatible.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": [
+          {
+            "decisionId": "decision-hidden-0",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-1",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-2",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-3",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-4",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-5",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-6",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-7",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-8",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-9",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-10",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-11",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-12",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-13",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-14",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-15",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-16",
+            "shortId": "00000000",
+            "participation": "candidate"
+          }
+        ]
+      }
+    },
+    {
       "name": "repository binding request",
       "definition": "RepositoryBindRequest",
       "valid": true,

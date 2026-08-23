@@ -1808,6 +1808,28 @@
             "required": ["decisionId"],
             "additionalProperties": {}
           }
+        },
+        "decisionDisclosures": {
+          "minItems": 1,
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decisionId": {
+                "type": "string"
+              },
+              "shortId": {
+                "type": "string"
+              },
+              "participation": {
+                "type": "string",
+                "enum": ["candidate", "reconcile_bypass"]
+              }
+            },
+            "required": ["decisionId", "shortId", "participation"],
+            "additionalProperties": false
+          }
         }
       },
       "required": [

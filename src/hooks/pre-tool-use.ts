@@ -40,6 +40,7 @@ import { normalizeEnvelope } from "./normalize.js";
 import {
   type CodexHookOutput,
   type ConflictCheckResult,
+  type ConflictVerdict,
   type HermesHookOutput,
   type HookEnv,
   type HookOutput,
@@ -125,6 +126,19 @@ function failOpen(): HookOutput | CodexHookOutput | HermesHookOutput {
 function invocationId(envelope: PreToolUseInput): string | undefined {
   const value = agent === "hermes" ? envelope.extra?.tool_call_id : envelope.tool_use_id;
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function hermesAdvisory(result: ConflictCheckResult, aggregate: ConflictVerdict): string {
+  const parts: string[] = [];
+  if (aggregate === "warn") parts.push(result.reason);
+  if (result.verdict === "unavailable") {
+    parts.push(result.unavailable ?? result.reason);
+  }
+  if (result.additionalContext && result.additionalContext !== result.reason) {
+    parts.push(result.additionalContext);
+  }
+  const message = [...new Set(parts.filter(Boolean))].join("\n");
+  return message.startsWith("[primitive]") ? message : message ? `[primitive] ${message}` : "";
 }
 
 async function emitUnverified(message: string, envelope?: PreToolUseInput): Promise<void> {
@@ -240,8 +254,9 @@ async function main(): Promise<void> {
     result.verdict === "unavailable" ? "allow" : result.verdict,
     mode,
   );
-  if (agent === "hermes" && (aggregate === "warn" || result.verdict === "unavailable")) {
-    process.stderr.write(`[primitive] ${result.reason || result.unavailable}\n`);
+  if (agent === "hermes" && aggregate !== "deny" && aggregate !== "ask") {
+    const advisory = hermesAdvisory(result, aggregate);
+    if (advisory) process.stderr.write(`${advisory}\n`);
   }
   let output =
     agent === "hermes"
