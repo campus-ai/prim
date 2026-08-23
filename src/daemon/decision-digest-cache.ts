@@ -25,7 +25,9 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Daemon-owned, in-memory snapshot of the organization Decision feed.
+ * Daemon-owned, in-memory snapshot of one credential generation's organization
+ * Decision feed. Credential rotation resets the snapshot before another
+ * principal can read it.
  *
  * Refreshes collapse onto one request. Once a valid snapshot exists, a later
  * transport failure leaves that last-known-good snapshot readable: prompt
@@ -39,6 +41,8 @@ export class DecisionDigestCache {
 
   private refreshInFlight: Promise<void> | undefined;
 
+  private generation = 0;
+
   constructor(
     private readonly load: () => Promise<unknown>,
     private readonly now: () => number = Date.now,
@@ -48,17 +52,30 @@ export class DecisionDigestCache {
     return { ...this.snapshot, decisions: [...this.snapshot.decisions] };
   }
 
+  /** Drop tenant-scoped state and fence any refresh started by the old principal. */
+  reset(): void {
+    this.generation += 1;
+    this.refreshInFlight = undefined;
+    this.snapshot = {
+      decisions: [],
+      unavailable: DECISION_DIGEST_CACHE_WARMING,
+    };
+  }
+
   refresh(): Promise<void> {
     if (this.refreshInFlight) return this.refreshInFlight;
-    this.refreshInFlight = this.performRefresh().finally(() => {
-      this.refreshInFlight = undefined;
+    const generation = this.generation;
+    const refresh = this.performRefresh(generation).finally(() => {
+      if (this.refreshInFlight === refresh) this.refreshInFlight = undefined;
     });
+    this.refreshInFlight = refresh;
     return this.refreshInFlight;
   }
 
-  private async performRefresh(): Promise<void> {
+  private async performRefresh(generation: number): Promise<void> {
     try {
       const value = (await this.load()) as DecisionDigestResponse;
+      if (generation !== this.generation) return;
       if (typeof value !== "object" || value === null || !Array.isArray(value.decisions)) {
         throw new Error("malformed Decision feed response");
       }
@@ -68,6 +85,7 @@ export class DecisionDigestCache {
         unavailable: typeof value.unavailable === "string" ? value.unavailable : undefined,
       };
     } catch (error) {
+      if (generation !== this.generation) return;
       // Never replace a last-known-good page with a transient transport error.
       // Before the first valid page, retain UNKNOWN so hooks cannot spend their
       // startup cursor on a feed the daemon never verified.

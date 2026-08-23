@@ -28,13 +28,13 @@ import {
   type DecisionDigestCacheSnapshot,
 } from "../daemon/decision-digest-cache.js";
 import type { DecisionFeedRow } from "../decisions/recent.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
+import { terminalSafeText } from "../lib/terminal-safe.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
-import { terminalSafeText } from "../lib/terminal-safe.js";
 
 export const CODEX_CONTEXT_TIMEOUT_MS = 250;
 // The daemon cache uses the server's RECENT_LIMIT_CEILING. The visible digest
@@ -423,12 +423,17 @@ export async function prepareCodexContext(
         : Promise.resolve(null),
     ]);
   }
-  const report = formatStatusline(
-    packageVersion() ?? "0.0.0",
-    snapshot,
-    () => decisionIngestionStatus(options.cwd),
-    { includeIngestionWhenUnavailable: true, plainLinks: true },
-  );
+  let ingestionStatus: ReturnType<typeof decisionIngestionStatus> | undefined;
+  const resolveIngestionStatus = () => {
+    ingestionStatus ??= decisionIngestionStatus(options.cwd);
+    return ingestionStatus;
+  };
+  const report = formatStatusline(packageVersion() ?? "0.0.0", snapshot, resolveIngestionStatus, {
+    includeIngestionWhenUnavailable: true,
+    plainLinks: true,
+    resolveRepositoryBindingState: () =>
+      resolveIngestionStatus() === "enabled" ? repositoryBindingState(options.cwd) : undefined,
+  });
   const reportChanged = startup || previous?.lastReport !== report;
 
   let feedAvailable = false;

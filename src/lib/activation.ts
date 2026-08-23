@@ -24,8 +24,11 @@ import { gitToplevel } from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
 export const PRIM_REPO_SYNC_ID_KEY = "prim.repoSyncId";
+export const PRIM_REPO_BINDING_STATE_KEY = "prim.repoBindingState";
 const GIT_TIMEOUT_MS = 1_000;
 const REPO_SYNC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export type LocalRepositoryBindingState = "connected" | "unbound" | "invalid";
 
 // Project-scope agent config files, relative to the REPO ROOT (where a
 // project-scope install writes them). Never the user-scope files under $HOME —
@@ -76,22 +79,27 @@ export function isValidRepoSyncId(value: unknown): value is string {
   return typeof value === "string" && REPO_SYNC_ID_RE.test(value);
 }
 
-/**
- * Read the server-issued repository binding already stored in local Git
- * config. This is only an attribution hint; the server remains authoritative.
- */
-export function repoSyncId(cwd: string): string | undefined {
+function localGitConfigValue(cwd: string, key: string): string | undefined {
   try {
-    const value = execFileSync("git", ["config", "--local", "--get", PRIM_REPO_SYNC_ID_KEY], {
+    const value = execFileSync("git", ["config", "--local", "--get", key], {
       cwd,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: GIT_TIMEOUT_MS,
     }).trim();
-    return isValidRepoSyncId(value) ? value : undefined;
+    return value || undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Read the server-issued repository binding already stored in local Git
+ * config. This is only an attribution hint; the server remains authoritative.
+ */
+export function repoSyncId(cwd: string): string | undefined {
+  const value = localGitConfigValue(cwd, PRIM_REPO_SYNC_ID_KEY);
+  return isValidRepoSyncId(value) ? value : undefined;
 }
 
 export function setRepoSyncId(cwd: string, value: string): void {
@@ -105,7 +113,42 @@ export function setRepoSyncId(cwd: string, value: string): void {
   });
 }
 
-/** Remove the checkout's cached server binding. Missing keys are already clear. */
+export function setRepositoryBindingState(cwd: string, state: LocalRepositoryBindingState): void {
+  if (state !== "connected" && state !== "unbound" && state !== "invalid") {
+    throw new Error("invalid repository binding state");
+  }
+  execFileSync("git", ["config", "--local", PRIM_REPO_BINDING_STATE_KEY, state], {
+    cwd,
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Read the checkout's last observed repository-binding state.
+ *
+ * This is diagnostics only: the cached repoSyncId remains an attribution hint
+ * and the server re-authorizes it on every use. Legacy checkouts with a valid
+ * id and no marker stay unspecified until their next successful bind; a
+ * missing or malformed id is surfaced immediately.
+ */
+export function repositoryBindingState(cwd: string): LocalRepositoryBindingState | undefined {
+  const rawId = localGitConfigValue(cwd, PRIM_REPO_SYNC_ID_KEY);
+  const marker = localGitConfigValue(cwd, PRIM_REPO_BINDING_STATE_KEY);
+
+  if (rawId !== undefined && !isValidRepoSyncId(rawId)) return "invalid";
+  if (marker === "unbound" || marker === "invalid") return marker;
+  if (marker === "connected") return isValidRepoSyncId(rawId) ? "connected" : "invalid";
+  if (marker !== undefined) return "invalid";
+  return rawId === undefined ? "unbound" : undefined;
+}
+
+/**
+ * Explicitly remove the checkout's cached server binding.
+ *
+ * Automatic bind retries never call this: repository-unavailable responses
+ * retain the last server-issued id and only mark the diagnostic state unbound.
+ */
 export function clearRepoSyncId(cwd: string): void {
   try {
     execFileSync("git", ["config", "--local", "--unset-all", PRIM_REPO_SYNC_ID_KEY], {
@@ -115,10 +158,12 @@ export function clearRepoSyncId(cwd: string): void {
     });
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 5) {
+      setRepositoryBindingState(cwd, "unbound");
       return;
     }
     throw error;
   }
+  setRepositoryBindingState(cwd, "unbound");
 }
 
 /**

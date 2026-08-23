@@ -14,6 +14,7 @@ import {
   classifyAuthCredential,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyJournalOrganization,
   classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
@@ -49,6 +50,30 @@ describe("classifyDoctor", () => {
   it("carries the checks through verbatim for machine consumers", () => {
     const checks = [ok("auth"), warn("stranded")];
     expect(classifyDoctor(checks).json.checks).toEqual(checks);
+  });
+});
+
+describe("journal organization diagnostics", () => {
+  it("reports exact credential matching and finite retained reasons", () => {
+    expect(classifyJournalOrganization(0, [])).toMatchObject({
+      name: "journal-org",
+      status: "ok",
+    });
+    expect(classifyJournalOrganization(2, [])).toEqual({
+      name: "journal-org",
+      status: "ok",
+      detail: "all pending buckets match the active credential",
+    });
+    expect(
+      classifyJournalOrganization(3, [
+        { bucket: "_unbound", reason: "unbound" },
+        { bucket: "org_other", reason: "organization_mismatch" },
+      ]),
+    ).toEqual({
+      name: "journal-org",
+      status: "fail",
+      detail: "2 bucket(s) retained (organization_mismatch:1, unbound:1)",
+    });
   });
 });
 
@@ -290,8 +315,8 @@ describe("repository binding diagnostics", () => {
     repoSyncId: "repoSync123",
     repositoryFullName: "campus-ai/primitive",
   } as const;
-  const pending = {
-    status: "pending",
+  const unbound = {
+    status: "unbound",
     repositoryFullName: "campus-ai/primitive",
   } as const;
 
@@ -322,13 +347,13 @@ describe("repository binding diagnostics", () => {
     },
   );
 
-  it("degrades without an enable loop when local capture is active but connection is pending", () => {
-    const check = classifyRepositoryBinding(undefined, pending, true);
+  it("degrades without an enable loop when local capture is active but the server is unbound", () => {
+    const check = classifyRepositoryBinding(undefined, unbound, true);
 
     expect(check).toMatchObject({
       name: "repo-binding",
       status: "warn",
-      detail: expect.stringContaining("campus-ai/primitive"),
+      detail: expect.stringContaining("repository is unbound"),
     });
     expect(check.detail).toContain("organization owner/admin");
     expect(check.detail).toContain("retried automatically next SessionStart");
@@ -339,22 +364,26 @@ describe("repository binding diagnostics", () => {
     });
   });
 
-  it("still requires enable when connection is pending and local capture is inactive", () => {
-    expect(classifyRepositoryBinding(undefined, pending, false)).toMatchObject({
+  it("still requires enable when the server is unbound and local capture is inactive", () => {
+    expect(classifyRepositoryBinding(undefined, unbound, false)).toMatchObject({
       name: "repo-binding",
       status: "fail",
       detail: expect.stringContaining("prim enable"),
     });
   });
 
-  it.each(["repoSync123", "malformed id"])(
-    "fails a stale local binding while connection is pending (%s)",
-    (value) => {
-      expect(classifyRepositoryBinding(value, pending, true)).toMatchObject({
-        name: "repo-binding",
-        status: "fail",
-        detail: expect.stringContaining("stale"),
-      });
-    },
-  );
+  it("retains a valid cached binding as recovery state while the server is unbound", () => {
+    const check = classifyRepositoryBinding("repoSync123", unbound, true);
+    expect(check).toMatchObject({ name: "repo-binding", status: "warn" });
+    expect(check.detail).toContain("retained locally for recovery");
+    expect(check.detail).not.toContain("repoSync123");
+  });
+
+  it("does not print malformed cached binding content on the unbound path", () => {
+    const check = classifyRepositoryBinding("bad\u001b]52;c;secret\u0007id", unbound, true);
+    expect(check).toMatchObject({ name: "repo-binding", status: "warn" });
+    expect(check.detail).toContain("local cached binding is invalid");
+    expect(check.detail).not.toContain("secret");
+    expect(check.detail).not.toContain("\u001b");
+  });
 });
