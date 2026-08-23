@@ -52,4 +52,24 @@ describe("daemon presence heartbeat contract", () => {
     );
     expect(normalizePresenceHeartbeatResponse({ accepted: "true" })).toBe(undefined);
   });
+
+  it("accepts only typed legacy acknowledgement fields", () => {
+    expect(normalizePresenceHeartbeatResponse({ accepted: true })).toEqual({ accepted: true });
+    expect(
+      normalizePresenceHeartbeatResponse({
+        accepted: true,
+        onlineTeammates: [{ name: "Maya", area: "auth" }],
+      }),
+    ).toEqual({
+      accepted: true,
+      onlineTeammates: [{ name: "Maya", area: "auth" }],
+    });
+    expect(normalizePresenceHeartbeatResponse({ accepted: true, onlineTeammates: [null] })).toBe(
+      undefined,
+    );
+    expect(normalizePresenceHeartbeatResponse({ accepted: true, onlineNames: [1] })).toBe(
+      undefined,
+    );
+    expect(normalizePresenceHeartbeatResponse({ accepted: "true" })).toBe(undefined);
+  });
 });

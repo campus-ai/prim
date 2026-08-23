@@ -42,7 +42,11 @@ import {
 } from "../lib/statusline-render.js";
 import { getOrCreateClientInstanceId } from "./client-instance-id.js";
 import { daemonRequest } from "./client.js";
-import { DECISION_DIGEST_CACHE_PATH, DecisionDigestCache } from "./decision-digest-cache.js";
+import {
+  DECISION_DIGEST_CACHE_PATH,
+  DecisionDigestCache,
+  decisionDraftDigestCachePath,
+} from "./decision-digest-cache.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 import {
   createDaemonHealthState,
@@ -117,6 +121,14 @@ const decisionDigestCache = new DecisionDigestCache(
       signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
     }),
 );
+const decisionDraftDigestCache = new DecisionDigestCache(
+  async (cursor) =>
+    await client.get(decisionDraftDigestCachePath(cursor), {
+      signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
+    }),
+  Date.now,
+  { cyclePages: true, failurePolicy: "clear" },
+);
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 // Loaded from private install-scoped config before the socket or network loops
 // start. Never expose this opaque correlation key in status/log output.
@@ -163,7 +175,6 @@ function requiredClientInstanceId(): string {
   }
   return clientInstanceId;
 }
-
 function resolveRuntimeVersion(): string {
   if (process.env.PRIM_RUNTIME_VERSION) {
     return process.env.PRIM_RUNTIME_VERSION;
@@ -185,6 +196,7 @@ function errorMessage(err: unknown): string {
 
 function purgePrincipalScopedState(): void {
   decisionDigestCache.reset();
+  decisionDraftDigestCache.reset();
   statuslineIngestionCache.clear();
   lastHeartbeatAt = undefined;
   lastOnlineCount = undefined;
@@ -248,6 +260,10 @@ function enterReauthHold(): void {
     return;
   }
   reauthHold = true;
+  // Private publish commands are authority-bearing. A terminal broker state
+  // invalidates them immediately; unlike the team summary they never survive
+  // an auth outage as last-known-good data.
+  decisionDraftDigestCache.reset();
   daemonHealth.needsReauth = true;
   if (heartbeatTimer) {
     clearTimeout(heartbeatTimer);
@@ -566,7 +582,10 @@ function scheduleDecisionDigestRefresh(): void {
 
 function refreshDecisionDigest(): Promise<void> {
   synchronizeDaemonCredential();
-  return shuttingDown || reauthHold ? Promise.resolve() : decisionDigestCache.refresh();
+  if (shuttingDown || reauthHold) return Promise.resolve();
+  return Promise.all([decisionDigestCache.refresh(), decisionDraftDigestCache.refresh()]).then(
+    () => undefined,
+  );
 }
 
 async function runDecisionDigestLoop(): Promise<void> {
@@ -733,6 +752,16 @@ async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonRespon
         assertCallerPrincipalMatches(req.caller);
         assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
         const result = decisionDigestCache.read();
+        void refreshDecisionDigest();
+        return { id, ok: true, result };
+      }
+      case "decision_draft_digest_snapshot": {
+        // Separate method keeps a new hook compatible with a daemon that has
+        // not restarted yet: an old daemon returns "unknown method", and the
+        // hook simply leaves private drafts unacknowledged until it upgrades.
+        assertCallerPrincipalMatches(req.caller);
+        assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
+        const result = decisionDraftDigestCache.read();
         void refreshDecisionDigest();
         return { id, ok: true, result };
       }
