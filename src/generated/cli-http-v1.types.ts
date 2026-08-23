@@ -4,6 +4,262 @@ export interface CliErrorResponse {
   [k: string]: unknown | undefined;
 }
 
+export interface DecisionCascadeResponse {
+  decision: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    area?: string;
+    authorName: string;
+    classifiedAt: number;
+    status: "active" | "superseded" | "under_review";
+    [k: string]: unknown | undefined;
+  };
+  rationale?: string;
+  reversibility?: "high" | "low";
+  fanOut: number;
+  upstream: {
+    files: string[];
+    contexts: {
+      id: string;
+      name: string;
+      [k: string]: unknown | undefined;
+    }[];
+    [k: string]: unknown | undefined;
+  };
+  downstream: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    area?: string;
+    authorName: string;
+    classifiedAt: number;
+    status: "active" | "superseded" | "under_review";
+    [k: string]: unknown | undefined;
+  }[];
+  trigger: {
+    type: "file_edit" | "supersession" | "context_edit" | "invalidation" | "confirmation_request";
+    file?: string;
+    contextName?: string;
+    flaggedAt: number;
+    authorName?: string;
+    reason?: string;
+    [k: string]: unknown | undefined;
+  } | null;
+  truncated: boolean;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionConfirmRequest {
+  id: string;
+  confirmed?: boolean;
+  correction?: string;
+  [k: string]: unknown | undefined;
+}
+
+export type DecisionConfirmSuccessResponse =
+  | {
+      decisionId: string;
+      shortId?: string;
+      outcome: "stale" | "confirmed" | "corrected";
+      [k: string]: unknown | undefined;
+    }
+  | {
+      decisionId: string;
+      shortId?: string;
+      outcome: "already_responded";
+      confirmed?: boolean;
+      respondedAt: number;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      decisionId: string;
+      shortId?: string;
+      outcome: "no_pending_prompt";
+      [k: string]: unknown | undefined;
+    };
+
+export interface DecisionCreateRequest {
+  intent: string;
+  attribution?: "user" | "agent" | "unknown";
+  kind?: "change" | "exploration" | "task_execution" | "unclear";
+  rationale?: string;
+  area?: string;
+  decided?: string[];
+  alternatives?: string[];
+  confidence?: "high" | "medium" | "low";
+  reversibility?: "high" | "low";
+  files?: string[];
+  protocolVersion?: 3;
+  repoSyncId?: string;
+  stageOverride?: "candidate" | "draft" | "adopted";
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionCreateResponse {
+  decisionId: string;
+  shortId: string;
+  createdAt: number;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionDetailResponse {
+  decision: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    intentKind: "change" | "exploration" | "task_execution" | "unclear";
+    rationale?: string;
+    decided?: string[];
+    alternatives: string[];
+    area?: string;
+    producerKind?: string;
+    status: "active" | "superseded" | "under_review";
+    supersededBy: string | null;
+    confidence: "high" | "medium" | "low";
+    reversibility?: "high" | "low";
+    confirmed?: boolean;
+    respondedAt?: number;
+    fanOut?: number;
+    classifiedAt: number;
+    authorName: string;
+    [k: string]: unknown | undefined;
+  };
+  files: string[];
+  contexts: {
+    id: string;
+    name: string;
+    [k: string]: unknown | undefined;
+  }[];
+  flags: {
+    type: "file_edit" | "supersession" | "context_edit" | "invalidation" | "confirmation_request";
+    file?: string;
+    flaggedAt: number;
+    acknowledgedAt?: number;
+    gateVerdict?: string;
+    reason?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  dependsOn: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    area?: string;
+    authorName: string;
+    classifiedAt: number;
+    status: "active" | "superseded" | "under_review";
+    [k: string]: unknown | undefined;
+  }[];
+  dependents: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    area?: string;
+    authorName: string;
+    classifiedAt: number;
+    status: "active" | "superseded" | "under_review";
+    [k: string]: unknown | undefined;
+  }[];
+  truncated: boolean;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionEditRequest {
+  id: string;
+  intent?: string;
+  rationale?: string;
+  alternatives?: string[];
+  area?: string;
+  decided?: string[];
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionIdRequest {
+  id: string;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionRelateRequest {
+  child: string;
+  parent: string;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionRelateSuccessResponse {
+  outcome: "linked" | "already_linked" | "unlinked" | "not_linked";
+  childId: string;
+  childShortId?: string;
+  parentId: string;
+  parentShortId?: string;
+  [k: string]: unknown | undefined;
+}
+
+export type DecisionStageSuccessResponse =
+  | {
+      outcome: "no_op";
+      stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+      [k: string]: unknown | undefined;
+    }
+  | {
+      outcome: "ok";
+      decisionId: string;
+      shortId?: string;
+      stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+      [k: string]: unknown | undefined;
+    };
+
+export interface DecisionSupersedeRequest {
+  id: string;
+  by: string;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionsAffectingResponse {
+  decisions: {
+    id: string;
+    intent: string;
+    rationale?: string;
+    status: "active" | "under_review";
+    classifiedAt: number;
+    matchedFiles: string[];
+    [k: string]: unknown | undefined;
+  }[];
+  truncated: boolean;
+  unavailable?: string;
+  [k: string]: unknown | undefined;
+}
+
+export interface DecisionsRecentResponse {
+  decisions: {
+    id: string;
+    shortId?: string;
+    intent: string;
+    intentKind?: "change" | "exploration" | "task_execution" | "unclear";
+    rationale?: string;
+    area?: string;
+    producerKind?: string;
+    isDecision?: boolean;
+    userId: string;
+    authorName: string;
+    authorIsSelf: boolean;
+    classifiedAt: number;
+    status: "active" | "superseded" | "under_review";
+    stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+    [k: string]: unknown | undefined;
+  }[];
+  viewerHasDecisions?: boolean;
+  author?: {
+    userId: string;
+    name: string;
+    [k: string]: unknown | undefined;
+  };
+  authorHasDecisions?: boolean;
+  windowTotal?: number;
+  windowTotalCapped?: boolean;
+  unavailable?: string;
+  [k: string]: unknown | undefined;
+}
+
 export interface DurableMoveIngestResponse {
   disposition: "persisted";
   acknowledged: number;
@@ -37,26 +293,115 @@ export interface FeedbackAckRequest {
   ];
 }
 
+export type FeedbackAckResponse =
+  | {
+      protocolVersion: number;
+      status: "acked";
+      acknowledgedEventIds: string[];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      protocolVersion: 2;
+      status: "unavailable";
+      reason: "organization_unbound";
+      [k: string]: unknown | undefined;
+    };
+
 export interface FeedbackLeaseRequest {
   protocolVersion: number;
   workspaceId: string;
   currentSessionId: string;
 }
 
+export type FeedbackLeaseResponse =
+  | {
+      protocolVersion: number;
+      status: "empty";
+      hasMore: false;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      protocolVersion: number;
+      status: "leased";
+      /**
+       * @minItems 1
+       * @maxItems 40
+       */
+      events: [
+        {
+          eventId: string;
+          leaseVersion: number;
+          shortId: string;
+          intent: string;
+          webUrl: string;
+          kind?: "confirm_prompt" | "publish_prompt";
+          [k: string]: unknown | undefined;
+        },
+        ...{
+          eventId: string;
+          leaseVersion: number;
+          shortId: string;
+          intent: string;
+          webUrl: string;
+          kind?: "confirm_prompt" | "publish_prompt";
+          [k: string]: unknown | undefined;
+        }[]
+      ];
+      hasMore: boolean;
+      [k: string]: unknown | undefined;
+    }
+  | {
+      protocolVersion: number;
+      status: "unavailable";
+      reason: "organization_unbound";
+      [k: string]: unknown | undefined;
+    };
+
+export type FeedbackStatusResponse =
+  | {
+      protocolVersion: 2;
+      status: "available";
+      [k: string]: unknown | undefined;
+    }
+  | {
+      protocolVersion: 2;
+      status: "unavailable";
+      reason: "organization_unbound";
+      [k: string]: unknown | undefined;
+    };
+
 export interface MoveIngestRequest {
-  batch: {
-    moveId: string;
-    capturedAt: number;
-    sessionId: string;
-    invocationId?: string;
-    eventType: string;
-    payload?: unknown;
-    env?: unknown;
-    envelopeVersion?: number;
-    producer?: "claude_code" | "codex" | "hermes";
-    toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
-    [k: string]: unknown | undefined;
-  }[];
+  batch: (
+    | {
+        moveId: string;
+        capturedAt: number;
+        sessionId: string;
+        invocationId?: string;
+        eventType: string;
+        payload?: unknown;
+        env?: unknown;
+        producer?: "claude_code" | "codex" | "hermes";
+        toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
+        envelopeVersion: 4;
+        capturedOrganizationId: string;
+        captureAuthorityKind: "workos" | "service_token";
+        decisionLifecycleProtocolVersion: number;
+        [k: string]: unknown | undefined;
+      }
+    | {
+        moveId: string;
+        capturedAt: number;
+        sessionId: string;
+        invocationId?: string;
+        eventType: string;
+        payload?: unknown;
+        env?: unknown;
+        producer?: "claude_code" | "codex" | "hermes";
+        toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
+        envelopeVersion?: number;
+        [k: string]: unknown | undefined;
+      }
+  )[];
   [k: string]: unknown | undefined;
 }
 
@@ -76,6 +421,57 @@ export interface PreflightRequestV3 {
   proposal: string;
 }
 
+export interface PreflightResponseV3 {
+  protocolVersion: 3;
+  verdict: "allow" | "warn" | "ask" | "block" | "unavailable";
+  reasonCode: string;
+  message: string;
+  conflicts: {
+    decisionId: string;
+    shortId?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  bypassed: {
+    decisionId: string;
+    bypassId?: string;
+    shortId?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  [k: string]: unknown | undefined;
+}
+
+export interface PresenceHeartbeatRequest {
+  sessionId: string;
+  decisionLifecycleProtocolVersion?: number;
+  [k: string]: unknown | undefined;
+}
+
+export type PresenceHeartbeatResponse =
+  | {
+      accepted: true;
+      lastHeartbeatAt: number;
+      created: boolean;
+      onlineCount: number;
+      onlineNames: string[];
+      onlineTeammates: {
+        name: string;
+        area?: string;
+        decisionUrl?: string;
+        [k: string]: unknown | undefined;
+      }[];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      accepted: false;
+      unavailable: string;
+      [k: string]: unknown | undefined;
+    };
+
 export interface RepositoryBindRequest {
   repositoryFullName: string;
+}
+
+export interface RepositoryBindResponse {
+  repoSyncId: string;
+  [k: string]: unknown | undefined;
 }

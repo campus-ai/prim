@@ -5,10 +5,16 @@ import { describe, expect, it } from "vitest";
 import { buildGeneratedOutputs } from "../../scripts/generate-cli-contract.mjs";
 import {
   isCliErrorResponse,
+  isDecisionsRecentResponse,
+  isDecisionsRecentResponseStructure,
   isDurableMoveIngestResponse,
   isFeedbackAckRequest,
   isFeedbackAckRequestStructure,
+  isFeedbackAckResponse,
+  isFeedbackAckResponseStructure,
   isFeedbackLeaseRequest,
+  isFeedbackLeaseResponse,
+  isFeedbackLeaseResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3,
   isPreflightRequestV3Structure,
@@ -19,11 +25,15 @@ const WORKSPACE_ID = "123e4567-e89b-42d3-a456-426614174000";
 
 function artifactFixture(): {
   artifact: Record<string, unknown>;
+  fixtures: Record<string, unknown>;
   lock: Record<string, unknown>;
 } {
   return {
     artifact: JSON.parse(
       readFileSync(resolve("contracts/cli-http-v1.schema.json"), "utf8"),
+    ) as Record<string, unknown>,
+    fixtures: JSON.parse(
+      readFileSync(resolve("contracts/cli-http-v1.fixtures.json"), "utf8"),
     ) as Record<string, unknown>,
     lock: JSON.parse(readFileSync(resolve("contracts/cli-http-v1.lock.json"), "utf8")) as Record<
       string,
@@ -34,15 +44,28 @@ function artifactFixture(): {
 
 function generatedInput(
   artifact: Record<string, unknown>,
+  fixtures: Record<string, unknown>,
   lock: Record<string, unknown>,
-): [Buffer, Buffer] {
+): [Buffer, Buffer, Buffer] {
   const artifactBytes = Buffer.from(`${JSON.stringify(artifact, null, 2)}\n`);
+  const fixtureBytes = Buffer.from(`${JSON.stringify(fixtures, null, 2)}\n`);
   return [
     artifactBytes,
+    fixtureBytes,
     Buffer.from(
       `${JSON.stringify({
         ...lock,
-        sha256: createHash("sha256").update(artifactBytes).digest("hex"),
+        artifacts: {
+          ...(lock.artifacts as Record<string, unknown>),
+          schema: {
+            ...((lock.artifacts as Record<string, Record<string, unknown>>).schema ?? {}),
+            sha256: createHash("sha256").update(artifactBytes).digest("hex"),
+          },
+          fixtures: {
+            ...((lock.artifacts as Record<string, Record<string, unknown>>).fixtures ?? {}),
+            sha256: createHash("sha256").update(fixtureBytes).digest("hex"),
+          },
+        },
       })}\n`,
     ),
   ];
@@ -147,6 +170,87 @@ describe("generated CLI HTTP request-core contract", () => {
     ).toBe(false);
   });
 
+  it("enforces feedback response version negotiation and unique event IDs", () => {
+    const event = {
+      eventId: "event-1",
+      leaseVersion: 1,
+      shortId: "0123abcd",
+      intent: "Adopt artifact v2",
+      webUrl: "https://app.getprimitive.ai/decisions/decision-1",
+    };
+    const invalidV1 = {
+      protocolVersion: 1,
+      status: "leased",
+      events: [{ ...event, kind: "publish_prompt" }],
+      hasMore: false,
+    };
+    expect(isFeedbackLeaseResponseStructure(invalidV1)).toBe(true);
+    expect(isFeedbackLeaseResponse(invalidV1)).toBe(false);
+
+    const invalidV2 = {
+      protocolVersion: 2,
+      status: "leased",
+      events: [event],
+      hasMore: false,
+    };
+    expect(isFeedbackLeaseResponseStructure(invalidV2)).toBe(true);
+    expect(isFeedbackLeaseResponse(invalidV2)).toBe(false);
+    expect(
+      isFeedbackLeaseResponse({
+        ...invalidV2,
+        events: [{ ...event, kind: "publish_prompt" }],
+      }),
+    ).toBe(true);
+    expect(
+      isFeedbackLeaseResponse({
+        ...invalidV2,
+        events: [
+          { ...event, kind: "confirm_prompt" },
+          { ...event, kind: "confirm_prompt" },
+        ],
+      }),
+    ).toBe(false);
+
+    const duplicateAck = {
+      protocolVersion: 2,
+      status: "acked",
+      acknowledgedEventIds: ["event-1", "event-1"],
+    };
+    expect(isFeedbackAckResponseStructure(duplicateAck)).toBe(true);
+    expect(isFeedbackAckResponse(duplicateAck)).toBe(false);
+  });
+
+  it("enforces resolved, unavailable, and complete-author recent response variants", () => {
+    const partialAuthor = {
+      decisions: [],
+      viewerHasDecisions: false,
+      author: { userId: "user-1", name: "Ada" },
+    };
+    expect(isDecisionsRecentResponseStructure(partialAuthor)).toBe(true);
+    expect(isDecisionsRecentResponse(partialAuthor)).toBe(false);
+    expect(
+      isDecisionsRecentResponse({
+        ...partialAuthor,
+        authorHasDecisions: false,
+        windowTotal: 0,
+        windowTotalCapped: false,
+      }),
+    ).toBe(true);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        unavailable: "organization_unbound",
+      }),
+    ).toBe(true);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        unavailable: "organization_unbound",
+        viewerHasDecisions: false,
+      }),
+    ).toBe(false);
+  });
+
   it("validates repository binding names from the server-owned pattern", () => {
     expect(isRepositoryBindRequest({ repositoryFullName: "campus-ai/primitive" })).toBe(true);
     expect(isRepositoryBindRequest({ repositoryFullName: "campus--ai/primitive" })).toBe(false);
@@ -156,19 +260,19 @@ describe("generated CLI HTTP request-core contract", () => {
   });
 
   it("fails generation closed when an artifact introduces an unknown refinement", async () => {
-    const { artifact, lock } = artifactFixture();
+    const { artifact, fixtures, lock } = artifactFixture();
     const definitions = artifact.$defs as Record<string, Record<string, unknown>>;
     definitions.PreflightRequestV3["x-primitive-runtime-refinements"] = [
       "canonical_repository_paths",
       "future_unknown_rule",
     ];
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      "unsupported runtime refinement: future_unknown_rule",
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("unsupported runtime refinement: future_unknown_rule");
   });
 
   it("fails generation closed when a refinement is nested inside a definition", async () => {
-    const { artifact, lock } = artifactFixture();
+    const { artifact, fixtures, lock } = artifactFixture();
     const definitions = artifact.$defs as Record<string, Record<string, unknown>>;
     const repositoryBind = definitions.RepositoryBindRequest;
     const properties = repositoryBind.properties as Record<string, Record<string, unknown>>;
@@ -176,48 +280,98 @@ describe("generated CLI HTTP request-core contract", () => {
       "future_unknown_nested_rule",
     ];
 
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      "unsupported runtime refinement: future_unknown_nested_rule",
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("unsupported runtime refinement: future_unknown_nested_rule");
 
     properties.repositoryFullName["x-primitive-runtime-refinements"] = [
       "canonical_repository_paths",
     ];
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      "uses runtime refinements outside a definition root",
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("uses runtime refinements outside a definition root");
   });
 
   it("fails generation closed when a refinement is attached to the schema root", async () => {
-    const { artifact, lock } = artifactFixture();
+    const { artifact, fixtures, lock } = artifactFixture();
     artifact["x-primitive-runtime-refinements"] = ["future_unknown_root_rule"];
 
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      "unsupported runtime refinement: future_unknown_root_rule",
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("unsupported runtime refinement: future_unknown_root_rule");
 
     artifact["x-primitive-runtime-refinements"] = ["canonical_repository_paths"];
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      "uses runtime refinements outside a definition root",
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("uses runtime refinements outside a definition root");
   });
 
   it("fails generation closed on unsupported schema keywords", async () => {
-    const { artifact, lock } = artifactFixture();
+    const { artifact, fixtures, lock } = artifactFixture();
     const definitions = artifact.$defs as Record<string, Record<string, unknown>>;
     definitions.RepositoryBindRequest.futureKeyword = true;
 
-    await expect(buildGeneratedOutputs(...generatedInput(artifact, lock))).rejects.toThrow(
-      'strict mode: unknown keyword: "futureKeyword"',
-    );
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow('strict mode: unknown keyword: "futureKeyword"');
   });
 
   it("rejects an artifact whose bytes do not match the provenance lock", async () => {
-    const { artifact, lock } = artifactFixture();
+    const { artifact, fixtures, lock } = artifactFixture();
     const artifactBytes = Buffer.from(`${JSON.stringify({ ...artifact, title: "tampered" })}\n`);
 
     await expect(
-      buildGeneratedOutputs(artifactBytes, Buffer.from(`${JSON.stringify(lock)}\n`)),
-    ).rejects.toThrow("contract artifact checksum mismatch");
+      buildGeneratedOutputs(
+        artifactBytes,
+        Buffer.from(`${JSON.stringify(fixtures)}\n`),
+        Buffer.from(`${JSON.stringify(lock)}\n`),
+      ),
+    ).rejects.toThrow("contract schema checksum mismatch");
+  });
+
+  it("rejects fixture byte drift and fixture metadata drift", async () => {
+    const schemaBytes = readFileSync(resolve("contracts/cli-http-v1.schema.json"));
+    const fixtureBytes = readFileSync(resolve("contracts/cli-http-v1.fixtures.json"));
+    const lockBytes = readFileSync(resolve("contracts/cli-http-v1.lock.json"));
+    await expect(
+      buildGeneratedOutputs(
+        schemaBytes,
+        Buffer.concat([fixtureBytes, Buffer.from(" ")]),
+        lockBytes,
+      ),
+    ).rejects.toThrow("conformance fixtures checksum mismatch");
+
+    const { artifact, fixtures, lock } = artifactFixture();
+    fixtures.contractVersion = 99;
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("conformance fixtures do not match the contract artifact");
+  });
+
+  it("rejects provenance path, repository, commit, and lock-shape tampering", async () => {
+    const { artifact, fixtures, lock } = artifactFixture();
+    const artifacts = lock.artifacts as Record<string, Record<string, unknown>>;
+    artifacts.fixtures.sourcePath = "contracts/renamed-fixtures.json";
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("conformance fixtures source path");
+
+    artifacts.fixtures.sourcePath = "contracts/cli-http-v1.fixtures.json";
+    lock.sourceRepository = "other/repository";
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("sourceRepository must be campus-ai/primitive");
+
+    lock.sourceRepository = "campus-ai/primitive";
+    lock.sourceCommit = "main";
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("sourceCommit must be a full lowercase Git object ID");
+
+    lock.sourceCommit = "9f394bb03d64c228190155ab3dbce15eca4cbbd5";
+    lock.unexpected = true;
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).rejects.toThrow("contract lock has unknown or missing fields");
   });
 });
