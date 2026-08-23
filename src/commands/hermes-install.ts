@@ -24,22 +24,12 @@
  * Writes atomically (tmp + fsync + rename). AX contract (matches `prim claude`
  * / `prim codex`): STDOUT is the JSON result; STDERR is the human verdict.
  */
-import {
-  chmodSync,
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { Command } from "commander";
-import { Document, parseDocument, stringify } from "yaml";
+import { Document, isMap, isSeq, parseDocument, stringify } from "yaml";
+import { atomicWriteFile } from "../lib/atomic-file.js";
 import { binFile, packageVersion } from "../lib/bin-path.js";
 
 const CAPTURE_BIN = "prim-hook";
@@ -268,20 +258,181 @@ function serializeHooks(hooks: HooksMap): string {
   return stringify({ hooks }, { lineWidth: 0 });
 }
 
+type YamlValue = {
+  toJSON?: () => unknown;
+  comment?: string | null;
+  commentBefore?: string | null;
+  spaceBefore?: boolean;
+};
+
+function yamlValue(node: unknown): unknown {
+  return typeof (node as YamlValue | null)?.toJSON === "function"
+    ? (node as YamlValue).toJSON?.()
+    : node;
+}
+
+function hookEntry(node: unknown): HookEntry | null {
+  const value = yamlValue(node);
+  return typeof value === "object" &&
+    value !== null &&
+    typeof (value as HookEntry).command === "string"
+    ? (value as HookEntry)
+    : null;
+}
+
+function isPrimEntry(entry: HookEntry): boolean {
+  return PRIM_BINS.some((bin) => commandUsesBin(entry.command, bin));
+}
+
+function entryKey(entry: HookEntry): string {
+  return JSON.stringify(entry);
+}
+
+function copyComments(source: unknown, target: unknown): void {
+  const from = source as YamlValue | null;
+  const to = target as YamlValue | null;
+  if (!from || !to) return;
+  if (from.commentBefore !== undefined && to.commentBefore === undefined) {
+    to.commentBefore = from.commentBefore;
+  }
+  if (from.comment !== undefined && to.comment === undefined) {
+    to.comment = from.comment;
+  }
+  if (from.spaceBefore !== undefined && to.spaceBefore === undefined) {
+    to.spaceBefore = from.spaceBefore;
+  }
+}
+
+/**
+ * Reconcile one sequence without rebuilding user-owned nodes. Valid entries
+ * follow the merge helper's requested order; malformed/foreign nodes retain
+ * their original AST nodes, comments, and relative positions.
+ */
+function reconcileSequence(
+  doc: Document,
+  sequence: { items: unknown[] },
+  desired: HookEntry[],
+): void {
+  const available = new Map<string, unknown[]>();
+  const displacedPrim: unknown[] = [];
+  for (const node of sequence.items) {
+    const entry = hookEntry(node);
+    if (!entry) continue;
+    const key = entryKey(entry);
+    const nodes = available.get(key) ?? [];
+    nodes.push(node);
+    available.set(key, nodes);
+  }
+
+  const desiredNodes = desired.map((entry) => {
+    const candidates = available.get(entryKey(entry));
+    const reused = candidates?.shift();
+    return reused ?? doc.createNode(entry);
+  });
+
+  for (const nodes of available.values()) {
+    for (const node of nodes) {
+      const entry = hookEntry(node);
+      if (entry && isPrimEntry(entry)) displacedPrim.push(node);
+    }
+  }
+
+  const newPrimNodes = desiredNodes.filter((node) => {
+    const entry = hookEntry(node);
+    return entry !== null && isPrimEntry(entry) && !sequence.items.includes(node);
+  });
+  for (let i = 0; i < Math.min(displacedPrim.length, newPrimNodes.length); i += 1) {
+    copyComments(displacedPrim[i], newPrimNodes[i]);
+  }
+
+  const next: unknown[] = [];
+  let desiredIndex = 0;
+  for (const node of sequence.items) {
+    if (hookEntry(node) === null) {
+      next.push(node);
+    } else if (desiredIndex < desiredNodes.length) {
+      next.push(desiredNodes[desiredIndex]);
+      desiredIndex += 1;
+    }
+  }
+  next.push(...desiredNodes.slice(desiredIndex));
+  sequence.items = next;
+}
+
+/** Rewrite only the hooks AST, retaining comments and unrecognized user data. */
+function reconcileHooksDocument(doc: Document, desired: HooksMap): boolean {
+  const hooksNode = doc.get("hooks", true);
+  if (hooksNode === undefined) {
+    if (Object.keys(desired).length === 0) return false;
+    doc.set("hooks", desired);
+    return true;
+  }
+  if (!isMap(hooksNode)) {
+    if (Object.keys(desired).length === 0) return false;
+    throw new Error("cannot merge Primitive hooks into a non-mapping hooks value");
+  }
+
+  const seen = new Set<string>();
+  for (const pair of [...hooksNode.items]) {
+    const event = yamlValue(pair.key);
+    if (typeof event !== "string") continue;
+    if (seen.has(event)) {
+      throw new Error(`cannot safely merge duplicate Hermes hook event ${JSON.stringify(event)}`);
+    }
+    seen.add(event);
+
+    const expected = desired[event] ?? [];
+    if (!isSeq(pair.value)) {
+      if (expected.length > 0) {
+        throw new Error(
+          `cannot merge Primitive hooks into non-list event ${JSON.stringify(event)}`,
+        );
+      }
+      continue;
+    }
+    reconcileSequence(doc, pair.value, expected);
+    if (pair.value.items.length === 0) {
+      hooksNode.delete(event);
+    }
+  }
+
+  for (const [event, entries] of Object.entries(desired)) {
+    if (!seen.has(event)) {
+      hooksNode.set(event, doc.createNode(entries));
+    }
+  }
+
+  if (hooksNode.items.length === 0) {
+    doc.delete("hooks");
+    return false;
+  }
+  return true;
+}
+
 // Replace ONLY the `hooks:` block with `hooks`'s serialization (or remove it
 // when empty), preserving every other byte of the file. Appends the block when
 // the file has none.
 export function spliceHooks(raw: string, hooks: HooksMap): string {
-  const block = serializeHooks(hooks);
   const loc = locateHooksBlock(raw);
-  if (loc) {
-    return raw.slice(0, loc.start) + block + raw.slice(loc.end);
+  if (!loc) {
+    const block = serializeHooks(hooks);
+    if (block.length === 0) return raw;
+    const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
+    return `${raw}${sep}${block}`;
   }
-  if (block.length === 0) {
-    return raw;
+
+  const doc = parseDocument(raw);
+  const hasHooks = reconcileHooksDocument(doc, hooks);
+  if (!hasHooks) {
+    return raw.slice(0, loc.start) + raw.slice(loc.end);
   }
-  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  return `${raw}${sep}${block}`;
+  const serialized = doc.toString({ lineWidth: 0 });
+  const serializedLoc = locateHooksBlock(serialized);
+  if (!serializedLoc) {
+    throw new Error("Hermes hooks merge lost the hooks mapping");
+  }
+  const block = serialized.slice(serializedLoc.start, serializedLoc.end);
+  return raw.slice(0, loc.start) + block + raw.slice(loc.end);
 }
 
 function hasAutoAccept(raw: string): boolean {
@@ -298,22 +449,6 @@ function setAutoAccept(raw: string): string {
   return `${raw}${sep}hooks_auto_accept: true\n`;
 }
 
-function atomicWriteFile(path: string, content: string): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${path}.tmp.${String(process.pid)}`;
-  writeFileSync(tmp, content, "utf-8");
-  const fd = openSync(tmp, "r+");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, path);
-}
-
 // True when the merged content is at least as parseable as the original — i.e.
 // the splice introduced no NEW structural error. Comparing error COUNTS (not
 // just "is it clean now") means a pre-existing ambiguity the user's YAML loader
@@ -323,23 +458,46 @@ export function mergeKeepsYamlValid(before: string, after: string): boolean {
   return parseDocument(after).errors.length <= parseDocument(before).errors.length;
 }
 
+/** A syntactically valid write must also contain exactly the requested valid hooks. */
+export function mergePreservesHermesSemantics(
+  before: string,
+  after: string,
+  expectedHooks: HooksMap,
+): boolean {
+  if (!mergeKeepsYamlValid(before, after)) return false;
+  try {
+    return JSON.stringify(readHooksFromRaw(after)) === JSON.stringify(expectedHooks);
+  } catch {
+    return false;
+  }
+}
+
+const INVALID_MERGE_MESSAGE =
+  "[prim] aborted: the merge would change unrelated Hermes config; config left unchanged";
+
 // Defense in depth: abort (leaving the file byte-untouched) if the splice
 // introduced a new YAML error, rather than persist a config we made worse.
-function assertMergeValid(before: string, after: string): void {
-  if (!mergeKeepsYamlValid(before, after)) {
-    console.error("[prim] aborted: the merge would introduce invalid YAML; config left unchanged");
+function assertMergeValid(before: string, after: string, expectedHooks: HooksMap): void {
+  if (!mergePreservesHermesSemantics(before, after, expectedHooks)) {
+    console.error(INVALID_MERGE_MESSAGE);
     process.exit(1);
   }
 }
 
+function writeConfig(path: string, before: string, after: string, expectedHooks: HooksMap): void {
+  atomicWriteFile(path, after, {
+    ensureParent: true,
+    validate(temporaryPath) {
+      const flushed = readFileSync(temporaryPath, "utf8");
+      if (!mergePreservesHermesSemantics(before, flushed, expectedHooks)) {
+        throw new Error(INVALID_MERGE_MESSAGE);
+      }
+    },
+  });
+}
+
 function writeShim(): void {
-  const path = shimPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, SHIM_SCRIPT, "utf-8");
-  chmodSync(path, SHIM_MODE);
+  atomicWriteFile(shimPath(), SHIM_SCRIPT, { ensureParent: true, mode: SHIM_MODE });
 }
 
 function removeShim(): void {
@@ -378,13 +536,13 @@ export function performInstall(opts: { force: boolean; autoAccept: boolean }): I
   if (opts.autoAccept) {
     next = setAutoAccept(next);
   }
+  const changed = next !== raw;
+  if (changed) assertMergeValid(raw, next, desired);
   // The shim is what the hook commands point at; write it whenever installing,
   // idempotently, so a config-unchanged re-install still heals a missing shim.
   writeShim();
-  const changed = next !== raw;
   if (changed) {
-    assertMergeValid(raw, next);
-    atomicWriteFile(path, next);
+    writeConfig(path, raw, next, desired);
   }
   return {
     path,
@@ -408,8 +566,8 @@ export function performUninstall(): InstallResult {
     JSON.stringify(existing) === JSON.stringify(remaining) ? raw : spliceHooks(raw, remaining);
   const changed = next !== raw;
   if (changed) {
-    assertMergeValid(raw, next);
-    atomicWriteFile(path, next);
+    assertMergeValid(raw, next, remaining);
+    writeConfig(path, raw, next, remaining);
   }
   // Every prim hook is gone now, so the shim it routed through is unused. The
   // user's hooks_auto_accept (if any) is left as their trust setting.
