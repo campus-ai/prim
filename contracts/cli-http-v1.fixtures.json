@@ -1,0 +1,633 @@
+{
+  "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
+  "contractVersion": 2,
+  "cases": [
+    {
+      "name": "v4 move preserves CRLF apply-patch move directive",
+      "definition": "MoveIngestRequest",
+      "valid": true,
+      "value": {
+        "batch": [
+          {
+            "moveId": "move-1",
+            "capturedAt": 100,
+            "sessionId": "session-1",
+            "eventType": "PostToolUse",
+            "envelopeVersion": 4,
+            "capturedOrganizationId": "org_123",
+            "captureAuthorityKind": "workos",
+            "decisionLifecycleProtocolVersion": 2,
+            "producer": "codex",
+            "payload": {
+              "patch": "*** Begin Patch\r\n*** Add File: added.ts\r\n+export {};\r\n*** Update File: old.ts\r\n*** Move to: new.ts\r\n@@\r\n-old\r\n+new\r\n*** Delete File: removed.ts\r\n*** End Patch\r\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "future move envelope version is not v4",
+      "definition": "MoveIngestRequest",
+      "valid": false,
+      "value": {
+        "batch": [
+          {
+            "moveId": "move-1",
+            "capturedAt": 100,
+            "sessionId": "session-1",
+            "eventType": "PostToolUse",
+            "envelopeVersion": 5,
+            "capturedOrganizationId": "org_123",
+            "captureAuthorityKind": "workos",
+            "decisionLifecycleProtocolVersion": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "durable move acknowledgement",
+      "definition": "DurableMoveIngestResponse",
+      "valid": true,
+      "value": {
+        "accepted": 1,
+        "acknowledged": 1,
+        "disposition": "persisted",
+        "verdictFooter": null
+      }
+    },
+    {
+      "name": "lifecycle-capable heartbeat",
+      "definition": "PresenceHeartbeatRequest",
+      "valid": true,
+      "value": {
+        "sessionId": "session-1",
+        "decisionLifecycleProtocolVersion": 2
+      }
+    },
+    {
+      "name": "legacy heartbeat remains accepted",
+      "definition": "PresenceHeartbeatRequest",
+      "valid": true,
+      "value": {
+        "sessionId": "session-1"
+      }
+    },
+    {
+      "name": "heartbeat rejects malformed lifecycle capability",
+      "definition": "PresenceHeartbeatRequest",
+      "valid": false,
+      "value": {
+        "sessionId": "session-1",
+        "decisionLifecycleProtocolVersion": 0
+      }
+    },
+    {
+      "name": "heartbeat acknowledgement",
+      "definition": "PresenceHeartbeatResponse",
+      "valid": true,
+      "value": {
+        "accepted": true,
+        "lastHeartbeatAt": 100,
+        "created": false,
+        "onlineCount": 1,
+        "onlineNames": [],
+        "onlineTeammates": []
+      }
+    },
+    {
+      "name": "heartbeat unavailable response",
+      "definition": "PresenceHeartbeatResponse",
+      "valid": true,
+      "value": {
+        "accepted": false,
+        "unavailable": "active organization membership required"
+      }
+    },
+    {
+      "name": "canonical preflight paths",
+      "definition": "PreflightRequestV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "invocation-1",
+        "repoSyncId": "repoSync123",
+        "paths": ["src/index.ts"],
+        "coverage": "complete",
+        "clientMode": "block",
+        "clientVersion": "0.2.0",
+        "proposal": "Edit the contract"
+      }
+    },
+    {
+      "name": "outside-repository preflight path",
+      "definition": "PreflightRequestV3",
+      "valid": false,
+      "value": {
+        "protocolVersion": 3,
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "invocation-1",
+        "repoSyncId": "repoSync123",
+        "paths": ["../outside.ts"],
+        "coverage": "complete",
+        "proposal": "Edit outside the repository"
+      }
+    },
+    {
+      "name": "preflight unavailable response",
+      "definition": "PreflightResponseV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "unavailable",
+        "reasonCode": "repository_unavailable",
+        "message": "Repository is unavailable.",
+        "conflicts": [],
+        "bypassed": []
+      }
+    },
+    {
+      "name": "repository binding request",
+      "definition": "RepositoryBindRequest",
+      "valid": true,
+      "value": {
+        "repositoryFullName": "campus-ai/primitive"
+      }
+    },
+    {
+      "name": "repository binding response",
+      "definition": "RepositoryBindResponse",
+      "valid": true,
+      "value": {
+        "repoSyncId": "repoSync123"
+      }
+    },
+    {
+      "name": "feedback lease request",
+      "definition": "FeedbackLeaseRequest",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "workspaceId": "123e4567-e89b-12d3-a456-426614174000",
+        "currentSessionId": "session-1"
+      }
+    },
+    {
+      "name": "feedback acknowledgement request",
+      "definition": "FeedbackAckRequest",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "workspaceId": "123e4567-e89b-12d3-a456-426614174000",
+        "deliveries": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "feedback v1 confirmation without kind",
+      "definition": "FeedbackLeaseResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "status": "leased",
+        "events": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1,
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "webUrl": "https://app.getprimitive.ai/decisions/decision-1"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback v1 cannot carry publish prompt",
+      "definition": "FeedbackLeaseResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "status": "leased",
+        "events": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1,
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
+            "kind": "publish_prompt"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback v2 publish prompt",
+      "definition": "FeedbackLeaseResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "leased",
+        "events": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1,
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
+            "kind": "publish_prompt"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback v2 requires event kind",
+      "definition": "FeedbackLeaseResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 2,
+        "status": "leased",
+        "events": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1,
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "webUrl": "https://app.getprimitive.ai/decisions/decision-1"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback empty response",
+      "definition": "FeedbackLeaseResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "empty",
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback unavailable response",
+      "definition": "FeedbackLeaseResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "unavailable",
+        "reason": "organization_unbound"
+      }
+    },
+    {
+      "name": "feedback acknowledgement response",
+      "definition": "FeedbackAckResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "acked",
+        "acknowledgedEventIds": ["event-1"]
+      }
+    },
+    {
+      "name": "feedback acknowledgement unavailable response",
+      "definition": "FeedbackAckResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "unavailable",
+        "reason": "organization_unbound"
+      }
+    },
+    {
+      "name": "feedback status available response",
+      "definition": "FeedbackStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "available"
+      }
+    },
+    {
+      "name": "feedback status unavailable response",
+      "definition": "FeedbackStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "unavailable",
+        "reason": "organization_unbound"
+      }
+    },
+    {
+      "name": "decisions affecting response",
+      "definition": "DecisionsAffectingResponse",
+      "valid": true,
+      "value": {
+        "decisions": [
+          {
+            "id": "decision-1",
+            "intent": "Publish the generated contract",
+            "status": "under_review",
+            "classifiedAt": 100,
+            "matchedFiles": ["src/index.ts"]
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "healthy recent feed",
+      "definition": "DecisionsRecentResponse",
+      "valid": true,
+      "value": {
+        "decisions": [
+          {
+            "id": "decision-1",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active",
+            "rationale": "Prevent cross-repository drift",
+            "producerKind": "cli",
+            "isDecision": true,
+            "userId": "user-1",
+            "authorIsSelf": true,
+            "stage": "provisional"
+          }
+        ],
+        "viewerHasDecisions": true
+      }
+    },
+    {
+      "name": "unavailable recent feed",
+      "definition": "DecisionsRecentResponse",
+      "valid": true,
+      "value": {
+        "decisions": [],
+        "unavailable": "organization_unbound"
+      }
+    },
+    {
+      "name": "partial author echo is not a resolved feed",
+      "definition": "DecisionsRecentResponse",
+      "valid": false,
+      "value": {
+        "decisions": [],
+        "viewerHasDecisions": false,
+        "author": {
+          "userId": "user-1",
+          "name": "Ada"
+        }
+      }
+    },
+    {
+      "name": "decision detail response",
+      "definition": "DecisionDetailResponse",
+      "valid": true,
+      "value": {
+        "decision": {
+          "id": "decision-1",
+          "shortId": "0123abcd",
+          "intent": "Publish the generated contract",
+          "area": "platform",
+          "authorName": "Ada",
+          "classifiedAt": 100,
+          "status": "active",
+          "intentKind": "change",
+          "rationale": "Prevent cross-repository drift",
+          "decided": ["Generate validators"],
+          "alternatives": [],
+          "producerKind": "cli",
+          "supersededBy": null,
+          "confidence": "high",
+          "reversibility": "high"
+        },
+        "files": ["src/index.ts"],
+        "flags": [],
+        "dependsOn": [],
+        "dependents": [
+          {
+            "id": "decision-1",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "decision cascade response",
+      "definition": "DecisionCascadeResponse",
+      "valid": true,
+      "value": {
+        "decision": {
+          "id": "decision-1",
+          "shortId": "0123abcd",
+          "intent": "Publish the generated contract",
+          "area": "platform",
+          "authorName": "Ada",
+          "classifiedAt": 100,
+          "status": "active"
+        },
+        "rationale": "Prevent cross-repository drift",
+        "reversibility": "high",
+        "fanOut": 1,
+        "upstream": {
+          "files": ["src/index.ts"]
+        },
+        "downstream": [
+          {
+            "id": "decision-1",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active"
+          }
+        ],
+        "trigger": {
+          "type": "file_edit",
+          "file": "src/index.ts",
+          "flaggedAt": 101,
+          "authorName": "Grace"
+        },
+        "truncated": false
+      }
+    },
+    {
+      "name": "decision create request",
+      "definition": "DecisionCreateRequest",
+      "valid": true,
+      "value": {
+        "intent": "Publish the generated contract",
+        "protocolVersion": 3,
+        "stageOverride": "draft"
+      }
+    },
+    {
+      "name": "decision create response",
+      "definition": "DecisionCreateResponse",
+      "valid": true,
+      "value": {
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "createdAt": 100
+      }
+    },
+    {
+      "name": "decision stage request",
+      "definition": "DecisionIdRequest",
+      "valid": true,
+      "value": {
+        "id": "decision-1"
+      }
+    },
+    {
+      "name": "decision supersede request",
+      "definition": "DecisionSupersedeRequest",
+      "valid": true,
+      "value": {
+        "id": "decision-1",
+        "by": "decision-2"
+      }
+    },
+    {
+      "name": "decision edit request",
+      "definition": "DecisionEditRequest",
+      "valid": true,
+      "value": {
+        "id": "decision-1",
+        "rationale": "Keep the generated contract current",
+        "alternatives": ["Retain handwritten mirrors"]
+      }
+    },
+    {
+      "name": "publish lifecycle success",
+      "definition": "DecisionStageSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "ok",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "stage": "provisional"
+      }
+    },
+    {
+      "name": "lifecycle no-op success",
+      "definition": "DecisionStageSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "no_op",
+        "stage": "provisional"
+      }
+    },
+    {
+      "name": "confirmation request",
+      "definition": "DecisionConfirmRequest",
+      "valid": true,
+      "value": {
+        "id": "decision-1",
+        "confirmed": false,
+        "correction": "Use v2"
+      }
+    },
+    {
+      "name": "confirmation success",
+      "definition": "DecisionConfirmSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "confirmed",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd"
+      }
+    },
+    {
+      "name": "confirmation already responded",
+      "definition": "DecisionConfirmSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "already_responded",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "confirmed": false,
+        "respondedAt": 100
+      }
+    },
+    {
+      "name": "confirmation has no pending prompt",
+      "definition": "DecisionConfirmSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "no_pending_prompt",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd"
+      }
+    },
+    {
+      "name": "decision relation request",
+      "definition": "DecisionRelateRequest",
+      "valid": true,
+      "value": {
+        "child": "decision-2",
+        "parent": "decision-1"
+      }
+    },
+    {
+      "name": "decision linked response",
+      "definition": "DecisionRelateSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "linked",
+        "childId": "decision-2",
+        "childShortId": "89abcdef",
+        "parentId": "decision-1",
+        "parentShortId": "0123abcd"
+      }
+    },
+    {
+      "name": "decision not-linked response",
+      "definition": "DecisionRelateSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "not_linked",
+        "childId": "decision-2",
+        "childShortId": "89abcdef",
+        "parentId": "decision-1",
+        "parentShortId": "0123abcd"
+      }
+    },
+    {
+      "name": "lifecycle rejection error envelope",
+      "definition": "CliErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "Cannot move an abandoned decision to draft"
+      }
+    },
+    {
+      "name": "lifecycle rejection uses the error envelope",
+      "definition": "DecisionStageSuccessResponse",
+      "valid": false,
+      "value": {
+        "outcome": "illegal_transition",
+        "from": "abandoned",
+        "to": "draft"
+      }
+    }
+  ]
+}

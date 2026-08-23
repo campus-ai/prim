@@ -177,6 +177,16 @@ describe("flush replay stability", () => {
     );
   });
 
+  it("keeps the additive-field compatibility policy for durable acknowledgements", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("older-server"));
+
+    await expect(
+      drainFlushingPath(flushing, fakeClient({ disposition: "persisted", acknowledged: 1 })),
+    ).resolves.toEqual({ flushed: 1, quarantined: 0 });
+    expect(existsSync(flushing)).toBe(false);
+  });
+
   it.each([
     ["legacy response", { accepted: 1 }],
     ["partial acknowledgement", { disposition: "persisted", acknowledged: 0, accepted: 0 }],
