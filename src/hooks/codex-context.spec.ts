@@ -348,7 +348,6 @@ describe("Codex hook context", () => {
     expect(first.context).toContain("prim decisions publish draft-1");
     expect(first.context).toContain("prim decisions publish draft-3");
     expect(first.context).not.toContain("prim decisions publish draft-4");
-    expect(first.decisionDigest).toContain("prim decisions publish draft-1");
     await first.acknowledge(false);
     expect(existsSync(stateDirectory())).toBe(false);
     expect(existsSync(draftStateDirectory())).toBe(false);
@@ -777,7 +776,6 @@ describe("Codex hook context", () => {
       includeDigest: false,
     });
 
-    expect(result.decisionDigest).toBeUndefined();
     expect(mocks.decisionDigestSnapshot).not.toHaveBeenCalled();
     expect(mocks.decisionDraftDigestSnapshot).not.toHaveBeenCalled();
     await result.acknowledge(true);

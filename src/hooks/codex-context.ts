@@ -89,8 +89,6 @@ export interface CodexDecisionDraftDeliveryState {
 export interface CodexContextResult {
   /** The context block to add, or undefined when a later report is unchanged. */
   context?: string;
-  /** Digest-only portion, used by Stop to decide whether to continue. */
-  decisionDigest?: string;
   /** True when the feed was verified and the cursor may advance after handoff. */
   feedAvailable: boolean;
   /** Commit state only after the caller confirms stdout handoff succeeded. */
@@ -705,7 +703,6 @@ export async function prepareCodexContext(
   let acknowledged = false;
   return {
     context,
-    decisionDigest: combinedDigest || undefined,
     feedAvailable,
     acknowledge: async (handedOff) => {
       if (!handedOff || acknowledged) return;
