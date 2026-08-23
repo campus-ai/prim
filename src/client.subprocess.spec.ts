@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "tsup";
 import { describe, expect, it } from "vitest";
+import { isClientInstanceId } from "./daemon/client-instance-id.js";
 import { stageRuntime } from "./daemon/launchd.js";
 
 type ChildResult = { code: number | null; stdout: string; stderr: string };
@@ -413,6 +414,11 @@ describe("daemon terminal-auth lifecycle", () => {
         () => existsSync(socketPath),
         () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
       );
+      const persistedClientInstanceId = readFileSync(
+        join(config, "client_instance_id"),
+        "utf8",
+      ).trim();
+      expect(isClientInstanceId(persistedClientInstanceId)).toBe(true);
 
       const held = await daemonRequest(socketPath, "status_snapshot");
       expect(held.needsReauth).toBe(true);

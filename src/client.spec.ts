@@ -503,6 +503,27 @@ describe("client credential store", () => {
     expect(readdirSync(config)).toEqual([]);
   });
 
+  it("preserves the install identity across OAuth rotation, set-token, and clear", async () => {
+    const identity = await import("./daemon/client-instance-id.js");
+    const client = await import("./client.js");
+    const initial = await identity.getOrCreateClientInstanceId({
+      configDir: config,
+    });
+
+    await client.commitCredentials({
+      accessToken: "oauth-access",
+      refreshToken: "oauth-refresh",
+      expiresIn: 300,
+    });
+    await client.setStoredToken("fixed-access");
+    await client.clearStoredCredentials();
+
+    await expect(identity.getOrCreateClientInstanceId({ configDir: config })).resolves.toBe(
+      initial,
+    );
+    expect(readdirSync(config)).toEqual(["client_instance_id"]);
+  });
+
   it("keeps login, set-token, and clear races in a coherent final generation", async () => {
     const client = await import("./client.js");
     let release!: () => void;

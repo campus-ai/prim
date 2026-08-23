@@ -40,6 +40,7 @@ import {
   StatuslineIngestionCache,
   formatStatusline,
 } from "../lib/statusline-render.js";
+import { getOrCreateClientInstanceId } from "./client-instance-id.js";
 import { daemonRequest } from "./client.js";
 import { DECISION_DIGEST_CACHE_PATH, DecisionDigestCache } from "./decision-digest-cache.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
@@ -111,6 +112,9 @@ const decisionDigestCache = new DecisionDigestCache(
     }),
 );
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
+// Loaded from private install-scoped config before the socket or network loops
+// start. Never expose this opaque correlation key in status/log output.
+let clientInstanceId: string | undefined;
 let lastHeartbeatAt: number | undefined;
 // From the last accepted heartbeat ack, cached for the statusline /
 // daemon-status to render. The server owns identity + display names (derived
@@ -144,6 +148,13 @@ function clearPresenceCache(): void {
   lastOnlineCount = undefined;
   lastOnlineNames = undefined;
   lastOnlineTeammates = undefined;
+}
+
+function requiredClientInstanceId(): string {
+  if (clientInstanceId === undefined) {
+    throw new Error("client instance identity is unavailable");
+  }
+  return clientInstanceId;
 }
 
 function resolveRuntimeVersion(): string {
@@ -318,7 +329,7 @@ async function performHeartbeat(): Promise<void> {
     const result = normalizePresenceHeartbeatResponse(
       await client.post(
         "/api/cli/presence/heartbeat",
-        buildPresenceHeartbeatRequest(activeSessionId),
+        buildPresenceHeartbeatRequest(activeSessionId, requiredClientInstanceId()),
         { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) },
       ),
     );
@@ -845,6 +856,9 @@ function installSignalHandlers(): void {
 
 async function main(): Promise<void> {
   try {
+    clientInstanceId = await getOrCreateClientInstanceId({
+      configDir: CONFIG_DIR,
+    });
     await takeOwnership();
   } catch (err) {
     process.stderr.write(`[prim-daemon] ${errorMessage(err)}\n`);
