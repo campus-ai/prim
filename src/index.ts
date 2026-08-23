@@ -11,7 +11,7 @@
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
  *   prim doctor
- *   prim decisions recent|show|cascade|check|confirm|create
+ *   prim decisions recent|show|cascade|check|publish|supersede|confirm|create
  *   prim reconcile <id>
  *   prim welcome
  *
