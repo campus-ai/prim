@@ -22,7 +22,8 @@
 import { createReadStream, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { type CliClient, getClient } from "./client.js";
+import { type CliClient, HttpError, getClient } from "./client.js";
+import { type DeadLetterReason, quarantineMove } from "./dead-letter.js";
 import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
 import {
   type FlushingFile,
@@ -60,6 +61,39 @@ export function batchMoves(moves: Move[], size: number = BATCH_SIZE): Move[][] {
   return batches;
 }
 
+export type DrainCounts = { flushed: number; quarantined: number };
+
+function addDrainCounts(left: DrainCounts, right: DrainCounts): DrainCounts {
+  return {
+    flushed: left.flushed + right.flushed,
+    quarantined: left.quarantined + right.quarantined,
+  };
+}
+
+function deadLetterReason(error: unknown): DeadLetterReason | undefined {
+  if (!(error instanceof HttpError)) {
+    return undefined;
+  }
+  if (error.status === 400) {
+    return "invalid_move";
+  }
+  if (
+    error.status === 409 &&
+    typeof error.body === "object" &&
+    error.body !== null &&
+    !Array.isArray(error.body)
+  ) {
+    const errorCode = (error.body as Record<string, unknown>).error;
+    if (errorCode === "move_id_conflict") {
+      return "move_id_conflict";
+    }
+    if (errorCode === "capture_authority_mismatch") {
+      return "tenant_mismatch";
+    }
+  }
+  return undefined;
+}
+
 /**
  * Drain an already-rotated `.flushing` file: POST its moves in batches, then
  * unlink on success. On a POST failure it throws WITHOUT unlinking, so the
@@ -69,20 +103,43 @@ export function batchMoves(moves: Move[], size: number = BATCH_SIZE): Move[][] {
 export async function drainFlushingPath(
   flushingPath: string,
   client: CliClient = getClient(),
-): Promise<number> {
-  const postBatch = async (batch: Move[]): Promise<void> => {
-    const response = await client.post(
-      "/api/cli/moves/ingest",
-      { batch },
-      { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
-    );
-    requireDurableIngestAcknowledgement(response, batch.length);
+): Promise<DrainCounts> {
+  const postBatch = async (batch: Move[]): Promise<DrainCounts> => {
+    try {
+      const response = await client.post(
+        "/api/cli/moves/ingest",
+        { batch },
+        { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) },
+      );
+      requireDurableIngestAcknowledgement(response, batch.length);
+      return { flushed: batch.length, quarantined: 0 };
+    } catch (error) {
+      const reason = deadLetterReason(error);
+      if (!reason) {
+        throw error;
+      }
+      if (batch.length > 1) {
+        // Ingest rejects a batch atomically. Bisect only deterministic 4xx
+        // failures so valid neighbors can be durably acknowledged while the
+        // exact offending envelope is isolated locally.
+        const midpoint = Math.floor(batch.length / 2);
+        const left = await postBatch(batch.slice(0, midpoint));
+        const right = await postBatch(batch.slice(midpoint));
+        return addDrainCounts(left, right);
+      }
+      const [move] = batch;
+      const quarantined = quarantineMove(flushingPath, move, reason);
+      process.stderr.write(
+        `[prim] quarantined rejected move ${quarantined.quarantineId.slice(0, 12)} (${reason})\n`,
+      );
+      return { flushed: 0, quarantined: 1 };
+    }
   };
 
   const input = createReadStream(flushingPath, { encoding: "utf-8" });
   const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
   let batch: Move[] = [];
-  let total = 0;
+  let counts: DrainCounts = { flushed: 0, quarantined: 0 };
   try {
     for await (const line of lines) {
       if (line.length === 0) {
@@ -96,31 +153,29 @@ export async function drainFlushingPath(
         continue;
       }
       if (batch.length === BATCH_SIZE) {
-        await postBatch(batch);
-        total += batch.length;
+        counts = addDrainCounts(counts, await postBatch(batch));
         batch = [];
       }
     }
     if (batch.length > 0) {
-      await postBatch(batch);
-      total += batch.length;
+      counts = addDrainCounts(counts, await postBatch(batch));
     }
   } finally {
     lines.close();
     input.destroy();
   }
   unlinkSync(flushingPath);
-  return total;
+  return counts;
 }
 
-async function drainPath(path: string): Promise<number> {
+async function drainPath(path: string): Promise<DrainCounts> {
   const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
   try {
     renameSync(path, tmpPath);
   } catch (err) {
     // No journal at this path, or a concurrent drain already rotated it.
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return 0;
+      return { flushed: 0, quarantined: 0 };
     }
     throw err;
   }
@@ -128,12 +183,16 @@ async function drainPath(path: string): Promise<number> {
   return drainFlushingPath(tmpPath);
 }
 
-function processIsAlive(pid: number): boolean {
+export function processIsAlive(
+  pid: number,
+  probe: (pid: number, signal: 0) => true = process.kill,
+): boolean {
   try {
-    process.kill(pid, 0);
+    probe(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM proves the process exists even though this user cannot signal it.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -171,7 +230,7 @@ export function selectRecoverable(
  * crash replays harmlessly), then unlinked. A file whose POST fails is left
  * for the next sweep rather than aborting recovery of the rest.
  */
-export type DrainSummary = { flushed: number; errors: unknown[]; failedBuckets: Set<string> };
+export type DrainSummary = DrainCounts & { errors: unknown[]; failedBuckets: Set<string> };
 
 export async function recoverOrphans(
   candidates: FlushingFile[] = listFlushing({ sampleBytes: 0 }),
@@ -179,10 +238,15 @@ export async function recoverOrphans(
     now?: number;
     ownerPid?: number;
     isAlive?: (pid: number) => boolean;
-    drain?: (path: string) => Promise<number>;
+    drain?: (path: string) => Promise<DrainCounts>;
   } = {},
 ): Promise<DrainSummary> {
-  const summary: DrainSummary = { flushed: 0, errors: [], failedBuckets: new Set() };
+  const summary: DrainSummary = {
+    flushed: 0,
+    quarantined: 0,
+    errors: [],
+    failedBuckets: new Set(),
+  };
   const recoverable = selectRecoverable(candidates, options.now ?? Date.now(), {
     ownerPid: options.ownerPid ?? process.pid,
     isAlive: options.isAlive,
@@ -193,7 +257,9 @@ export async function recoverOrphans(
       continue;
     }
     try {
-      summary.flushed += await drain(file.path);
+      const counts = await drain(file.path);
+      summary.flushed += counts.flushed;
+      summary.quarantined += counts.quarantined;
     } catch (err) {
       // Leave this orphan on disk for a later sweep; keep recovering the rest.
       summary.errors.push(err);
@@ -205,20 +271,23 @@ export async function recoverOrphans(
 
 export class FlushError extends Error {
   readonly flushed: number;
+  readonly quarantined: number;
 
-  constructor(cause: unknown, flushed: number) {
+  constructor(cause: unknown, flushed: number, quarantined: number) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "FlushError";
     this.flushed = flushed;
+    this.quarantined = quarantined;
   }
 }
 
-async function flushOnce(): Promise<{ flushed: number }> {
+async function flushOnce(): Promise<DrainCounts> {
   // Reclaim crash-stranded orphans first, then drain the live buckets.
   // Path-only enumeration (listBuckets does not stat/read), so the only
   // race-sensitive op is drainPath's ENOENT-tolerant rename.
   const recovered = await recoverOrphans();
   let total = recovered.flushed;
+  let quarantined = recovered.quarantined;
   const errors = recovered.errors;
   for (const { bucket, path } of listBuckets()) {
     // Do not create one new failed rotation per retry while a prior rotation
@@ -228,7 +297,9 @@ async function flushOnce(): Promise<{ flushed: number }> {
       continue;
     }
     try {
-      total += await drainPath(path);
+      const counts = await drainPath(path);
+      total += counts.flushed;
+      quarantined += counts.quarantined;
     } catch (err) {
       // One broken/disabled bucket must not prevent independent buckets from
       // draining. Every failed rotation remains on disk for the next attempt.
@@ -236,15 +307,15 @@ async function flushOnce(): Promise<{ flushed: number }> {
     }
   }
   if (errors.length > 0) {
-    throw new FlushError(errors[0], total);
+    throw new FlushError(errors[0], total, quarantined);
   }
-  return { flushed: total };
+  return { flushed: total, quarantined };
 }
 
 // `skipped` distinguishes a contended bow-out (another process holds the drain
 // lock) from a genuine empty-journal drain, so the daemon does not record a
 // false success and `prim moves flush` does not imply the journal was empty.
-export type FlushResult = { flushed: number; skipped?: boolean };
+export type FlushResult = DrainCounts & { skipped?: boolean };
 
 let flushInFlight: Promise<FlushResult> | undefined;
 
@@ -276,7 +347,7 @@ export function flush(): Promise<FlushResult> {
       // and orphans; bowing out avoids the concurrent re-drain. Non-contention
       // failures (a real drain error) still propagate to the caller.
       if (isFlushLockContended(error)) {
-        return { flushed: 0, skipped: true };
+        return { flushed: 0, quarantined: 0, skipped: true };
       }
       throw error;
     })
