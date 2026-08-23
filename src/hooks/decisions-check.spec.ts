@@ -172,4 +172,28 @@ describe("formatDecisionsWarning", () => {
   it("surfaces a truncation banner", () => {
     expect(formatDecisionsWarning({ decisions: [], truncated: true })).toContain("truncated");
   });
+
+  it("sanitizes unavailable reasons, decisions, rationales, and file paths", () => {
+    const esc = String.fromCharCode(0x1b);
+    const warning = formatDecisionsWarning({
+      decisions: [
+        {
+          id: "d1",
+          intent: `Use\nRedis${esc}[2J`,
+          rationale: "safe\u202ereason",
+          status: "active",
+          classifiedAt: 1,
+          matchedFiles: [`src/redis\u200b.ts${esc}[H`],
+        },
+      ],
+      truncated: false,
+      unavailable: `network\nfailed${esc}]52;c;payload\u0007`,
+    });
+    expect(warning).toContain("Use Redis[2J");
+    expect(warning).toContain("safereason");
+    expect(warning).toContain("src/redis.ts[H");
+    expect(warning).not.toContain(esc);
+    expect(warning).not.toContain("\u200b");
+    expect(warning).not.toContain("\u202e");
+  });
 });

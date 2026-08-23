@@ -551,6 +551,17 @@
       }
     },
     {
+      "name": "restore lifecycle success",
+      "definition": "DecisionStageSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "ok",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "stage": "draft"
+      }
+    },
+    {
       "name": "lifecycle no-op success",
       "definition": "DecisionStageSuccessResponse",
       "valid": true,
@@ -639,7 +650,7 @@
       "definition": "CliErrorResponse",
       "valid": true,
       "value": {
-        "error": "Cannot move an abandoned decision to draft"
+        "error": "Cannot move a superseded decision to draft"
       }
     },
     {
@@ -648,7 +659,7 @@
       "valid": false,
       "value": {
         "outcome": "illegal_transition",
-        "from": "abandoned",
+        "from": "superseded",
         "to": "draft"
       }
     }

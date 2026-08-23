@@ -200,11 +200,18 @@ export function isDecisionsRecentResponse(value: unknown): value is DecisionsRec
     return false;
   }
   const authorFields = [value.authorHasDecisions, value.windowTotal, value.windowTotalCapped];
+  const hasCursor = value.continueCursor !== undefined;
+  const hasDone = value.isDone !== undefined;
+  if (hasCursor !== hasDone) {
+    return false;
+  }
   if (value.unavailable !== undefined) {
     return (
       value.decisions.length === 0 &&
       value.viewerHasDecisions === undefined &&
       value.author === undefined &&
+      !hasCursor &&
+      !hasDone &&
       authorFields.every((field) => field === undefined)
     );
   }

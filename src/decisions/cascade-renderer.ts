@@ -14,6 +14,7 @@
  */
 
 import { color, colorForArea, stripAnsi } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import type { CascadeNode, CascadeResult } from "./cascade.js";
 
 const DEPENDENTS_INLINE_LIMIT = 5;
@@ -67,14 +68,15 @@ function formatDate(ms: number): string {
 }
 
 function truncate(s: string, max: number): string {
-  if (s.length <= max) {
-    return s;
+  const safe = terminalSafeLine(s);
+  if (safe.length <= max) {
+    return safe;
   }
-  return `${s.slice(0, max - 1)}…`;
+  return `${safe.slice(0, max - 1)}…`;
 }
 
 function bracketed(label: string): string {
-  return `[${label}]`;
+  return `[${terminalSafeLine(label)}]`;
 }
 
 function knowledgeRow(
@@ -103,10 +105,11 @@ function knowledgeRow(
 }
 
 function areaChip(area: string | undefined): string {
-  if (!area) {
+  const safeArea = terminalSafeLine(area ?? "");
+  if (!safeArea) {
     return color("[--]", "gray");
   }
-  return color(`[${area}]`, colorForArea(area));
+  return color(`[${safeArea}]`, colorForArea(safeArea));
 }
 
 function countCrossAreaDependents(
@@ -163,10 +166,10 @@ function dependentsBox(dependents: CascadeNode[]): string[] {
 function triggerHeadline(t: NonNullable<CascadeResult["trigger"]>): string {
   const at = formatDate(t.flaggedAt);
   if (t.type === "file_edit" && t.file) {
-    return `trigger: file '${t.file}' was edited; cascade fired at ${at}.`;
+    return `trigger: file '${terminalSafeLine(t.file)}' was edited; cascade fired at ${at}.`;
   }
   if (t.type === "context_edit" && t.contextName) {
-    return `trigger: context '${t.contextName}' was edited; cascade fired at ${at}.`;
+    return `trigger: context '${terminalSafeLine(t.contextName)}' was edited; cascade fired at ${at}.`;
   }
   if (t.type === "supersession") {
     return `trigger: an upstream decision was superseded; cascade fired at ${at}.`;
@@ -177,7 +180,7 @@ function triggerHeadline(t: NonNullable<CascadeResult["trigger"]>): string {
   if (t.type === "confirmation_request") {
     return `trigger: asking-policy confirmation request opened at ${at}.`;
   }
-  return `trigger: ${t.type} at ${at}.`;
+  return `trigger: ${terminalSafeLine(t.type)} at ${at}.`;
 }
 
 function triggerLine(result: CascadeResult): string[] {
@@ -190,17 +193,18 @@ function triggerLine(result: CascadeResult): string[] {
   // free-text triage reason (server `reason`). Either may be absent;
   // render only the parts the server actually projected.
   if (t.authorName) {
-    lines.push(`  by ${t.authorName}`);
+    lines.push(`  by ${terminalSafeLine(t.authorName)}`);
   }
   if (t.reason) {
-    lines.push(`  reason: ${t.reason}`);
+    lines.push(`  reason: ${terminalSafeLine(t.reason)}`);
   }
   return lines;
 }
 
 export function renderCascade(result: CascadeResult): string {
   const d = result.decision;
-  const id = d.shortId ? `dec_${d.shortId}` : d.id;
+  const shortId = terminalSafeLine(d.shortId ?? "");
+  const id = shortId ? `dec_${shortId}` : terminalSafeLine(d.id);
   const idColored = color(id, "orange");
   const header = `what this would break · ${String(result.fanOut)} decision(s) · enforcing`;
   const lines: string[] = [header, "", "knowledge"];
@@ -220,7 +224,7 @@ export function renderCascade(result: CascadeResult): string {
   const decisionLine = `• ${idColored}  ${truncate(d.intent, INTENT_TRUNC)}`;
   const fanOutFragment =
     result.fanOut > 0 ? `  ·  ${String(result.fanOut)} decision(s) depend on this` : "";
-  const meta = `  ${d.authorName} · ${formatDate(d.classifiedAt)}${fanOutFragment}  ·  ${result.reversibility ?? "(unset)"} reversibility`;
+  const meta = `  ${terminalSafeLine(d.authorName)} · ${formatDate(d.classifiedAt)}${fanOutFragment}  ·  ${terminalSafeLine(result.reversibility ?? "(unset)")} reversibility`;
   lines.push("", decisionLine, meta);
   lines.push("");
   lines.push("dependents");

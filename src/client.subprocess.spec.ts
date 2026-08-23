@@ -414,6 +414,31 @@ describe("daemon terminal-auth lifecycle", () => {
         );
         return;
       }
+      if (
+        request.method === "GET" &&
+        request.url === "/api/cli/decisions/recent?limit=100&since=24h&drafts=true"
+      ) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            decisions: [
+              {
+                id: "private-draft",
+                shortId: "a1b2c3d4",
+                intent: "Publish from the Codex digest",
+                intentKind: "change",
+                userId: "user-self",
+                authorName: "Taylor",
+                authorIsSelf: true,
+                classifiedAt: 1_001,
+                status: "under_review",
+                stage: "draft",
+              },
+            ],
+          }),
+        );
+        return;
+      }
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "not_found" }));
     });
@@ -513,6 +538,8 @@ describe("daemon raw statusline socket", () => {
     const tokenB = testJwt("user-b", "org-b", "1");
     const callerA = daemonCaller(tokenA, "user-a", "org-a");
     const callerB = daemonCaller(tokenB, "user-b", "org-b");
+    const requestUrls: string[] = [];
+    let rejectDrafts = false;
     for (const repo of [activeRepo, inactiveRepo, otherEnvRepo]) {
       mkdirSync(repo, { recursive: true });
       execFileSync("git", ["init", "--quiet"], { cwd: repo });
@@ -538,7 +565,44 @@ describe("daemon raw statusline socket", () => {
     writeFileSync(join(config, "token"), `${tokenB}\n`);
 
     const server = createServer((request, response) => {
+      requestUrls.push(request.url ?? "");
       request.resume();
+      if (
+        request.method === "GET" &&
+        request.url === "/api/cli/decisions/recent?limit=100&since=24h&drafts=true"
+      ) {
+        if (rejectDrafts) {
+          response.writeHead(403, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: "membership_revoked" }));
+          return;
+        }
+        const draftId =
+          request.headers.authorization === `Bearer ${tokenA}`
+            ? "private-draft-a"
+            : "private-draft-b";
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            decisions: [
+              {
+                id: draftId,
+                shortId: "a1b2c3d4",
+                intent: "Publish from the Codex digest",
+                intentKind: "change",
+                userId: "user-self",
+                authorName: "Taylor",
+                authorIsSelf: true,
+                classifiedAt: 1_001,
+                status: "under_review",
+                stage: "draft",
+              },
+            ],
+            continueCursor: "terminal",
+            isDone: true,
+          }),
+        );
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
@@ -646,6 +710,55 @@ describe("daemon raw statusline socket", () => {
         decisions: [{ id: "cached-decision-b" }],
         cachedAt: expect.any(Number),
       });
+
+      const draftDigestSnapshot = await eventuallyValue(
+        async () =>
+          await daemonRequest(
+            socketPath,
+            "decision_draft_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerB,
+          ),
+        (value) => Array.isArray(value.decisions) && value.decisions.length === 1,
+        () =>
+          `daemon private-draft cache did not warm (requests=${[...new Set(requestUrls)].join(",")}): ${daemon?.stderr() ?? ""}`,
+      );
+      expect(draftDigestSnapshot).toMatchObject({
+        decisions: [{ id: "private-draft-b", stage: "draft", authorIsSelf: true }],
+        cachedAt: expect.any(Number),
+        pageDone: true,
+      });
+      await expect(
+        daemonRequest(socketPath, "decision_draft_digest_snapshot", { callerEnv: apiUrl }),
+      ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "decision_draft_digest_snapshot", { callerEnv: apiUrl }, callerA),
+      ).rejects.toThrow("principal or organization mismatch");
+
+      rejectDrafts = true;
+      await daemonRequest(
+        socketPath,
+        "decision_draft_digest_snapshot",
+        { callerEnv: apiUrl },
+        callerB,
+      );
+      const revokedDrafts = await eventuallyValue(
+        async () =>
+          await daemonRequest(
+            socketPath,
+            "decision_draft_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerB,
+          ),
+        (value) =>
+          Array.isArray(value.decisions) &&
+          value.decisions.length === 0 &&
+          typeof value.unavailable === "string",
+        () => `private draft cache did not fail closed: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(revokedDrafts.decisions).toEqual([]);
+      rejectDrafts = false;
+      expect(requestUrls).toContain("/api/cli/decisions/recent?limit=100&since=24h&drafts=true");
 
       const raw = statuslineRequest(activeRepo, apiUrl);
       const fragmented = await rawStatuslineRequest(
@@ -775,6 +888,29 @@ describe("daemon raw statusline socket", () => {
         () => `daemon Decision cache did not re-key: ${daemon?.stderr() ?? ""}`,
       );
       expect(rotatedDigest).toMatchObject({ decisions: [{ id: "cached-decision-a" }] });
+      const afterDraftRotation = await daemonRequest(
+        socketPath,
+        "decision_draft_digest_snapshot",
+        { callerEnv: apiUrl },
+        callerA,
+      );
+      expect(afterDraftRotation).not.toMatchObject({ decisions: [{ id: "private-draft-b" }] });
+      const rotatedDrafts = await eventuallyValue(
+        async () =>
+          await daemonRequest(
+            socketPath,
+            "decision_draft_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerA,
+          ),
+        (value) =>
+          Array.isArray(value.decisions) &&
+          (value.decisions as Array<{ id?: string }>).some(
+            (decision) => decision.id === "private-draft-a",
+          ),
+        () => `private draft cache did not re-key: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(rotatedDrafts).toMatchObject({ decisions: [{ id: "private-draft-a" }] });
 
       // The JSON protocol has its own byte budget and a bad client cannot
       // wedge the listener for subsequent calls.

@@ -5,6 +5,8 @@
  *   prim decisions recent [--limit=N] [--since=DUR]
  *   prim decisions show <idOrShortId>
  *   prim decisions cascade <idOrShortId>
+ *   prim decisions publish <idOrShortId>
+ *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
@@ -36,6 +38,7 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
+import { publishDecision, supersedeDecision } from "../decisions/lifecycle.js";
 import {
   LinkNotFoundError,
   fetchLink,
@@ -219,6 +222,21 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw err;
       }
+    });
+
+  decisions
+    .command("publish <idOrShortId>")
+    .description("Publish an authored draft to the team as a provisional Decision")
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await publishDecision(idOrShortId);
+    });
+
+  decisions
+    .command("supersede <idOrShortId>")
+    .description("Supersede a Decision with a distinct replacement Decision")
+    .requiredOption("--by <replacementIdOrShortId>", "Decision that replaces the named Decision")
+    .action(async (idOrShortId: string, opts: { by: string }) => {
+      process.exitCode = await supersedeDecision(idOrShortId, opts.by);
     });
 
   decisions

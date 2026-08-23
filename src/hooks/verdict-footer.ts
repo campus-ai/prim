@@ -22,6 +22,7 @@
  */
 
 import { bold, color } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 // Mirrors the server's VerdictFooterContext verbatim (even the fields the
 // renderer doesn't print) so the wire shape is tracked in one place.
@@ -38,7 +39,7 @@ export function renderVerdictFooter(ctx: VerdictFooterContext): string {
   const successPrefix = color("✓ Conflict caught before merge", "green");
   const savedCount = `${String(ctx.decisionsSaved)}${ctx.decisionsSavedTruncated ? "+" : ""}`;
   const savedFragment = `${savedCount} decisions saved`;
-  const intentFragment = `${bold(ctx.author)}'s intent preserved`;
+  const intentFragment = `${bold(terminalSafeLine(ctx.author))}'s intent preserved`;
   return `${successPrefix} · ${savedFragment} · ${intentFragment}`;
 }
 

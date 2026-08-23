@@ -17,6 +17,7 @@
  */
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export interface ActiveDecisionSummary {
   id: string;
@@ -123,7 +124,7 @@ const FILES_PREVIEW_LIMIT = 3;
 export function formatDecisionsWarning(result: DecisionsCheckResult): string {
   const lines: string[] = [];
   if (result.unavailable !== undefined) {
-    lines.push(`[prim] decision check not verified — ${result.unavailable}`);
+    lines.push(`[prim] decision check not verified — ${terminalSafeLine(result.unavailable)}`);
   }
   if (result.decisions.length > 0) {
     lines.push(
@@ -131,15 +132,15 @@ export function formatDecisionsWarning(result: DecisionsCheckResult): string {
     );
     for (const d of result.decisions) {
       const statusMark = d.status === "under_review" ? " (under review)" : "";
-      const preview = d.matchedFiles.slice(0, FILES_PREVIEW_LIMIT).join(", ");
+      const preview = d.matchedFiles.slice(0, FILES_PREVIEW_LIMIT).map(terminalSafeLine).join(", ");
       const overflow =
         d.matchedFiles.length > FILES_PREVIEW_LIMIT
           ? ` (+${String(d.matchedFiles.length - FILES_PREVIEW_LIMIT)} more)`
           : "";
-      lines.push(`  · ${d.intent}${statusMark}`);
+      lines.push(`  · ${terminalSafeLine(d.intent)}${statusMark}`);
       lines.push(`    files: ${preview}${overflow}`);
       if (d.rationale) {
-        lines.push(`    rationale: ${d.rationale}`);
+        lines.push(`    rationale: ${terminalSafeLine(d.rationale)}`);
       }
     }
   }

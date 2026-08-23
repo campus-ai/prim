@@ -1,14 +1,14 @@
 {
   "sourceRepository": "campus-ai/primitive",
-  "sourceCommit": "66955f6ceb8a7e7549f84714555b3f3c788cdc9e",
+  "sourceCommit": "abad4360717f98852aa0d125851fdfd790b48520",
   "artifacts": {
     "schema": {
       "sourcePath": "contracts/cli-http-v1.schema.json",
-      "sha256": "6ea0e8000d1b05b314b05867e3f4e277b28907ad651cc670445cafc82fd06f4c"
+      "sha256": "939445153487380f5f024672cdea2e55febb926454ed9a51b491fd59577212ea"
     },
     "fixtures": {
       "sourcePath": "contracts/cli-http-v1.fixtures.json",
-      "sha256": "3598b78aa4d24d68b70a007e604cfdf41cbc5ee8776e8ee35637e410949330ef"
+      "sha256": "5a31f9f0c5d5f19ace3c86564f4394ff21aa25f5f9a76efe4a8a4f9f9346c4a5"
     }
   },
   "artifactId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",

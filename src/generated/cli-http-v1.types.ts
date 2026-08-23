@@ -256,6 +256,8 @@ export interface DecisionsRecentResponse {
   authorHasDecisions?: boolean;
   windowTotal?: number;
   windowTotalCapped?: boolean;
+  continueCursor?: string;
+  isDone?: boolean;
   unavailable?: string;
   [k: string]: unknown | undefined;
 }

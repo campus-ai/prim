@@ -102,6 +102,26 @@ describe("formatWelcome", () => {
     expect(plain).not.toContain("…");
   });
 
+  it("inherits terminal-safe rendering for inlined server decision fields", () => {
+    const esc = String.fromCharCode(0x1b);
+    const plain = plainOf({
+      org: "active",
+      recent: [
+        row({
+          authorName: `Ma${esc}[2Jya\u202e`,
+          area: "da\u200bta",
+          intent: `Store\nPII safely${esc}]52;c;payload\u0007`,
+        }),
+      ],
+    });
+    expect(plain).toContain("Ma[2Jya");
+    expect(plain).toContain("• data");
+    expect(plain).toContain("Store PII safely]52;c;payload");
+    expect(plain).not.toContain(esc);
+    expect(plain).not.toContain("\u200b");
+    expect(plain).not.toContain("\u202e");
+  });
+
   it("seed (empty org): seeding block explains the proposal pass and the standing guidance, no team block", () => {
     const plain = plainOf({ org: "seed", recent: [] });
     expect(plain).toContain("Welcome to Primitive");

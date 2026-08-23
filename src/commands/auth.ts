@@ -24,7 +24,7 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
-import { stripControlChars } from "../lib/ansi.js";
+import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 import { FAILURE_HTML, STATE_MISMATCH_HTML, SUCCESS_HTML } from "./auth-pages.js";
 

@@ -25,7 +25,11 @@
 
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
+import type { DecisionsRecentResponse } from "../generated/cli-http-v1.types.js";
 import { color, colorForArea } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
+
+type ContractDecisionFeedRow = DecisionsRecentResponse["decisions"][number];
 
 export interface DecisionFeedRow {
   id: string;
@@ -41,6 +45,8 @@ export interface DecisionFeedRow {
   authorIsSelf: boolean;
   classifiedAt: number;
   status: "active" | "superseded" | "under_review";
+  /** Required by the current contract; optional here for rolling old-server reads. */
+  stage?: ContractDecisionFeedRow["stage"];
 }
 
 export interface DecisionsRecentResult {
@@ -219,7 +225,7 @@ function formatClock(ms: number): string {
 
 function authorLabel(row: DecisionFeedRow): string {
   if (!row.authorIsSelf) {
-    return row.authorName;
+    return terminalSafeLine(row.authorName);
   }
   // "Your Codex" / "Your Claude Code" / "Your chat" — drive off the
   // producerKind.
@@ -237,7 +243,7 @@ function authorLabel(row: DecisionFeedRow): string {
     case "cli":
       return "Your CLI";
     default:
-      return `Your ${row.authorName}`;
+      return `Your ${terminalSafeLine(row.authorName)}`;
   }
 }
 
@@ -258,10 +264,11 @@ function padRight(s: string, width: number): string {
 export function formatRecentRow(row: DecisionFeedRow): string {
   const clock = formatClock(row.classifiedAt);
   const author = padRight(authorLabel(row), AUTHOR_WIDTH);
-  const areaText = row.area ? `• ${row.area}` : "•";
+  const area = terminalSafeLine(row.area ?? "");
+  const areaText = area ? `• ${area}` : "•";
   const areaPlain = padRight(areaText, AREA_WIDTH);
-  const areaCol = row.area ? areaPlain.replace("•", color("•", colorForArea(row.area))) : areaPlain;
-  return `  ${clock}  ${author}${areaCol}${row.intent}`;
+  const areaCol = area ? areaPlain.replace("•", color("•", colorForArea(area))) : areaPlain;
+  return `  ${clock}  ${author}${areaCol}${terminalSafeLine(row.intent)}`;
 }
 
 // Mirrors the server's RECENT_LIMIT_CEILING: the largest page a single
@@ -294,7 +301,7 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
   // UNKNOWN beats empty: when the feed couldn't be verified, never render a
   // clean "0 decisions" the reader would trust as a healthy all-clear.
   if (result.unavailable !== undefined) {
-    return `[prim] recent · feed not verified — ${result.unavailable}`;
+    return `[prim] recent · feed not verified — ${terminalSafeLine(result.unavailable)}`;
   }
   if (result.author !== undefined && result.decisions.length === 0) {
     // Author-filtered empties are two DIFFERENT truths — say which one.
@@ -307,14 +314,15 @@ export function formatRecentHuman(result: DecisionsRecentResult): string {
       // with authorHasDecisions holds every in-window visible decision — none
       // exist here, they're older than --since. Raising --limit can't un-empty
       // it; --since is the only remedy, so it's the only one offered.
-      return `[prim] recent · ${result.author.name} · 0 decisions in this window (older decisions exist — widen --since)`;
+      return `[prim] recent · ${terminalSafeLine(result.author.name)} · 0 decisions in this window (older decisions exist — widen --since)`;
     }
     if (result.authorHasDecisions === false) {
-      return `[prim] recent · ${result.author.name} · no feed-visible decisions yet (if unexpected, check prim setup/doctor on their machine and the repo they work in)`;
+      return `[prim] recent · ${terminalSafeLine(result.author.name)} · no feed-visible decisions yet (if unexpected, check prim setup/doctor on their machine and the repo they work in)`;
     }
-    return `[prim] recent · ${result.author.name} · 0 decisions`;
+    return `[prim] recent · ${terminalSafeLine(result.author.name)} · 0 decisions`;
   }
-  const label = result.author === undefined ? "recent" : `recent · ${result.author.name}`;
+  const label =
+    result.author === undefined ? "recent" : `recent · ${terminalSafeLine(result.author.name)}`;
   if (result.decisions.length === 0) {
     return "[prim] recent · 0 decisions";
   }
@@ -343,8 +351,9 @@ export function renderIdentifier(row: {
   shortId?: string | undefined;
   id: string;
 }): string {
-  if (row.shortId) {
-    return `${SHORT_ID_PREFIX}${row.shortId}`;
+  const shortId = terminalSafeLine(row.shortId ?? "");
+  if (shortId) {
+    return `${SHORT_ID_PREFIX}${shortId}`;
   }
-  return row.id;
+  return terminalSafeLine(row.id);
 }

@@ -259,6 +259,32 @@ describe("formatShowHuman", () => {
     const out = formatShowHuman({ ...DETAIL, truncated: true });
     expect(out).toContain("partial");
   });
+
+  it("sanitizes all free-text detail fields before terminal rendering", () => {
+    const esc = String.fromCharCode(0x1b);
+    const unsafe: DecisionShowResult = {
+      ...DETAIL,
+      decision: {
+        ...DETAIL.decision,
+        intent: `Update\nAUTH${esc}[2J`,
+        rationale: "safe\u202ereason",
+        decided: ["one\u200bpoint"],
+        alternatives: [`other${esc}]52;c;payload\u0007`],
+        area: "au\u200bth",
+      },
+      files: [`src/auth.ts${esc}[H`],
+      contexts: [{ id: "ctx", name: "auth\u202e.spec" }],
+      flags: [{ ...DETAIL.flags[0], reason: `flag\nreason${esc}[2J` }],
+      dependents: [{ ...DETAIL.dependents[0], authorName: "Ma\u200bya" }],
+    };
+    const out = formatShowHuman(unsafe);
+    expect(out).toContain("Update AUTH[2J");
+    expect(out).toContain("safereason");
+    expect(out).toContain("onepoint");
+    expect(out).not.toContain(esc);
+    expect(out).not.toContain("\u200b");
+    expect(out).not.toContain("\u202e");
+  });
 });
 
 describe("formatShowJson", () => {
@@ -269,5 +295,13 @@ describe("formatShowJson", () => {
     expect(parsed.contexts[0].name).toBe("auth.spec");
     expect(parsed.dependents).toHaveLength(1);
     expect(parsed.flags).toHaveLength(1);
+  });
+
+  it("does not sanitize the machine-readable projection", () => {
+    const unsafe = {
+      ...DETAIL,
+      decision: { ...DETAIL.decision, intent: "raw\u001b[2J\u202e\u200b" },
+    };
+    expect(formatShowJson(unsafe)).toBe(JSON.stringify(unsafe, null, 2));
   });
 });
