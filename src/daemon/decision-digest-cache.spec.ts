@@ -80,4 +80,29 @@ describe("DecisionDigestCache", () => {
       unavailable: "daemon Decision cache unavailable: malformed Decision feed response",
     });
   });
+
+  it("resets snapshots and fences an old principal's in-flight response", async () => {
+    let release: ((value: unknown) => void) | undefined;
+    const load = vi.fn(
+      () =>
+        new Promise<unknown>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const cache = new DecisionDigestCache(load);
+    const oldRefresh = cache.refresh();
+
+    cache.reset();
+    expect(cache.read()).toEqual({
+      decisions: [],
+      unavailable: DECISION_DIGEST_CACHE_WARMING,
+    });
+    release?.({ decisions: [row("old-tenant")] });
+    await oldRefresh;
+
+    expect(cache.read()).toEqual({
+      decisions: [],
+      unavailable: DECISION_DIGEST_CACHE_WARMING,
+    });
+  });
 });

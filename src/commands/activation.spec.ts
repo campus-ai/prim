@@ -91,10 +91,10 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("enable succeeds locally with a clear degraded warning while connection is pending", async () => {
+  it("enable succeeds locally with a clear degraded warning while the repository is unbound", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
-      status: "pending",
+      status: "unbound",
       repositoryFullName: "campus-ai/primitive",
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -111,14 +111,14 @@ describe("prim enable / disable", () => {
     expect(output).toMatchObject({
       active: true,
       repo: "/repo",
-      bindingStatus: "pending",
+      bindingStatus: "unbound",
       repositoryFullName: "campus-ai/primitive",
       postCommitHook: "/repo/.git/hooks/post-commit",
     });
     expect(output).not.toHaveProperty("repoSyncId");
     const warning = errSpy.mock.calls.map(([message]) => String(message)).join("");
     expect(warning).toContain("Prim is enabled locally in /repo");
-    expect(warning).toContain("repository campus-ai/primitive is not connected");
+    expect(warning).toContain("repository is not connected");
     expect(warning).toContain("Moves still ingest into the team graph");
     expect(warning).toContain("repository-specific file attribution");
     expect(warning).toContain("Conflict Gate verification");

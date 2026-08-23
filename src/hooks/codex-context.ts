@@ -28,7 +28,7 @@ import {
   type DecisionDigestCacheSnapshot,
 } from "../daemon/decision-digest-cache.js";
 import type { DecisionFeedRow } from "../decisions/recent.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { stripControlChars } from "../lib/ansi.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
@@ -423,12 +423,17 @@ export async function prepareCodexContext(
         : Promise.resolve(null),
     ]);
   }
-  const report = formatStatusline(
-    packageVersion() ?? "0.0.0",
-    snapshot,
-    () => decisionIngestionStatus(options.cwd),
-    { includeIngestionWhenUnavailable: true, plainLinks: true },
-  );
+  let ingestionStatus: ReturnType<typeof decisionIngestionStatus> | undefined;
+  const resolveIngestionStatus = () => {
+    ingestionStatus ??= decisionIngestionStatus(options.cwd);
+    return ingestionStatus;
+  };
+  const report = formatStatusline(packageVersion() ?? "0.0.0", snapshot, resolveIngestionStatus, {
+    includeIngestionWhenUnavailable: true,
+    plainLinks: true,
+    resolveRepositoryBindingState: () =>
+      resolveIngestionStatus() === "enabled" ? repositoryBindingState(options.cwd) : undefined,
+  });
   const reportChanged = startup || previous?.lastReport !== report;
 
   let feedAvailable = false;

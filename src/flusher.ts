@@ -16,15 +16,17 @@
  * provably gone (a dead pid, or an aged legacy pid-less file), so a concurrent
  * drain's in-flight file is never stolen out from under it. On a POST failure
  * the .flushing file is left behind for the next sweep, so no moves are lost
- * on a clean failure. Uses getClient() for bearer auth + auto-refresh.
+ * on a clean failure. Before any rotation, one refreshed bearer generation is
+ * pinned and its server-derived tenant tuple must match each drained bucket.
  */
 
 import { createReadStream, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { type CliClient, HttpError, getClient } from "./client.js";
+import { type CliClient, HttpError } from "./client.js";
 import { type DeadLetterReason, quarantineMove } from "./dead-letter.js";
 import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
+import { type RetainedJournalBucket, inspectJournalDelivery } from "./journal-organization.js";
 import {
   type FlushingFile,
   JOURNAL_DIR,
@@ -102,7 +104,7 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
  */
 export async function drainFlushingPath(
   flushingPath: string,
-  client: CliClient = getClient(),
+  client: CliClient,
 ): Promise<DrainCounts> {
   const postBatch = async (batch: Move[]): Promise<DrainCounts> => {
     try {
@@ -168,7 +170,7 @@ export async function drainFlushingPath(
   return counts;
 }
 
-async function drainPath(path: string): Promise<DrainCounts> {
+async function drainPath(path: string, client: CliClient): Promise<DrainCounts> {
   const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
   try {
     renameSync(path, tmpPath);
@@ -180,7 +182,7 @@ async function drainPath(path: string): Promise<DrainCounts> {
     throw err;
   }
 
-  return drainFlushingPath(tmpPath);
+  return drainFlushingPath(tmpPath, client);
 }
 
 export function processIsAlive(
@@ -233,13 +235,13 @@ export function selectRecoverable(
 export type DrainSummary = DrainCounts & { errors: unknown[]; failedBuckets: Set<string> };
 
 export async function recoverOrphans(
-  candidates: FlushingFile[] = listFlushing({ sampleBytes: 0 }),
+  candidates: FlushingFile[],
   options: {
     now?: number;
     ownerPid?: number;
     isAlive?: (pid: number) => boolean;
-    drain?: (path: string) => Promise<DrainCounts>;
-  } = {},
+    drain: (path: string) => Promise<DrainCounts>;
+  },
 ): Promise<DrainSummary> {
   const summary: DrainSummary = {
     flushed: 0,
@@ -251,7 +253,7 @@ export async function recoverOrphans(
     ownerPid: options.ownerPid ?? process.pid,
     isAlive: options.isAlive,
   }).sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path));
-  const drain = options.drain ?? drainFlushingPath;
+  const drain = options.drain;
   for (const file of recoverable) {
     if (summary.failedBuckets.has(file.bucket)) {
       continue;
@@ -281,15 +283,38 @@ export class FlushError extends Error {
   }
 }
 
-async function flushOnce(): Promise<DrainCounts> {
+async function flushOnce(): Promise<
+  DrainCounts & {
+  retained?: RetainedJournalBucket[];
+  }
+> {
   // Reclaim crash-stranded orphans first, then drain the live buckets.
   // Path-only enumeration (listBuckets does not stat/read), so the only
   // race-sensitive op is drainPath's ENOENT-tolerant rename.
-  const recovered = await recoverOrphans();
+  const orphanCandidates = listFlushing({ sampleBytes: 0 });
+  const liveBuckets = listBuckets();
+  if (orphanCandidates.length === 0 && liveBuckets.length === 0) {
+    return { flushed: 0, quarantined: 0 };
+  }
+  const inspection = await inspectJournalDelivery([
+    ...orphanCandidates.map((file) => file.bucket),
+    ...liveBuckets.map((bucket) => bucket.bucket),
+  ]);
+  if (!inspection.client) {
+    return { flushed: 0, quarantined: 0, retained: inspection.retainedBuckets };
+  }
+  const client = inspection.client;
+  const recovered = await recoverOrphans(
+    orphanCandidates.filter((file) => inspection.deliverableBuckets.has(file.bucket)),
+    { drain: (path) => drainFlushingPath(path, client) },
+  );
   let total = recovered.flushed;
   let quarantined = recovered.quarantined;
   const errors = recovered.errors;
-  for (const { bucket, path } of listBuckets()) {
+  for (const { bucket, path } of liveBuckets) {
+    if (!inspection.deliverableBuckets.has(bucket)) {
+      continue;
+    }
     // Do not create one new failed rotation per retry while a prior rotation
     // for this bucket is still undeliverable (for example, capture disabled).
     // Other buckets remain independent and continue draining.
@@ -297,7 +322,7 @@ async function flushOnce(): Promise<DrainCounts> {
       continue;
     }
     try {
-      const counts = await drainPath(path);
+      const counts = await drainPath(path, client);
       total += counts.flushed;
       quarantined += counts.quarantined;
     } catch (err) {
@@ -309,13 +334,18 @@ async function flushOnce(): Promise<DrainCounts> {
   if (errors.length > 0) {
     throw new FlushError(errors[0], total, quarantined);
   }
-  return { flushed: total, quarantined };
+  return inspection.retainedBuckets.length > 0
+    ? { flushed: total, quarantined, retained: inspection.retainedBuckets }
+    : { flushed: total, quarantined };
 }
 
 // `skipped` distinguishes a contended bow-out (another process holds the drain
 // lock) from a genuine empty-journal drain, so the daemon does not record a
 // false success and `prim moves flush` does not imply the journal was empty.
-export type FlushResult = DrainCounts & { skipped?: boolean };
+export type FlushResult = DrainCounts & {
+  skipped?: boolean;
+  retained?: RetainedJournalBucket[];
+};
 
 let flushInFlight: Promise<FlushResult> | undefined;
 

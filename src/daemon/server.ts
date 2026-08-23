@@ -17,7 +17,7 @@
  * down, hooks degrade to ~200ms instead of ~30ms; never to an outright block.
  */
 
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { type Server, type Socket, createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +32,7 @@ import {
 } from "../client.js";
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import type { Teammate } from "../lib/presence.js";
 import {
@@ -62,6 +62,19 @@ import {
 } from "./instance-lock.js";
 import { buildPresenceHeartbeatRequest } from "./presence-heartbeat.js";
 import {
+  daemonPrincipalsMatch,
+  resolveDaemonCredentialKey,
+  resolveDaemonPrincipal,
+} from "./principal.js";
+import {
+  DAEMON_JSON_REQUEST_MAX_BYTES,
+  DAEMON_JSON_RESPONSE_MAX_BYTES,
+  DAEMON_SOCKET_IDLE_TIMEOUT_MS,
+  type DaemonRequestEnvelope,
+  type DaemonResponseEnvelope,
+  parseDaemonRequestEnvelope,
+} from "./protocol.js";
+import {
   STATUSLINE_PROTOCOL_PREFIX,
   STATUSLINE_REQUEST_MAX_BYTES,
   isStatuslineRequestPrefix,
@@ -70,6 +83,10 @@ import {
 
 const CONFIG_DIR = primConfigDirectory();
 const SOCK_PATH = join(CONFIG_DIR, "sock");
+const CONFIG_DIR_MODE = 0o700;
+const SOCKET_MODE = 0o600;
+const MAX_SOCKET_CONNECTIONS = 64;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const INGESTION_POLL_INTERVAL_MS = 15_000;
@@ -84,24 +101,13 @@ const PRESENCE_FRESH_WINDOW_MS = 90_000;
 const EXIT_OK = 0;
 const EXIT_CRASH = 1;
 
-interface SocketRequest {
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface SocketResponse {
-  id: number;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-}
-
 const startedAt = Date.now();
 const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
 const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
-const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus);
+const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus, {
+  resolveRepositoryBindingState: repositoryBindingState,
+});
 const decisionDigestCache = new DecisionDigestCache(
   async () =>
     await client.get(DECISION_DIGEST_CACHE_PATH, {
@@ -134,6 +140,7 @@ let heartbeatRerunRequested = false;
 let ownership: DaemonOwnership | undefined;
 let socketServer: Server | undefined;
 let shuttingDown = false;
+let activeCredentialKey = resolveDaemonCredentialKey();
 // Set once the broker terminally ends the session (isSessionEnded()). The
 // heartbeat + ingestion loops halt — replaying a dead token every poll was the
 // server-side 500 flood — while the slower token-check loop keeps running to
@@ -164,6 +171,41 @@ function resolveRuntimeVersion(): string {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function purgePrincipalScopedState(): void {
+  decisionDigestCache.reset();
+  statuslineIngestionCache.clear();
+  lastHeartbeatAt = undefined;
+  lastOnlineCount = undefined;
+  lastOnlineNames = undefined;
+  lastOnlineTeammates = undefined;
+  lastOkAtLocal = undefined;
+}
+
+/** Re-read the credential generation before every tenant-scoped socket or cache operation. */
+function synchronizeDaemonCredential(): ReturnType<typeof resolveDaemonPrincipal> {
+  const token = resolveAuthCredential()?.token;
+  const credentialKey = resolveDaemonCredentialKey(token);
+  if (credentialKey !== activeCredentialKey) {
+    activeCredentialKey = credentialKey;
+    purgePrincipalScopedState();
+  }
+  return resolveDaemonPrincipal(token);
+}
+
+function assertCallerPrincipalMatches(caller: DaemonRequestEnvelope["caller"]): string {
+  const daemonPrincipal = synchronizeDaemonCredential();
+  const credentialKey = activeCredentialKey;
+  if (!(credentialKey && daemonPrincipalsMatch(caller, daemonPrincipal))) {
+    throw new Error("daemon caller principal or organization mismatch");
+  }
+  return credentialKey;
+}
+
+function ensureDaemonDirectoryPermissions(): void {
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: CONFIG_DIR_MODE });
+  chmodSync(CONFIG_DIR, CONFIG_DIR_MODE);
 }
 
 function persistHealth(): void {
@@ -310,6 +352,8 @@ function cleanup(): void {
 }
 
 async function performHeartbeat(): Promise<void> {
+  synchronizeDaemonCredential();
+  const requestCredentialKey = activeCredentialKey;
   daemonHealth.heartbeat.lastAttemptAt = Date.now();
   persistHealth();
   try {
@@ -329,6 +373,13 @@ async function performHeartbeat(): Promise<void> {
       onlineTeammates?: Teammate[];
       unavailable?: string;
     };
+    synchronizeDaemonCredential();
+    if (requestCredentialKey !== activeCredentialKey) {
+      // Never publish a heartbeat response from the credential generation
+      // that just rotated away. Rerun once under the new generation instead.
+      heartbeatRerunRequested = true;
+      return;
+    }
     if (result.accepted) {
       const now = Date.now();
       lastOkAtLocal = now;
@@ -436,6 +487,7 @@ function scheduleIngestion(delayMs: number): void {
 }
 
 async function runIngestionLoop(): Promise<void> {
+  synchronizeDaemonCredential();
   try {
     updatePendingHealth();
   } catch (err) {
@@ -510,6 +562,7 @@ function scheduleDecisionDigestRefresh(): void {
 }
 
 function refreshDecisionDigest(): Promise<void> {
+  synchronizeDaemonCredential();
   return shuttingDown || reauthHold ? Promise.resolve() : decisionDigestCache.refresh();
 }
 
@@ -531,16 +584,33 @@ function assertEndpointPath(path: string, endpoint: string): void {
   }
 }
 
-async function proxyGet(params: Record<string, unknown>, allowedPrefix: string): Promise<unknown> {
+async function proxyGet(
+  params: Record<string, unknown>,
+  allowedPrefix: string,
+  caller: DaemonRequestEnvelope["caller"],
+): Promise<unknown> {
+  const requestCredentialKey = assertCallerPrincipalMatches(caller);
   // getSiteUrl() fresh (not a boot snapshot) so the guard tracks the very URL
   // request() will hit — both re-resolve from the daemon's fixed env + cwd.
   assertCallerEnvMatches(params.callerEnv, getSiteUrl());
   const path = pathParam(params);
   assertEndpointPath(path, allowedPrefix);
-  return await client.get(path, { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
+  const result = await client.get(path, { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) });
+  if (
+    requestCredentialKey !== activeCredentialKey ||
+    !daemonPrincipalsMatch(caller, synchronizeDaemonCredential())
+  ) {
+    throw new Error("daemon credential changed during proxied read");
+  }
+  return result;
 }
 
-function handleStatusSnapshot(params: Record<string, unknown>): StatusSnapshot {
+function handleStatusSnapshot(
+  params: Record<string, unknown>,
+  caller?: DaemonRequestEnvelope["caller"],
+  enforcePrincipal = false,
+): StatusSnapshot {
+  const daemonPrincipal = synchronizeDaemonCredential();
   const wasHealthy = daemonHealth.healthy;
   const heartbeatWasHealthy = daemonHealth.heartbeat.healthy;
   const ingestionWasHealthy = daemonHealth.ingestion.healthy;
@@ -564,12 +634,23 @@ function handleStatusSnapshot(params: Record<string, unknown>): StatusSnapshot {
     heartbeat: { ...daemonHealth.heartbeat },
     ingestion: { ...daemonHealth.ingestion },
   };
-  // Presence is this daemon's own bound-env heartbeat. A cross-env caller (e.g. a
+  if (enforcePrincipal && !daemonPrincipalsMatch(caller, daemonPrincipal)) {
+    return {
+      ...base,
+      onlineCount: undefined,
+      onlineNames: undefined,
+      onlineTeammates: undefined,
+      presenceStale: false,
+      principalMismatch: true,
+    };
+  }
+  // Presence is this daemon's own principal-bound heartbeat. A cross-env caller (e.g. a
   // prod statusline reading a staging-bound daemon) must not see that roster:
   // withhold count/names and flag the mismatch so the statusline shows
   // "presence: other env" instead of another deployment's team. There is no
   // direct fallback for presence, so unlike the proxied reads this withholds
-  // rather than throws. `daemon status` sends no callerEnv and still sees it all.
+  // rather than throws. Raw statusline v1 relies on the protected socket directory;
+  // JSON callers additionally prove their exact principal above.
   if (isCrossEnv(params.callerEnv, getSiteUrl())) {
     return {
       ...base,
@@ -598,24 +679,24 @@ function handleStatusSnapshot(params: Record<string, unknown>): StatusSnapshot {
   };
 }
 
-async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
+async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonResponseEnvelope> {
   const id = req.id;
   try {
     switch (req.method) {
       case "decisions_recent": {
-        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/recent");
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/recent", req.caller);
         return { id, ok: true, result };
       }
       case "decisions_show": {
-        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/show");
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/show", req.caller);
         return { id, ok: true, result };
       }
       case "decisions_cascade": {
-        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/cascade");
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/cascade", req.caller);
         return { id, ok: true, result };
       }
       case "decisions_affecting": {
-        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/affecting");
+        const result = await proxyGet(req.params ?? {}, "/api/cli/decisions/affecting", req.caller);
         return { id, ok: true, result };
       }
       case "session_start": {
@@ -637,11 +718,16 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
         return { id, ok: true, result: { ack: true } };
       }
       case "status_snapshot":
-        return { id, ok: true, result: handleStatusSnapshot(req.params ?? {}) };
+        return {
+          id,
+          ok: true,
+          result: handleStatusSnapshot(req.params ?? {}, req.caller, true),
+        };
       case "decision_digest_snapshot": {
         // Unlike the generic read proxy, this never waits on HTTP. Prompt hooks
         // receive the daemon-owned page immediately; the read itself requests
         // an asynchronous refresh that Stop can observe as a backstop.
+        assertCallerPrincipalMatches(req.caller);
         assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
         const result = decisionDigestCache.read();
         void refreshDecisionDigest();
@@ -667,30 +753,52 @@ async function dispatchRequest(req: SocketRequest): Promise<SocketResponse> {
 function handleConnection(conn: Socket): void {
   let mode: "undecided" | "statusline" | "json" = "undecided";
   let rawBuffer = Buffer.alloc(0);
-  let jsonBuffer = "";
+  let jsonBuffer = Buffer.alloc(0);
+  let dispatched = false;
 
-  const dispatchJson = (chunk: string): void => {
-    jsonBuffer += chunk;
-    let newlineIdx = jsonBuffer.indexOf("\n");
-    while (newlineIdx !== -1) {
-      const line = jsonBuffer.slice(0, newlineIdx);
-      jsonBuffer = jsonBuffer.slice(newlineIdx + 1);
-      if (line.length > 0) {
-        try {
-          const req = JSON.parse(line) as SocketRequest;
-          dispatchRequest(req).then(
-            (res) => {
-              conn.write(`${JSON.stringify(res)}\n`);
-            },
-            () => {
-              // dispatcher should not throw; defensive only
-            },
-          );
-        } catch {
-          // ignore malformed envelopes — fail-soft
-        }
+  conn.setTimeout(DAEMON_SOCKET_IDLE_TIMEOUT_MS, () => conn.end());
+
+  const writeJsonResponse = (response: DaemonResponseEnvelope): void => {
+    let payload = Buffer.from(`${JSON.stringify(response)}\n`, "utf8");
+    if (payload.length > DAEMON_JSON_RESPONSE_MAX_BYTES) {
+      payload = Buffer.from(
+        `${JSON.stringify({ id: response.id, ok: false, error: "daemon response too large" })}\n`,
+        "utf8",
+      );
+    }
+    conn.end(payload);
+  };
+
+  const dispatchJson = (chunk: Buffer): void => {
+    if (dispatched || jsonBuffer.length + chunk.length > DAEMON_JSON_REQUEST_MAX_BYTES) {
+      conn.end();
+      return;
+    }
+    jsonBuffer = Buffer.concat([jsonBuffer, chunk]);
+    const newlineIdx = jsonBuffer.indexOf(0x0a);
+    if (newlineIdx === -1) return;
+
+    // The protocol is deliberately one request per connection. Accept only
+    // trailing whitespace after the first newline, never pipelined requests.
+    const trailing = jsonBuffer.subarray(newlineIdx + 1);
+    if (trailing.some((byte) => ![0x09, 0x0a, 0x0d, 0x20].includes(byte))) {
+      conn.end();
+      return;
+    }
+    try {
+      const line = utf8Decoder.decode(jsonBuffer.subarray(0, newlineIdx));
+      const request = parseDaemonRequestEnvelope(JSON.parse(line));
+      if (!request) {
+        conn.end();
+        return;
       }
-      newlineIdx = jsonBuffer.indexOf("\n");
+      dispatched = true;
+      conn.pause();
+      void dispatchRequest(request).then(writeJsonResponse, () => {
+        writeJsonResponse({ id: request.id, ok: false, error: "daemon request failed" });
+      });
+    } catch {
+      conn.end();
     }
   };
 
@@ -706,8 +814,14 @@ function handleConnection(conn: Socket): void {
     try {
       const callerEnv = getSiteUrlForEnvironment(parsed.request.primApiUrl || undefined);
       const snapshot = handleStatusSnapshot({ callerEnv });
-      const line = formatStatusline(runtimeVersion, snapshot, () =>
-        statuslineIngestionCache.get(parsed.request.cwd),
+      const line = formatStatusline(
+        runtimeVersion,
+        snapshot,
+        () => statuslineIngestionCache.get(parsed.request.cwd),
+        {
+          resolveRepositoryBindingState: () =>
+            statuslineIngestionCache.getRepositoryBindingState(parsed.request.cwd),
+        },
       );
       conn.end(line);
     } catch {
@@ -718,7 +832,7 @@ function handleConnection(conn: Socket): void {
   conn.on("data", (chunk) => {
     const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     if (mode === "json") {
-      dispatchJson(bytes.toString("utf8"));
+      dispatchJson(bytes);
       return;
     }
     rawBuffer = Buffer.concat([rawBuffer, bytes]);
@@ -739,7 +853,7 @@ function handleConnection(conn: Socket): void {
       return;
     }
     mode = "json";
-    dispatchJson(rawBuffer.toString("utf8"));
+    dispatchJson(rawBuffer);
     rawBuffer = Buffer.alloc(0);
   });
   conn.on("error", () => {
@@ -765,6 +879,7 @@ function shutdown(exitCode: number, reason: string): void {
 
 function startSocketServer(): void {
   socketServer = createServer(handleConnection);
+  socketServer.maxConnections = MAX_SOCKET_CONNECTIONS;
   socketServer.on("error", (err) => {
     // A bind/runtime socket failure means the daemon cannot serve hooks. Exit
     // non-zero so launchd restarts it; staying PID-alive/socket-dead is never a
@@ -772,6 +887,12 @@ function startSocketServer(): void {
     shutdown(EXIT_CRASH, `[prim-daemon] fatal socket error: ${err.message}`);
   });
   socketServer.listen(SOCK_PATH, () => {
+    try {
+      chmodSync(SOCK_PATH, SOCKET_MODE);
+    } catch (err) {
+      shutdown(EXIT_CRASH, `[prim-daemon] failed to secure socket: ${errorMessage(err)}`);
+      return;
+    }
     process.stderr.write(`[prim-daemon] listening on ${SOCK_PATH}\n`);
     startTimers();
     process.stderr.write(
@@ -804,6 +925,7 @@ async function runTokenCheckLoop(): Promise<void> {
     }
   } else {
     await ensureTokenFresh();
+    synchronizeDaemonCredential();
     // A proactive refresh may have hit the terminal rejection; halt promptly
     // rather than waiting for the next heartbeat/ingest to rediscover it.
     if (isSessionEnded()) {
@@ -849,6 +971,7 @@ function installSignalHandlers(): void {
 
 async function main(): Promise<void> {
   try {
+    ensureDaemonDirectoryPermissions();
     clientInstanceId = await getOrCreateClientInstanceId({
       configDir: CONFIG_DIR,
     });

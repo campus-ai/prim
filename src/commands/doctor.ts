@@ -32,7 +32,8 @@ import {
   getLaunchdService,
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
-import { pendingJournalStats } from "../journal.js";
+import { type RetainedJournalBucket, inspectJournalDelivery } from "../journal-organization.js";
+import { listBuckets, listFlushing, pendingJournalStats } from "../journal.js";
 import {
   decisionIngestionStatus,
   isRepoActiveForCapture,
@@ -308,6 +309,51 @@ function checkStranded(): Check {
   };
 }
 
+export function classifyJournalOrganization(
+  bucketCount: number,
+  retainedBuckets: RetainedJournalBucket[],
+): Check {
+  if (bucketCount === 0) {
+    return {
+      name: "journal-org",
+      status: "ok",
+      detail: "no pending organization buckets",
+    };
+  }
+  if (retainedBuckets.length === 0) {
+    return {
+      name: "journal-org",
+      status: "ok",
+      detail: "all pending buckets match the active credential",
+    };
+  }
+  const reasonCounts = new Map<string, number>();
+  for (const item of retainedBuckets) {
+    reasonCounts.set(item.reason, (reasonCounts.get(item.reason) ?? 0) + 1);
+  }
+  const reasons = [...reasonCounts]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}:${String(count)}`)
+    .join(", ");
+  return {
+    name: "journal-org",
+    status: "fail",
+    detail: `${String(retainedBuckets.length)} bucket(s) retained (${reasons})`,
+  };
+}
+
+async function checkJournalOrganization(): Promise<Check> {
+  const buckets = [
+    ...listBuckets().map((entry) => entry.bucket),
+    ...listFlushing({ sampleBytes: 0 }).map((entry) => entry.bucket),
+  ];
+  if (buckets.length === 0) {
+    return classifyJournalOrganization(0, []);
+  }
+  const inspection = await inspectJournalDelivery(buckets);
+  return classifyJournalOrganization(new Set(buckets).size, inspection.retainedBuckets);
+}
+
 function checkWorkspaceIdentity(): Check {
   const identity = inspectWorkspaceId();
   switch (identity.status) {
@@ -345,14 +391,7 @@ export function classifyRepositoryBinding(
   current: RepositoryBindingResult,
   active: boolean,
 ): Check {
-  if (current.status === "pending") {
-    if (value !== undefined) {
-      return {
-        name: "repo-binding",
-        status: "fail",
-        detail: `local repository binding is stale for ${current.repositoryFullName} — run \`prim enable\``,
-      };
-    }
+  if (current.status === "unbound") {
     if (!active) {
       return {
         name: "repo-binding",
@@ -360,10 +399,16 @@ export function classifyRepositoryBinding(
         detail: "passive capture is inactive — run `prim enable`",
       };
     }
+    const localDetail =
+      value === undefined
+        ? "repository is unbound"
+        : isValidRepoSyncId(value)
+          ? "server reports this repository unbound; the last binding is retained locally for recovery"
+          : "server reports this repository unbound; the local cached binding is invalid";
     return {
       name: "repo-binding",
       status: "warn",
-      detail: `${current.repositoryFullName} is not connected to Primitive — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
+      detail: `${localDetail} — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
     };
   }
   if (!isValidRepoSyncId(value)) {
@@ -606,6 +651,7 @@ async function collectChecks(): Promise<Check[]> {
     await checkDaemon(),
     checkJournal(),
     checkStranded(),
+    await checkJournalOrganization(),
     checkFeedbackHooks(),
     checkWorkspaceIdentity(),
     await checkRepositoryBinding(),
