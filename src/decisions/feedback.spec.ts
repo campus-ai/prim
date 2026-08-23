@@ -18,6 +18,7 @@ function event(overrides: Record<string, unknown> = {}): Record<string, unknown>
     leaseVersion: 1,
     shortId: "a1b2c3d4",
     intent: "Use the stable API",
+    kind: "confirm_prompt",
     ...overrides,
   };
 }
@@ -46,7 +47,7 @@ describe("parseFeedbackLease", () => {
   it("accepts the versioned leased, empty, and unavailable responses", () => {
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event()],
         hasMore: true,
@@ -59,17 +60,18 @@ describe("parseFeedbackLease", () => {
           leaseVersion: 1,
           shortId: "a1b2c3d4",
           intent: "Use the stable API",
+          kind: "confirm_prompt",
         },
       ],
       hasMore: true,
     });
-    expect(parseFeedbackLease({ protocolVersion: 1, status: "empty", hasMore: false })).toEqual({
+    expect(parseFeedbackLease({ protocolVersion: 2, status: "empty", hasMore: false })).toEqual({
       events: [],
       hasMore: false,
     });
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "unavailable",
         reason: "organization_unbound",
       }),
@@ -79,7 +81,7 @@ describe("parseFeedbackLease", () => {
   it("accepts a valid web URL and preserves compatibility when it is missing", () => {
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event({ webUrl })],
         hasMore: false,
@@ -92,6 +94,7 @@ describe("parseFeedbackLease", () => {
           shortId: "a1b2c3d4",
           intent: "Use the stable API",
           webUrl,
+          kind: "confirm_prompt",
         },
       ],
       hasMore: false,
@@ -99,7 +102,7 @@ describe("parseFeedbackLease", () => {
 
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event()],
         hasMore: false,
@@ -111,6 +114,7 @@ describe("parseFeedbackLease", () => {
           leaseVersion: 1,
           shortId: "a1b2c3d4",
           intent: "Use the stable API",
+          kind: "confirm_prompt",
         },
       ],
       hasMore: false,
@@ -135,7 +139,7 @@ describe("parseFeedbackLease", () => {
   ])("rejects a %s web URL and the whole lease", (_label, invalidWebUrl) => {
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event(), event({ eventId: "event-2", webUrl: invalidWebUrl })],
         hasMore: false,
@@ -143,14 +147,60 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
   });
 
-  it("rejects unknown versions/statuses and malformed event tokens", () => {
-    expect(
-      parseFeedbackLease({ protocolVersion: 2, status: "empty", hasMore: false }),
-    ).toBeUndefined();
-    expect(parseFeedbackLease({ protocolVersion: 1, status: "future" })).toBeUndefined();
+  it("defaults v1 events to confirmations but requires an explicit v2 kind", () => {
     expect(
       parseFeedbackLease({
         protocolVersion: 1,
+        status: "leased",
+        events: [event({ kind: undefined })],
+        hasMore: false,
+      }),
+    ).toEqual({
+      events: [
+        {
+          eventId: "event-1",
+          leaseVersion: 1,
+          shortId: "a1b2c3d4",
+          intent: "Use the stable API",
+          kind: "confirm_prompt",
+        },
+      ],
+      hasMore: false,
+    });
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 1,
+        status: "leased",
+        events: [event({ kind: "publish_prompt" })],
+        hasMore: false,
+      }),
+    ).toBeUndefined();
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 2,
+        status: "leased",
+        events: [event({ kind: undefined })],
+        hasMore: false,
+      }),
+    ).toBeUndefined();
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 2,
+        status: "leased",
+        events: [event({ kind: "future_prompt" })],
+        hasMore: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects unknown versions/statuses and malformed event tokens", () => {
+    expect(
+      parseFeedbackLease({ protocolVersion: 3, status: "empty", hasMore: false }),
+    ).toBeUndefined();
+    expect(parseFeedbackLease({ protocolVersion: 2, status: "future" })).toBeUndefined();
+    expect(
+      parseFeedbackLease({
+        protocolVersion: 2,
         status: "leased",
         events: [event({ leaseVersion: 0 })],
         hasMore: false,
@@ -158,7 +208,7 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event({ eventId: "event\u202e-1" })],
         hasMore: false,
@@ -166,7 +216,7 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event({ shortId: "ABC12345" })],
         hasMore: false,
@@ -174,7 +224,7 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event(), event()],
         hasMore: false,
@@ -182,7 +232,7 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event({ intent: "x".repeat(513) })],
         hasMore: false,
@@ -190,7 +240,7 @@ describe("parseFeedbackLease", () => {
     ).toBeUndefined();
     expect(
       parseFeedbackLease({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "leased",
         events: [event({ shortId: "x\nspoof" })],
         hasMore: false,
@@ -202,7 +252,7 @@ describe("parseFeedbackLease", () => {
 describe("renderFeedback", () => {
   it("renders the exact linked copy and retains only the corresponding ack token", () => {
     const lease = parseFeedbackLease({
-      protocolVersion: 1,
+      protocolVersion: 2,
       status: "leased",
       events: [event({ webUrl })],
       hasMore: false,
@@ -223,6 +273,20 @@ describe("renderFeedback", () => {
     });
   });
 
+  it("renders a publish prompt with the exact author action and ack token", () => {
+    const lease = parseFeedbackLease({
+      protocolVersion: 2,
+      status: "leased",
+      events: [event({ kind: "publish_prompt", webUrl })],
+      hasMore: false,
+    });
+    expect(renderFeedback(lease as FeedbackLease)).toEqual({
+      systemMessage:
+        "[prim] publish this Decision draft (dec_a1b2c3d4)? Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q) Run `prim decisions publish dec_a1b2c3d4` to share it with your team.",
+      deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
+    });
+  });
+
   it("includes web URLs in the 8k display budget and leaves overflow unacknowledged", () => {
     const events = Array.from({ length: 40 }, (_, index) => ({
       eventId: `event-${String(index)}`,
@@ -230,6 +294,7 @@ describe("renderFeedback", () => {
       shortId: `id${String(index)}`,
       intent: "x".repeat(MAX_FEEDBACK_INTENT_CODE_POINTS),
       webUrl: `https://app.getprimitive.ai/decisions/${"x".repeat(300)}`,
+      kind: index % 2 === 0 ? ("confirm_prompt" as const) : ("publish_prompt" as const),
     }));
     const rendered = renderFeedback({ events, hasMore: false });
     expect(rendered).toBeDefined();
@@ -246,7 +311,7 @@ describe("renderFeedback", () => {
 
 describe("feedback HTTP client", () => {
   it("leases directly with the closed request and quiet shared signal", async () => {
-    const post = vi.fn().mockResolvedValue({ protocolVersion: 1, status: "empty", hasMore: false });
+    const post = vi.fn().mockResolvedValue({ protocolVersion: 2, status: "empty", hasMore: false });
     const result = await leaseDecisionFeedback(
       { workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4", currentSessionId: "s1", signal },
       { client: { get: vi.fn(), post } },
@@ -255,7 +320,7 @@ describe("feedback HTTP client", () => {
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/feedback/lease",
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
         currentSessionId: "s1",
       },
@@ -273,7 +338,7 @@ describe("feedback HTTP client", () => {
     ).resolves.toBeUndefined();
 
     const post = vi.fn().mockResolvedValue({
-      protocolVersion: 1,
+      protocolVersion: 2,
       status: "acked",
       acknowledgedEventIds: ["event-1"],
     });
@@ -290,7 +355,7 @@ describe("feedback HTTP client", () => {
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/feedback/ack",
       {
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
         deliveries: [{ eventId: "event-1", leaseVersion: 3 }],
       },
@@ -317,16 +382,19 @@ describe("feedback HTTP client", () => {
 
 describe("parseFeedbackCapability", () => {
   it("accepts only the versioned capability union", () => {
-    expect(parseFeedbackCapability({ protocolVersion: 1, status: "available" })).toEqual({
+    expect(parseFeedbackCapability({ protocolVersion: 2, status: "available" })).toEqual({
       status: "available",
     });
     expect(
       parseFeedbackCapability({
-        protocolVersion: 1,
+        protocolVersion: 2,
         status: "unavailable",
         reason: "organization_unbound",
       }),
     ).toEqual({ status: "unavailable", reason: "organization_unbound" });
-    expect(parseFeedbackCapability({ protocolVersion: 1, status: "unknown" })).toBeUndefined();
+    expect(parseFeedbackCapability({ protocolVersion: 1, status: "available" })).toEqual({
+      status: "available",
+    });
+    expect(parseFeedbackCapability({ protocolVersion: 3, status: "unknown" })).toBeUndefined();
   });
 });

@@ -1,7 +1,12 @@
 import { type CliClient, getClient } from "../client.js";
 import { isTerminalSafeText, terminalSafeLine, terminalSafeText } from "../lib/terminal-safe.js";
 
-export const FEEDBACK_PROTOCOL_VERSION = 1;
+// Protocol v2 adds a required event kind so candidate drafts can be rendered
+// as publish prompts instead of being mistaken for confirmation feedback.
+// The parser still understands v1 responses for rolling compatibility, but
+// every new request advertises v2 and therefore receives publish prompts.
+export const FEEDBACK_PROTOCOL_VERSION = 2;
+const FEEDBACK_MIN_PROTOCOL_VERSION = 1;
 export const FEEDBACK_DEADLINE_MS = 3_000;
 export const MAX_FEEDBACK_EVENTS = 40;
 export const MAX_FEEDBACK_MESSAGE_CODE_POINTS = 8_000;
@@ -20,10 +25,13 @@ export type FeedbackDeliveryToken = {
   leaseVersion: number;
 };
 
+export type FeedbackKind = "confirm_prompt" | "publish_prompt";
+
 export type FeedbackEvent = FeedbackDeliveryToken & {
   shortId: string;
   intent: string;
   webUrl?: string;
+  kind: FeedbackKind;
 };
 
 export type FeedbackLease = {
@@ -44,6 +52,14 @@ type FeedbackClient = Pick<CliClient, "get" | "post">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSupportedProtocolVersion(value: unknown): value is 1 | 2 {
+  return (
+    Number.isSafeInteger(value) &&
+    Number(value) >= FEEDBACK_MIN_PROTOCOL_VERSION &&
+    Number(value) <= FEEDBACK_PROTOCOL_VERSION
+  );
 }
 
 /** Normalize untrusted display text without changing ordinary Unicode prose. */
@@ -83,7 +99,7 @@ function parseFeedbackWebUrl(value: unknown): string | undefined {
   return value;
 }
 
-function parseEvent(value: unknown): FeedbackEvent | undefined {
+function parseEvent(value: unknown, protocolVersion: 1 | 2): FeedbackEvent | undefined {
   if (!isRecord(value)) return undefined;
   if (
     typeof value.eventId !== "string" ||
@@ -106,17 +122,25 @@ function parseEvent(value: unknown): FeedbackEvent | undefined {
   if (!intent) return undefined;
   const webUrl = value.webUrl === undefined ? undefined : parseFeedbackWebUrl(value.webUrl);
   if (value.webUrl !== undefined && webUrl === undefined) return undefined;
+  const kind = value.kind === undefined && protocolVersion === 1 ? "confirm_prompt" : value.kind;
+  if (kind !== "confirm_prompt" && kind !== "publish_prompt") return undefined;
+  // A v1 caller cannot truthfully consume publish prompts. The server already
+  // withholds them; enforce that boundary locally so a malformed response is
+  // never acknowledged under the legacy dialect.
+  if (protocolVersion === 1 && kind === "publish_prompt") return undefined;
   return {
     eventId: value.eventId,
     leaseVersion: Number(value.leaseVersion),
     shortId: value.shortId,
     intent,
     ...(webUrl === undefined ? {} : { webUrl }),
+    kind,
   };
 }
 
 export function parseFeedbackLease(value: unknown): FeedbackLease | undefined {
-  if (!isRecord(value) || value.protocolVersion !== FEEDBACK_PROTOCOL_VERSION) return undefined;
+  if (!isRecord(value) || !isSupportedProtocolVersion(value.protocolVersion)) return undefined;
+  const protocolVersion = value.protocolVersion;
   if (value.status === "empty") {
     return value.hasMore === false ? { events: [], hasMore: false } : undefined;
   }
@@ -131,7 +155,7 @@ export function parseFeedbackLease(value: unknown): FeedbackLease | undefined {
   ) {
     return undefined;
   }
-  const events = value.events.map(parseEvent);
+  const events = value.events.map((event) => parseEvent(event, protocolVersion));
   if (events.some((event) => event === undefined)) return undefined;
   const parsedEvents = events as FeedbackEvent[];
   if (new Set(parsedEvents.map((event) => event.eventId)).size !== parsedEvents.length) {
@@ -145,7 +169,12 @@ export function renderFeedback(lease: FeedbackLease): RenderedFeedback | undefin
   const deliveries: FeedbackDeliveryToken[] = [];
   let pointCount = 0;
   for (const event of lease.events) {
-    const line = `[prim] response → created Decision (dec_${event.shortId}): ${event.intent}${event.webUrl ? ` (${event.webUrl})` : ""}`;
+    const identifier = `dec_${event.shortId}`;
+    const detail = `${event.intent}${event.webUrl ? ` (${event.webUrl})` : ""}`;
+    const line =
+      event.kind === "publish_prompt"
+        ? `[prim] publish this Decision draft (${identifier})? ${detail} Run \`prim decisions publish ${identifier}\` to share it with your team.`
+        : `[prim] response → created Decision (${identifier}): ${detail}`;
     const extra = Array.from(line).length + (lines.length === 0 ? 0 : 1);
     if (pointCount + extra > MAX_FEEDBACK_MESSAGE_CODE_POINTS) break;
     lines.push(line);
@@ -231,7 +260,7 @@ export async function acknowledgeDecisionFeedback(
 }
 
 export function parseFeedbackCapability(value: unknown): FeedbackCapability | undefined {
-  if (!isRecord(value) || value.protocolVersion !== FEEDBACK_PROTOCOL_VERSION) return undefined;
+  if (!isRecord(value) || !isSupportedProtocolVersion(value.protocolVersion)) return undefined;
   if (value.status === "available") return { status: "available" };
   if (value.status === "unavailable" && value.reason === "organization_unbound") {
     return { status: "unavailable", reason: "organization_unbound" };
