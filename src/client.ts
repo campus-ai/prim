@@ -554,9 +554,47 @@ export class HttpError extends Error {
   }
 }
 
+/** A successful management response could not be decoded within its strict bound. */
+export class CliManagementResponseError extends Error {
+  constructor() {
+    super("Invalid API-key management response");
+    this.name = "CliManagementResponseError";
+  }
+}
+
 export interface CliClient {
   get(path: string, options?: RequestOptions): Promise<unknown>;
   post(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
+}
+
+/** Pinned transport used by user API-key management, including DELETE. */
+export interface CliManagementClient extends CliClient {
+  delete(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
+}
+
+const CLI_MANAGEMENT_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+
+async function managementResponseValue(response: Response): Promise<unknown> {
+  if (response.status === 401) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  let value: unknown;
+  try {
+    value = await readBoundedJson(response, CLI_MANAGEMENT_RESPONSE_MAX_BYTES);
+  } catch {
+    if (response.ok) throw new CliManagementResponseError();
+    throw new HttpError(response.status, `HTTP ${response.status}`, null);
+  }
+  if (!response.ok) {
+    const errorRecord =
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+    const message =
+      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
+    throw new HttpError(response.status, message, value);
+  }
+  return value;
 }
 
 let _cachedCredential: AuthCredential | undefined;
@@ -700,6 +738,48 @@ export async function getPinnedClient(options: RequestOptions = {}): Promise<Cli
   ): Promise<unknown> =>
     responseValue(await fetchWithToken(method, path, body, requestOptions, token, siteUrl));
   return {
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
+  };
+}
+
+/**
+ * Resolve one usable bearer generation for a management operation without a
+ * post-response credential retry. A user API-key mint may have reached WorkOS
+ * even when its HTTP result is lost, so replaying it under a refreshed token is
+ * not safe. Callers must treat a failed mint as uncertain and start a new
+ * explicitly authorized operation only after reconciliation.
+ */
+export async function getPinnedManagementClient(
+  options: RequestOptions = {},
+): Promise<CliManagementClient> {
+  const siteUrl = getSiteUrl();
+  let credential = selectedCredential();
+  if (credential && isTokenExpiringSoon(credential)) {
+    const token = await refreshToken({
+      signal: options.signal,
+      quiet: options.quietRefresh,
+      siteUrl,
+    });
+    if (token) {
+      credential = { token, source: "token_file" };
+    }
+  }
+  if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  const token = credential.token;
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    managementResponseValue(
+      await fetchWithToken(method, path, body, requestOptions, token, siteUrl),
+    );
+  return {
+    delete: (path, body, requestOptions) => pinnedRequest("DELETE", path, body, requestOptions),
     get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
     post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
   };

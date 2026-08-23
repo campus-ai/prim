@@ -4,6 +4,7 @@
  * prim auth login             — Open browser to authenticate via WorkOS
  * prim auth set-token <token> — Save a bearer token for authenticated calls
  * prim auth clear             — Remove the saved token
+ * prim auth api-keys mint|list|revoke
  */
 
 import { execFile } from "node:child_process";
@@ -12,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { platform } from "node:os";
 import type { Command } from "commander";
+import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from "../auth/api-keys.js";
 import {
   REFRESH_TOKEN_PATH,
   TOKEN_FILE_PATH,
@@ -382,6 +384,42 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
 
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
+
+  const apiKeys = auth
+    .command("api-keys")
+    .description("Mint, list, and revoke WorkOS user API keys");
+
+  apiKeys
+    .command("mint")
+    .description("Mint a user API key and return its secret once")
+    .requiredOption("--name <name>", "Name for the API key")
+    .option("--expires-at <epoch-ms>", "Optional expiration as Unix epoch milliseconds")
+    .action(async (options: { name: string; expiresAt?: string }) => {
+      const expiresAt = options.expiresAt === undefined ? undefined : Number(options.expiresAt);
+      process.exitCode = await mintUserApiKey({
+        name: options.name,
+        ...(expiresAt === undefined ? {} : { expiresAt }),
+      });
+    });
+
+  apiKeys
+    .command("list")
+    .description("List user API-key metadata (never plaintext secrets)")
+    .option("--limit <count>", "Maximum keys to return (1-100)", "100")
+    .option("--after <api-key-id>", "Continue after this API-key ID")
+    .action(async (options: { limit: string; after?: string }) => {
+      process.exitCode = await listUserApiKeys({
+        limit: Number(options.limit),
+        ...(options.after === undefined ? {} : { after: options.after }),
+      });
+    });
+
+  apiKeys
+    .command("revoke <apiKeyId>")
+    .description("Revoke one API key owned by the current user and organization")
+    .action(async (apiKeyId: string) => {
+      process.exitCode = await revokeUserApiKey(apiKeyId);
+    });
 
   auth
     .command("login")

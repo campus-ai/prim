@@ -1196,6 +1196,78 @@ export interface RepositoryBindResponse {
   [k: string]: unknown | undefined;
 }
 
+export interface UserApiKeyListRequest {
+  requestId: string;
+  limit: number;
+  after?: string;
+}
+
+export interface UserApiKeyListResponse {
+  /**
+   * @maxItems 100
+   */
+  apiKeys: {
+    id: string;
+    name: string;
+    obfuscatedValue: string;
+    /**
+     * @maxItems 100
+     */
+    permissions: string[];
+    lastUsedAt: number | null;
+    expiresAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+  }[];
+  nextCursor: string | null;
+}
+
+export interface UserApiKeyMetadata {
+  id: string;
+  name: string;
+  obfuscatedValue: string;
+  /**
+   * @maxItems 100
+   */
+  permissions: string[];
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface UserApiKeyMintRequest {
+  requestId: string;
+  name: string;
+  expiresAt?: number;
+}
+
+export interface UserApiKeyMintResponse {
+  apiKey: {
+    id: string;
+    name: string;
+    obfuscatedValue: string;
+    /**
+     * @maxItems 100
+     */
+    permissions: string[];
+    lastUsedAt: number | null;
+    expiresAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+  };
+  secret: string;
+}
+
+export interface UserApiKeyRevokeRequest {
+  requestId: string;
+}
+
+export interface UserApiKeyRevokeResponse {
+  apiKeyId: string;
+  revoked: true;
+}
+
 export interface WorkosConnectDeviceConfigurationDisabled {
   error: "connect_device_auth_disabled";
 }
