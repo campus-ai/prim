@@ -58,6 +58,17 @@ describe("flush lock", () => {
       "fetch",
       vi.fn((url: string | URL | Request) => {
         posts.push(String(url));
+        if (String(url).endsWith("/api/cli/auth/status")) {
+          return Promise.resolve(
+            jsonResponse({
+              authenticated: true,
+              organizationBindingVersion: 1,
+              captureAuthorityKind: "workos",
+              organizationId: "org1",
+              workosOrganizationId: "org_workos",
+            }),
+          );
+        }
         return Promise.resolve(
           jsonResponse({ accepted: 1, acknowledged: 1, disposition: "persisted" }),
         );
@@ -79,7 +90,7 @@ describe("flush lock", () => {
       "org1",
     );
 
-    await expect(flush()).resolves.toEqual({ flushed: 1 });
+    await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
     expect(posts.some((u) => u.endsWith("/api/cli/moves/ingest"))).toBe(true);
   });
 
@@ -115,7 +126,7 @@ describe("flush lock", () => {
     );
 
     const { flush } = await import("./flusher.js");
-    await expect(flush()).resolves.toEqual({ flushed: 0, skipped: true });
+    await expect(flush()).resolves.toEqual({ flushed: 0, quarantined: 0, skipped: true });
     // No POST fired, and the move is still journaled for the lock holder.
     expect(fetchMock).not.toHaveBeenCalled();
     expect(readMovesFromPath(bucketPath).map((m) => m.moveId)).toEqual(["m1"]);

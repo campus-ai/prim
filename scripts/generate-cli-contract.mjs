@@ -242,7 +242,8 @@ function validatorExportName(name, schema) {
 function convertAjvRuntimeImports(source) {
   const converted = source.replace(
     /const ([A-Za-z0-9_$]+) = require\("(ajv\/dist\/runtime\/[^".]+)"\)\.default;/gu,
-    (_match, localName, moduleName) => `import ${localName} from "${moduleName}.js";`,
+    (_match, localName, moduleName) =>
+      `import ${localName}Import from "${moduleName}.js";\nconst ${localName} = typeof ${localName}Import === "function" ? ${localName}Import : ${localName}Import.default;`,
   );
   if (converted.includes("require(")) {
     throw new Error("Ajv emitted an unsupported CommonJS runtime dependency");
