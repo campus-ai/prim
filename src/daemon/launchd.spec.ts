@@ -24,6 +24,7 @@ import {
   launchdPaths,
   parseLaunchdService,
   runtimePaths,
+  runtimeStatuslineCommand,
   stageRuntime,
   withDaemonLifecycleLock,
 } from "./launchd.js";
@@ -344,6 +345,30 @@ describe("runtime staging", () => {
       }).logPath,
     ).toBe(join(configDir, "daemon.log"));
   });
+
+  it.each([
+    ["missing", {}],
+    ["relative", { HOME: "relative-home", XDG_DATA_HOME: "relative-data" }],
+  ])(
+    "falls back to the stable hook runtime when the data-root environment is %s",
+    (_label, environment) => {
+      const root = mkdtempSync(join(tmpdir(), "prim-statusline-root-"));
+      temporaryRoots.push(root);
+      const configDir = join(root, "config");
+      const launcher = join(configDir, "prim-hook-launcher-v1");
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(launcher, '#!/bin/sh\nprintf "stable:%s" "$1"\n', { mode: 0o700 });
+
+      const command = runtimeStatuslineCommand();
+      expect(command).toContain("prim-hook-launcher-v1");
+      expect(
+        execFileSync("/bin/sh", ["-c", command], {
+          env: { ...environment, PRIM_CONFIG_DIR: configDir },
+          encoding: "utf8",
+        }),
+      ).toBe("stable:prim-statusline");
+    },
+  );
 
   macIt(
     "falls back within the deadline when an old daemon accepts but never responds",

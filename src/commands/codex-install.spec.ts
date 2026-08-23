@@ -5,11 +5,11 @@
  * resolve `~/.codex/hooks.json` at module load, so they're exercised by the
  * live-disk smoke. Here we verify the Codex registration table composes
  * correctly through the shared merge engine reused from claude-install, now
- * emitting absolute, PATH-independent commands that still carry `--agent codex`.
+ * emitting byte-stable, PATH-independent commands that still carry `--agent codex`.
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, pinnedHookCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, stableHookCommand } from "../lib/bin-path.js";
 import type { ClaudeSettings } from "./claude-install.js";
 import { applyInstall, applyUninstall, isGateInstalled, resolveScope } from "./codex-install.js";
 
@@ -46,10 +46,10 @@ describe("codex applyInstall", () => {
     const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch");
     const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch|Bash");
     expect(preGate?.hooks?.[0].command).toBe(
-      pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
+      stableHookCommand("prim-pre-tool-use", "--agent codex"),
     );
     expect(postIngest?.hooks?.[0].command).toBe(
-      pinnedHookCommand("prim-post-tool-use", "--agent codex"),
+      stableHookCommand("prim-post-tool-use", "--agent codex"),
     );
     // The shim, not the old bare form.
     expect(preGate?.hooks?.[0].command).not.toBe("prim-pre-tool-use --agent codex");
@@ -71,7 +71,7 @@ describe("codex applyInstall", () => {
     expect(cmds).toHaveLength(2);
     expect(commandMatchesBin(cmds[0], "prim-hook")).toBe(true);
     expect(commandMatchesBin(cmds[1], "prim-session-start")).toBe(true);
-    expect(cmds[1]).toBe(pinnedHookCommand("prim-session-start", "--agent codex"));
+    expect(cmds[1]).toBe(stableHookCommand("prim-session-start", "--agent codex"));
   });
 
   it("does NOT register SessionEnd (Codex has no such event) or a statusLine", () => {
@@ -114,7 +114,7 @@ describe("codex applyInstall", () => {
     const gateEntries = (out.hooks?.PreToolUse ?? []).filter((e) => e.matcher === "apply_patch");
     expect(gateEntries).toHaveLength(1);
     expect(gateEntries[0].hooks?.[0].command).toBe(
-      pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
+      stableHookCommand("prim-pre-tool-use", "--agent codex"),
     );
   });
 });

@@ -31,18 +31,20 @@ import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { commandMatchesBin, detachedHookShimCommand, pinnedHookCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
+import { stageHookRuntime } from "../lib/hook-runtime.js";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
 const SESSION_START_BIN = "prim-session-start";
 const SESSION_END_BIN = "prim-session-end";
-// The statusline rides the `prim` bin, invoked as `… statusline`.
-const STATUSLINE_BIN = "prim";
-const STATUSLINE_ARGS = "statusline";
-const STATUSLINE_COMMAND = pinnedHookCommand(STATUSLINE_BIN, STATUSLINE_ARGS);
+// The stable launcher enters the self-contained statusline bundle directly.
+// Legacy `prim statusline` commands remain recognized below for migration.
+const STATUSLINE_BIN = "prim-statusline";
+const STATUSLINE_ARGS = "";
+const STATUSLINE_COMMAND = stableHookCommand(STATUSLINE_BIN, STATUSLINE_ARGS);
 // Claude Code re-renders the statusLine only on conversation events by
 // default, so a "team: N online" count goes stale between prompts. The idle
 // refresh poll keeps presence live without the user submitting anything; 5s ≈
@@ -94,7 +96,7 @@ export type Registration = {
   matcher: string;
   /** npm bin name — the stable identity matched on for install/uninstall. */
   bin: string;
-  /** The absolute, PATH-independent command written into settings.json. */
+  /** The byte-stable, PATH-independent launcher command written into settings.json. */
   command: string;
 };
 
@@ -108,7 +110,7 @@ export function makeRegistration(
     event,
     matcher,
     bin,
-    command: pinnedHookCommand(bin, args),
+    command: stableHookCommand(bin, args),
   };
 }
 
@@ -351,6 +353,7 @@ function isPrimStatusLine(settings: ClaudeSettings): boolean {
   return (
     c === LEGACY_STATUSLINE_COMMAND ||
     (c.includes("@primitive.ai/prim") && c.includes("statusline")) ||
+    (c.includes("prim-hook-launcher-v1") && commandMatchesBin(c, STATUSLINE_BIN)) ||
     RUNTIME_STATUSLINE_SUFFIXES.some((suffix) => c.includes(suffix))
   );
 }
@@ -584,6 +587,10 @@ export function userStatuslineBlocksProjectInstall(
 }
 
 export function performInstall(scope: Scope, force: boolean): InstallResult {
+  // Prepare immutable exact runtime bytes before persisting any stable
+  // launcher command. A failed preparation leaves the existing settings and
+  // launcher selection untouched.
+  stageHookRuntime();
   const path = settingsPathFor(scope);
   const before = readSettings(path);
   const blockedByUserStatusline = userStatuslineBlocksProjectInstall(
@@ -606,7 +613,7 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       process.stderr.write(
-        `[prim] ⚠ could not stage the durable statusline runtime (${detail}); using the package resolver\n`,
+        `[prim] ⚠ could not stage the lightweight statusline runtime (${detail}); using the stable hook runtime\n`,
       );
     }
   }

@@ -24,6 +24,10 @@ export interface FileLockOptions {
   signal?: AbortSignal;
 }
 
+export type FileLockSyncOptions = Omit<FileLockOptions, "signal" | "sleep"> & {
+  sleep?: (ms: number) => void;
+};
+
 function ownerPath(lockDir: string): string {
   return join(lockDir, "owner.json");
 }
@@ -140,6 +144,44 @@ async function defaultSleep(ms: number, signal: AbortSignal | undefined): Promis
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+const syncSleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
+function defaultSleepSync(ms: number): void {
+  Atomics.wait(syncSleeper, 0, 0, ms);
+}
+
+/** Serialize a synchronous filesystem mutation across independent prim processes. */
+export function withFileLockSync<T>(
+  lockDir: string,
+  operation: () => T,
+  options: FileLockSyncOptions = {},
+): T {
+  mkdirSync(dirname(lockDir), { recursive: true, mode: DIRECTORY_MODE });
+  const nowMs = options.nowMs ?? Date.now;
+  const alive = options.processAlive ?? processIsAlive;
+  const deadline = nowMs() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  let owner: FileLockOwner | null = null;
+  while (!owner) {
+    const now = nowMs();
+    owner = tryTakeLock(lockDir, now);
+    if (owner) break;
+    recoverStaleLock(lockDir, now, alive, options.initGraceMs ?? DEFAULT_INIT_GRACE_MS);
+    if (now >= deadline) {
+      throw new Error(`timed out waiting for file lock ${lockDir}`);
+    }
+    (options.sleep ?? defaultSleepSync)(options.pollMs ?? DEFAULT_POLL_MS);
+  }
+
+  try {
+    return operation();
+  } finally {
+    if (sameOwner(readOwner(lockDir), owner)) {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+  }
 }
 
 /** Serialize a filesystem mutation across independent prim processes. */

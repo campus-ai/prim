@@ -7,7 +7,15 @@
  * `name + ".js"` would get wrong.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,6 +27,7 @@ import {
   pinnedHookCommand,
   pinnedNpxArgs,
   pinnedNpxCommand,
+  stableHookCommand,
 } from "./bin-path.js";
 
 describe("binFile", () => {
@@ -62,13 +71,15 @@ describe("pinned npx runtime", () => {
       pinnedNpxCommand("prim-post-commit"),
       pinnedNpxCommand("prim-post-rewrite"),
       pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
-      detachedHookShimCommand("prim-hook", "--agent codex"),
     ];
     for (const command of commands) {
       expect(command).toContain(`@primitive.ai/prim@${packageVersion()}`);
       expect(command).toContain("--ignore-scripts");
       expect(command).not.toContain("@latest");
     }
+    expect(detachedHookShimCommand("prim-hook", "--agent codex")).not.toMatch(
+      /@latest|\bnpx\b|command -v|node_modules/u,
+    );
   });
 });
 
@@ -86,10 +97,90 @@ describe("pinnedHookCommand", () => {
   });
 });
 
+describe("stableHookCommand", () => {
+  // Frozen from the #242 reader. This is deliberately not imported from
+  // product code: the regression proves old-reader -> new-writer compatibility.
+  const legacyCommandMatchesBin = (command: string, bin: string): boolean => {
+    const c = command.trim();
+    if (c === bin || c.startsWith(`${bin} `)) return true;
+    const exactBin = new RegExp(
+      `(?:^|\\s)${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|;|$)`,
+    );
+    return (
+      c.includes(`command -v ${bin} `) || (c.includes("-p @primitive.ai/prim@") && exactBin.test(c))
+    );
+  };
+
+  it("is byte-stable and contains no machine, version, PATH, or lifecycle-script resolver", () => {
+    const command = stableHookCommand("prim-pre-tool-use", "--agent codex");
+    expect(command).toContain("/bin/sh -c");
+    expect(command).toContain("prim-hook-launcher-v1");
+    expect(command).toContain("prim-pre-tool-use --agent codex");
+    expect(command).not.toContain(process.execPath);
+    expect(command).not.toContain(packageVersion());
+    expect(command).not.toMatch(/\bnpx\b|@latest|command -v|node_modules|ignore-scripts/u);
+    expect(commandMatchesBin(command, "prim-pre-tool-use")).toBe(true);
+  });
+
+  it("remains removable by the frozen #242 reader during a rolling upgrade", () => {
+    for (const bin of [
+      "prim-hook",
+      "prim-pre-tool-use",
+      "prim-post-tool-use",
+      "prim-session-start",
+      "prim-session-end",
+      "prim-statusline",
+    ]) {
+      expect(legacyCommandMatchesBin(stableHookCommand(bin), bin)).toBe(true);
+    }
+  });
+
+  it("rejects shell metacharacters in the closed installer-owned argv", () => {
+    expect(() => stableHookCommand("prim-hook; touch /tmp/nope")).toThrow(
+      "invalid stable hook command",
+    );
+    expect(() => stableHookCommand("prim-hook", "--agent codex; false")).toThrow(
+      "invalid stable hook command",
+    );
+  });
+
+  it("fails closed without a canonical absolute config root", () => {
+    const command = stableHookCommand("prim-hook");
+    expect(spawnSync("/bin/sh", ["-c", command], { env: {} }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "relative" } }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "/home/../other" } }).status).toBe(
+      78,
+    );
+  });
+
+  it("matches the Node resolver for whitespace and noncanonical overrides", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-stable-root-"));
+    try {
+      const home = join(root, "home");
+      const config = join(home, ".config", "prim");
+      const launcher = join(config, "prim-hook-launcher-v1");
+      mkdirSync(config, { recursive: true });
+      writeFileSync(launcher, "#!/bin/sh\nprintf fallback\n", { mode: 0o700 });
+      const result = spawnSync("/bin/sh", ["-c", stableHookCommand("prim-hook")], {
+        env: {
+          HOME: home,
+          PRIM_CONFIG_DIR: ` ${join(root, "explicit")} `,
+          XDG_CONFIG_HOME: `${join(root, "xdg")}/../other`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("fallback");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("detachedHookShimCommand", () => {
   it("embeds the pinned launcher inside the detached template", () => {
     const cmd = detachedHookShimCommand("prim-hook");
-    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook")}; }`);
+    expect(cmd).toContain(`| { ${stableHookCommand("prim-hook")}; }`);
     expect(cmd).not.toContain("@latest");
   });
 
@@ -118,25 +209,14 @@ describe("detachedHookShimCommand", () => {
     expect(cmd).not.toContain("\n");
   });
 
-  it("bounds the npx branch with a self-coherent npm fetch tuple", () => {
-    // Without these, a hung registry holds the invisible detached job open
-    // for ~15 minutes on npm's defaults. They must sit INSIDE the
-    // backgrounded group (they only concern the detached chain) and before
-    // the payload pipe so the exports reach the npx branch's environment.
-    // mintimeout must be pinned alongside maxtimeout: env overrides npmrc
-    // per-key, so a host npmrc with fetch-retry-mintimeout > 10s would
-    // otherwise yield min > max and npm throws before any network attempt.
+  it("never performs a package-manager or PATH lookup in the detached branch", () => {
     const cmd = detachedHookShimCommand("prim-hook");
-    expect(cmd).toContain(
-      "trap '' HUP; export npm_config_fetch_retries=2 " +
-        "npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 " +
-        "npm_config_fetch_timeout=60000; printf",
-    );
+    expect(cmd).not.toMatch(/\bnpx\b|npm_config_|command -v|node_modules/u);
   });
 
   it("threads args through the embedded shim", () => {
     const cmd = detachedHookShimCommand("prim-hook", "--agent codex");
-    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook", "--agent codex")}; }`);
+    expect(cmd).toContain(`| { ${stableHookCommand("prim-hook", "--agent codex")}; }`);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -145,22 +225,22 @@ describe("detachedHookShimCommand", () => {
       const dir = mkdtempSync(join(tmpdir(), "prim-detach-"));
       const outFile = join(dir, "out.json");
       try {
-        // Stub the exact-version npx fallback: sleep, then persist stdin.
+        // Stub the stable launcher: sleep, then persist stdin.
         // Write-then-rename so the exists-poll below never observes the file
         // in its exists-but-empty window between open() and cat's write.
         writeFileSync(
-          join(dir, "npx"),
-          `#!/bin/sh\nsleep 1\ncat > "$STUB_OUT.tmp" && mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
+          join(dir, "prim-hook-launcher-v1"),
+          `#!/bin/sh\n/bin/sleep 1\n/bin/cat > "$STUB_OUT.tmp" && /bin/mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
         );
-        chmodSync(join(dir, "npx"), 0o755);
+        chmodSync(join(dir, "prim-hook-launcher-v1"), 0o755);
         const payload = '{"hook_event_name":"SessionEnd","session_id":"s-1","cwd":"/tmp"}';
         const started = performance.now();
         // spawnSync blocks on pipe EOF as well as exit, so the elapsed budget
         // alone regression-guards the redirect placement: without the
         // outermost /dev/null redirects it blocks for the stub's full sleep.
-        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-nonesuch")], {
+        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-hook")], {
           input: payload,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, STUB_OUT: outFile },
+          env: { ...process.env, PRIM_CONFIG_DIR: dir, STUB_OUT: outFile },
           timeout: 5000,
         });
         const elapsed = performance.now() - started;
@@ -189,7 +269,7 @@ describe("canonical command strings (golden)", () => {
   // changing the bytes a deliberate act.
   it("pins the detached wrapper byte-for-byte", () => {
     expect(detachedHookShimCommand("prim-hook")).toBe(
-      `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand("prim-hook")}; }; } </dev/null >/dev/null 2>&1 &`,
+      `payload=$(cat); { trap '' HUP; printf '%s' "$payload" | { ${stableHookCommand("prim-hook")}; }; } </dev/null >/dev/null 2>&1 &`,
     );
   });
 });
@@ -210,6 +290,13 @@ describe("commandMatchesBin", () => {
   it("matches the current exact-version pinned form", () => {
     expect(commandMatchesBin(pinnedHookCommand("prim-hook"), "prim-hook")).toBe(true);
     expect(commandMatchesBin(pinnedHookCommand("prim-hook", "--agent codex"), "prim-hook")).toBe(
+      true,
+    );
+  });
+
+  it("matches the stable launcher form", () => {
+    expect(commandMatchesBin(stableHookCommand("prim-hook"), "prim-hook")).toBe(true);
+    expect(commandMatchesBin(stableHookCommand("prim-hook", "--agent codex"), "prim-hook")).toBe(
       true,
     );
   });

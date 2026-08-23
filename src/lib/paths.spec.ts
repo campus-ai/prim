@@ -27,7 +27,6 @@ describe("resolvePrimConfigDirectory", () => {
       }),
     ).toEqual({ path: join("/home/tester", ".config", "prim"), source: "default" });
   });
-
   it.each([
     ["PRIM_CONFIG_DIR", "/private/prim\u001b[2J"],
     ["PRIM_CONFIG_DIR", "/private/prim\u202e"],
@@ -40,5 +39,17 @@ describe("resolvePrimConfigDirectory", () => {
         homeDir: "/home/tester",
       }),
     ).toThrow(`${variable} contains unsafe characters`);
+  });
+
+  it("rejects noncanonical roots and fails closed without an absolute home", () => {
+    expect(
+      resolvePrimConfigDirectory({
+        env: { PRIM_CONFIG_DIR: " /private/prim ", XDG_CONFIG_HOME: "/xdg/../other" },
+        homeDir: "/home/tester",
+      }),
+    ).toEqual({ path: join("/home/tester", ".config", "prim"), source: "default" });
+    expect(() => resolvePrimConfigDirectory({ env: {}, homeDir: "relative-home" })).toThrow(
+      "HOME is not an absolute path",
+    );
   });
 });

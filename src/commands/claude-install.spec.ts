@@ -2,7 +2,7 @@
  * `prim claude install|uninstall` coverage — pure merge helpers.
  *
  * Exercises applyInstall / applyUninstall / isGateInstalled. Commands are now
- * written as absolute, PATH-independent invocations, so assertions match on bin
+ * written as stable, PATH-independent invocations, so assertions match on bin
  * IDENTITY (commandMatchesBin) rather than literal strings — which also pins
  * the migration behavior: a legacy bare-name install is recognized, upgraded in
  * place on re-install, and stripped on uninstall. The fs-touching perform*
@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, detachedHookShimCommand, pinnedHookCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
   PRIM_AUTOMODE_TRUST,
@@ -147,7 +147,7 @@ describe("applyInstall", () => {
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-pre-tool-use")),
     );
     expect(gateEntry?.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit|Bash");
-    expect(gateEntry?.hooks?.[0].command).toBe(pinnedHookCommand("prim-pre-tool-use"));
+    expect(gateEntry?.hooks?.[0].command).toBe(stableHookCommand("prim-pre-tool-use"));
     expect(gateEntry?.hooks?.[0].command).not.toBe("prim-pre-tool-use");
   });
 
@@ -178,7 +178,7 @@ describe("applyInstall", () => {
     );
     // Upgraded, not duplicated: exactly one gate entry, now the shim form.
     expect(gateEntries).toHaveLength(1);
-    expect(gateEntries[0].hooks?.[0].command).toBe(pinnedHookCommand("prim-pre-tool-use"));
+    expect(gateEntries[0].hooks?.[0].command).toBe(stableHookCommand("prim-pre-tool-use"));
     expect(hasBin(out, "PreToolUse", "prim-hook")).toBe(true);
   });
 
@@ -485,15 +485,19 @@ describe("post-tool-use, session hooks, statusline install", () => {
     const entry = out.hooks?.SessionStart?.find((e) =>
       e.hooks?.some((h) => commandMatchesBin(h.command, "prim-session-start")),
     );
-    expect(entry?.hooks?.[0].command).toBe(pinnedHookCommand("prim-session-start"));
+    expect(entry?.hooks?.[0].command).toBe(stableHookCommand("prim-session-start"));
   });
 
   it("installs the prim statusLine (shim) with a refresh interval when the slot is empty", () => {
     const out = applyInstall(EMPTY);
     expect(out.statusLine?.type).toBe("command");
     expect(out.statusLine?.refreshInterval).toBe(5);
-    expect(out.statusLine?.command).toBe(pinnedHookCommand("prim", "statusline"));
+    expect(out.statusLine?.command).toBe(stableHookCommand("prim-statusline"));
+    expect(out.statusLine?.command).toContain("prim-hook-launcher-v1");
+    expect(out.statusLine?.command).not.toMatch(/@latest|\bnpx\b|command -v/u);
+    // Frozen #242 ownership check: package marker + `statusline`.
     expect(out.statusLine?.command).toContain("@primitive.ai/prim");
+    expect(out.statusLine?.command).toContain("statusline");
   });
 
   it("can install and recognize the durable staged statusLine command", () => {
@@ -521,7 +525,7 @@ describe("post-tool-use, session hooks, statusline install", () => {
     };
     const out = applyInstall(old);
     expect(out.statusLine?.refreshInterval).toBe(5);
-    expect(out.statusLine?.command).toBe(pinnedHookCommand("prim", "statusline"));
+    expect(out.statusLine?.command).toBe(stableHookCommand("prim-statusline"));
   });
 
   it("never clobbers a user-defined statusLine", () => {
@@ -599,7 +603,7 @@ describe("SessionEnd detached registrations", () => {
     const out = applyInstall(EMPTY);
     for (const event of CAPTURE_EVENTS.filter((e) => e !== "SessionEnd")) {
       const commands = commandsFor(out, event).filter((c) => commandMatchesBin(c, "prim-hook"));
-      expect(commands).toEqual([pinnedHookCommand("prim-hook")]);
+      expect(commands).toEqual([stableHookCommand("prim-hook")]);
       expect(commands[0]).not.toMatch(/^payload=/);
     }
   });
@@ -634,7 +638,7 @@ describe("SessionEnd detached registrations", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0].hooks?.[0].command).toBe(detachedHookShimCommand(bin));
     }
-    expect(commandsFor(out, "Stop")).toEqual([pinnedHookCommand("prim-hook")]);
+    expect(commandsFor(out, "Stop")).toEqual([stableHookCommand("prim-hook")]);
   });
 
   it("heals a mixed canonical+stale SessionEnd state on a plain re-install", () => {
