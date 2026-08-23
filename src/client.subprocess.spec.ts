@@ -37,6 +37,7 @@ function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Prom
     ...process.env,
     HOME: home,
     USERPROFILE: home,
+    PRIM_CONFIG_DIR: join(home, ".config", "prim"),
     PRIM_API_URL: apiUrl,
   };
   env.PRIM_TOKEN = undefined;
@@ -132,6 +133,7 @@ function runDaemonProcess(moduleUrl: string, home: string, apiUrl: string): Runn
     ...process.env,
     HOME: home,
     USERPROFILE: home,
+    PRIM_CONFIG_DIR: join(home, ".config", "prim"),
     PRIM_API_URL: apiUrl,
     PRIM_RUNTIME_VERSION: "test",
   };
@@ -304,7 +306,7 @@ describe("cross-process browser credential rotation", () => {
         Date.now(),
       );
     } finally {
-      await close(server);
+      if (server.listening) await close(server);
       rmSync(home, { recursive: true, force: true });
     }
   }, 20_000);
@@ -453,7 +455,7 @@ describe("daemon terminal-auth lifecycle", () => {
         daemon.kill();
         await daemon.exited;
       }
-      await close(server);
+      if (server.listening) await close(server);
       rmSync(home, { recursive: true, force: true });
     }
   }, 20_000);
@@ -665,7 +667,7 @@ describe("daemon raw statusline socket", () => {
         daemon.kill();
         await daemon.exited;
       }
-      await close(server);
+      if (server.listening) await close(server);
       rmSync(home, { recursive: true, force: true });
     }
   }, 25_000);

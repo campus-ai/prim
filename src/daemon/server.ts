@@ -2,7 +2,7 @@
 /**
  * `prim-daemon-server` — long-lived per-user companion for the prim hooks.
  *
- * Opens a Unix socket at ~/.config/prim/sock that decision reads plus the
+ * Opens a Unix socket under Primitive's resolved config directory that decision reads plus the
  * SessionStart / SessionEnd hooks proxy through; amortizes the token-refresh
  * check; and heartbeats `agentPresence` every 30s, caching the online count
  * and the teammate-name roster the ack returns so a statusline can render
@@ -19,13 +19,12 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { type Server, type Socket, createServer } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   getClient,
   getSiteUrl,
-  getSiteUrlForCwd,
+  getSiteUrlForEnvironment,
   getTokenExpiresAt,
   isSessionEnded,
   refreshToken,
@@ -34,6 +33,7 @@ import {
 import { FlushError, flush } from "../flusher.js";
 import { pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
+import { primConfigDirectory } from "../lib/paths.js";
 import type { Teammate } from "../lib/presence.js";
 import {
   type StatusSnapshot,
@@ -68,7 +68,7 @@ import {
   parseStatuslineRequest,
 } from "./statusline-protocol.js";
 
-const CONFIG_DIR = join(homedir(), ".config", "prim");
+const CONFIG_DIR = primConfigDirectory();
 const SOCK_PATH = join(CONFIG_DIR, "sock");
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -704,10 +704,7 @@ function handleConnection(conn: Socket): void {
       return;
     }
     try {
-      const callerEnv = getSiteUrlForCwd(
-        parsed.request.cwd,
-        parsed.request.primApiUrl || undefined,
-      );
+      const callerEnv = getSiteUrlForEnvironment(parsed.request.primApiUrl || undefined);
       const snapshot = handleStatusSnapshot({ callerEnv });
       const line = formatStatusline(runtimeVersion, snapshot, () =>
         statuslineIngestionCache.get(parsed.request.cwd),
