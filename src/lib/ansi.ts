@@ -11,6 +11,10 @@
  * all degrade gracefully to plain text.
  */
 
+import { terminalSafeLine } from "./terminal-safe.js";
+
+export { stripControlChars } from "./terminal-safe.js";
+
 export type AnsiColor =
   | "yellow"
   | "magenta"
@@ -102,30 +106,6 @@ export function colorForArea(area: string | undefined): AnsiColor {
   return AREA_COLORS[area] ?? "gray";
 }
 
-/**
- * Strip C0/C1 control bytes (incl. ESC, BEL, CR, BS, DEL) from untrusted text
- * before it reaches the terminal. Dropping the control bytes that *introduce*
- * escape sequences neutralizes CSI, OSC, and raw C0 vectors without parsing
- * their grammar — nothing can smuggle a sequence past a strip of its introducer.
- * Newlines and tabs go too, which is what a single-line verdict wants (no forged
- * second line).
- *
- * This is the untrusted-input safety boundary; `stripAnsi` is not (it removes
- * only SGR color codes, for width/test purposes). Not a full Unicode sanitizer:
- * bidi/RTL-override and zero-width chars are out of scope.
- */
-export function stripControlChars(text: string): string {
-  let out = "";
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0;
-    // Keep everything except C0 (0x00-0x1f), DEL (0x7f), and C1 (0x80-0x9f).
-    if (code > 0x1f && !(code >= 0x7f && code <= 0x9f)) {
-      out += ch;
-    }
-  }
-  return out;
-}
-
 const MAX_HEALTH_ERROR_LENGTH = 240;
 
 /**
@@ -135,7 +115,7 @@ const MAX_HEALTH_ERROR_LENGTH = 240;
  */
 export function boundedHealthError(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  const clean = stripControlChars(value).replace(/\s+/g, " ").trim();
+  const clean = terminalSafeLine(value);
   if (!clean) return undefined;
   return clean.length <= MAX_HEALTH_ERROR_LENGTH
     ? clean

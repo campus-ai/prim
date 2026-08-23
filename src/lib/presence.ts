@@ -1,4 +1,4 @@
-import { stripControlChars } from "./ansi.js";
+import { stripControlChars } from "./terminal-safe.js";
 
 /** An online teammate, optionally annotated with the area of their most
  *  recent decision and its canonical web URL (both server-derived). */

@@ -1,4 +1,5 @@
 import { type CliClient, getClient } from "../client.js";
+import { isTerminalSafeText, terminalSafeLine, terminalSafeText } from "../lib/terminal-safe.js";
 
 export const FEEDBACK_PROTOCOL_VERSION = 1;
 export const FEEDBACK_DEADLINE_MS = 3_000;
@@ -45,47 +46,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isUnsafeControl(point: number): boolean {
-  const c0OrC1 = point <= 0x1f || (point >= 0x7f && point <= 0x9f);
-  const bidiControl =
-    point === 0x061c ||
-    point === 0x200e ||
-    point === 0x200f ||
-    (point >= 0x202a && point <= 0x202e) ||
-    (point >= 0x2066 && point <= 0x2069);
-  return c0OrC1 || bidiControl;
-}
-
-function replaceIsolatedSurrogates(value: string): string {
-  let out = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        out += value[index] + value[index + 1];
-        index += 1;
-      } else {
-        out += "\ufffd";
-      }
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      out += "\ufffd";
-    } else {
-      out += value[index];
-    }
-  }
-  return out;
-}
-
 /** Normalize untrusted display text without changing ordinary Unicode prose. */
 export function normalizeFeedbackIntent(value: string): string {
-  const safeUnicode = replaceIsolatedSurrogates(value);
-  const whitespace = safeUnicode.replace(/\s+/gu, " ");
-  const withoutControls = Array.from(whitespace)
-    .filter((character) => !isUnsafeControl(character.codePointAt(0) ?? 0))
-    .join("")
-    .replace(/\s+/gu, " ")
-    .trim();
+  const withoutControls = terminalSafeLine(value);
   const points = Array.from(withoutControls);
   if (points.length <= MAX_FEEDBACK_INTENT_CODE_POINTS) {
     return withoutControls;
@@ -100,8 +63,7 @@ function parseFeedbackWebUrl(value: unknown): string | undefined {
     value.length > MAX_FEEDBACK_WEB_URL_CHARS ||
     !/^https:\/\//iu.test(value) ||
     /\s/u.test(value) ||
-    replaceIsolatedSurrogates(value) !== value ||
-    Array.from(value).some((character) => isUnsafeControl(character.codePointAt(0) ?? 0))
+    !isTerminalSafeText(value)
   ) {
     return undefined;
   }
@@ -127,7 +89,7 @@ function parseEvent(value: unknown): FeedbackEvent | undefined {
     typeof value.eventId !== "string" ||
     value.eventId.length === 0 ||
     value.eventId.length > MAX_EVENT_ID_CHARS ||
-    Array.from(value.eventId).some((character) => isUnsafeControl(character.codePointAt(0) ?? 0))
+    terminalSafeText(value.eventId) !== value.eventId
   ) {
     return undefined;
   }
