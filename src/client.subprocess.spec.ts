@@ -378,6 +378,19 @@ describe("daemon terminal-auth lifecycle", () => {
         );
         return;
       }
+      if (request.method === "GET" && request.url === "/api/cli/auth/status") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            authenticated: true,
+            organizationBindingVersion: 1,
+            captureAuthorityKind: "workos",
+            organizationId: "org_local",
+            workosOrganizationId: "org_workos",
+          }),
+        );
+        return;
+      }
       if (
         request.method === "GET" &&
         request.url === "/api/cli/decisions/recent?limit=100&since=24h"
@@ -407,7 +420,7 @@ describe("daemon terminal-auth lifecycle", () => {
 
     try {
       const port = await listen(server);
-      const pendingDir = join(config, "moves", `127.0.0.1_${String(port)}`, "_unbound");
+      const pendingDir = join(config, "moves", `127.0.0.1_${String(port)}`, "org_local");
       const pendingPath = join(
         pendingDir,
         `journal.ndjson.flushing.${String(Date.now())}.99999999`,

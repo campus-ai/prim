@@ -36,12 +36,24 @@ export function registerMovesCommands(program: Command): void {
     .command("flush")
     .description("Drain all local move journals to the server")
     .action(async () => {
-      const { flushed, skipped } = await flush();
+      const { flushed, retained = [], skipped } = await flush();
       if (skipped) {
         console.log("[prim] another flush is already draining; moves left journaled");
         return;
       }
       console.log(`[prim] flushed ${String(flushed)} move${flushed === 1 ? "" : "s"}`);
+      const retainedReasons = new Map<string, number>();
+      for (const item of retained) {
+        retainedReasons.set(item.reason, (retainedReasons.get(item.reason) ?? 0) + 1);
+      }
+      for (const [reason, count] of [...retainedReasons].sort(([left], [right]) =>
+        left.localeCompare(right),
+      )) {
+        console.log(`[prim] retained ${String(count)} organization bucket(s): ${reason}`);
+      }
+      if (retained.length > 0 && !process.exitCode) {
+        process.exitCode = 1;
+      }
     });
 
   moves

@@ -14,6 +14,7 @@ import {
   classifyAuthCredential,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyJournalOrganization,
   classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
@@ -49,6 +50,30 @@ describe("classifyDoctor", () => {
   it("carries the checks through verbatim for machine consumers", () => {
     const checks = [ok("auth"), warn("stranded")];
     expect(classifyDoctor(checks).json.checks).toEqual(checks);
+  });
+});
+
+describe("journal organization diagnostics", () => {
+  it("reports exact credential matching and finite retained reasons", () => {
+    expect(classifyJournalOrganization(0, [])).toMatchObject({
+      name: "journal-org",
+      status: "ok",
+    });
+    expect(classifyJournalOrganization(2, [])).toEqual({
+      name: "journal-org",
+      status: "ok",
+      detail: "all pending buckets match the active credential",
+    });
+    expect(
+      classifyJournalOrganization(3, [
+        { bucket: "_unbound", reason: "unbound" },
+        { bucket: "org_other", reason: "organization_mismatch" },
+      ]),
+    ).toEqual({
+      name: "journal-org",
+      status: "fail",
+      detail: "2 bucket(s) retained (organization_mismatch:1, unbound:1)",
+    });
   });
 });
 

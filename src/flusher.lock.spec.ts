@@ -58,6 +58,17 @@ describe("flush lock", () => {
       "fetch",
       vi.fn((url: string | URL | Request) => {
         posts.push(String(url));
+        if (String(url).endsWith("/api/cli/auth/status")) {
+          return Promise.resolve(
+            jsonResponse({
+              authenticated: true,
+              organizationBindingVersion: 1,
+              captureAuthorityKind: "workos",
+              organizationId: "org1",
+              workosOrganizationId: "org_workos",
+            }),
+          );
+        }
         return Promise.resolve(
           jsonResponse({ accepted: 1, acknowledged: 1, disposition: "persisted" }),
         );
