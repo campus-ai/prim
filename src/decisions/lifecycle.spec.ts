@@ -4,6 +4,7 @@ import {
   DECISION_LIFECYCLE_EXIT,
   type DecisionLifecycleCommandDependencies,
   publishDecision,
+  restoreDecision,
   supersedeDecision,
 } from "./lifecycle.js";
 
@@ -80,6 +81,45 @@ describe("Decision lifecycle success contract", () => {
     expect(stderr).toEqual(["[prim] decision-1 is already provisional; nothing to change."]);
   });
 
+  it("restores with the generated request and projects only generated success fields", async () => {
+    const { dependencies, post, signal, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "draft",
+      internalReceipt: "must-not-print",
+    });
+
+    const exitCode = await restoreDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/restore",
+      { id: "decision-1" },
+      { signal },
+    );
+    expect(machineOutput(stdout)).toEqual({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "draft",
+    });
+    expect(stdout.join("\n")).not.toContain("must-not-print");
+    expect(stderr).toEqual(["[prim] dec_0123abcd restored as a private draft."]);
+  });
+
+  it("treats an already-restored draft as a successful no-op", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({ outcome: "no_op", stage: "draft" });
+
+    const exitCode = await restoreDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "draft" });
+    expect(stderr).toEqual(["[prim] decision-1 is already draft; nothing to change."]);
+  });
+
   it("supersedes with the generated request and makes the direction explicit", async () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
@@ -132,6 +172,27 @@ describe("Decision lifecycle success contract", () => {
     expect(machineOutput(stdout)).toEqual({
       ok: false,
       operation: "publish",
+      code: "invalid_response",
+    });
+    expect(stderr[0]).toContain("invalid lifecycle response");
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("must-not-print");
+  });
+
+  it("rejects a generated restore response whose stage contradicts its endpoint", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      stage: "provisional",
+      sensitive: "must-not-print",
+    });
+
+    const exitCode = await restoreDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "restore",
       code: "invalid_response",
     });
     expect(stderr[0]).toContain("invalid lifecycle response");
@@ -194,7 +255,14 @@ describe("Decision lifecycle error contract and exits", () => {
     {
       name: "illegal stage transition",
       status: 409,
-      message: "Cannot move a adopted decision to provisional",
+      message: "Cannot move an adopted decision to provisional",
+      code: "illegal_transition",
+      exitCode: DECISION_LIFECYCLE_EXIT.rejected,
+    },
+    {
+      name: "illegal stage transition with a consonant article",
+      status: 409,
+      message: "Cannot move a provisional decision to draft",
       code: "illegal_transition",
       exitCode: DECISION_LIFECYCLE_EXIT.rejected,
     },
@@ -235,6 +303,45 @@ describe("Decision lifecycle error contract and exits", () => {
       status: testCase.status,
     });
     expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
+  });
+
+  it("codes a restore transition rejection without reflecting server fields", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockRejectedValueOnce(
+      httpError(409, "Cannot move an adopted decision to draft", {
+        token: "sensitive-error-value",
+      }),
+    );
+
+    const exitCode = await restoreDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "restore",
+      code: "illegal_transition",
+      status: 409,
+    });
+    expect(stderr).toEqual([
+      "[prim] restore rejected: the Decision's current lifecycle stage cannot be restored.",
+    ]);
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
+  });
+
+  it("codes an old server without accepting an uncontracted restore result", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockRejectedValueOnce(httpError(404, "Not found"));
+
+    const exitCode = await restoreDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "restore",
+      code: "unsupported_server",
+      status: 404,
+    });
+    expect(stderr[0]).toContain("restore unavailable");
   });
 
   it.each([
@@ -339,5 +446,19 @@ describe("Decision lifecycle error contract and exits", () => {
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
     expect(post).not.toHaveBeenCalled();
     expect(machineOutput(stdout).code).toBe("invalid_request");
+  });
+
+  it("fails locally when restore is called without a generated-contract identifier", async () => {
+    const { dependencies, post, stdout } = harness();
+
+    const exitCode = await restoreDecision(undefined as unknown as string, dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
+    expect(post).not.toHaveBeenCalled();
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "restore",
+      code: "invalid_request",
+    });
   });
 });

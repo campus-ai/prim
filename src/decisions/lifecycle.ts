@@ -26,7 +26,7 @@ import {
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
-export type DecisionLifecycleOperation = "publish" | "supersede";
+export type DecisionLifecycleOperation = "publish" | "restore" | "supersede";
 
 export const DECISION_LIFECYCLE_TIMEOUT_MS = 10_000;
 
@@ -78,12 +78,20 @@ const defaultDependencies: DecisionLifecycleCommandDependencies = {
 
 const EXPECTED_STAGE = {
   publish: "provisional",
+  restore: "draft",
   supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, DecisionStageSuccessResponse["stage"]>;
 
 const PATH = {
   publish: "/api/cli/decisions/publish",
+  restore: "/api/cli/decisions/restore",
   supersede: "/api/cli/decisions/supersede",
+} as const satisfies Record<DecisionLifecycleOperation, string>;
+
+const PAST_PARTICIPLE = {
+  publish: "published",
+  restore: "restored",
+  supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, string>;
 
 const ORG_UNBOUND_MESSAGE = "CLI token is not bound to an organization";
@@ -100,7 +108,7 @@ const IMMUTABLE_MESSAGE = new RegExp(
   "u",
 );
 const ILLEGAL_TRANSITION_MESSAGE = new RegExp(
-  `^Cannot move a ${STAGE_NAME} decision to ${STAGE_NAME}$`,
+  `^Cannot move (?:a|an) ${STAGE_NAME} decision to ${STAGE_NAME}$`,
   "u",
 );
 
@@ -143,6 +151,9 @@ function formatSuccessHuman(
     renderIdentifier({ id: response.decisionId, shortId: response.shortId }) || "the Decision";
   if (operation === "publish") {
     return `[prim] ${identifier} published as ${response.stage}.`;
+  }
+  if (operation === "restore") {
+    return `[prim] ${identifier} restored as a private draft.`;
   }
 
   const replacement = safeRequestedIdentifier(
@@ -213,7 +224,7 @@ function classifyError(error: unknown): DecisionLifecycleFailure {
 }
 
 function operationVerb(operation: DecisionLifecycleOperation): string {
-  return operation === "publish" ? "publish" : "supersede";
+  return operation;
 }
 
 function formatFailureHuman(
@@ -233,7 +244,7 @@ function formatFailureHuman(
     case "immutable":
       return `[prim] ${verb} rejected: this Decision is immutable; supersede it to change it.`;
     case "illegal_transition":
-      return `[prim] ${verb} rejected: the Decision's current lifecycle stage cannot be ${operation === "publish" ? "published" : "superseded"}.`;
+      return `[prim] ${verb} rejected: the Decision's current lifecycle stage cannot be ${PAST_PARTICIPLE[operation]}.`;
     case "invalid_replacement":
       return "[prim] supersede rejected: a Decision cannot supersede itself.";
     case "decision_not_found":
@@ -241,7 +252,7 @@ function formatFailureHuman(
     case "replacement_not_found":
       return "[prim] supersede rejected: replacement Decision not found.";
     case "unsupported_server":
-      return `[prim] ${verb} unavailable: this Primitive server does not support Decision lifecycle protocol v2; upgrade the server before retrying.`;
+      return `[prim] ${verb} unavailable: this Primitive server does not support this Decision lifecycle operation; upgrade the server before retrying.`;
     case "rejected":
       return `[prim] ${verb} rejected by the server.`;
     case "invalid_request":
@@ -284,7 +295,7 @@ async function executeLifecycle(
   dependencies: DecisionLifecycleCommandDependencies,
 ): Promise<number> {
   const requestIsValid =
-    operation === "publish" ? isDecisionIdRequest(request) : isDecisionSupersedeRequest(request);
+    operation === "supersede" ? isDecisionSupersedeRequest(request) : isDecisionIdRequest(request);
   if (!requestIsValid) {
     return writeFailure(
       operation,
@@ -318,6 +329,14 @@ export function publishDecision(
 ): Promise<number> {
   const request: DecisionIdRequest = { id };
   return executeLifecycle("publish", request, dependencies);
+}
+
+export function restoreDecision(
+  id: string,
+  dependencies: DecisionLifecycleCommandDependencies = defaultDependencies,
+): Promise<number> {
+  const request: DecisionIdRequest = { id };
+  return executeLifecycle("restore", request, dependencies);
 }
 
 export function supersedeDecision(

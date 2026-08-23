@@ -7031,8 +7031,9 @@ validate44.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isPresenceHeartbeatRequest = validate45;
 const schema80 = {"$id":"urn:primitive:cli-http-v1:PresenceHeartbeatRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest"};
-const schema81 = {"type":"object","properties":{"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,128}$"},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991}},"required":["sessionId"],"additionalProperties":{}};
+const schema81 = {"type":"object","properties":{"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,128}$"},"clientInstanceId":{"type":"string","pattern":"^pci_[A-Za-z0-9_-]{43}$"},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991}},"required":["sessionId"],"additionalProperties":{}};
 const pattern10 = new RegExp("^[A-Za-z0-9._-]{1,128}$", "u");
+const pattern11 = new RegExp("^pci_[A-Za-z0-9_-]{43}$", "u");
 
 function validate45(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PresenceHeartbeatRequest" */;
@@ -7075,31 +7076,53 @@ else {
 var valid1 = true;
 }
 if(valid1){
-if(data.decisionLifecycleProtocolVersion !== undefined){
-let data1 = data.decisionLifecycleProtocolVersion;
+if(data.clientInstanceId !== undefined){
+let data1 = data.clientInstanceId;
 const _errs5 = errors;
-if(!(((typeof data1 == "number") && (!(data1 % 1) && !isNaN(data1))) && (isFinite(data1)))){
-validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+if(errors === _errs5){
+if(typeof data1 === "string"){
+if(!pattern11.test(data1)){
+validate45.errors = [{instancePath:instancePath+"/clientInstanceId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/clientInstanceId/pattern",keyword:"pattern",params:{pattern: "^pci_[A-Za-z0-9_-]{43}$"},message:"must match pattern \""+"^pci_[A-Za-z0-9_-]{43}$"+"\""}];
 return false;
 }
-if(errors === _errs5){
-if((typeof data1 == "number") && (isFinite(data1))){
-if(data1 > 9007199254740991 || isNaN(data1)){
-validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
-return false;
 }
 else {
-if(data1 < 1 || isNaN(data1)){
-validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
+validate45.errors = [{instancePath:instancePath+"/clientInstanceId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/clientInstanceId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
-}
-}
 }
 }
 var valid1 = _errs5 === errors;
 }
 else {
 var valid1 = true;
+}
+if(valid1){
+if(data.decisionLifecycleProtocolVersion !== undefined){
+let data2 = data.decisionLifecycleProtocolVersion;
+const _errs7 = errors;
+if(!(((typeof data2 == "number") && (!(data2 % 1) && !isNaN(data2))) && (isFinite(data2)))){
+validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+return false;
+}
+if(errors === _errs7){
+if((typeof data2 == "number") && (isFinite(data2))){
+if(data2 > 9007199254740991 || isNaN(data2)){
+validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+return false;
+}
+else {
+if(data2 < 1 || isNaN(data2)){
+validate45.errors = [{instancePath:instancePath+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
+return false;
+}
+}
+}
+}
+var valid1 = _errs7 === errors;
+}
+else {
+var valid1 = true;
+}
 }
 }
 }
@@ -7554,7 +7577,7 @@ validate46.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isRepositoryBindRequest = validate47;
 const schema84 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest"};
 const schema85 = {"type":"object","properties":{"repositoryFullName":{"type":"string","pattern":"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"}},"required":["repositoryFullName"],"additionalProperties":false};
-const pattern11 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
+const pattern12 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
 
 function validate47(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindRequest" */;
@@ -7590,7 +7613,7 @@ let data0 = data.repositoryFullName;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern11.test(data0)){
+if(!pattern12.test(data0)){
 validate47.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/pattern",keyword:"pattern",params:{pattern: "^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"},message:"must match pattern \""+"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"+"\""}];
 return false;
 }
