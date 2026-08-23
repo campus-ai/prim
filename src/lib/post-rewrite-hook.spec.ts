@@ -60,6 +60,7 @@ function initializedRepository(): HookRepo {
   git(root, ["init", "-b", "main"]);
   git(root, ["config", "user.email", "prim@example.com"]);
   git(root, ["config", "user.name", "Prim Test"]);
+  git(root, ["config", "commit.gpgsign", "false"]);
   git(root, ["config", "prim.active", "true"]);
   git(root, ["config", "core.hooksPath", ".git/hooks"]);
   const binDir = join(root, "node_modules", ".bin");
