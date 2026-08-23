@@ -30,7 +30,8 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { Document, isMap, isSeq, parseDocument, stringify } from "yaml";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { binFile, packageVersion } from "../lib/bin-path.js";
+import { stableHookCommand } from "../lib/bin-path.js";
+import { stageHookRuntime } from "../lib/hook-runtime.js";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
@@ -40,20 +41,7 @@ const SESSION_END_BIN = "prim-session-end";
 const HERMES_ARGS = "--agent hermes";
 const EDIT_MATCHER = "write_file|patch";
 const JSON_INDENT = 2;
-const SHIM_MODE = 0o755;
 const PRIM_BINS = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, SESSION_START_BIN, SESSION_END_BIN];
-const PINNED_VERSION = packageVersion();
-if (!PINNED_VERSION) throw new Error("cannot determine Primitive package version");
-const sh = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
-const PINNED_NODE = sh(process.execPath);
-const PINNED_CASES = PRIM_BINS.map((bin) => {
-  const file = binFile(bin);
-  if (!file) throw new Error(`cannot locate Primitive hook binary: ${bin}`);
-  return `  ${bin})
-    if [ -x ${PINNED_NODE} ] && [ -f ${sh(file)} ]; then exec ${PINNED_NODE} ${sh(file)} "$@"; fi
-    exec npx --yes -p @primitive.ai/prim@${PINNED_VERSION} "$bin" "$@"
-    ;;`;
-}).join("\n");
 
 // HERMES_HOME defaults to ~/.hermes; honor it so a relocated Hermes is found.
 function hermesHome(): string {
@@ -62,28 +50,14 @@ function hermesHome(): string {
 function configPath(): string {
   return join(hermesHome(), "config.yaml");
 }
-function shimPath(): string {
+function legacyShimPath(): string {
   return join(hermesHome(), "agent-hooks", "prim-shim.sh");
 }
 
-// Hermes cannot run an inline shell command, so every registration enters this
-// pinned launcher script and retains stdin/stdout/exit semantics.
-export const SHIM_SCRIPT = `#!/bin/sh
-# prim Hermes hook shim — managed by \`prim hermes install\`. Hermes runs hooks
-# with shell=False, so exact package entrypoints are selected here.
-bin="$1"
-shift
-case "$bin" in
-${PINNED_CASES}
-esac
-exit 64
-`;
-
-// Hermes execs hook commands with shell=False (shlex.split), so the absolute
-// shim path is double-quoted: an unquoted space in HERMES_HOME would split
-// argv and silently disable every hook (capture, gate, ingest, presence).
+// `stableHookCommand` explicitly enters /bin/sh, so Hermes's shell=False
+// execution retains the same config-root resolution as Claude and Codex.
 function commandFor(bin: string): string {
-  return `"${shimPath()}" ${bin} ${HERMES_ARGS}`;
+  return stableHookCommand(bin, HERMES_ARGS);
 }
 
 // A hook command is prim's when it routes `bin` through the prim shim. The
@@ -91,7 +65,7 @@ function commandFor(bin: string): string {
 // prefix; the optional `"` tolerates the quoted-path form, and the five bin
 // names are mutually non-substring.
 function commandUsesBin(command: string, bin: string): boolean {
-  return new RegExp(`prim-shim\\.sh"?\\s+${bin}\\s`).test(command);
+  return new RegExp(`(?:prim-hook-launcher-v1|prim-shim\\.sh)"?[^\n]*\\s${bin}\\s`).test(command);
 }
 
 // The Hermes lifecycle events the capture hook rides — the Hermes-named
@@ -496,12 +470,8 @@ function writeConfig(path: string, before: string, after: string, expectedHooks:
   });
 }
 
-function writeShim(): void {
-  atomicWriteFile(shimPath(), SHIM_SCRIPT, { ensureParent: true, mode: SHIM_MODE });
-}
-
-function removeShim(): void {
-  rmSync(shimPath(), { force: true });
+function removeLegacyShim(): void {
+  rmSync(legacyShimPath(), { force: true });
 }
 
 function autoAcceptOf(raw: string): boolean {
@@ -524,7 +494,12 @@ export type InstallResult = {
   changed: boolean;
 };
 
-export function performInstall(opts: { force: boolean; autoAccept: boolean }): InstallResult {
+export function performInstall(opts: {
+  force: boolean;
+  autoAccept: boolean;
+  stageRuntime?: () => unknown;
+}): InstallResult {
+  (opts.stageRuntime ?? stageHookRuntime)();
   const path = configPath();
   const raw = existsSync(path) ? readFileSync(path, "utf-8") : "";
   const existing = readHooksFromRaw(raw);
@@ -538,12 +513,12 @@ export function performInstall(opts: { force: boolean; autoAccept: boolean }): I
   }
   const changed = next !== raw;
   if (changed) assertMergeValid(raw, next, desired);
-  // The shim is what the hook commands point at; write it whenever installing,
-  // idempotently, so a config-unchanged re-install still heals a missing shim.
-  writeShim();
   if (changed) {
     writeConfig(path, raw, next, desired);
   }
+  // Remove the superseded machine-specific shim only after the config no
+  // longer references it. A crash before this point leaves harmless old bytes.
+  removeLegacyShim();
   return {
     path,
     gate: isGateInstalled(desired),
@@ -556,7 +531,7 @@ export function performInstall(opts: { force: boolean; autoAccept: boolean }): I
 export function performUninstall(): InstallResult {
   const path = configPath();
   if (!existsSync(path)) {
-    removeShim();
+    removeLegacyShim();
     return { path, gate: false, capture: false, autoAccept: false, changed: false };
   }
   const raw = readFileSync(path, "utf-8");
@@ -571,7 +546,7 @@ export function performUninstall(): InstallResult {
   }
   // Every prim hook is gone now, so the shim it routed through is unused. The
   // user's hooks_auto_accept (if any) is left as their trust setting.
-  removeShim();
+  removeLegacyShim();
   return {
     path,
     gate: isGateInstalled(remaining),

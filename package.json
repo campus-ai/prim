@@ -48,7 +48,7 @@
     "SKILL.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/hooks/pre-commit.ts src/hooks/post-commit.ts src/hooks/post-rewrite.ts src/hooks/prim-hook.ts src/hooks/pre-tool-use.ts src/hooks/post-tool-use.ts src/hooks/session-start.ts src/hooks/session-end.ts --format esm --clean && tsup src/statusline-main.ts src/daemon/server.ts --format esm --splitting false",
+    "build": "tsup src/index.ts src/hooks/pre-commit.ts src/hooks/post-commit.ts src/hooks/post-rewrite.ts src/hooks/prim-hook.ts src/hooks/pre-tool-use.ts src/hooks/post-tool-use.ts src/hooks/session-start.ts src/hooks/session-end.ts --format esm --clean && tsup src/statusline-main.ts src/daemon/server.ts --format esm --splitting false && tsup --config tsup.hook-runtime.config.ts",
     "contracts:generate": "node scripts/generate-cli-contract.mjs --write",
     "contracts:check": "node scripts/generate-cli-contract.mjs --check",
     "contracts:update": "node scripts/update-cli-contract.mjs",

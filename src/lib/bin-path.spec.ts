@@ -1,5 +1,5 @@
 /**
- * `bin-path` coverage — bin resolution for spawning + the settings.json shim.
+ * `bin-path` coverage — bin resolution and exact-version runtime commands.
  *
  * Runs against the `src/` layout (no build needed): locateRoot walks up to the
  * repo's own package.json, so binFile returns paths under the real `dist/` tree
@@ -14,7 +14,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,9 +23,11 @@ import {
   binFile,
   commandMatchesBin,
   detachedHookShimCommand,
-  hookShimCommand,
   packageVersion,
   pinnedHookCommand,
+  pinnedNpxArgs,
+  pinnedNpxCommand,
+  stableHookCommand,
 } from "./bin-path.js";
 
 describe("binFile", () => {
@@ -47,53 +48,38 @@ describe("binFile", () => {
   });
 });
 
-describe("hookShimCommand", () => {
-  it("emits a PATH -> node_modules -> npx@latest resolution ladder", () => {
-    const cmd = hookShimCommand("prim-hook");
-    expect(cmd).toContain("command -v prim-hook >/dev/null 2>&1");
-    expect(cmd).toContain('elif [ -f "./node_modules/.bin/prim-hook" ]');
-    expect(cmd).toContain("npx --yes -p @primitive.ai/prim@latest prim-hook");
-    // No stdio/exit suppression — the hook's STDOUT + exit code must pass through.
-    expect(cmd).not.toContain("|| true");
-    expect(cmd).not.toContain("2>/dev/null; ");
-  });
-
-  it("threads args through every branch (codex, statusline)", () => {
-    const codex = hookShimCommand("prim-hook", "--agent codex");
-    expect(codex).toContain("then prim-hook --agent codex;");
-    expect(codex).toContain("./node_modules/.bin/prim-hook --agent codex;");
-    expect(codex).toContain("@primitive.ai/prim@latest prim-hook --agent codex;");
-
-    const status = hookShimCommand("prim", "statusline");
-    expect(status).toContain("command -v prim >/dev/null 2>&1");
-    expect(status).toContain("then prim statusline;");
-  });
-
-  it("prepends a branch-0 cache read that execs the cached bin directly", () => {
-    const cmd = hookShimCommand("prim-hook");
-    // Mirrors binCacheDir() in bin-cache.ts (a drift guard lives there too).
-    expect(cmd).toContain('d="${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";');
-    // Kill switch and the default 24h backstop TTL, both read in-shell.
-    expect(cmd).toContain('[ "${PRIM_BIN_CACHE:-1}" != "0" ]');
-    expect(cmd).toContain('-mmin "-${PRIM_BIN_CACHE_TTL_MIN:-1440}"');
-    // Marks the hit so the warmer skips (no mtime bump → TTL can expire), and
-    // `exec` preserves stdio/exit AND prevents falling through to the ladder.
-    expect(cmd).toContain('export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p";');
-    // Existence guard catches an npx-GC'd cached target → fail open to ladder.
-    expect(cmd).toContain('[ -x "$n" ] && [ -f "$p" ]');
-  });
-
-  it("threads args onto the cached exec (codex, statusline)", () => {
-    expect(hookShimCommand("prim-hook", "--agent codex")).toContain(
-      'exec "$n" "$p" --agent codex;',
+describe("pinned npx runtime", () => {
+  it("centralizes the exact package, lifecycle-script guard, and argv", () => {
+    expect(pinnedNpxArgs("prim", ["daemon", "ensure"], { preferOnline: true })).toEqual([
+      "--yes",
+      "--ignore-scripts",
+      "--prefer-online",
+      "-p",
+      `@primitive.ai/prim@${packageVersion()}`,
+      "prim",
+      "daemon",
+      "ensure",
+    ]);
+    expect(pinnedNpxCommand("prim-post-commit")).toBe(
+      `npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} prim-post-commit`,
     );
-    expect(hookShimCommand("prim", "statusline")).toContain('exec "$n" "$p" statusline;');
+    expect(pinnedNpxCommand("prim-post-commit")).not.toContain("@latest");
   });
 
-  it("omits branch-0 entirely when cacheRead is false", () => {
-    const cmd = hookShimCommand("prim-hook", "", { cacheRead: false });
-    expect(cmd).not.toContain("PRIM_BIN_CACHE");
-    expect(cmd.startsWith("if command -v prim-hook")).toBe(true);
+  it("keeps every generated unattended fallback exact-version and script-free", () => {
+    const commands = [
+      pinnedNpxCommand("prim-post-commit"),
+      pinnedNpxCommand("prim-post-rewrite"),
+      pinnedHookCommand("prim-pre-tool-use", "--agent codex"),
+    ];
+    for (const command of commands) {
+      expect(command).toContain(`@primitive.ai/prim@${packageVersion()}`);
+      expect(command).toContain("--ignore-scripts");
+      expect(command).not.toContain("@latest");
+    }
+    expect(detachedHookShimCommand("prim-hook", "--agent codex")).not.toMatch(
+      /@latest|\bnpx\b|command -v|node_modules/u,
+    );
   });
 });
 
@@ -103,6 +89,7 @@ describe("pinnedHookCommand", () => {
     expect(command).toContain("dist/hooks/pre-tool-use.js");
     expect(command).toContain(`@primitive.ai/prim@${packageVersion()}`);
     expect(command).not.toContain("@latest");
+    expect(command).toContain("--ignore-scripts");
     expect(command).not.toContain("command -v prim-pre-tool-use");
     expect(command).toMatch(/\[ -x '.+node' \] && \[ -f '.+pre-tool-use\.js' \]/);
     expect(command).toContain("--agent codex");
@@ -110,10 +97,90 @@ describe("pinnedHookCommand", () => {
   });
 });
 
+describe("stableHookCommand", () => {
+  // Frozen from the #242 reader. This is deliberately not imported from
+  // product code: the regression proves old-reader -> new-writer compatibility.
+  const legacyCommandMatchesBin = (command: string, bin: string): boolean => {
+    const c = command.trim();
+    if (c === bin || c.startsWith(`${bin} `)) return true;
+    const exactBin = new RegExp(
+      `(?:^|\\s)${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|;|$)`,
+    );
+    return (
+      c.includes(`command -v ${bin} `) || (c.includes("-p @primitive.ai/prim@") && exactBin.test(c))
+    );
+  };
+
+  it("is byte-stable and contains no machine, version, PATH, or lifecycle-script resolver", () => {
+    const command = stableHookCommand("prim-pre-tool-use", "--agent codex");
+    expect(command).toContain("/bin/sh -c");
+    expect(command).toContain("prim-hook-launcher-v1");
+    expect(command).toContain("prim-pre-tool-use --agent codex");
+    expect(command).not.toContain(process.execPath);
+    expect(command).not.toContain(packageVersion());
+    expect(command).not.toMatch(/\bnpx\b|@latest|command -v|node_modules|ignore-scripts/u);
+    expect(commandMatchesBin(command, "prim-pre-tool-use")).toBe(true);
+  });
+
+  it("remains removable by the frozen #242 reader during a rolling upgrade", () => {
+    for (const bin of [
+      "prim-hook",
+      "prim-pre-tool-use",
+      "prim-post-tool-use",
+      "prim-session-start",
+      "prim-session-end",
+      "prim-statusline",
+    ]) {
+      expect(legacyCommandMatchesBin(stableHookCommand(bin), bin)).toBe(true);
+    }
+  });
+
+  it("rejects shell metacharacters in the closed installer-owned argv", () => {
+    expect(() => stableHookCommand("prim-hook; touch /tmp/nope")).toThrow(
+      "invalid stable hook command",
+    );
+    expect(() => stableHookCommand("prim-hook", "--agent codex; false")).toThrow(
+      "invalid stable hook command",
+    );
+  });
+
+  it("fails closed without a canonical absolute config root", () => {
+    const command = stableHookCommand("prim-hook");
+    expect(spawnSync("/bin/sh", ["-c", command], { env: {} }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "relative" } }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "/home/../other" } }).status).toBe(
+      78,
+    );
+  });
+
+  it("matches the Node resolver for whitespace and noncanonical overrides", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-stable-root-"));
+    try {
+      const home = join(root, "home");
+      const config = join(home, ".config", "prim");
+      const launcher = join(config, "prim-hook-launcher-v1");
+      mkdirSync(config, { recursive: true });
+      writeFileSync(launcher, "#!/bin/sh\nprintf fallback\n", { mode: 0o700 });
+      const result = spawnSync("/bin/sh", ["-c", stableHookCommand("prim-hook")], {
+        env: {
+          HOME: home,
+          PRIM_CONFIG_DIR: ` ${join(root, "explicit")} `,
+          XDG_CONFIG_HOME: `${join(root, "xdg")}/../other`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("fallback");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("detachedHookShimCommand", () => {
   it("embeds the pinned launcher inside the detached template", () => {
     const cmd = detachedHookShimCommand("prim-hook");
-    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook")}; }`);
+    expect(cmd).toContain(`| { ${stableHookCommand("prim-hook")}; }`);
     expect(cmd).not.toContain("@latest");
   });
 
@@ -142,25 +209,14 @@ describe("detachedHookShimCommand", () => {
     expect(cmd).not.toContain("\n");
   });
 
-  it("bounds the npx branch with a self-coherent npm fetch tuple", () => {
-    // Without these, a hung registry holds the invisible detached job open
-    // for ~15 minutes on npm's defaults. They must sit INSIDE the
-    // backgrounded group (they only concern the detached chain) and before
-    // the payload pipe so the exports reach the npx branch's environment.
-    // mintimeout must be pinned alongside maxtimeout: env overrides npmrc
-    // per-key, so a host npmrc with fetch-retry-mintimeout > 10s would
-    // otherwise yield min > max and npm throws before any network attempt.
+  it("never performs a package-manager or PATH lookup in the detached branch", () => {
     const cmd = detachedHookShimCommand("prim-hook");
-    expect(cmd).toContain(
-      "trap '' HUP; export npm_config_fetch_retries=2 " +
-        "npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 " +
-        "npm_config_fetch_timeout=60000; printf",
-    );
+    expect(cmd).not.toMatch(/\bnpx\b|npm_config_|command -v|node_modules/u);
   });
 
   it("threads args through the embedded shim", () => {
     const cmd = detachedHookShimCommand("prim-hook", "--agent codex");
-    expect(cmd).toContain(`| { ${pinnedHookCommand("prim-hook", "--agent codex")}; }`);
+    expect(cmd).toContain(`| { ${stableHookCommand("prim-hook", "--agent codex")}; }`);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -169,22 +225,22 @@ describe("detachedHookShimCommand", () => {
       const dir = mkdtempSync(join(tmpdir(), "prim-detach-"));
       const outFile = join(dir, "out.json");
       try {
-        // Stub the exact-version npx fallback: sleep, then persist stdin.
+        // Stub the stable launcher: sleep, then persist stdin.
         // Write-then-rename so the exists-poll below never observes the file
         // in its exists-but-empty window between open() and cat's write.
         writeFileSync(
-          join(dir, "npx"),
-          `#!/bin/sh\nsleep 1\ncat > "$STUB_OUT.tmp" && mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
+          join(dir, "prim-hook-launcher-v1"),
+          `#!/bin/sh\n/bin/sleep 1\n/bin/cat > "$STUB_OUT.tmp" && /bin/mv "$STUB_OUT.tmp" "$STUB_OUT"\n`,
         );
-        chmodSync(join(dir, "npx"), 0o755);
+        chmodSync(join(dir, "prim-hook-launcher-v1"), 0o755);
         const payload = '{"hook_event_name":"SessionEnd","session_id":"s-1","cwd":"/tmp"}';
         const started = performance.now();
         // spawnSync blocks on pipe EOF as well as exit, so the elapsed budget
         // alone regression-guards the redirect placement: without the
         // outermost /dev/null redirects it blocks for the stub's full sleep.
-        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-nonesuch")], {
+        const res = spawnSync("sh", ["-c", detachedHookShimCommand("prim-hook")], {
           input: payload,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, STUB_OUT: outFile },
+          env: { ...process.env, PRIM_CONFIG_DIR: dir, STUB_OUT: outFile },
           timeout: 5000,
         });
         const elapsed = performance.now() - started;
@@ -211,33 +267,9 @@ describe("canonical command strings (golden)", () => {
   // rewrites it back (form ping-pong in a committed project file). The
   // fragment tests above explain WHY each piece exists; these goldens make
   // changing the bytes a deliberate act.
-  const primHookLadder =
-    "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
-    'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
-    "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi";
-
-  it("pins the cache-enabled synchronous shim byte-for-byte", () => {
-    expect(hookShimCommand("prim-hook")).toBe(
-      'd="${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"; if [ "${PRIM_BIN_CACHE:-1}" != "0" ] && ' +
-        '[ -f "$d/prim-hook" ] && [ -f "$d/node" ] && ' +
-        '[ -n "$(find "$d/prim-hook" -mmin "-${PRIM_BIN_CACHE_TTL_MIN:-1440}" 2>/dev/null)" ]; ' +
-        'then n=$(cat "$d/node"); p=$(cat "$d/prim-hook"); ' +
-        'if [ -x "$n" ] && [ -f "$p" ]; then export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p"; fi; fi; ' +
-        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
-        'elif [ -f "./node_modules/.bin/prim-hook" ]; then ./node_modules/.bin/prim-hook; ' +
-        "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi",
-    );
-  });
-
-  it("pins the bare-ladder (cacheRead:false) shim byte-for-byte", () => {
-    // SessionStart and the detached wrapper emit exactly this — unchanged from
-    // the pre-cache form, so those registrations are not a settings.json churn.
-    expect(hookShimCommand("prim-hook", "", { cacheRead: false })).toBe(primHookLadder);
-  });
-
   it("pins the detached wrapper byte-for-byte", () => {
     expect(detachedHookShimCommand("prim-hook")).toBe(
-      `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand("prim-hook")}; }; } </dev/null >/dev/null 2>&1 &`,
+      `payload=$(cat); { trap '' HUP; printf '%s' "$payload" | { ${stableHookCommand("prim-hook")}; }; } </dev/null >/dev/null 2>&1 &`,
     );
   });
 });
@@ -248,9 +280,23 @@ describe("commandMatchesBin", () => {
     expect(commandMatchesBin("prim-hook --agent codex", "prim-hook")).toBe(true);
   });
 
-  it("matches the current shim form", () => {
-    expect(commandMatchesBin(hookShimCommand("prim-hook"), "prim-hook")).toBe(true);
-    expect(commandMatchesBin(hookShimCommand("prim-hook", "--agent codex"), "prim-hook")).toBe(
+  it("matches a legacy ladder already written to settings", () => {
+    const legacy =
+      "if command -v prim-hook >/dev/null 2>&1; then prim-hook; " +
+      "else npx --yes -p @primitive.ai/prim@latest prim-hook; fi";
+    expect(commandMatchesBin(legacy, "prim-hook")).toBe(true);
+  });
+
+  it("matches the current exact-version pinned form", () => {
+    expect(commandMatchesBin(pinnedHookCommand("prim-hook"), "prim-hook")).toBe(true);
+    expect(commandMatchesBin(pinnedHookCommand("prim-hook", "--agent codex"), "prim-hook")).toBe(
+      true,
+    );
+  });
+
+  it("matches the stable launcher form", () => {
+    expect(commandMatchesBin(stableHookCommand("prim-hook"), "prim-hook")).toBe(true);
+    expect(commandMatchesBin(stableHookCommand("prim-hook", "--agent codex"), "prim-hook")).toBe(
       true,
     );
   });
@@ -263,7 +309,7 @@ describe("commandMatchesBin", () => {
   });
 
   it("does not cross-match a sibling bin", () => {
-    expect(commandMatchesBin(hookShimCommand("prim-post-tool-use"), "prim-pre-tool-use")).toBe(
+    expect(commandMatchesBin(pinnedHookCommand("prim-post-tool-use"), "prim-pre-tool-use")).toBe(
       false,
     );
     expect(commandMatchesBin("prim-post-tool-use", "prim-pre-tool-use")).toBe(false);
@@ -280,109 +326,4 @@ describe("commandMatchesBin", () => {
     expect(commandMatchesBin("/usr/local/bin/other", "prim-hook")).toBe(false);
     expect(commandMatchesBin(undefined, "prim-hook")).toBe(false);
   });
-});
-
-describe("branch-0 cache read (behavioral)", () => {
-  // A fake "node" recording how it was invoked — stands in for the cached
-  // runtime the shim execs. $1 is the cached bin entry the shim hands it.
-  function writeFakeNode(dir: string): string {
-    const p = join(dir, "fake-node.sh");
-    writeFileSync(p, '#!/bin/sh\nprintf "cache-hit:%s:%s" "$PRIM_BIN_CACHE_HIT" "$1"\n');
-    chmodSync(p, 0o755);
-    return p;
-  }
-
-  // A fake prim-hook on PATH answers the ladder's `command -v` branch, proving
-  // the shim fell through branch-0 to the resolution ladder.
-  function writeLadderBin(dir: string): string {
-    const binDir = join(dir, "bin");
-    mkdirSync(binDir);
-    const onPath = join(binDir, "prim-hook");
-    writeFileSync(onPath, '#!/bin/sh\nprintf "ladder"\n');
-    chmodSync(onPath, 0o755);
-    return binDir;
-  }
-
-  function seedCache(dir: string): string {
-    const cacheDir = join(dir, "prim", "bin");
-    mkdirSync(cacheDir, { recursive: true });
-    const target = join(dir, "entry.js");
-    writeFileSync(target, "// cached entry\n");
-    writeFileSync(join(cacheDir, "node"), writeFakeNode(dir));
-    writeFileSync(join(cacheDir, "prim-hook"), target);
-    return target;
-  }
-
-  // Scrub the cache-control knobs from the inherited env so an ambient export
-  // (e.g. a developer's PRIM_BIN_CACHE=0) can't unhermetically flip these
-  // spawns; overrides re-add any the test sets deliberately.
-  function spawnEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    const e = { ...process.env };
-    // biome-ignore lint/performance/noDelete: env hermeticity requires actual removal
-    delete e.PRIM_BIN_CACHE;
-    // biome-ignore lint/performance/noDelete: env hermeticity requires actual removal
-    delete e.PRIM_BIN_CACHE_HIT;
-    // biome-ignore lint/performance/noDelete: env hermeticity requires actual removal
-    delete e.PRIM_BIN_CACHE_TTL_MIN;
-    return { ...e, ...overrides };
-  }
-
-  it.skipIf(process.platform === "win32")("execs the cached bin directly on a fresh hit", () => {
-    const dir = mkdtempSync(join(tmpdir(), "prim-cache-"));
-    try {
-      const target = seedCache(dir);
-      const res = spawnSync("sh", ["-c", hookShimCommand("prim-hook")], {
-        env: spawnEnv({ XDG_CACHE_HOME: dir }),
-        encoding: "utf-8",
-      });
-      // `exec` replaced the shell with fake-node (PRIM_BIN_CACHE_HIT exported);
-      // the ladder never ran.
-      expect(res.stdout).toBe(`cache-hit:1:${target}`);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it.skipIf(process.platform === "win32")(
-    "falls through to the ladder when the entry is older than TTL",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "prim-cache-"));
-      try {
-        seedCache(dir);
-        // Age the entry two days past the 24h default TTL.
-        const old = new Date(Date.now() - 2 * 24 * 3600 * 1000);
-        utimesSync(join(dir, "prim", "bin", "prim-hook"), old, old);
-        const binDir = writeLadderBin(dir);
-        const res = spawnSync("sh", ["-c", hookShimCommand("prim-hook")], {
-          env: spawnEnv({ XDG_CACHE_HOME: dir, PATH: `${binDir}:${process.env.PATH}` }),
-          encoding: "utf-8",
-        });
-        expect(res.stdout).toBe("ladder");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "ignores the cache under the PRIM_BIN_CACHE=0 kill switch",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "prim-cache-"));
-      try {
-        seedCache(dir);
-        const binDir = writeLadderBin(dir);
-        const res = spawnSync("sh", ["-c", hookShimCommand("prim-hook")], {
-          env: spawnEnv({
-            XDG_CACHE_HOME: dir,
-            PRIM_BIN_CACHE: "0",
-            PATH: `${binDir}:${process.env.PATH}`,
-          }),
-          encoding: "utf-8",
-        });
-        expect(res.stdout).toBe("ladder");
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
 });

@@ -37,6 +37,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ClaudeSettings,
   type HookEntry,
@@ -162,6 +163,7 @@ function resultFor(
 }
 
 export function performInstall(scope: Scope, force: boolean): InstallResult {
+  stageHookRuntime();
   const path = settingsPathFor(scope);
   const before = readSettings(path);
   const after = applyInstall(before, { force });
