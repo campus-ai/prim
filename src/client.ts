@@ -8,14 +8,25 @@ import {
   type AuthCredential,
   type AuthCredentialSource,
   CREDENTIAL_LOCK_PATH,
+  CREDENTIAL_METADATA_PATH,
   REFRESH_TOKEN_PATH,
+  type StoredCredentialMetadataResolution,
   TERMINAL_REFRESH_PATH,
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
   jwtExpiresAt,
+  readStoredCredentialMetadata,
   resolveAuthCredential,
 } from "./lib/credentials.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
+import {
+  WORKOS_CONNECT_RESPONSE_MAX_BYTES,
+  type WorkosConnectCredentialContext,
+  type WorkosConnectCredentialMetadata,
+  parseWorkosConnectTokens,
+  readBoundedJson,
+  workosConnectTokenEndpoint,
+} from "./lib/workos-connect.js";
 
 const CONFIG_DIR_MODE = 0o700;
 const CREDENTIAL_FILE_MODE = 0o600;
@@ -24,6 +35,7 @@ const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
 export {
+  CREDENTIAL_METADATA_PATH,
   CREDENTIAL_LOCK_PATH,
   REFRESH_TOKEN_PATH,
   resolveAuthCredential,
@@ -31,12 +43,19 @@ export {
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
 };
-export type { AuthCredential, AuthCredentialSource };
+export type {
+  AuthCredential,
+  AuthCredentialSource,
+  StoredCredentialMetadataResolution,
+  WorkosConnectCredentialContext,
+  WorkosConnectCredentialMetadata,
+};
 
 export interface StoredCredentials {
   accessToken: string;
   refreshToken: string;
   expiresIn?: number;
+  metadata?: WorkosConnectCredentialContext;
 }
 
 export type CredentialLockOptions = FileLockOptions;
@@ -136,9 +155,23 @@ function commitCredentialsUnlocked(credentials: StoredCredentials): void {
     throw new Error("OAuth credentials require both access and refresh tokens");
   }
 
-  // Access is the commit marker. Readers cannot observe a new access token
-  // paired with the previous one-use refresh generation.
+  // Access is the commit marker. For Connect, bind the family metadata before
+  // replacing the refresh token: a crash between those writes leaves a hash
+  // mismatch that fails closed instead of sending a Connect token to the
+  // legacy broker. For a legacy generation, replace the refresh token before
+  // removing old Connect metadata for the same fail-closed reason.
+  if (credentials.metadata !== undefined) {
+    atomicWrite(
+      CREDENTIAL_METADATA_PATH,
+      `${JSON.stringify({
+        ...credentials.metadata,
+        accessTokenHash: refreshFingerprint(accessToken),
+        refreshTokenHash: refreshFingerprint(refreshToken),
+      })}\n`,
+    );
+  }
   atomicWrite(REFRESH_TOKEN_PATH, `${refreshToken}\n`);
+  if (credentials.metadata === undefined) removeCredentialFile(CREDENTIAL_METADATA_PATH);
   const expiresAt = expiresAtFor(accessToken, credentials.expiresIn);
   if (expiresAt === undefined) removeCredentialFile(TOKEN_EXPIRES_PATH);
   else atomicWrite(TOKEN_EXPIRES_PATH, `${expiresAt}\n`);
@@ -165,6 +198,7 @@ export async function setStoredToken(
   await withCredentialLock(() => {
     removeCredentialFile(REFRESH_TOKEN_PATH);
     removeCredentialFile(TOKEN_EXPIRES_PATH);
+    removeCredentialFile(CREDENTIAL_METADATA_PATH);
     clearTerminalFingerprint();
     atomicWrite(TOKEN_FILE_PATH, `${value}\n`);
     _cachedCredential = { token: value, source: "token_file" };
@@ -172,7 +206,10 @@ export async function setStoredToken(
 }
 
 export interface ClearStoredCredentialsOptions extends CredentialLockOptions {
-  beforeClear?: (refreshToken: string | undefined) => Promise<void> | void;
+  beforeClear?: (
+    refreshToken: string | undefined,
+    metadata: StoredCredentialMetadataResolution,
+  ) => Promise<void> | void;
 }
 
 /** Revoke/inspect and delete one coherent credential generation under one lock. */
@@ -182,9 +219,10 @@ export async function clearStoredCredentials(
   const { beforeClear, ...lockOptions } = options;
   return withCredentialLock(async () => {
     const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+    const metadata = readStoredCredentialMetadata();
     let callbackError: unknown;
     try {
-      await beforeClear?.(refreshToken);
+      await beforeClear?.(refreshToken, metadata);
     } catch (error) {
       callbackError = error;
     }
@@ -194,6 +232,7 @@ export async function clearStoredCredentials(
       TOKEN_FILE_PATH,
       REFRESH_TOKEN_PATH,
       TOKEN_EXPIRES_PATH,
+      CREDENTIAL_METADATA_PATH,
       TERMINAL_REFRESH_PATH,
     ]) {
       removed = removeCredentialFile(path) || removed;
@@ -235,9 +274,27 @@ function isTerminalRefreshResponse(response: Response, detail: string): boolean 
 function refreshDiagnostic(response: Response, detail: string, quiet: boolean | undefined): void {
   if (quiet) return;
   process.stderr.write(
-    `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
+    `[prim] token refresh rejected: ${response.status} ${response.statusText}${
       detail ? ` — ${detail}` : ""
     }\n`,
+  );
+}
+
+function metadataMatchesCredentialGeneration(
+  expected: StoredCredentialMetadataResolution,
+  accessToken: string,
+  refreshToken: string,
+): boolean {
+  const current = readStoredCredentialMetadata();
+  if (expected.state === "legacy_broker") return current.state === "legacy_broker";
+  if (expected.state !== "workos_connect" || current.state !== "workos_connect") return false;
+  return (
+    current.metadata.issuer === expected.metadata.issuer &&
+    current.metadata.clientId === expected.metadata.clientId &&
+    current.metadata.accessTokenHash === refreshFingerprint(accessToken) &&
+    current.metadata.accessTokenHash === expected.metadata.accessTokenHash &&
+    current.metadata.refreshTokenHash === refreshFingerprint(refreshToken) &&
+    current.metadata.refreshTokenHash === expected.metadata.refreshTokenHash
   );
 }
 
@@ -269,20 +326,78 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
       }
       if (isSessionEnded()) return undefined;
 
-      const response = await fetch(`${options.siteUrl ?? getSiteUrl()}/mcp/broker/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: currentGeneration }),
-        signal: options.signal,
-      });
+      const metadata = readStoredCredentialMetadata();
+      if (
+        metadata.state === "invalid" ||
+        (metadata.state === "workos_connect" &&
+          (metadata.metadata.accessTokenHash !== refreshFingerprint(currentCredential.token) ||
+            metadata.metadata.refreshTokenHash !== refreshFingerprint(currentGeneration)))
+      ) {
+        return undefined;
+      }
+
+      const connectContext =
+        metadata.state === "workos_connect"
+          ? {
+              version: 1 as const,
+              family: "workos_connect" as const,
+              issuer: metadata.metadata.issuer,
+              clientId: metadata.metadata.clientId,
+            }
+          : undefined;
+      const response = await fetch(
+        connectContext
+          ? workosConnectTokenEndpoint(connectContext.issuer)
+          : `${options.siteUrl ?? getSiteUrl()}/mcp/broker/refresh`,
+        connectContext
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                grant_type: "refresh_token",
+                refresh_token: currentGeneration,
+                client_id: connectContext.clientId,
+              }),
+              signal: options.signal,
+            }
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: currentGeneration }),
+              signal: options.signal,
+            },
+      );
+
+      let directResponse: unknown;
+      if (connectContext) {
+        try {
+          directResponse = await readBoundedJson(response, WORKOS_CONNECT_RESPONSE_MAX_BYTES);
+        } catch {
+          if (
+            response.ok &&
+            readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+            metadataMatchesCredentialGeneration(
+              metadata,
+              currentCredential.token,
+              currentGeneration,
+            )
+          ) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
+      }
 
       if (!response.ok) {
-        const detail = (await response.text().catch(() => "")).slice(0, 200);
+        const detail = connectContext
+          ? JSON.stringify(directResponse).slice(0, 200)
+          : (await response.text().catch(() => "")).slice(0, 200);
         // An older uncoordinated client could have replaced the files while the
         // request was in flight. Never poison that newer generation.
         if (
           isTerminalRefreshResponse(response, detail) &&
-          readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration
+          readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+          metadataMatchesCredentialGeneration(metadata, currentCredential.token, currentGeneration)
         ) {
           writeTerminalFingerprint(currentGeneration);
         }
@@ -294,43 +409,74 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
           : undefined;
       }
 
-      let data: unknown;
-      try {
-        data = await response.json();
-      } catch {
-        // A 2xx means the one-use generation may have been consumed. Fail
-        // closed rather than replaying it after a malformed response.
-        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
-          writeTerminalFingerprint(currentGeneration);
+      let accessToken: string;
+      let replacementRefreshToken: string;
+      let expiresIn: number | undefined;
+      if (connectContext) {
+        try {
+          const tokens = parseWorkosConnectTokens(directResponse, {
+            fallbackRefreshToken: currentGeneration,
+          });
+          accessToken = tokens.accessToken;
+          replacementRefreshToken = tokens.refreshToken;
+          expiresIn = tokens.expiresIn;
+        } catch {
+          if (
+            readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+            metadataMatchesCredentialGeneration(
+              metadata,
+              currentCredential.token,
+              currentGeneration,
+            )
+          ) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
         }
-        return undefined;
+      } else {
+        let data: unknown;
+        try {
+          data = await response.json();
+        } catch {
+          if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
+        const record =
+          typeof data === "object" && data !== null && !Array.isArray(data)
+            ? (data as Record<string, unknown>)
+            : undefined;
+        accessToken = typeof record?.access_token === "string" ? record.access_token.trim() : "";
+        replacementRefreshToken =
+          typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
+        expiresIn =
+          typeof record?.expires_in === "number" && Number.isFinite(record.expires_in)
+            ? record.expires_in
+            : undefined;
+        if (!(accessToken && replacementRefreshToken)) {
+          if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
       }
-      const record =
-        typeof data === "object" && data !== null && !Array.isArray(data)
-          ? (data as Record<string, unknown>)
-          : undefined;
-      const accessToken =
-        typeof record?.access_token === "string" ? record.access_token.trim() : "";
-      const replacementRefreshToken =
-        typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
-      // WorkOS rotation is optional: a successful refresh may return the SAME
-      // refresh token (AuthKit: "Refresh tokens may be rotated after use").
-      // Require both fields, but accept an unchanged token — poisoning a
-      // same-value replacement would strand a session the broker still honors.
-      if (!(accessToken && replacementRefreshToken)) {
-        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
-          writeTerminalFingerprint(currentGeneration);
-        }
-        return undefined;
+
+      const latestCredential = resolveAuthCredential();
+      if (
+        readTrimmed(REFRESH_TOKEN_PATH) !== currentGeneration ||
+        latestCredential?.source !== "token_file" ||
+        latestCredential.token !== currentCredential.token ||
+        !metadataMatchesCredentialGeneration(metadata, currentCredential.token, currentGeneration)
+      ) {
+        return latestCredential?.source === "token_file" ? latestCredential.token : undefined;
       }
 
       commitCredentialsUnlocked({
         accessToken,
         refreshToken: replacementRefreshToken,
-        expiresIn:
-          typeof record?.expires_in === "number" && Number.isFinite(record.expires_in)
-            ? record.expires_in
-            : undefined,
+        expiresIn,
+        metadata: connectContext,
       });
       return accessToken;
     },

@@ -8,6 +8,7 @@ import type {
   FeedbackLeaseRequest,
   FeedbackLeaseResponse,
   PreflightRequestV3,
+  WorkosConnectDeviceConfigurationSuccess,
 } from "../generated/cli-http-v1.types.js";
 import {
   isCliErrorResponse,
@@ -38,6 +39,10 @@ import {
   isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
   isRepositoryBindResponse,
+  isWorkosConnectDeviceConfigurationDisabled,
+  isWorkosConnectDeviceConfigurationError,
+  isWorkosConnectDeviceConfigurationSuccessStructure,
+  isWorkosConnectDeviceConfigurationUnavailable,
 } from "../generated/cli-http-v1.validators.js";
 
 export type * from "../generated/cli-http-v1.types.js";
@@ -71,6 +76,9 @@ export {
   isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
   isRepositoryBindResponse,
+  isWorkosConnectDeviceConfigurationDisabled,
+  isWorkosConnectDeviceConfigurationError,
+  isWorkosConnectDeviceConfigurationUnavailable,
 };
 
 const MAX_REPOSITORY_PATH_CHARS = 4_096;
@@ -81,6 +89,30 @@ const CANONICAL_WORKSPACE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: wire paths reject C0 and DEL.
 const PATH_CONTROL = /[\x00-\x1f\x7f]/u;
+const WORKOS_CONNECT_DEVICE_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
+
+export function isWorkosConnectDeviceConfigurationSuccess(
+  value: unknown,
+): value is WorkosConnectDeviceConfigurationSuccess {
+  if (!isWorkosConnectDeviceConfigurationSuccessStructure(value)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value.issuer);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "https:" &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.origin === value.issuer &&
+    parsed.pathname === "/" &&
+    parsed.search === "" &&
+    parsed.hash === "" &&
+    value.default_scopes.length === WORKOS_CONNECT_DEVICE_SCOPES.length &&
+    value.default_scopes.every((scope, index) => scope === WORKOS_CONNECT_DEVICE_SCOPES[index])
+  );
+}
 
 function isCanonicalRepositoryPath(path: string): boolean {
   return (
@@ -255,6 +287,10 @@ export const cliHttpV1Validators = {
   PresenceHeartbeatResponse: isPresenceHeartbeatResponse,
   RepositoryBindRequest: isRepositoryBindRequest,
   RepositoryBindResponse: isRepositoryBindResponse,
+  WorkosConnectDeviceConfigurationDisabled: isWorkosConnectDeviceConfigurationDisabled,
+  WorkosConnectDeviceConfigurationError: isWorkosConnectDeviceConfigurationError,
+  WorkosConnectDeviceConfigurationSuccess: isWorkosConnectDeviceConfigurationSuccess,
+  WorkosConnectDeviceConfigurationUnavailable: isWorkosConnectDeviceConfigurationUnavailable,
 } as const satisfies Record<string, (value: unknown) => boolean>;
 
 export type CliHttpV1DefinitionName = keyof typeof cliHttpV1Validators;

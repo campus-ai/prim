@@ -16,6 +16,18 @@ vi.mock("../client.js", async () => {
   };
 });
 
+vi.mock("../lib/workos-connect.js", async () => {
+  const actual = await vi.importActual<typeof import("../lib/workos-connect.js")>(
+    "../lib/workos-connect.js",
+  );
+  return {
+    ...actual,
+    discoverWorkosConnect: vi.fn(),
+    requestWorkosDeviceAuthorization: vi.fn(),
+    pollWorkosDeviceAuthorization: vi.fn(),
+  };
+});
+
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
   return {
@@ -36,6 +48,7 @@ import { existsSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import {
   clearStoredCredentials,
+  commitCredentials,
   getTokenExpiresAt,
   isSessionEnded,
   refreshToken,
@@ -43,12 +56,21 @@ import {
   setStoredToken,
 } from "../client.js";
 import {
+  discoverWorkosConnect,
+  pollWorkosDeviceAuthorization,
+  requestWorkosDeviceAuthorization,
+} from "../lib/workos-connect.js";
+import {
   fetchAuthBrokerConfig,
   openBrowser,
   parseAuthBrokerConfig,
   registerAuthCommands,
   resolveCallbackPage,
 } from "./auth.js";
+
+beforeEach(() => {
+  vi.mocked(discoverWorkosConnect).mockResolvedValue({ state: "legacy_server" });
+});
 
 describe("auth discovery and browser launch", () => {
   const validConfig = {
@@ -151,9 +173,54 @@ describe("credential mutation commands", () => {
     expect(setStoredToken).toHaveBeenCalledWith("fixed-token");
   });
 
+  it("uses device flow without a callback server and commits its frozen provider context", async () => {
+    vi.mocked(discoverWorkosConnect).mockResolvedValue({
+      state: "available",
+      configuration: {
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+        scopes: ["openid", "offline_access"],
+      },
+    });
+    vi.mocked(requestWorkosDeviceAuthorization).mockResolvedValue({
+      deviceCode: "device-code",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://auth.example.test/device",
+      verificationUriComplete: "https://auth.example.test/device?user_code=ABCD-EFGH",
+      expiresIn: 600,
+      interval: 5,
+    });
+    vi.mocked(pollWorkosDeviceAuthorization).mockResolvedValue({
+      accessToken: "connect-access",
+      refreshToken: "connect-refresh",
+      expiresIn: 300,
+    });
+    vi.mocked(commitCredentials).mockResolvedValue();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(["auth", "login", "--no-browser"], { from: "user" });
+
+    expect(execFile).not.toHaveBeenCalled();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("ABCD-EFGH");
+    expect(commitCredentials).toHaveBeenCalledWith({
+      accessToken: "connect-access",
+      refreshToken: "connect-refresh",
+      expiresIn: 300,
+      metadata: {
+        version: 1,
+        family: "workos_connect",
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+      },
+    });
+  });
+
   it("revokes and deletes one coherent refresh generation under the clear lock", async () => {
     vi.mocked(clearStoredCredentials).mockImplementation(async (options) => {
-      await options?.beforeClear?.("refresh-generation");
+      await options?.beforeClear?.("refresh-generation", { state: "legacy_broker" });
       return true;
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
@@ -171,6 +238,31 @@ describe("credential mutation commands", () => {
         body: JSON.stringify({ refresh_token: "refresh-generation" }),
       }),
     );
+  });
+
+  it("does not send a Connect refresh token to the legacy broker during clear", async () => {
+    vi.mocked(clearStoredCredentials).mockImplementation(async (options) => {
+      await options?.beforeClear?.("connect-refresh", {
+        state: "workos_connect",
+        metadata: {
+          version: 1,
+          family: "workos_connect",
+          issuer: "https://auth.example.test",
+          clientId: "client_cli",
+          accessTokenHash: "b".repeat(64),
+          refreshTokenHash: "a".repeat(64),
+        },
+      });
+      return true;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(["auth", "clear"], { from: "user" });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

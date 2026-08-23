@@ -3,6 +3,69 @@
   "contractVersion": 2,
   "cases": [
     {
+      "name": "WorkOS Connect device configuration",
+      "definition": "WorkosConnectDeviceConfigurationSuccess",
+      "valid": true,
+      "value": {
+        "protocol_version": 1,
+        "issuer": "https://auth.example.com",
+        "client_id": "client_cli",
+        "default_scopes": ["openid", "profile", "email", "offline_access"]
+      }
+    },
+    {
+      "name": "WorkOS Connect device configuration rejects MCP scopes",
+      "definition": "WorkosConnectDeviceConfigurationSuccess",
+      "valid": false,
+      "value": {
+        "protocol_version": 1,
+        "issuer": "https://auth.example.com",
+        "client_id": "client_cli",
+        "default_scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access",
+          "mcp.tasks.read"
+        ]
+      }
+    },
+    {
+      "name": "WorkOS Connect device configuration rejects reordered scopes",
+      "definition": "WorkosConnectDeviceConfigurationSuccess",
+      "valid": false,
+      "value": {
+        "protocol_version": 1,
+        "issuer": "https://auth.example.com",
+        "client_id": "client_cli",
+        "default_scopes": ["openid", "email", "profile", "offline_access"]
+      }
+    },
+    {
+      "name": "WorkOS Connect device configuration disabled",
+      "definition": "WorkosConnectDeviceConfigurationDisabled",
+      "valid": true,
+      "value": {
+        "error": "connect_device_auth_disabled"
+      }
+    },
+    {
+      "name": "WorkOS Connect device configuration unavailable",
+      "definition": "WorkosConnectDeviceConfigurationUnavailable",
+      "valid": true,
+      "value": {
+        "error": "connect_device_auth_unavailable"
+      }
+    },
+    {
+      "name": "WorkOS Connect device configuration closed error",
+      "definition": "WorkosConnectDeviceConfigurationError",
+      "valid": true,
+      "value": {
+        "error": "connect_device_auth_disabled"
+      }
+    },
+    {
       "name": "v4 move preserves CRLF apply-patch move directive",
       "definition": "MoveIngestRequest",
       "valid": true,

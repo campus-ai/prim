@@ -195,6 +195,166 @@ describe("client credential store", () => {
     expect(readdirSync(config).some((name) => name.endsWith(".tmp"))).toBe(false);
   });
 
+  it("binds Connect metadata to the refresh generation and refreshes at the frozen issuer", async () => {
+    const client = await import("./client.js");
+    await client.commitCredentials({
+      accessToken: "connect-access",
+      refreshToken: "connect-refresh",
+      expiresIn: 300,
+      metadata: {
+        version: 1,
+        family: "workos_connect",
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+      },
+    });
+    const stored = JSON.parse(readFileSync(client.CREDENTIAL_METADATA_PATH, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(stored).toEqual({
+      version: 1,
+      family: "workos_connect",
+      issuer: "https://auth.example.test",
+      clientId: "client_cli",
+      accessTokenHash: createHash("sha256").update("connect-access").digest("hex"),
+      refreshTokenHash: createHash("sha256").update("connect-refresh").digest("hex"),
+    });
+    expect(statSync(client.CREDENTIAL_METADATA_PATH).mode & 0o777).toBe(0o600);
+    expect(renamedCredentialPaths.slice(0, 4)).toEqual([
+      client.CREDENTIAL_METADATA_PATH,
+      client.REFRESH_TOKEN_PATH,
+      client.TOKEN_EXPIRES_PATH,
+      client.TOKEN_FILE_PATH,
+    ]);
+
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "rotated-access",
+          refresh_token: "rotated-refresh",
+          expires_in: 300,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "unrotated-access",
+          expires_in: 300,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBe("rotated-access");
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("https://auth.example.test/oauth2/token");
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    expect(String(init?.body)).toBe(
+      "grant_type=refresh_token&refresh_token=connect-refresh&client_id=client_cli",
+    );
+    expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("rotated-refresh");
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_METADATA_PATH, "utf8")).refreshTokenHash).toBe(
+      createHash("sha256").update("rotated-refresh").digest("hex"),
+    );
+
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBe(
+      "unrotated-access",
+    );
+    expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("rotated-refresh");
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_METADATA_PATH, "utf8")).refreshTokenHash).toBe(
+      createHash("sha256").update("rotated-refresh").digest("hex"),
+    );
+  });
+
+  it("fails closed before I/O when Connect metadata is malformed or stale", async () => {
+    writeFileSync(join(config, "token"), "newer-access\n");
+    writeFileSync(join(config, "refresh_token"), "newer-refresh\n");
+    writeFileSync(
+      join(config, "credential_metadata.json"),
+      JSON.stringify({
+        version: 1,
+        family: "workos_connect",
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+        accessTokenHash: createHash("sha256").update("newer-access").digest("hex"),
+        refreshTokenHash: createHash("sha256").update("older-refresh").digest("hex"),
+      }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    writeFileSync(join(config, "credential_metadata.json"), "not-json\n");
+    vi.resetModules();
+    const reloaded = await import("./client.js");
+    await expect(reloaded.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["metadata", false, false],
+    ["refresh", true, false],
+    ["expiry", true, true],
+  ] as const)(
+    "fails closed after a Connect login crash following the %s write",
+    async (_stage, replaceRefresh, replaceExpiry) => {
+      writeFileSync(join(config, "token"), "old-access\n");
+      writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+      writeFileSync(join(config, "token_expires_at"), "1\n");
+      writeFileSync(
+        join(config, "credential_metadata.json"),
+        `${JSON.stringify({
+          version: 1,
+          family: "workos_connect",
+          issuer: "https://auth.example.test",
+          clientId: "client_cli",
+          accessTokenHash: createHash("sha256").update("new-access").digest("hex"),
+          refreshTokenHash: createHash("sha256").update("new-refresh").digest("hex"),
+        })}\n`,
+      );
+      if (replaceRefresh) writeFileSync(join(config, "refresh_token"), "new-refresh\n");
+      if (replaceExpiry)
+        writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = await import("./client.js");
+      expect(client.resolveAuthCredential()).toBeUndefined();
+      await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+      await expect(client.getClient().get("/api/cli/auth/status")).rejects.toBeInstanceOf(
+        client.HttpError,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a fully committed Connect generation bound to both token hashes", async () => {
+    const accessToken = "new-access";
+    const refreshToken = "new-refresh";
+    writeFileSync(join(config, "token"), `${accessToken}\n`);
+    writeFileSync(join(config, "refresh_token"), `${refreshToken}\n`);
+    writeFileSync(
+      join(config, "credential_metadata.json"),
+      `${JSON.stringify({
+        version: 1,
+        family: "workos_connect",
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+        accessTokenHash: createHash("sha256").update(accessToken).digest("hex"),
+        refreshTokenHash: createHash("sha256").update(refreshToken).digest("hex"),
+      })}\n`,
+    );
+
+    const client = await import("./client.js");
+    expect(client.resolveAuthCredential()).toEqual({ token: accessToken, source: "token_file" });
+  });
+
   it("persists only a terminal refresh fingerprint and suppresses replay after reload", async () => {
     writeFileSync(join(config, "token"), "old-access\n");
     writeFileSync(join(config, "refresh_token"), "secret-refresh\n");
@@ -462,6 +622,7 @@ describe("client credential store", () => {
     writeFileSync(join(config, "refresh_token"), "old-refresh\n");
     writeFileSync(join(config, "token_expires_at"), "0\n");
     writeFileSync(join(config, "refresh_terminal"), "stale\n");
+    writeFileSync(join(config, "credential_metadata.json"), "stale\n");
     const client = await import("./client.js");
 
     await client.setStoredToken("fixed-access");
