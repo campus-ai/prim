@@ -989,6 +989,10 @@ async function ensureMacDaemonLocked(
   const configuredApiUrl = (options.env ?? process.env).PRIM_API_URL;
   const apiUrl = configuredApiUrl ? normalizeApiUrl(configuredApiUrl) || undefined : undefined;
   const configDir = primConfigDirectory(options);
+  const legacyDefaultConfigDir = join(options.homeDir ?? homedir(), ".config", "prim");
+  // Keep the default-root schema-v1 launcher byte-compatible with older CLIs.
+  // A custom root needs to be exported because the daemon cannot infer it.
+  const launcherConfigDir = configDir === legacyDefaultConfigDir ? undefined : configDir;
   if (retainSelected && selected) {
     const usable = readUsableDaemonConfig(control.launcher);
     if (!usable) {
@@ -1001,7 +1005,7 @@ async function ensureMacDaemonLocked(
       daemonPath: usable.daemonPath,
       runtimeVersion: usable.runtimeVersion,
       ...(apiUrl ? { apiUrl } : {}),
-      configDir,
+      ...(launcherConfigDir ? { configDir: launcherConfigDir } : {}),
     };
   } else {
     runtime = stageRuntime({ ...options, version: requestedVersion });
@@ -1010,7 +1014,7 @@ async function ensureMacDaemonLocked(
       daemonPath: runtime.daemonPath,
       runtimeVersion: runtime.manifest.version,
       ...(apiUrl ? { apiUrl } : {}),
-      configDir,
+      ...(launcherConfigDir ? { configDir: launcherConfigDir } : {}),
     };
   }
 
