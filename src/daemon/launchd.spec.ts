@@ -80,6 +80,33 @@ exec ${shellQuotedForTest(config.nodePath)} ${shellQuotedForTest(config.daemonPa
 `,
   };
 }
+function readLegacyLauncher(path: string): LauncherMetadata | null {
+  try {
+    const content = readFileSync(path, "utf8");
+    const encoded = /^# prim-daemon-launcher: ([A-Za-z0-9_-]+)$/mu.exec(content)?.[1];
+    if (!encoded) return null;
+    const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    if (
+      value.schemaVersion !== 1 ||
+      typeof value.nodePath !== "string" ||
+      typeof value.daemonPath !== "string" ||
+      typeof value.runtimeVersion !== "string" ||
+      (value.apiUrl !== null && typeof value.apiUrl !== "string") ||
+      typeof value.revision !== "string"
+    ) {
+      return null;
+    }
+    const legacy = legacyLauncher(value as unknown as LauncherMetadata);
+    return legacy.revision === value.revision && legacy.content === content
+      ? (value as unknown as LauncherMetadata)
+      : null;
+  } catch {
+    return null;
+  }
+}
 function result(
   status: number | null,
   stderr = "",
@@ -409,14 +436,12 @@ describe("generated launchd contract", () => {
       schemaVersion: 1,
       runtimeVersion: "1.0.0",
       apiUrl: "https://api.test",
-      configDir: join(fake.homeDir, ".config", "prim"),
     });
+    expect(launcher).not.toHaveProperty("configDir");
     expect(launcherText).toContain(`export PRIM_RUNTIME_VERSION='1.0.0'`);
     expect(launcherText).toContain(`export PRIM_LAUNCH_REVISION='${launcher.revision}'`);
     expect(launcherText).toContain(`export PRIM_API_URL='https://api.test'`);
-    expect(launcherText).toContain(
-      `export PRIM_CONFIG_DIR=${shellQuotedForTest(join(fake.homeDir, ".config", "prim"))}`,
-    );
+    expect(launcherText).not.toContain("PRIM_CONFIG_DIR");
     expect(launcherText).toContain(`O'"'"'Brien`);
     expect(mode(fake.launcherPath)).toBe(0o700);
     const escapedLauncher = fake.launcherPath.replaceAll("&", "&amp;").replaceAll("'", "&apos;");
@@ -492,7 +517,7 @@ describe("launchd reconciliation", () => {
     expect(await fake.ensure({ version: "nightly" })).toMatchObject({ action: "none" });
     expect(readLauncher(fake.launcherPath).runtimeVersion).toBe("1.0.0");
   });
-  it("retains a newer schema-v1 launcher written before config-dir propagation", async () => {
+  it("retains a newer legacy-readable default-root launcher without restarting", async () => {
     const fake = new FakeLaunchd();
     await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
     const selected = readLauncher(fake.launcherPath);
@@ -511,9 +536,29 @@ describe("launchd reconciliation", () => {
     expect(readLauncher(fake.launcherPath)).toMatchObject({
       daemonPath: selected.daemonPath,
       runtimeVersion: "2.0.0",
-      configDir: join(fake.homeDir, ".config", "prim"),
     });
-    expect(fake.lifecycleCommands()).toEqual(["kickstart"]);
+    expect(readLauncher(fake.launcherPath)).not.toHaveProperty("configDir");
+    expect(fake.lifecycleCommands()).toEqual([]);
+  });
+  it("keeps the default-root launcher readable by the frozen prior CLI", async () => {
+    const fake = new FakeLaunchd();
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+
+    const selectedByPriorCli = readLegacyLauncher(fake.launcherPath);
+
+    expect(selectedByPriorCli).toMatchObject({
+      schemaVersion: 1,
+      runtimeVersion: "2.0.0",
+    });
+
+    fake.clearCommands();
+    const retained = await fake.ensure({
+      env: { ...fake.env, PRIM_CONFIG_DIR: join(fake.homeDir, ".config", "prim") },
+      version: "1.0.0",
+    });
+    expect(retained).toMatchObject({ action: "none", runtimeChanged: false });
+    expect(readLegacyLauncher(fake.launcherPath)?.runtimeVersion).toBe("2.0.0");
+    expect(fake.lifecycleCommands()).toEqual([]);
   });
   it("converges the bootout race with one bootout and bootstrap 5, 5, 0", async () => {
     const fake = new FakeLaunchd();
