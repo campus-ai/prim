@@ -249,6 +249,36 @@ describe("generated CLI HTTP request-core contract", () => {
         viewerHasDecisions: false,
       }),
     ).toBe(false);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        viewerHasDecisions: false,
+        continueCursor: "cursor-2",
+        isDone: false,
+      }),
+    ).toBe(true);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        viewerHasDecisions: false,
+        continueCursor: "cursor-2",
+      }),
+    ).toBe(false);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        viewerHasDecisions: false,
+        isDone: true,
+      }),
+    ).toBe(false);
+    expect(
+      isDecisionsRecentResponse({
+        decisions: [],
+        unavailable: "organization_unbound",
+        continueCursor: "cursor-2",
+        isDone: true,
+      }),
+    ).toBe(false);
   });
 
   it("validates repository binding names from the server-owned pattern", () => {

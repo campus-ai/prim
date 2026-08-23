@@ -256,6 +256,8 @@ export interface DecisionsRecentResponse {
   authorHasDecisions?: boolean;
   windowTotal?: number;
   windowTotalCapped?: boolean;
+  continueCursor?: string;
+  isDone?: boolean;
   unavailable?: string;
   [k: string]: unknown | undefined;
 }
@@ -442,6 +444,7 @@ export interface PreflightResponseV3 {
 
 export interface PresenceHeartbeatRequest {
   sessionId: string;
+  clientInstanceId?: string;
   decisionLifecycleProtocolVersion?: number;
   [k: string]: unknown | undefined;
 }

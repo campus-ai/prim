@@ -97,6 +97,7 @@ afterEach(() => {
 beforeEach(() => {
   temporaryHome = mkdtempSync(join(tmpdir(), "prim-session-start-core-"));
   vi.stubEnv("HOME", temporaryHome);
+  vi.stubEnv("PRIM_CONFIG_DIR", join(temporaryHome, ".config", "prim"));
   vi.resetAllMocks();
   vi.mocked(getSiteUrl).mockReturnValue("https://app.getprimitive.ai");
   vi.mocked(isSessionEnded).mockReturnValue(false);
@@ -517,11 +518,11 @@ describe("processSessionStart", () => {
     );
   });
 
-  it("retries a pending repository connection on the next active session", async () => {
+  it("retries an unbound repository connection on the next active session", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(bindRepository)
       .mockResolvedValueOnce({
-        status: "pending",
+        status: "unbound",
         repositoryFullName: "campus-ai/primitive",
       })
       .mockResolvedValueOnce({
@@ -530,10 +531,10 @@ describe("processSessionStart", () => {
         repositoryFullName: "campus-ai/primitive",
       });
 
-    const pendingResult = await processSessionStart(ENVELOPE, "codex");
+    const unboundResult = await processSessionStart(ENVELOPE, "codex");
     const connectedResult = await processSessionStart(ENVELOPE, "codex");
 
-    expect(pendingResult.output).toEqual({
+    expect(unboundResult.output).toEqual({
       hookSpecificOutput: {
         hookEventName: "SessionStart",
         additionalContext: CODEX_DOWN_REPORT,

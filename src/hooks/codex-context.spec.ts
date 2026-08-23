@@ -16,11 +16,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   daemonRequest: vi.fn(),
   decisionDigestSnapshot: vi.fn(),
+  decisionDraftDigestSnapshot: vi.fn(),
   decisionIngestionStatus: vi.fn(),
   getSiteUrl: vi.fn(),
   gitToplevel: vi.fn(),
   isSessionEnded: vi.fn(),
   packageVersion: vi.fn(),
+  repositoryBindingState: vi.fn(),
+  resolveDaemonPrincipal: vi.fn(),
   statusSnapshot: vi.fn(),
 }));
 
@@ -29,8 +32,13 @@ vi.mock("../client.js", () => ({
   isSessionEnded: mocks.isSessionEnded,
 }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: mocks.daemonRequest }));
+vi.mock("../daemon/principal.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../daemon/principal.js")>()),
+  resolveDaemonPrincipal: mocks.resolveDaemonPrincipal,
+}));
 vi.mock("../lib/activation.js", () => ({
   decisionIngestionStatus: mocks.decisionIngestionStatus,
+  repositoryBindingState: mocks.repositoryBindingState,
 }));
 vi.mock("../lib/bin-path.js", () => ({ packageVersion: mocks.packageVersion }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: mocks.gitToplevel }));
@@ -46,12 +54,17 @@ import {
   hasVisibleCodexMessage,
   prepareCodexContext,
   renderDecisionDigest,
+  renderDecisionDraftDigest,
 } from "./codex-context.js";
 
 let temporaryHome = "";
 
 function stateDirectory(): string {
   return join(temporaryHome, ".config", "prim", "codex", "decision-digests");
+}
+
+function draftStateDirectory(): string {
+  return join(temporaryHome, ".config", "prim", "codex", "decision-draft-deliveries");
 }
 
 function healthySnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -85,17 +98,30 @@ function row(id: string, overrides: Partial<DecisionFeedRow> = {}): DecisionFeed
 beforeEach(() => {
   temporaryHome = mkdtempSync(join(tmpdir(), "prim-codex-context-"));
   vi.stubEnv("HOME", temporaryHome);
+  vi.stubEnv("PRIM_CONFIG_DIR", join(temporaryHome, ".config", "prim"));
   vi.resetAllMocks();
   mocks.getSiteUrl.mockReturnValue("https://app.getprimitive.ai");
   mocks.gitToplevel.mockReturnValue("/repo");
   mocks.isSessionEnded.mockReturnValue(false);
   mocks.packageVersion.mockReturnValue("1.2.3");
   mocks.decisionIngestionStatus.mockReturnValue("enabled");
+  mocks.resolveDaemonPrincipal.mockReturnValue({
+    principalId: "a".repeat(64),
+    organizationId: "org-a",
+    credentialFingerprint: "1".repeat(64),
+  });
   mocks.statusSnapshot.mockResolvedValue(healthySnapshot());
   mocks.decisionDigestSnapshot.mockResolvedValue({ decisions: [], cachedAt: Date.now() });
+  mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+    decisions: [],
+    cachedAt: Date.now(),
+  });
   mocks.daemonRequest.mockImplementation(async (method) => {
     if (method === "status_snapshot") return await mocks.statusSnapshot();
     if (method === "decision_digest_snapshot") return await mocks.decisionDigestSnapshot();
+    if (method === "decision_draft_digest_snapshot") {
+      return await mocks.decisionDraftDigestSnapshot();
+    }
     return null;
   });
 });
@@ -170,7 +196,84 @@ describe("renderDecisionDigest", () => {
   });
 });
 
+describe("renderDecisionDraftDigest", () => {
+  it("renders a terminal-safe private draft with an exact publish command", () => {
+    const rendered = renderDecisionDraftDigest([
+      row("draft-one", {
+        shortId: "a1b2c3d4",
+        intent: "Use `stable` “API”\nwithout controls",
+        intentKind: "change",
+        authorIsSelf: true,
+        stage: "draft",
+      }),
+    ]);
+
+    expect(rendered).toEqual({
+      message:
+        "[prim] private Decision dec_a1b2c3d4 · stage: draft · “Use 'stable' 'API'without controls”\n" +
+        "[prim] Run `prim decisions publish dec_a1b2c3d4` to share it with your team.",
+      deliveredIds: ["draft-one"],
+    });
+  });
+
+  it("fails closed on non-private, non-draft, hidden-kind, and malformed rows", () => {
+    expect(
+      renderDecisionDraftDigest([
+        row("team", { shortId: "11111111", stage: "draft", authorIsSelf: false }),
+        row("published", {
+          shortId: "22222222",
+          stage: "provisional",
+          authorIsSelf: true,
+        }),
+        row("hidden", {
+          shortId: "33333333",
+          stage: "draft",
+          authorIsSelf: true,
+          intentKind: "exploration",
+        }),
+        row("bad-short", { shortId: "not-safe", stage: "draft", authorIsSelf: true }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("delivers only visible commands and leaves overflow for later messages", () => {
+    const rows = ["11111111", "22222222", "33333333", "44444444"].map((shortId, index) =>
+      row(`draft-${String(index + 1)}`, {
+        shortId,
+        authorIsSelf: true,
+        stage: "draft",
+      }),
+    );
+    const rendered = renderDecisionDraftDigest(rows, { pageTruncated: true });
+
+    expect(rendered?.message).toContain("+1+ private Decision drafts remain");
+    expect(rendered?.message).not.toContain("dec_44444444");
+    expect(rendered?.deliveredIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+  });
+});
+
 describe("Codex hook context", () => {
+  it("surfaces repository-unbound once through the existing deduped status report", async () => {
+    mocks.repositoryBindingState.mockReturnValue("unbound");
+
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-unbound",
+      startup: true,
+      includeDigest: false,
+    });
+    expect(first.context).toContain("repository: unbound (enforcement not evaluating)");
+    expect(first.context).not.toContain("repoSync");
+    await first.acknowledge(true);
+
+    const repeated = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-unbound",
+      includeDigest: false,
+    });
+    expect(repeated.context).toBeUndefined();
+  });
+
   it("includes the daemon's initial all-change snapshot and advances only after handoff", async () => {
     const rows = [
       row("1", {
@@ -204,6 +307,11 @@ describe("Codex hook context", () => {
       { callerEnv: "https://app.getprimitive.ai" },
       { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
     );
+    expect(mocks.daemonRequest).toHaveBeenCalledWith(
+      "decision_draft_digest_snapshot",
+      { callerEnv: "https://app.getprimitive.ai" },
+      { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
+    );
 
     await result.acknowledge(false);
     expect(existsSync(stateDirectory())).toBe(false);
@@ -220,6 +328,239 @@ describe("Codex hook context", () => {
     expect(state.watermarkMs).toBeGreaterThan(0);
     expect(statSync(stateDirectory()).mode & 0o777).toBe(0o700);
     expect(statSync(statePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("persists only draft commands that were visibly handed off", async () => {
+    const drafts = ["11111111", "22222222", "33333333", "44444444"].map((shortId, index) =>
+      row(`draft-${String(index + 1)}`, {
+        shortId,
+        authorIsSelf: true,
+        stage: "draft",
+        intentKind: "change",
+      }),
+    );
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({ decisions: drafts });
+
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-drafts",
+      startup: true,
+    });
+    expect(first.context).toContain("prim decisions publish dec_11111111");
+    expect(first.context).toContain("prim decisions publish dec_33333333");
+    expect(first.context).not.toContain("dec_44444444");
+    expect(first.decisionDigest).toContain("prim decisions publish dec_11111111");
+    await first.acknowledge(false);
+    expect(existsSync(stateDirectory())).toBe(false);
+    expect(existsSync(draftStateDirectory())).toBe(false);
+
+    await first.acknowledge(true);
+    const files = readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json"));
+    const statePath = join(draftStateDirectory(), files[0]);
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+      seenDraftIds: string[];
+    };
+    expect(state.seenDraftIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+
+    const second = await prepareCodexContext({ cwd: "/repo", sessionId: "session-drafts" });
+    expect(second.context).toContain("prim decisions publish dec_44444444");
+    expect(second.context).not.toContain("dec_11111111");
+    await second.acknowledge(true);
+
+    const quiet = await prepareCodexContext({ cwd: "/repo", sessionId: "session-drafts" });
+    expect(quiet.context).toBeUndefined();
+  });
+
+  it("keeps private acknowledgements outside the legacy v1 team-state writer", async () => {
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("private-separated", {
+          shortId: "a1b2c3d4",
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-old-writer",
+      startup: true,
+    });
+    await first.acknowledge(true);
+
+    const teamFile = readdirSync(stateDirectory()).find((name) => name.endsWith(".json"));
+    const draftFile = readdirSync(draftStateDirectory()).find((name) => name.endsWith(".json"));
+    expect(teamFile).toBeTruthy();
+    expect(draftFile).toBeTruthy();
+    const currentTeam = JSON.parse(
+      readFileSync(join(stateDirectory(), teamFile as string), "utf8"),
+    ) as Record<string, unknown>;
+    // A frozen old hook understands and rewrites only the original v1 fields.
+    // It never opens the separately locked private-delivery file.
+    writeFileSync(
+      join(stateDirectory(), teamFile as string),
+      `${JSON.stringify({
+        version: 1,
+        sessionId: currentTeam.sessionId,
+        siteUrl: currentTeam.siteUrl,
+        workspace: currentTeam.workspace,
+        startedAt: currentTeam.startedAt,
+        watermarkMs: currentTeam.watermarkMs,
+        seenIds: currentTeam.seenIds,
+        lastReport: currentTeam.lastReport,
+        updatedAt: Date.now(),
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+
+    const afterOldWriter = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-old-writer",
+    });
+    expect(afterOldWriter.context).toBeUndefined();
+    const privateState = JSON.parse(
+      readFileSync(join(draftStateDirectory(), draftFile as string), "utf8"),
+    ) as { seenDraftIds: string[] };
+    expect(privateState.seenDraftIds).toEqual(["private-separated"]);
+  });
+
+  it("scopes private delivery state to the exact user and organization", async () => {
+    const privateRow = row("principal-scoped", {
+      shortId: "b1c2d3e4",
+      authorIsSelf: true,
+      stage: "draft",
+      intentKind: "change",
+    });
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({ decisions: [privateRow] });
+    const principalA = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-principal",
+      startup: true,
+    });
+    await principalA.acknowledge(true);
+
+    mocks.resolveDaemonPrincipal.mockReturnValue({
+      principalId: "b".repeat(64),
+      organizationId: "org-b",
+      credentialFingerprint: "2".repeat(64),
+    });
+    const principalB = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-principal",
+    });
+    expect(principalB.context).toContain("prim decisions publish dec_b1c2d3e4");
+    await principalB.acknowledge(true);
+    expect(
+      readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json")),
+    ).toHaveLength(2);
+  });
+
+  it("withholds fetched organization state when the credential rotates in flight", async () => {
+    const principalA = {
+      principalId: "a".repeat(64),
+      organizationId: "org-a",
+      credentialFingerprint: "1".repeat(64),
+    };
+    const principalB = {
+      principalId: "b".repeat(64),
+      organizationId: "org-b",
+      credentialFingerprint: "2".repeat(64),
+    };
+    mocks.resolveDaemonPrincipal.mockReturnValue(principalA);
+    let releaseDrafts: ((value: unknown) => void) | undefined;
+    mocks.decisionDraftDigestSnapshot.mockImplementationOnce(
+      () =>
+        new Promise<unknown>((resolve) => {
+          releaseDrafts = resolve;
+        }),
+    );
+
+    const pending = prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-principal-drift",
+      startup: true,
+    });
+    await vi.waitFor(() => expect(releaseDrafts).toBeTypeOf("function"));
+    mocks.resolveDaemonPrincipal.mockReturnValue(principalB);
+    releaseDrafts?.({
+      decisions: [
+        row("private-drift", {
+          shortId: "d1e2f3a4",
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+
+    const drifted = await pending;
+    expect(drifted.context).not.toContain("prim decisions publish");
+    expect(drifted.context).not.toContain("Author team");
+    await drifted.acknowledge(true);
+    expect(existsSync(draftStateDirectory())).toBe(false);
+
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("private-drift", {
+          shortId: "d1e2f3a4",
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+    const stableB = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-principal-drift",
+    });
+    expect(stableB.context).toContain("prim decisions publish dec_d1e2f3a4");
+  });
+
+  it("withholds private commands when the caller has no exact local principal", async () => {
+    mocks.resolveDaemonPrincipal.mockReturnValue(undefined);
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("opaque", {
+          shortId: "c1d2e3f4",
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-opaque",
+      startup: true,
+    });
+    expect(result.context).not.toContain("prim decisions publish");
+    expect(mocks.decisionDraftDigestSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("fails soft against an old daemon with no private-draft snapshot method", async () => {
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue(null);
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-old-daemon",
+      startup: true,
+    });
+
+    expect(result.context).toContain("Decision ingestion enabled");
+    expect(result.context).not.toContain("prim decisions publish");
+  });
+
+  it("does not let a malformed private page suppress the verified team digest", async () => {
+    mocks.decisionDigestSnapshot.mockResolvedValue({ decisions: [row("team")] });
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({ decisions: [null, "not-a-row"] });
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-malformed-drafts",
+      startup: true,
+    });
+
+    expect(result.context).toContain("Author team — “Intent team”");
+    expect(result.context).not.toContain("prim decisions publish");
   });
 
   it("uses an overlap watermark while suppressing already-seen Decision IDs", async () => {
@@ -281,6 +622,40 @@ describe("Codex hook context", () => {
     expect(recovered.context).toContain("Author new — “Intent new”");
   });
 
+  it("delivers and acknowledges a private draft independently of the team feed", async () => {
+    mocks.decisionDigestSnapshot.mockResolvedValue({ decisions: [], unavailable: "offline" });
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("private-1", {
+          shortId: "a1b2c3d4",
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-independent-draft",
+      startup: true,
+    });
+    expect(result.feedAvailable).toBe(false);
+    expect(result.context).toContain("prim decisions publish dec_a1b2c3d4");
+    await result.acknowledge(true);
+
+    const teamFiles = readdirSync(stateDirectory()).filter((name) => name.endsWith(".json"));
+    const teamState = JSON.parse(readFileSync(join(stateDirectory(), teamFiles[0]), "utf8")) as {
+      watermarkMs: number;
+    };
+    const draftFiles = readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json"));
+    const draftState = JSON.parse(
+      readFileSync(join(draftStateDirectory(), draftFiles[0]), "utf8"),
+    ) as { seenDraftIds: string[] };
+    expect(draftState.seenDraftIds).toEqual(["private-1"]);
+    expect(teamState.watermarkMs).toBe(-1);
+  });
+
   it("synthesizes the canonical paused report after terminal authentication ends", async () => {
     mocks.isSessionEnded.mockReturnValue(true);
     const result = await prepareCodexContext({
@@ -294,6 +669,7 @@ describe("Codex hook context", () => {
     );
     expect(result.feedAvailable).toBe(false);
     expect(mocks.decisionDigestSnapshot).not.toHaveBeenCalled();
+    expect(mocks.decisionDraftDigestSnapshot).not.toHaveBeenCalled();
     await result.acknowledge(true);
 
     // The paused report is recorded so it is delivered once, not on every
@@ -333,6 +709,7 @@ describe("Codex hook context", () => {
 
     expect(result.decisionDigest).toBeUndefined();
     expect(mocks.decisionDigestSnapshot).not.toHaveBeenCalled();
+    expect(mocks.decisionDraftDigestSnapshot).not.toHaveBeenCalled();
     await result.acknowledge(true);
     const files = readdirSync(stateDirectory()).filter((name) => name.endsWith(".json"));
     const state = JSON.parse(readFileSync(join(stateDirectory(), files[0]), "utf8")) as {

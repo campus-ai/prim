@@ -61,6 +61,7 @@
       "valid": true,
       "value": {
         "sessionId": "session-1",
+        "clientInstanceId": "pci_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "decisionLifecycleProtocolVersion": 2
       }
     },
@@ -79,6 +80,16 @@
       "value": {
         "sessionId": "session-1",
         "decisionLifecycleProtocolVersion": 0
+      }
+    },
+    {
+      "name": "heartbeat rejects malformed client instance id",
+      "definition": "PresenceHeartbeatRequest",
+      "valid": false,
+      "value": {
+        "sessionId": "session-1",
+        "clientInstanceId": "pci_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!",
+        "decisionLifecycleProtocolVersion": 2
       }
     },
     {
@@ -540,6 +551,17 @@
       }
     },
     {
+      "name": "restore lifecycle success",
+      "definition": "DecisionStageSuccessResponse",
+      "valid": true,
+      "value": {
+        "outcome": "ok",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "stage": "draft"
+      }
+    },
+    {
       "name": "lifecycle no-op success",
       "definition": "DecisionStageSuccessResponse",
       "valid": true,
@@ -628,7 +650,7 @@
       "definition": "CliErrorResponse",
       "valid": true,
       "value": {
-        "error": "Cannot move an abandoned decision to draft"
+        "error": "Cannot move a superseded decision to draft"
       }
     },
     {
@@ -637,7 +659,7 @@
       "valid": false,
       "value": {
         "outcome": "illegal_transition",
-        "from": "abandoned",
+        "from": "superseded",
         "to": "draft"
       }
     }
