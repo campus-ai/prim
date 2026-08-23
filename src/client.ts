@@ -216,6 +216,8 @@ export interface RefreshOptions {
   quiet?: boolean;
   /** Documents that the caller intentionally verifies by rotating now. */
   force?: boolean;
+  /** Freeze a deployment across a multi-request credential-bound operation. */
+  siteUrl?: string;
 }
 
 function isTerminalRefreshResponse(response: Response, detail: string): boolean {
@@ -270,7 +272,7 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
       }
       if (isSessionEnded()) return undefined;
 
-      const response = await fetch(`${getSiteUrl()}/mcp/broker/refresh`, {
+      const response = await fetch(`${options.siteUrl ?? getSiteUrl()}/mcp/broker/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: currentGeneration }),
@@ -387,13 +389,48 @@ function selectedCredential(): AuthCredential | undefined {
   return _cachedCredential;
 }
 
+function fetchWithToken(
+  method: string,
+  path: string,
+  body: unknown,
+  options: RequestOptions | undefined,
+  token: string,
+  siteUrl: string = getSiteUrl(),
+): Promise<Response> {
+  return fetch(`${siteUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: options?.signal,
+  });
+}
+
+async function responseValue(response: Response): Promise<unknown> {
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    }
+    const errorBody: unknown = await response.json().catch(() => null);
+    const errorRecord =
+      typeof errorBody === "object" && errorBody !== null && !Array.isArray(errorBody)
+        ? (errorBody as Record<string, unknown>)
+        : undefined;
+    const message =
+      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
+    throw new HttpError(response.status, message, errorBody);
+  }
+  return response.json();
+}
+
 async function request(
   method: string,
   path: string,
   body?: unknown,
   options?: RequestOptions,
 ): Promise<unknown> {
-  const url = `${getSiteUrl()}${path}`;
   let credential = selectedCredential();
   let refreshAttempted = false;
 
@@ -422,19 +459,8 @@ async function request(
     throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
   }
 
-  const doFetch = (token: string | undefined) => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: options?.signal,
-    });
-  };
-
-  const tokenUsed = credential?.token;
-  let response = await doFetch(tokenUsed);
+  const tokenUsed = credential.token;
+  let response = await fetchWithToken(method, path, body, options, tokenUsed);
   if (response.status === 401) {
     const latest = resolveAuthCredential();
     let retryToken = latest?.token !== tokenUsed ? latest?.token : undefined;
@@ -447,29 +473,50 @@ async function request(
         token: retryToken,
         source: latest?.source === "token_file" ? "token_file" : (latest?.source ?? "token_file"),
       };
-      response = await doFetch(retryToken);
+      response = await fetchWithToken(method, path, body, options, retryToken);
     }
   }
-
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
-    }
-    const errorBody: unknown = await response.json().catch(() => null);
-    const errorRecord =
-      typeof errorBody === "object" && errorBody !== null && !Array.isArray(errorBody)
-        ? (errorBody as Record<string, unknown>)
-        : undefined;
-    const message =
-      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
-    throw new HttpError(response.status, message, errorBody);
-  }
-  return response.json();
+  return responseValue(response);
 }
 
 export function getClient(): CliClient {
   return {
     get: (path, options) => request("GET", path, undefined, options),
     post: (path, body, options) => request("POST", path, body, options),
+  };
+}
+
+/**
+ * Resolve one usable bearer generation and pin it for a multi-request operation.
+ * A 401 never swaps in a different credential: callers that bind local data to
+ * the authenticated tenant must retry the whole preflight under the new token.
+ */
+export async function getPinnedClient(options: RequestOptions = {}): Promise<CliClient> {
+  const siteUrl = getSiteUrl();
+  let credential = selectedCredential();
+  if (credential && isTokenExpiringSoon(credential)) {
+    const token = await refreshToken({
+      signal: options.signal,
+      quiet: options.quietRefresh,
+      siteUrl,
+    });
+    if (token) {
+      credential = { token, source: "token_file" };
+    }
+  }
+  if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  const token = credential.token;
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    responseValue(await fetchWithToken(method, path, body, requestOptions, token, siteUrl));
+  return {
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
   };
 }

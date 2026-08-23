@@ -8,21 +8,46 @@
  * network drain itself is exercised by the release smoke; these pin the pure
  * pieces.
  */
-import { existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CliClient } from "./client.js";
+import { type CliClient, HttpError } from "./client.js";
+import {
+  type AnyDeadLetterRecord,
+  type DeadLetterRecord,
+  deadLetterDirectoryForRotation,
+  deadLetterPathForMove,
+  deadLetterPathForRawLine,
+} from "./dead-letter.js";
 import {
   batchMoves,
   drainFlushingPath,
+  processIsAlive,
   recoverOrphans,
   selectRecoverable,
   shouldFlushPending,
 } from "./flusher.js";
 import { IngestAcknowledgementError } from "./ingest-response.js";
+import type { CurrentOrganizationBinding } from "./journal-organization.js";
 import { type FlushingFile, appendMoveToPath, readMovesFromPath } from "./journal.js";
 import type { Move } from "./protocol/move.js";
+
+const binding: CurrentOrganizationBinding = {
+  captureAuthorityKind: "workos",
+  organizationId: "org_local",
+  workosOrganizationId: "org_workos",
+};
 
 function move(id: string): Move {
   return {
@@ -144,11 +169,24 @@ describe("flush replay stability", () => {
     appendMoveToPath(flushing, move("dedup"));
     const client = fakeClient({ disposition: "persisted", acknowledged: 1, accepted: 0 });
 
-    await expect(drainFlushingPath(flushing, client)).resolves.toBe(1);
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 1,
+      quarantined: 0,
+    });
     expect(existsSync(flushing)).toBe(false);
     expect(client.post).toHaveBeenCalledWith(
       "/api/cli/moves/ingest",
-      { batch: [move("dedup")] },
+      {
+        batch: [
+          expect.objectContaining({
+            moveId: "dedup",
+            envelopeVersion: 4,
+            capturedOrganizationId: "org_workos",
+            captureAuthorityKind: "workos",
+            decisionLifecycleProtocolVersion: 2,
+          }),
+        ],
+      },
       { signal: expect.any(AbortSignal) },
     );
   });
@@ -158,8 +196,12 @@ describe("flush replay stability", () => {
     appendMoveToPath(flushing, move("older-server"));
 
     await expect(
-      drainFlushingPath(flushing, fakeClient({ disposition: "persisted", acknowledged: 1 })),
-    ).resolves.toBe(1);
+      drainFlushingPath(
+        flushing,
+        fakeClient({ disposition: "persisted", acknowledged: 1 }),
+        binding,
+      ),
+    ).resolves.toEqual({ flushed: 1, quarantined: 0 });
     expect(existsSync(flushing)).toBe(false);
   });
 
@@ -172,7 +214,7 @@ describe("flush replay stability", () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     appendMoveToPath(flushing, move("retain"));
 
-    await expect(drainFlushingPath(flushing, fakeClient(response))).rejects.toBeInstanceOf(
+    await expect(drainFlushingPath(flushing, fakeClient(response), binding)).rejects.toBeInstanceOf(
       IngestAcknowledgementError,
     );
     expect(existsSync(flushing)).toBe(true);
@@ -186,7 +228,7 @@ describe("flush replay stability", () => {
       post: vi.fn().mockRejectedValue(new Error("HTTP 503")),
     };
 
-    await expect(drainFlushingPath(flushing, client)).rejects.toThrow("HTTP 503");
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow("HTTP 503");
     expect(existsSync(flushing)).toBe(true);
   });
 
@@ -211,10 +253,372 @@ describe("flush replay stability", () => {
       }),
     };
 
-    await expect(drainFlushingPath(flushing, client)).resolves.toBe(1_201);
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 1_201,
+      quarantined: 0,
+    });
     expect(batchSizes).toEqual([500, 500, 201]);
     expect(delivered).toEqual(moves.map((item) => item.moveId));
     expect(existsSync(flushing)).toBe(false);
+  });
+
+  function readDeadLetters(flushingPath: string): AnyDeadLetterRecord[] {
+    const directory = deadLetterDirectoryForRotation(flushingPath);
+    return readdirSync(directory)
+      .filter((name) => name.endsWith(".json"))
+      .sort()
+      .map(
+        (name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as AnyDeadLetterRecord,
+      );
+  }
+
+  function moveDeadLetters(flushingPath: string): DeadLetterRecord[] {
+    return readDeadLetters(flushingPath).filter(
+      (record): record is DeadLetterRecord => !("recordKind" in record),
+    );
+  }
+
+  it("quarantines a malformed local envelope before any transport", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    writeFileSync(flushing, `${JSON.stringify({ moveId: "malformed" })}\n`);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(client.post).not.toHaveBeenCalled();
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        reason: "invalid_move",
+        move: { moveId: "malformed" },
+      }),
+    ]);
+  });
+
+  it("durably quarantines syntax-invalid exact bytes before unlinking or transport", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":"secret-marker"\n', "utf8");
+    writeFileSync(flushing, rawLine);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const result = await drainFlushingPath(flushing, client, binding);
+    const terminalOutput = stderr.mock.calls.flat().join("");
+    stderr.mockRestore();
+
+    expect(result).toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(terminalOutput).not.toContain("secret-marker");
+    expect(client.post).not.toHaveBeenCalled();
+    expect(existsSync(flushing)).toBe(false);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        version: 1,
+        recordKind: "raw_line_v1",
+        quarantineId: createHash("sha256").update(rawLine).digest("hex"),
+        reason: "invalid_move",
+        rawLineEncoding: "base64",
+        rawLineBytes: rawLine.length,
+        rawLine: rawLine.toString("base64"),
+      }),
+    ]);
+    expect(statSync(deadLetterDirectoryForRotation(flushing)).mode & 0o777).toBe(0o700);
+    expect(statSync(deadLetterPathForRawLine(flushing, rawLine)).mode & 0o777).toBe(0o600);
+  });
+
+  it("replays raw-line quarantine idempotently after a crash before source unlink", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":\n', "utf8");
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    writeFileSync(flushing, rawLine);
+    await drainFlushingPath(flushing, client, binding);
+    const first = readDeadLetters(flushing);
+
+    // Recreate the source bytes to model a crash after the atomic dead-letter
+    // rename but before the source rotation unlink.
+    writeFileSync(flushing, rawLine);
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(readDeadLetters(flushing)).toEqual(first);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  it("retains syntax-invalid source bytes when raw-line quarantine cannot be written", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":\n', "utf8");
+    writeFileSync(flushing, rawLine);
+    // Block creation of the hardened dead-letter directory.
+    writeFileSync(deadLetterDirectoryForRotation(flushing), "not a directory");
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow();
+    expect(client.post).not.toHaveBeenCalled();
+    expect(existsSync(flushing)).toBe(true);
+    expect(readFileSync(flushing)).toEqual(rawLine);
+  });
+
+  it("retains the source until post-rename directory fsync and retries the existing record", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":\n', "utf8");
+    writeFileSync(flushing, rawLine);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+    const parent = dirname(deadLetterDirectoryForRotation(flushing));
+    const deadLetterDirectory = deadLetterDirectoryForRotation(flushing);
+    const firstSync = vi.fn((path: string) => {
+      if (path === deadLetterDirectory) {
+        throw new Error("directory fsync failed");
+      }
+    });
+
+    await expect(
+      drainFlushingPath(flushing, client, binding, {
+        deadLetterPersistence: { syncDirectory: firstSync },
+      }),
+    ).rejects.toThrow("directory fsync failed");
+    expect(firstSync.mock.calls.map(([path]) => path)).toEqual([parent, deadLetterDirectory]);
+    expect(existsSync(deadLetterPathForRawLine(flushing, rawLine))).toBe(true);
+    expect(existsSync(flushing)).toBe(true);
+    expect(client.post).not.toHaveBeenCalled();
+
+    const retrySync = vi.fn<(path: string) => void>();
+    await expect(
+      drainFlushingPath(flushing, client, binding, {
+        deadLetterPersistence: { syncDirectory: retrySync },
+      }),
+    ).resolves.toEqual({ flushed: 0, quarantined: 1 });
+    expect(retrySync.mock.calls.map(([path]) => path)).toEqual([parent, deadLetterDirectory]);
+    expect(existsSync(flushing)).toBe(false);
+    expect(readDeadLetters(flushing)).toHaveLength(1);
+  });
+
+  it("durably quarantines a direct move_id_conflict without persisting server prose", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("foreign"));
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi
+        .fn()
+        .mockRejectedValue(
+          new HttpError(409, "attacker-controlled message", { error: "move_id_conflict" }),
+        ),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(existsSync(flushing)).toBe(false);
+    const deadLetters = readDeadLetters(flushing);
+    expect(deadLetters).toHaveLength(1);
+    expect(deadLetters[0]).toMatchObject({
+      version: 1,
+      reason: "move_id_conflict",
+      move: { moveId: "foreign" },
+    });
+    expect(JSON.stringify(deadLetters[0])).not.toContain("attacker-controlled");
+    expect(statSync(deadLetterPathForMove(flushing, move("foreign"))).mode & 0o777).toBe(0o600);
+  });
+
+  it("durably quarantines an exact capture authority mismatch as tenant_mismatch", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("wrong-tenant"));
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(
+        new HttpError(409, "capture authority mismatch", {
+          error: "capture_authority_mismatch",
+        }),
+      ),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(existsSync(flushing)).toBe(false);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        version: 1,
+        reason: "tenant_mismatch",
+        move: expect.objectContaining({ moveId: "wrong-tenant" }),
+      }),
+    ]);
+  });
+
+  it("bisects a mixed 400 batch, acknowledging valid neighbors and quarantining only poison", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    for (const item of [move("good-a"), move("poison"), move("good-b")]) {
+      appendMoveToPath(flushing, item);
+    }
+    const delivered: string[] = [];
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.some((item) => item.moveId === "poison")) {
+          return Promise.reject(new HttpError(400, "Malformed move(s) in batch"));
+        }
+        delivered.push(...body.batch.map((item) => item.moveId));
+        return Promise.resolve({
+          disposition: "persisted",
+          acknowledged: body.batch.length,
+          accepted: body.batch.length,
+        });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 1,
+    });
+    expect(delivered).toEqual(["good-a", "good-b"]);
+    expect(moveDeadLetters(flushing).map((record) => record.move.moveId)).toEqual(["poison"]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("bisects an exact tenant mismatch while acknowledging valid neighbors", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    for (const item of [move("good-a"), move("wrong-tenant"), move("good-b")]) {
+      appendMoveToPath(flushing, item);
+    }
+    const delivered: string[] = [];
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.some((item) => item.moveId === "wrong-tenant")) {
+          return Promise.reject(
+            new HttpError(409, "capture authority mismatch", {
+              error: "capture_authority_mismatch",
+            }),
+          );
+        }
+        delivered.push(...body.batch.map((item) => item.moveId));
+        return Promise.resolve({
+          disposition: "persisted",
+          acknowledged: body.batch.length,
+          accepted: body.batch.length,
+        });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 1,
+    });
+    expect(delivered).toEqual(["good-a", "good-b"]);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        reason: "tenant_mismatch",
+        move: expect.objectContaining({ moveId: "wrong-tenant" }),
+      }),
+    ]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("replays acknowledged and quarantined halves safely after a later transport failure", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("poison"));
+    appendMoveToPath(flushing, move("later"));
+    let laterAttempts = 0;
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.some((item) => item.moveId === "poison")) {
+          return Promise.reject(new HttpError(400, "Malformed move(s) in batch"));
+        }
+        laterAttempts += 1;
+        if (laterAttempts === 1) {
+          return Promise.reject(new Error("offline"));
+        }
+        return Promise.resolve({
+          disposition: "persisted",
+          acknowledged: body.batch.length,
+          accepted: body.batch.length,
+        });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow("offline");
+    expect(existsSync(flushing)).toBe(true);
+    const firstQuarantine = readDeadLetters(flushing)[0];
+
+    await expect(drainFlushingPath(flushing, client, binding)).resolves.toEqual({
+      flushed: 1,
+      quarantined: 1,
+    });
+    const records = readDeadLetters(flushing);
+    expect(records).toHaveLength(1);
+    expect(records[0].quarantineId).toBe(firstQuarantine.quarantineId);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("retains a 409 that is not the coded move ownership conflict", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("retry"));
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi
+        .fn()
+        .mockRejectedValue(new HttpError(409, "retry later", { error: "state_conflict" })),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow("retry later");
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
+  it("retains a retryable 503 without splitting or quarantining the batch", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("retry-a"));
+    appendMoveToPath(flushing, move("retry-b"));
+    const post = vi.fn().mockRejectedValue(
+      new HttpError(503, "capture authority check unavailable", {
+        error: "capture_authority_check_unavailable",
+      }),
+    );
+    const client: CliClient = { get: vi.fn(), post };
+
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow(
+      "capture authority check unavailable",
+    );
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
+  it("retains the source rotation when durable quarantine cannot be written", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("poison"));
+    // Block creation of the required hardened directory.
+    writeFileSync(deadLetterDirectoryForRotation(flushing), "not a directory");
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(new HttpError(400, "Malformed move(s) in batch")),
+    };
+
+    await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow();
+    expect(existsSync(flushing)).toBe(true);
+  });
+});
+
+describe("processIsAlive", () => {
+  it("treats EPERM as proof that the process exists", () => {
+    const probe = vi.fn(() => {
+      throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+    });
+    expect(processIsAlive(42, probe)).toBe(true);
+  });
+
+  it("treats ESRCH as a dead process", () => {
+    const probe = vi.fn(() => {
+      throw Object.assign(new Error("not found"), { code: "ESRCH" });
+    });
+    expect(processIsAlive(42, probe)).toBe(false);
   });
 });
 
@@ -269,7 +673,9 @@ describe("selectRecoverable", () => {
       now,
       drain: vi.fn().mockImplementation((path: string) => {
         calls.push(path);
-        return path === "/a-old" ? Promise.reject(new Error("disabled")) : Promise.resolve(1);
+        return path === "/a-old"
+          ? Promise.reject(new Error("disabled"))
+          : Promise.resolve({ flushed: 1, quarantined: 0 });
       }),
     });
 
@@ -295,7 +701,9 @@ describe("selectRecoverable", () => {
       now,
       drain: vi.fn().mockImplementation((path: string) => {
         calls.push(path);
-        return path.startsWith("/a-") ? Promise.reject(new Error("disabled")) : Promise.resolve(1);
+        return path.startsWith("/a-")
+          ? Promise.reject(new Error("disabled"))
+          : Promise.resolve({ flushed: 1, quarantined: 0 });
       }),
     });
 
