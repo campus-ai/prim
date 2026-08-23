@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequest } from "../daemon/client.js";
-import { decisionIngestionStatus } from "../lib/activation.js";
+import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import type { Teammate } from "../lib/presence.js";
 import { renderStatusline } from "./statusline.js";
 
@@ -10,10 +10,12 @@ vi.mock("../daemon/client.js", () => ({
 
 vi.mock("../lib/activation.js", () => ({
   decisionIngestionStatus: vi.fn(() => "enabled"),
+  repositoryBindingState: vi.fn(),
 }));
 
 const mockDaemonRequest = vi.mocked(daemonRequest);
 const mockDecisionIngestionStatus = vi.mocked(decisionIngestionStatus);
+const mockRepositoryBindingState = vi.mocked(repositoryBindingState);
 
 function snapshot(onlineCount?: number, onlineNames?: string[], onlineTeammates?: Teammate[]) {
   return {
@@ -32,6 +34,7 @@ describe("renderStatusline", () => {
     mockDaemonRequest.mockReset();
     mockDecisionIngestionStatus.mockReset();
     mockDecisionIngestionStatus.mockReturnValue("enabled");
+    mockRepositoryBindingState.mockReset();
   });
 
   it("renders enabled decision ingestion with the org-wide online count", async () => {
@@ -46,6 +49,23 @@ describe("renderStatusline", () => {
     mockDecisionIngestionStatus.mockReturnValue("disabled");
     mockDaemonRequest.mockResolvedValue(snapshot(2));
     expect(await renderStatusline()).toContain("daemon: live, Decision ingestion disabled");
+    expect(mockRepositoryBindingState).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an unbound active repository without exposing its cached id", async () => {
+    mockRepositoryBindingState.mockReturnValue("unbound");
+    mockDaemonRequest.mockResolvedValue(snapshot(2));
+
+    const line = await renderStatusline();
+
+    expect(line).toContain("repository: unbound (enforcement not evaluating)");
+    expect(line).not.toContain("repoSync");
+  });
+
+  it("surfaces an invalid local binding with one fixed doctor action", async () => {
+    mockRepositoryBindingState.mockReturnValue("invalid");
+    mockDaemonRequest.mockResolvedValue(snapshot(2));
+    expect(await renderStatusline()).toContain("repository binding: invalid (run `prim doctor`)");
   });
 
   it("renders teammate names when the snapshot carries them", async () => {
@@ -144,6 +164,7 @@ describe("renderStatusline", () => {
   });
 
   it("surfaces the one-command re-auth fix when the daemon is in reauth-hold", async () => {
+    mockRepositoryBindingState.mockReturnValue("unbound");
     mockDaemonRequest.mockResolvedValue({
       ...snapshot(2, ["Sam"]),
       healthy: false,
@@ -154,6 +175,8 @@ describe("renderStatusline", () => {
     expect(line).toContain("run `prim auth login`");
     expect(line).not.toContain("team:");
     expect(line).not.toContain("Decision ingestion");
+    expect(line).not.toContain("repository:");
+    expect(mockRepositoryBindingState).not.toHaveBeenCalled();
     expect(mockDecisionIngestionStatus).not.toHaveBeenCalled();
   });
 
@@ -230,6 +253,17 @@ describe("renderStatusline", () => {
     expect(line).toContain("presence: other env");
     expect(line).not.toContain("team:");
     expect(line).not.toContain("\x1b]8;;");
+  });
+
+  it("withholds another authenticated account's presence", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Kasey"]),
+      principalMismatch: true,
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: live, Decision ingestion enabled");
+    expect(line).toContain("presence: other account");
+    expect(line).not.toContain("team:");
   });
 
   it("renders 'presence: stale' (never a frozen count) when the daemon flags staleness", async () => {

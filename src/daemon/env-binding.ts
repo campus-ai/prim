@@ -1,12 +1,11 @@
 /**
  * Environment-binding check for the daemon read-proxy.
  *
- * The prim-daemon resolves ONE API base URL at boot (PRIM_API_URL env → the
- * boot cwd's `.env.local` → default prod) and proxies the latency-sensitive
- * decision reads from that single upstream. Because the socket envelope only
- * carries the request path — not the caller's environment — a daemon bound to
- * one deployment (say staging) would otherwise answer a CLI invocation that
- * targets another (prod) with the wrong deployment's decisions.
+ * The prim-daemon resolves ONE API base URL at boot (explicit PRIM_API_URL env
+ * or default prod) and proxies the latency-sensitive decision reads from that
+ * single upstream. The socket envelope carries both caller environment and
+ * principal context so a daemon bound to one deployment (say staging) refuses
+ * a CLI invocation targeting another (prod) before serving Decisions.
  *
  * So an env-bound proxied call now carries the caller's resolved base URL, and
  * the daemon refuses it on mismatch; the caller treats the refusal as a

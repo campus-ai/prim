@@ -4,7 +4,7 @@
  * Used by every hook (pre-tool-use, post-tool-use, session-start,
  * session-end) and every CLI subcommand (`prim statusline`,
  * `prim reconcile`, `prim daemon status`) to talk to the long-lived
- * `prim-daemon-server` over ~/.config/prim/sock.
+ * `prim-daemon-server` over the socket in Primitive's resolved config directory.
  *
  * Failure model: returns `null` on any socket-side error (daemon down,
  * socket missing, timeout, malformed reply). Callers must treat null as
@@ -13,26 +13,19 @@
  */
 
 import { type Socket, createConnection } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { primConfigDirectory } from "../lib/paths.js";
+import { resolveDaemonPrincipal } from "./principal.js";
+import {
+  DAEMON_JSON_RESPONSE_MAX_BYTES,
+  type DaemonRequestEnvelope,
+  parseDaemonResponseEnvelope,
+} from "./protocol.js";
 
-const SOCK_PATH = join(homedir(), ".config", "prim", "sock");
+const SOCK_PATH = join(primConfigDirectory(), "sock");
 const DEFAULT_TIMEOUT_MS = 250;
 
 let nextRequestId = 1;
-
-interface DaemonRequest {
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface DaemonResponse {
-  id: number;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-}
 
 export interface DaemonRequestOptions {
   /** Hard deadline before the call resolves with `null`. */
@@ -53,13 +46,19 @@ export function daemonRequest<T>(
   opts: DaemonRequestOptions = {},
 ): Promise<T | null> {
   const id = nextRequestId++;
-  const request: DaemonRequest = { id, method, params };
+  const caller = resolveDaemonPrincipal();
+  const request: DaemonRequestEnvelope = {
+    id,
+    method,
+    params,
+    ...(caller ? { caller } : {}),
+  };
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return new Promise<T | null>((resolve) => {
     let settled = false;
     let socket: Socket | undefined;
-    let buffer = "";
+    let buffer = Buffer.alloc(0);
 
     const settle = (value: T | null) => {
       if (settled) {
@@ -102,15 +101,20 @@ export function daemonRequest<T>(
     });
 
     socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf-8");
-      const newlineIdx = buffer.indexOf("\n");
+      buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+      if (buffer.length > DAEMON_JSON_RESPONSE_MAX_BYTES) {
+        clearTimeout(timer);
+        settle(null);
+        return;
+      }
+      const newlineIdx = buffer.indexOf(0x0a);
       if (newlineIdx === -1) {
         return;
       }
-      const line = buffer.slice(0, newlineIdx);
+      const line = buffer.subarray(0, newlineIdx).toString("utf8");
       try {
-        const res = JSON.parse(line) as DaemonResponse;
-        if (res.id !== id) {
+        const res = parseDaemonResponseEnvelope(JSON.parse(line));
+        if (!res || res.id !== id) {
           clearTimeout(timer);
           settle(null);
           return;

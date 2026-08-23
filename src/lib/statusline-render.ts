@@ -1,6 +1,15 @@
 import { type Teammate, formatTeammates, formatTeammatesWithArea } from "./presence.js";
 
 export type DecisionIngestionStatus = "enabled" | "disabled";
+export type RepositoryBindingDiagnosticState = "connected" | "unbound" | "invalid";
+
+export function repositoryBindingDiagnosticLabel(
+  state: RepositoryBindingDiagnosticState | undefined,
+): string | undefined {
+  if (state === "unbound") return "repository: unbound (enforcement not evaluating)";
+  if (state === "invalid") return "repository binding: invalid (run `prim doctor`)";
+  return undefined;
+}
 
 export interface StatusSnapshot {
   pid: number;
@@ -12,6 +21,7 @@ export interface StatusSnapshot {
   onlineTeammates?: Teammate[];
   presenceStale?: boolean;
   envMismatch?: boolean;
+  principalMismatch?: boolean;
   healthy?: boolean;
   heartbeat?: { healthy?: boolean };
   ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
@@ -35,6 +45,8 @@ export interface StatuslineRenderOptions {
    * consuming agent verbatim.
    */
   plainLinks?: boolean;
+  /** Last locally observed repository-binding state for this checkout. */
+  resolveRepositoryBindingState?: () => RepositoryBindingDiagnosticState | undefined;
 }
 
 /** Render a status snapshot without performing socket, filesystem, or Git I/O. */
@@ -53,29 +65,43 @@ export function formatStatusline(
         : undefined
       : resolveIngestionStatus();
 
+  // Terminal auth is the actionable root cause and deliberately suppresses
+  // lower-priority binding diagnostics. One line, one recovery action.
+  if (snapshot?.healthy === false && snapshot.needsReauth) {
+    return `primitive ${version} (daemon: paused · run \`prim auth login\`${ingestionSuffix(ingestionStatus)})`;
+  }
+
+  const repositoryLabel = repositoryBindingDiagnosticLabel(
+    (snapshot !== null && snapshot.healthy !== false) ||
+      options.includeIngestionWhenUnavailable === true
+      ? options.resolveRepositoryBindingState?.()
+      : undefined,
+  );
+  const repositorySuffix = repositoryLabel ? ` · ${repositoryLabel}` : "";
+
   if (!snapshot) {
-    return `primitive ${version} (daemon: down${ingestionSuffix(ingestionStatus)})`;
+    return `primitive ${version} (daemon: down${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
   }
   if (snapshot.healthy === false) {
-    if (snapshot.needsReauth) {
-      return `primitive ${version} (daemon: paused · run \`prim auth login\`${ingestionSuffix(ingestionStatus)})`;
-    }
     if (snapshot.ingestion?.healthy === false) {
       const pending = snapshot.ingestion.pendingCount;
       const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
-      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""}${ingestionSuffix(ingestionStatus)})`;
+      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""}${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
     }
     if (snapshot.heartbeat?.healthy === false) {
-      return `primitive ${version} (daemon: degraded · presence: unavailable${ingestionSuffix(ingestionStatus)})`;
+      return `primitive ${version} (daemon: degraded · presence: unavailable${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
     }
-    return `primitive ${version} (daemon: starting${ingestionSuffix(ingestionStatus)})`;
+    return `primitive ${version} (daemon: starting${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
   }
 
   if (snapshot.envMismatch) {
-    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: other env)`;
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus}${repositorySuffix} · presence: other env)`;
+  }
+  if (snapshot.principalMismatch) {
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus}${repositorySuffix} · presence: other account)`;
   }
   if (snapshot.presenceStale) {
-    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · presence: stale)`;
+    return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus}${repositorySuffix} · presence: stale)`;
   }
 
   let team: string;
@@ -88,44 +114,74 @@ export function formatStatusline(
   } else {
     team = "team: —";
   }
-  return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus} · ${team})`;
+  return `primitive ${version} (daemon: live, Decision ingestion ${ingestionStatus}${repositorySuffix} · ${team})`;
 }
 
 interface CacheEntry {
   expiresAt: number;
   value: DecisionIngestionStatus;
+  repositoryBindingState?: RepositoryBindingDiagnosticState;
 }
 
 export const STATUSLINE_INGESTION_CACHE_TTL_MS = 30_000;
 export const STATUSLINE_INGESTION_CACHE_MAX_ENTRIES = 256;
 
+export interface StatuslineIngestionCacheOptions {
+  now?: () => number;
+  ttlMs?: number;
+  maxEntries?: number;
+  resolveRepositoryBindingState?: (cwd: string) => RepositoryBindingDiagnosticState | undefined;
+}
+
 /** Small daemon-local cache for the only Git-backed part of status rendering. */
 export class StatuslineIngestionCache {
   readonly #entries = new Map<string, CacheEntry>();
+  readonly #now: () => number;
+  readonly #ttlMs: number;
+  readonly #maxEntries: number;
+  readonly #resolveRepositoryBindingState?: StatuslineIngestionCacheOptions["resolveRepositoryBindingState"];
 
   constructor(
     private readonly resolve: (cwd: string) => DecisionIngestionStatus,
-    private readonly now: () => number = Date.now,
-    private readonly ttlMs = STATUSLINE_INGESTION_CACHE_TTL_MS,
-    private readonly maxEntries = STATUSLINE_INGESTION_CACHE_MAX_ENTRIES,
-  ) {}
+    options: StatuslineIngestionCacheOptions = {},
+  ) {
+    this.#now = options.now ?? Date.now;
+    this.#ttlMs = options.ttlMs ?? STATUSLINE_INGESTION_CACHE_TTL_MS;
+    this.#maxEntries = options.maxEntries ?? STATUSLINE_INGESTION_CACHE_MAX_ENTRIES;
+    this.#resolveRepositoryBindingState = options.resolveRepositoryBindingState;
+  }
 
-  get(cwd: string): DecisionIngestionStatus {
-    const now = this.now();
+  #entry(cwd: string): CacheEntry {
+    const now = this.#now();
     const cached = this.#entries.get(cwd);
     if (cached && cached.expiresAt > now) {
-      return cached.value;
+      return cached;
     }
 
     const value = this.resolve(cwd);
+    const repositoryState =
+      value === "enabled" ? this.#resolveRepositoryBindingState?.(cwd) : undefined;
+    const entry = {
+      expiresAt: now + this.#ttlMs,
+      value,
+      ...(repositoryState ? { repositoryBindingState: repositoryState } : {}),
+    };
     this.#entries.delete(cwd);
-    this.#entries.set(cwd, { expiresAt: now + this.ttlMs, value });
-    while (this.#entries.size > this.maxEntries) {
+    this.#entries.set(cwd, entry);
+    while (this.#entries.size > this.#maxEntries) {
       const oldest = this.#entries.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       this.#entries.delete(oldest);
     }
-    return value;
+    return entry;
+  }
+
+  get(cwd: string): DecisionIngestionStatus {
+    return this.#entry(cwd).value;
+  }
+
+  getRepositoryBindingState(cwd: string): RepositoryBindingDiagnosticState | undefined {
+    return this.#entry(cwd).repositoryBindingState;
   }
 
   clear(): void {

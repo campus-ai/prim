@@ -25,8 +25,11 @@
 
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
+import type { DecisionsRecentResponse } from "../generated/cli-http-v1.types.js";
 import { color, colorForArea } from "../lib/ansi.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
+
+type ContractDecisionFeedRow = DecisionsRecentResponse["decisions"][number];
 
 export interface DecisionFeedRow {
   id: string;
@@ -42,6 +45,8 @@ export interface DecisionFeedRow {
   authorIsSelf: boolean;
   classifiedAt: number;
   status: "active" | "superseded" | "under_review";
+  /** Required by the current contract; optional here for rolling old-server reads. */
+  stage?: ContractDecisionFeedRow["stage"];
 }
 
 export interface DecisionsRecentResult {

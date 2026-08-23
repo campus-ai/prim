@@ -1,12 +1,14 @@
 import { HttpError, type RequestOptions, getClient } from "../client.js";
-import { clearRepoSyncId, isValidRepoSyncId, setRepoSyncId } from "./activation.js";
+import { isValidRepoSyncId, setRepoSyncId, setRepositoryBindingState } from "./activation.js";
 import { githubRepositoryFullName } from "./git.js";
 
 type BindResponse = { repoSyncId?: unknown };
 
+class InvalidRepositoryBindingResponseError extends Error {}
+
 export type RepositoryBindingResult =
   | { status: "connected"; repoSyncId: string; repositoryFullName: string }
-  | { status: "pending"; repositoryFullName: string };
+  | { status: "unbound"; repositoryFullName: string };
 
 /** Resolve the active server binding for the checkout's current GitHub origin. */
 export async function resolveRepositoryBinding(
@@ -26,26 +28,44 @@ export async function resolveRepositoryBinding(
     )) as BindResponse;
   } catch (error) {
     if (error instanceof HttpError && error.status === 404) {
-      return { status: "pending", repositoryFullName };
+      return { status: "unbound", repositoryFullName };
     }
     throw error;
   }
   if (!isValidRepoSyncId(response.repoSyncId)) {
-    throw new Error("server returned no repository binding");
+    throw new InvalidRepositoryBindingResponseError(
+      "server returned an invalid repository binding",
+    );
   }
   return { status: "connected", repoSyncId: response.repoSyncId, repositoryFullName };
 }
 
-/** Persist a connected binding, or clear a stale id while connection is pending. */
+/** Persist the server's result without deleting a previously issued binding on a 404. */
 export async function bindRepository(
   root: string,
   options?: RequestOptions,
 ): Promise<RepositoryBindingResult> {
-  const binding = await resolveRepositoryBinding(root, options);
+  let binding: RepositoryBindingResult;
+  try {
+    binding = await resolveRepositoryBinding(root, options);
+  } catch (error) {
+    if (error instanceof InvalidRepositoryBindingResponseError) {
+      try {
+        setRepositoryBindingState(root, "invalid");
+      } catch {
+        // Preserve the protocol error; the next bind/doctor retries diagnosis.
+      }
+    }
+    throw error;
+  }
   if (binding.status === "connected") {
     setRepoSyncId(root, binding.repoSyncId);
+    setRepositoryBindingState(root, "connected");
   } else {
-    clearRepoSyncId(root);
+    // A 404 can be a transient server-side binding outage. Retain the last
+    // server-issued id so one failed SessionStart does not self-propagate the
+    // outage across later hooks; the server still validates the id on use.
+    setRepositoryBindingState(root, "unbound");
   }
   return binding;
 }
