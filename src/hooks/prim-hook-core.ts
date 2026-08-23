@@ -20,6 +20,7 @@ import {
   type ToolOutcome,
 } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
+import { scrubEnvironmentPaths } from "./redact.js";
 
 const CORRELATED_TOOL_EVENTS = new Set([
   "PostToolUse",
@@ -139,7 +140,7 @@ export function toMove(
     sessionId,
     eventType,
     payload: parsed,
-    env: {
+    env: scrubEnvironmentPaths({
       cwd: (parsed.cwd as string | undefined) ?? process.cwd(),
       cliVersion,
       osPlatform: platform(),
@@ -153,7 +154,7 @@ export function toMove(
           }
         : {}),
       ...(workspaceId ? { workspaceId } : {}),
-    },
+    }),
     envelopeVersion: AGENT_ENVELOPE_VERSION,
     producer: agent,
     ...(invocationId ? { invocationId } : {}),
@@ -302,7 +303,7 @@ export function toCommitMove(
       changedFiles: commit.files,
       changedFilesComplete: commit.filesComplete,
     },
-    env: {
+    env: scrubEnvironmentPaths({
       cwd,
       cliVersion,
       osPlatform: platform(),
@@ -316,7 +317,7 @@ export function toCommitMove(
       ...(repoFullName ? { repoFullName } : {}),
       ...(validatedRepoSyncId ? { repoSyncId: validatedRepoSyncId } : {}),
       ...(validatedWorkspaceId ? { workspaceId: validatedWorkspaceId } : {}),
-    },
+    }),
   };
   return validatedAttribution
     ? {
@@ -399,7 +400,7 @@ export function toRewriteMove(
         pairs: sortedPairs,
         ...(branch ? { branch } : {}),
       },
-      env: {
+      env: scrubEnvironmentPaths({
         cwd,
         cliVersion,
         osPlatform: platform(),
@@ -413,7 +414,7 @@ export function toRewriteMove(
         ...(repoFullName ? { repoFullName } : {}),
         repoSyncId,
         workspaceId,
-      },
+      }),
       envelopeVersion: ENVELOPE_VERSION,
     });
   }

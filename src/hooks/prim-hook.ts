@@ -115,10 +115,9 @@ async function main(): Promise<void> {
     : null;
 
   try {
-    // Derive the envelope's identity/control fields (sessionId, eventType,
-    // env.cwd) from the (normalized) event so org binding is provably
-    // independent of redaction, then scrub ONLY the payload body that persists
-    // to the journal, transits to the server, and lands in the moves table.
+    // Derive identity/control fields from the normalized event so org binding
+    // is independent of redaction. `toMove` removes user identity from local
+    // environment paths; the payload is scrubbed separately before persistence.
     // Canonical refs are authoritative on every captured tool event. In
     // particular, PreToolUse can be selected as Decision evidence on its own;
     // leaving it raw would let the backend recreate a lexical ref that the
@@ -137,12 +136,12 @@ async function main(): Promise<void> {
       repository,
       invocationId,
     );
-    const scrubbed = scrubFromCwd(enriched, cwd);
+    const scrubbed = await scrubFromCwd(enriched, cwd);
     const move = {
       ...base,
       payload: enrichment ? preserveHookFileMetadata(scrubbed, enrichment.resolution) : scrubbed,
     };
-    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
+    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
     appendMove(move, orgId);
     if (shouldFlushAfter(move.eventType)) {
       spawnBackgroundFlush();
