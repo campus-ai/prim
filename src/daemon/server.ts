@@ -59,6 +59,7 @@ import {
   readDaemonPid,
   releaseDaemonOwnership,
 } from "./instance-lock.js";
+import { buildPresenceHeartbeatRequest } from "./presence-heartbeat.js";
 import {
   STATUSLINE_PROTOCOL_PREFIX,
   STATUSLINE_REQUEST_MAX_BYTES,
@@ -301,13 +302,12 @@ async function performHeartbeat(): Promise<void> {
   daemonHealth.heartbeat.lastAttemptAt = Date.now();
   persistHealth();
   try {
-    // The body is `{ sessionId }` ONLY — the server derives identity and the
-    // display names from the authenticated token. The ack carries the online
-    // count and the teammate names, which we cache for the statusline and
-    // daemon status.
+    // The lifecycle version is an additive capability hint. Legacy servers
+    // ignore the unknown field; identity and display names remain derived
+    // solely from the authenticated token.
     const result = (await client.post(
       "/api/cli/presence/heartbeat",
-      { sessionId: activeSessionId },
+      buildPresenceHeartbeatRequest(activeSessionId),
       { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) },
     )) as {
       accepted?: boolean;
