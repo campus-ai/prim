@@ -27,4 +27,18 @@ describe("resolvePrimConfigDirectory", () => {
       }),
     ).toEqual({ path: join("/home/tester", ".config", "prim"), source: "default" });
   });
+
+  it.each([
+    ["PRIM_CONFIG_DIR", "/private/prim\u001b[2J"],
+    ["PRIM_CONFIG_DIR", "/private/prim\u202e"],
+    ["XDG_CONFIG_HOME", "/private/.config\u200b"],
+    ["XDG_CONFIG_HOME", "/private/.config\u2028"],
+  ])("fails closed when %s contains terminal-unsafe characters", (variable, value) => {
+    expect(() =>
+      resolvePrimConfigDirectory({
+        env: { [variable]: value },
+        homeDir: "/home/tester",
+      }),
+    ).toThrow(`${variable} contains unsafe characters`);
+  });
 });

@@ -13,7 +13,12 @@ export interface PrimConfigDirectory {
   source: PrimConfigDirectorySource;
 }
 
-function absolutePath(value: string | undefined): string | undefined {
+const UNSAFE_CONFIG_PATH_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+function absolutePath(value: string | undefined, variable: string): string | undefined {
+  if (value !== undefined && UNSAFE_CONFIG_PATH_CHARACTERS.test(value)) {
+    throw new Error(`${variable} contains unsafe characters`);
+  }
   const candidate = value?.trim();
   return candidate && isAbsolute(candidate) ? normalize(candidate) : undefined;
 }
@@ -23,10 +28,10 @@ export function resolvePrimConfigDirectory(
   options: PrimConfigDirectoryOptions = {},
 ): PrimConfigDirectory {
   const env = options.env ?? process.env;
-  const explicit = absolutePath(env.PRIM_CONFIG_DIR);
+  const explicit = absolutePath(env.PRIM_CONFIG_DIR, "PRIM_CONFIG_DIR");
   if (explicit) return { path: explicit, source: "explicit" };
 
-  const xdgConfigHome = absolutePath(env.XDG_CONFIG_HOME);
+  const xdgConfigHome = absolutePath(env.XDG_CONFIG_HOME, "XDG_CONFIG_HOME");
   if (xdgConfigHome) return { path: join(xdgConfigHome, "prim"), source: "xdg" };
 
   return {
