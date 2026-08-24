@@ -444,7 +444,9 @@ describe("daemon terminal-auth lifecycle", () => {
 
       const held = await daemonRequest(socketPath, "status_snapshot");
       expect(held.needsReauth).toBe(true);
-      await daemonRequest(socketPath, "session_start", { sessionId: "held-session" });
+      await expect(
+        daemonRequest(socketPath, "session_start", { sessionId: "held-session" }),
+      ).rejects.toThrow("principal or organization mismatch");
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(networkCalls).toBe(0);
       expect(
@@ -616,6 +618,16 @@ describe("daemon raw statusline socket", () => {
         cachedAt: expect.any(Number),
       });
 
+      await expect(
+        daemonRequest(socketPath, "session_start", { sessionId: "session-b" }, callerB),
+      ).resolves.toEqual({ sessionId: "session-b" });
+      await expect(
+        daemonRequest(socketPath, "session_start", { sessionId: "session-a" }, callerA),
+      ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "status_snapshot", { callerEnv: apiUrl }, callerB),
+      ).resolves.toMatchObject({ sessionId: "session-b" });
+
       const raw = statuslineRequest(activeRepo, apiUrl);
       const fragmented = await rawStatuslineRequest(
         socketPath,
@@ -697,7 +709,7 @@ describe("daemon raw statusline socket", () => {
         "Decision ingestion disabled",
       );
       execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
-      await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" });
+      await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" }, callerB);
       expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
 
       const relative = statuslineRequest("relative/path", apiUrl);

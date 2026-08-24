@@ -636,8 +636,8 @@ function handleStatusSnapshot(
   // withhold count/names and flag the mismatch so the statusline shows
   // "presence: other env" instead of another deployment's team. There is no
   // direct fallback for presence, so unlike the proxied reads this withholds
-  // rather than throws. Raw statusline v1 relies on the protected socket directory;
-  // JSON callers additionally prove their exact principal above.
+  // rather than throws. Raw statusline v1 has no principal proof, so its
+  // dispatcher withholds the roster before reaching this branch.
   if (isCrossEnv(params.callerEnv, getSiteUrl())) {
     return {
       ...base,
@@ -687,6 +687,7 @@ async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonRespon
         return { id, ok: true, result };
       }
       case "session_start": {
+        assertCallerPrincipalMatches(req.caller);
         statuslineIngestionCache.clear();
         const sid = req.params?.sessionId;
         if (typeof sid === "string" && sid.length > 0) {
