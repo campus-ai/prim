@@ -21,6 +21,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ syncDirectory: vi.fn() }));
+
+vi.mock("./lib/atomic-file.js", () => ({ syncDirectory: mocks.syncDirectory }));
+
 import { type CliClient, HttpError } from "./client.js";
 import {
   type DeadLetterRecord,
@@ -128,6 +133,7 @@ describe("flush replay stability", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "prim-flush-"));
+    mocks.syncDirectory.mockReset();
   });
 
   afterEach(() => {
@@ -264,7 +270,7 @@ describe("flush replay stability", () => {
     expect(statSync(deadLetterPathForMove(flushing, move("foreign"))).mode & 0o777).toBe(0o600);
   });
 
-  it("bisects a mixed 400 batch, acknowledging valid neighbors and quarantining only poison", async () => {
+  it("bisects a versioned invalid-move batch, acknowledging valid neighbors and quarantining only poison", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     for (const item of [move("good-a"), move("poison"), move("good-b")]) {
       appendMoveToPath(flushing, item);
@@ -274,7 +280,12 @@ describe("flush replay stability", () => {
       get: vi.fn(),
       post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
         if (body.batch.some((item) => item.moveId === "poison")) {
-          return Promise.reject(new HttpError(400, "Malformed move(s) in batch"));
+          return Promise.reject(
+            new HttpError(400, "Malformed move(s) in batch", {
+              error: "invalid_move",
+              errorVersion: 1,
+            }),
+          );
         }
         delivered.push(...body.batch.map((item) => item.moveId));
         return Promise.resolve({
@@ -303,7 +314,12 @@ describe("flush replay stability", () => {
       get: vi.fn(),
       post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
         if (body.batch.some((item) => item.moveId === "poison")) {
-          return Promise.reject(new HttpError(400, "Malformed move(s) in batch"));
+          return Promise.reject(
+            new HttpError(400, "Malformed move(s) in batch", {
+              error: "invalid_move",
+              errorVersion: 1,
+            }),
+          );
         }
         laterAttempts += 1;
         if (laterAttempts === 1) {
@@ -346,6 +362,72 @@ describe("flush replay stability", () => {
     expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
   });
 
+  it("retains the source when the post-rename dead-letter sync fails", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("poison"));
+    mocks.syncDirectory
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("dead-letter sync failed");
+      });
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(
+        new HttpError(400, "Malformed move(s) in batch", {
+          error: "invalid_move",
+          errorVersion: 1,
+        }),
+      ),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).rejects.toThrow("dead-letter sync failed");
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterPathForMove(flushing, move("poison")))).toBe(true);
+  });
+
+  it("re-syncs an existing dead letter before retiring its replayed source", async () => {
+    const first = join(dir, "journal.ndjson.flushing.1.2");
+    const replay = join(dir, "journal.ndjson.flushing.3.4");
+    const poisoned = move("poison");
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(
+        new HttpError(400, "Malformed move(s) in batch", {
+          error: "invalid_move",
+          errorVersion: 1,
+        }),
+      ),
+    };
+    appendMoveToPath(first, poisoned);
+    await expect(drainFlushingPath(first, client)).resolves.toEqual({ flushed: 0, quarantined: 1 });
+
+    mocks.syncDirectory.mockClear();
+    appendMoveToPath(replay, poisoned);
+    await expect(drainFlushingPath(replay, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(mocks.syncDirectory).toHaveBeenCalledWith(deadLetterDirectoryForRotation(replay));
+  });
+
+  it.each([
+    ["legacy generic error", { error: "Malformed move(s) in batch" }],
+    ["unversioned invalid move", { error: "invalid_move" }],
+    ["unknown invalid-move version", { error: "invalid_move", errorVersion: 2 }],
+    ["extended invalid-move response", { error: "invalid_move", errorVersion: 1, detail: "x" }],
+  ])("retains a %s 400 for retry", async (_label, body) => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("retry"));
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(new HttpError(400, "retry later", body)),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).rejects.toThrow("retry later");
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
   it("retains the source rotation when durable quarantine cannot be written", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     appendMoveToPath(flushing, move("poison"));
@@ -353,7 +435,12 @@ describe("flush replay stability", () => {
     writeFileSync(deadLetterDirectoryForRotation(flushing), "not a directory");
     const client: CliClient = {
       get: vi.fn(),
-      post: vi.fn().mockRejectedValue(new HttpError(400, "Malformed move(s) in batch")),
+      post: vi.fn().mockRejectedValue(
+        new HttpError(400, "Malformed move(s) in batch", {
+          error: "invalid_move",
+          errorVersion: 1,
+        }),
+      ),
     };
 
     await expect(drainFlushingPath(flushing, client)).rejects.toThrow();

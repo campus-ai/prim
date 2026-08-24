@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { syncDirectory } from "./lib/atomic-file.js";
 import type { Move } from "./protocol/move.js";
 
 const DIRECTORY_MODE = 0o700;
@@ -60,6 +61,7 @@ export function quarantineMove(
   const directory = deadLetterDirectoryForRotation(flushingPath);
   mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
   chmodSync(directory, DIRECTORY_MODE);
+  syncDirectory(dirname(directory));
 
   const serializedMove = JSON.stringify(move);
   const record: DeadLetterRecord = {
@@ -71,6 +73,7 @@ export function quarantineMove(
   };
   const path = join(directory, `${record.quarantineId}.json`);
   if (existsSync(path)) {
+    syncDirectory(directory);
     return record;
   }
 
@@ -91,6 +94,7 @@ export function quarantineMove(
     // Same-directory rename is atomic. If another flusher won the race, its
     // complete record is equivalent and this complete file may replace it.
     renameSync(temporaryPath, path);
+    syncDirectory(directory);
   } finally {
     rmSync(temporaryPath, { force: true });
   }

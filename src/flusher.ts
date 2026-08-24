@@ -70,11 +70,21 @@ function addDrainCounts(left: DrainCounts, right: DrainCounts): DrainCounts {
   };
 }
 
+function isVersionedInvalidMoveDisposition(body: unknown): boolean {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 2 && record.error === "invalid_move" && record.errorVersion === 1
+  );
+}
+
 function deadLetterReason(error: unknown): DeadLetterReason | undefined {
   if (!(error instanceof HttpError)) {
     return undefined;
   }
-  if (error.status === 400) {
+  if (error.status === 400 && isVersionedInvalidMoveDisposition(error.body)) {
     return "invalid_move";
   }
   if (
@@ -114,9 +124,9 @@ export async function drainFlushingPath(
         throw error;
       }
       if (batch.length > 1) {
-        // Ingest rejects a batch atomically. Bisect only deterministic 4xx
-        // failures so valid neighbors can be durably acknowledged while the
-        // exact offending envelope is isolated locally.
+        // Ingest rejects a batch atomically. Bisect only closed permanent
+        // dispositions so valid neighbors can be durably acknowledged while
+        // the exact offending envelope is isolated locally.
         const midpoint = Math.floor(batch.length / 2);
         const left = await postBatch(batch.slice(0, midpoint));
         const right = await postBatch(batch.slice(midpoint));
