@@ -372,6 +372,111 @@ export type FeedbackStatusResponse =
       [k: string]: unknown | undefined;
     };
 
+export type GitHubInstallIntentStartErrorResponse =
+  | {
+      error: "Unauthorized";
+    }
+  | {
+      error: "interactive_workos_authority_required";
+    }
+  | {
+      error: "feature_disabled";
+      feature: "github-connect";
+    }
+  | {
+      error: "github_connect_unavailable" | "feature_check_unavailable";
+      feature: "github-connect";
+    }
+  | {
+      error: "github_install_intent_conflict";
+    };
+
+export interface GitHubInstallIntentStartResponse {
+  protocolVersion: 1;
+  mode: "install_intent_v1";
+  status: "pending";
+  intentId: string;
+  browserUrl: string;
+  expiresAt: number;
+  pollAfterMs: 1000;
+}
+
+export type GitHubInstallIntentStatusErrorResponse =
+  | {
+      error: "Unauthorized";
+    }
+  | {
+      error: "interactive_workos_authority_required";
+    }
+  | {
+      error: "github_install_intent_not_found";
+    };
+
+export interface GitHubInstallIntentStatusRequest {
+  intentId: string;
+}
+
+export type GitHubInstallIntentStatusResponse =
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "pending";
+    }
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "claimed";
+      leaseExpiresAt: number;
+    }
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "consumed";
+      completedAt: number;
+      repositoryCount: number;
+      adminRepositoryCount: number;
+      nonAdminRepositoryCount: number;
+    }
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "expired";
+      closedAt: number;
+    }
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "cancelled";
+      closedAt: number;
+    }
+  | {
+      protocolVersion: 1;
+      mode: "install_intent_v1";
+      found: true;
+      expiresAt: number;
+      status: "failed_terminal";
+      closedAt: number;
+      failureCode:
+        | "claim_lease_expired"
+        | "authority_changed"
+        | "oauth_exchange_failed"
+        | "installation_not_administered"
+        | "repository_enumeration_failed"
+        | "repository_bound_exceeded"
+        | "installation_changed"
+        | "proof_commit_failed";
+    };
+
 export interface MoveIngestRequest {
   batch: (
     | {

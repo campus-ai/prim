@@ -30,6 +30,7 @@ export const SUPPORTED_RUNTIME_REFINEMENTS = new Set([
   "exact_workos_connect_device_scopes",
   "proposal_utf8_max_6144",
   "recent_response_variant",
+  "repository_count_partition",
   "safe_feedback_event_id",
   "safe_feedback_session_id",
   "unique_feedback_event_ids",
@@ -85,10 +86,17 @@ function assertRuntimeRefinements(value, definitionNames, path = []) {
         throw new Error(`${location} uses unsupported runtime refinement: ${refinement}`);
       }
     }
-    const atDefinitionRoot =
-      path.length === 2 && path[0] === "$defs" && definitionNames.has(path[1]);
-    if (!atDefinitionRoot) {
-      throw new Error(`${location} uses runtime refinements outside a definition root`);
+    const insideKnownDefinition = path[0] === "$defs" && definitionNames.has(path[1]);
+    const atDefinitionRoot = path.length === 2 && insideKnownDefinition;
+    const atDefinitionUnionMember =
+      path.length === 4 &&
+      insideKnownDefinition &&
+      path[2] === "anyOf" &&
+      /^\d+$/u.test(path[3] ?? "");
+    if (!(atDefinitionRoot || atDefinitionUnionMember)) {
+      throw new Error(
+        `${location} uses runtime refinements outside a definition or direct anyOf member root`,
+      );
     }
   }
 
@@ -236,9 +244,21 @@ async function generateTypes(entries) {
   return `${GENERATED_HEADER}${sections.join("\n")}`;
 }
 
+function hasRuntimeRefinement(value) {
+  if (Array.isArray(value)) {
+    return value.some(hasRuntimeRefinement);
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (Object.hasOwn(value, "x-primitive-runtime-refinements")) {
+    return value["x-primitive-runtime-refinements"].length > 0;
+  }
+  return Object.values(value).some(hasRuntimeRefinement);
+}
+
 function validatorExportName(name, schema) {
-  const refinements = schema["x-primitive-runtime-refinements"];
-  return `is${name}${Array.isArray(refinements) && refinements.length > 0 ? "Structure" : ""}`;
+  return `is${name}${hasRuntimeRefinement(schema) ? "Structure" : ""}`;
 }
 
 function convertAjvRuntimeImports(source) {

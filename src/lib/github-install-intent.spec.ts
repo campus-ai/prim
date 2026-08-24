@@ -19,6 +19,17 @@ const START: GitHubInstallIntentStart = {
   expiresAt: EXPIRES_AT,
   pollAfterMs: 1000,
 };
+const CONSUMED = {
+  protocolVersion: 1,
+  mode: "install_intent_v1",
+  found: true,
+  status: "consumed",
+  expiresAt: EXPIRES_AT,
+  completedAt: NOW + 2_000,
+  repositoryCount: 3,
+  adminRepositoryCount: 2,
+  nonAdminRepositoryCount: 1,
+} as const;
 
 function client(responses: unknown[]): CliClient {
   return {
@@ -55,34 +66,15 @@ describe("GitHub install-intent protocol", () => {
   });
 
   it("requires exact status shapes and consistent repository counts", () => {
+    expect(parseGitHubInstallIntentStatus(CONSUMED, EXPIRES_AT)).toMatchObject({
+      status: "consumed",
+      repositoryCount: 3,
+    });
     expect(
       parseGitHubInstallIntentStatus(
         {
-          protocolVersion: 1,
-          mode: "install_intent_v1",
-          found: true,
-          status: "consumed",
-          expiresAt: EXPIRES_AT,
-          completedAt: NOW + 2_000,
-          repositoryCount: 3,
-          adminRepositoryCount: 2,
-          nonAdminRepositoryCount: 1,
-        },
-        EXPIRES_AT,
-      ),
-    ).toMatchObject({ status: "consumed", repositoryCount: 3 });
-    expect(
-      parseGitHubInstallIntentStatus(
-        {
-          protocolVersion: 1,
-          mode: "install_intent_v1",
-          found: true,
-          status: "consumed",
-          expiresAt: EXPIRES_AT,
-          completedAt: NOW + 2_000,
+          ...CONSUMED,
           repositoryCount: 4,
-          adminRepositoryCount: 2,
-          nonAdminRepositoryCount: 1,
         },
         EXPIRES_AT,
       ),
@@ -97,6 +89,74 @@ describe("GitHub install-intent protocol", () => {
           expiresAt: EXPIRES_AT,
           closedAt: NOW + 2_000,
           failureCode: "provider_token_leaked",
+        },
+        EXPIRES_AT,
+      ),
+    ).toBeNull();
+  });
+
+  it("retains bounded repository counts from the generated contract", () => {
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          ...CONSUMED,
+          repositoryCount: 256,
+          adminRepositoryCount: 128,
+          nonAdminRepositoryCount: 128,
+        },
+        EXPIRES_AT,
+      ),
+    ).toMatchObject({ status: "consumed", repositoryCount: 256 });
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          ...CONSUMED,
+          repositoryCount: 257,
+          adminRepositoryCount: 128,
+          nonAdminRepositoryCount: 129,
+        },
+        EXPIRES_AT,
+      ),
+    ).toBeNull();
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          ...CONSUMED,
+          repositoryCount: 129,
+          adminRepositoryCount: 129,
+          nonAdminRepositoryCount: 0,
+        },
+        EXPIRES_AT,
+      ),
+    ).toBeNull();
+  });
+
+  it("retains intent-lifetime timestamp relationships above structural validation", () => {
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          protocolVersion: 1,
+          mode: "install_intent_v1",
+          found: true,
+          status: "claimed",
+          expiresAt: EXPIRES_AT,
+          leaseExpiresAt: EXPIRES_AT + 1,
+        },
+        EXPIRES_AT,
+      ),
+    ).toBeNull();
+    expect(
+      parseGitHubInstallIntentStatus({ ...CONSUMED, completedAt: EXPIRES_AT + 1 }, EXPIRES_AT),
+    ).toBeNull();
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          protocolVersion: 1,
+          mode: "install_intent_v1",
+          found: true,
+          status: "expired",
+          expiresAt: EXPIRES_AT,
+          closedAt: EXPIRES_AT + 1,
         },
         EXPIRES_AT,
       ),

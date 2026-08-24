@@ -7,6 +7,7 @@ import type {
   FeedbackAckResponse,
   FeedbackLeaseRequest,
   FeedbackLeaseResponse,
+  GitHubInstallIntentStatusResponse,
   PreflightRequestV3,
   UserApiKeyListRequest,
   UserApiKeyListResponse,
@@ -39,6 +40,11 @@ import {
   isFeedbackLeaseRequestStructure,
   isFeedbackLeaseResponseStructure,
   isFeedbackStatusResponse,
+  isGitHubInstallIntentStartErrorResponse,
+  isGitHubInstallIntentStartResponse,
+  isGitHubInstallIntentStatusErrorResponse,
+  isGitHubInstallIntentStatusRequest,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
   isPreflightResponseV3,
@@ -83,6 +89,11 @@ export {
   isFeedbackLeaseRequestStructure,
   isFeedbackLeaseResponseStructure,
   isFeedbackStatusResponse,
+  isGitHubInstallIntentStartErrorResponse,
+  isGitHubInstallIntentStartResponse,
+  isGitHubInstallIntentStatusErrorResponse,
+  isGitHubInstallIntentStatusRequest,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
   isPreflightResponseV3,
@@ -248,6 +259,18 @@ export function isFeedbackAckResponse(value: unknown): value is FeedbackAckRespo
   );
 }
 
+export function isGitHubInstallIntentStatusResponse(
+  value: unknown,
+): value is GitHubInstallIntentStatusResponse {
+  if (!isGitHubInstallIntentStatusResponseStructure(value)) {
+    return false;
+  }
+  return (
+    value.status !== "consumed" ||
+    value.repositoryCount === value.adminRepositoryCount + value.nonAdminRepositoryCount
+  );
+}
+
 export function isDecisionsRecentResponse(value: unknown): value is DecisionsRecentResponse {
   if (!isDecisionsRecentResponseStructure(value)) {
     return false;
@@ -301,6 +324,11 @@ export const cliHttpV1Validators = {
   FeedbackLeaseRequest: isFeedbackLeaseRequest,
   FeedbackLeaseResponse: isFeedbackLeaseResponse,
   FeedbackStatusResponse: isFeedbackStatusResponse,
+  GitHubInstallIntentStartErrorResponse: isGitHubInstallIntentStartErrorResponse,
+  GitHubInstallIntentStartResponse: isGitHubInstallIntentStartResponse,
+  GitHubInstallIntentStatusErrorResponse: isGitHubInstallIntentStatusErrorResponse,
+  GitHubInstallIntentStatusRequest: isGitHubInstallIntentStatusRequest,
+  GitHubInstallIntentStatusResponse: isGitHubInstallIntentStatusResponse,
   MoveIngestRequest: isMoveIngestRequest,
   PreflightRequestV3: isPreflightRequestV3,
   PreflightResponseV3: isPreflightResponseV3,

@@ -15,6 +15,8 @@ import {
   isFeedbackLeaseRequest,
   isFeedbackLeaseResponse,
   isFeedbackLeaseResponseStructure,
+  isGitHubInstallIntentStatusResponse,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3,
   isPreflightRequestV3Structure,
@@ -220,6 +222,30 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(isFeedbackAckResponse(duplicateAck)).toBe(false);
   });
 
+  it("keeps install-intent count partitioning as a semantic facade refinement", () => {
+    const inconsistentCounts = {
+      protocolVersion: 1,
+      mode: "install_intent_v1",
+      found: true,
+      status: "consumed",
+      expiresAt: 1_800_000_060_000,
+      completedAt: 1_800_000_002_000,
+      repositoryCount: 4,
+      adminRepositoryCount: 2,
+      nonAdminRepositoryCount: 1,
+    };
+    expect(isGitHubInstallIntentStatusResponseStructure(inconsistentCounts)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(inconsistentCounts)).toBe(false);
+    expect(
+      isGitHubInstallIntentStatusResponseStructure({
+        ...inconsistentCounts,
+        repositoryCount: 257,
+        adminRepositoryCount: 128,
+        nonAdminRepositoryCount: 129,
+      }),
+    ).toBe(false);
+  });
+
   it("enforces resolved, unavailable, and complete-author recent response variants", () => {
     const partialAuthor = {
       decisions: [],
@@ -319,7 +345,7 @@ describe("generated CLI HTTP request-core contract", () => {
     ];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
   });
 
   it("fails generation closed when a refinement is attached to the schema root", async () => {
@@ -333,7 +359,7 @@ describe("generated CLI HTTP request-core contract", () => {
     artifact["x-primitive-runtime-refinements"] = ["canonical_repository_paths"];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
   });
 
   it("fails generation closed on unsupported schema keywords", async () => {
