@@ -16,7 +16,6 @@ import {
   TERMINAL_REFRESH_PATH,
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
-  isPotentialWorkosConnectAccessToken,
   jwtExpiresAt,
   readStoredCredentialMetadata,
   resolveAuthCredential,
@@ -241,12 +240,10 @@ export async function clearStoredCredentials(
     const metadata = readStoredCredentialMetadata();
     const protectedMetadata =
       metadata.state === "legacy_broker" &&
-      ((metadata.metadata === undefined &&
-        isPotentialWorkosConnectAccessToken(accessToken ?? "")) ||
-        (metadata.metadata !== undefined &&
-          (!refreshToken ||
-            metadata.metadata.accessTokenHash !== refreshFingerprint(accessToken ?? "") ||
-            metadata.metadata.refreshTokenHash !== refreshFingerprint(refreshToken))))
+      metadata.metadata !== undefined &&
+      (!refreshToken ||
+        metadata.metadata.accessTokenHash !== refreshFingerprint(accessToken ?? "") ||
+        metadata.metadata.refreshTokenHash !== refreshFingerprint(refreshToken))
         ? { state: "invalid" as const }
         : metadata;
     let callbackError: unknown;
@@ -375,10 +372,7 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
         (metadata.state === "legacy_broker" &&
           metadata.metadata !== undefined &&
           (metadata.metadata.accessTokenHash !== refreshFingerprint(currentCredential.token) ||
-            metadata.metadata.refreshTokenHash !== refreshFingerprint(currentGeneration))) ||
-        (metadata.state === "legacy_broker" &&
-          metadata.metadata === undefined &&
-          isPotentialWorkosConnectAccessToken(currentCredential.token))
+            metadata.metadata.refreshTokenHash !== refreshFingerprint(currentGeneration)))
       ) {
         return undefined;
       }

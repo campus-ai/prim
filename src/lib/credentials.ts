@@ -191,16 +191,6 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | undef
   }
 }
 
-/** A marker-less Connect access token must never be refreshed by the legacy broker. */
-export function isPotentialWorkosConnectAccessToken(token: string): boolean {
-  const audience = decodeJwtPayload(token)?.aud;
-  const values =
-    typeof audience === "string" ? [audience] : Array.isArray(audience) ? audience : [];
-  return values.some(
-    (value) => typeof value === "string" && /^client_[A-Za-z0-9_-]+$/u.test(value),
-  );
-}
-
 export function jwtExpiresAt(token: string): number | undefined {
   const exp = decodeJwtPayload(token)?.exp;
   return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : undefined;

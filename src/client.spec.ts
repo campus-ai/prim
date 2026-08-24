@@ -297,10 +297,10 @@ describe("client credential store", () => {
     );
   });
 
-  it("refreshes a Connect generation directly when its legacy metadata file is missing", async () => {
+  it("keeps a Connect refresh out of the broker after legacy metadata loss", async () => {
     const client = await import("./client.js");
     await client.commitCredentials({
-      accessToken: "connect-access",
+      accessToken: jwt({ aud: "client_cli" }),
       refreshToken: "connect-refresh",
       expiresIn: 300,
       metadata: {
@@ -330,15 +330,34 @@ describe("client credential store", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("/mcp/broker/refresh");
   });
 
-  it("never sends an unmarked Connect-looking refresh token to the legacy broker", async () => {
+  it("refreshes a marker-less legacy broker JWT with a WorkOS client audience", async () => {
     writeFileSync(join(config, "token"), `${jwt({ aud: "client_cli" })}\n`);
-    writeFileSync(join(config, "refresh_token"), "connect-refresh\n");
-    const fetchMock = vi.fn();
+    writeFileSync(join(config, "refresh_token"), "broker-refresh\n");
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          access_token: "rotated-access",
+          refresh_token: "rotated-refresh",
+          expires_in: 300,
+        }),
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const client = await import("./client.js");
-    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(
+      client.refreshToken({ force: true, quiet: true, siteUrl: "https://legacy.example.test" }),
+    ).resolves.toBe("rotated-access");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://legacy.example.test/mcp/broker/refresh",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ refresh_token: "broker-refresh" }),
+      }),
+    );
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_FAMILY_PATH, "utf8"))).toMatchObject({
+      family: "legacy_broker",
+    });
   });
 
   it("fails closed before I/O when Connect metadata is malformed or stale", async () => {
@@ -721,7 +740,7 @@ describe("client credential store", () => {
     expect(readdirSync(config)).toEqual([]);
   });
 
-  it("does not classify a marker-less Connect-looking credential as broker state during clear", async () => {
+  it("classifies a marker-less legacy broker JWT with a WorkOS client audience during clear", async () => {
     writeFileSync(join(config, "token"), `${jwt({ aud: "client_cli" })}\n`);
     writeFileSync(join(config, "refresh_token"), "connect-refresh\n");
     const client = await import("./client.js");
@@ -733,7 +752,7 @@ describe("client credential store", () => {
       },
     });
 
-    expect(observed).toEqual({ state: "invalid" });
+    expect(observed).toEqual({ state: "legacy_broker" });
   });
 
   it("preserves the install identity across OAuth rotation, set-token, and clear", async () => {
