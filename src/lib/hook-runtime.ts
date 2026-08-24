@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  constants,
+  accessSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -91,6 +93,10 @@ export type RemoveHookRuntimeResult = {
   changed: boolean;
   paths: HookRuntimePaths;
 };
+
+export type HookRuntimeInspection =
+  | Readonly<{ state: "ready"; version: string }>
+  | Readonly<{ state: "missing" | "invalid" }>;
 
 export function hookRuntimePaths(options: PrimConfigDirectoryOptions = {}): HookRuntimePaths {
   // The persisted POSIX launcher can only resolve its default from HOME. Pass
@@ -328,6 +334,42 @@ case "$prim_node" in /*) ;; *) exit 69 ;; esac
 [ -x "$prim_node" ] && [ -f "$prim_entry" ] || exit 69
 exec "$prim_node" "$prim_entry" "$@"
 `;
+
+/** Inspect the selected immutable hook runtime without staging or repairing it. */
+export function inspectHookRuntime(
+  options: PrimConfigDirectoryOptions = {},
+): HookRuntimeInspection {
+  let paths: HookRuntimePaths;
+  try {
+    paths = hookRuntimePaths(options);
+  } catch {
+    return { state: "invalid" };
+  }
+
+  const launcherExists = existsSync(paths.launcher);
+  const selectorExists = existsSync(paths.current);
+  if (!(launcherExists || selectorExists)) return { state: "missing" };
+  if (!(launcherExists && selectorExists)) return { state: "invalid" };
+
+  try {
+    const launcherStat = statSync(paths.launcher);
+    if (
+      !launcherStat.isFile() ||
+      (launcherStat.mode & 0o777) !== LAUNCHER_MODE ||
+      readFileSync(paths.launcher, "utf8") !== STABLE_HOOK_LAUNCHER_CONTENT
+    ) {
+      return { state: "invalid" };
+    }
+    const selected = readSelectedRelease(paths);
+    if (!selected || !statSync(selected.manifest.nodePath).isFile()) {
+      return { state: "invalid" };
+    }
+    accessSync(selected.manifest.nodePath, constants.X_OK);
+    return { state: "ready", version: selected.manifest.version };
+  } catch {
+    return { state: "invalid" };
+  }
+}
 
 function writeRelease(
   sourceDir: string,
