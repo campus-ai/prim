@@ -33,7 +33,6 @@ import {
 import {
   batchMoves,
   drainFlushingPath,
-  processIsAlive,
   recoverOrphans,
   selectRecoverable,
   shouldFlushPending,
@@ -603,22 +602,6 @@ describe("flush replay stability", () => {
 
     await expect(drainFlushingPath(flushing, client, binding)).rejects.toThrow();
     expect(existsSync(flushing)).toBe(true);
-  });
-});
-
-describe("processIsAlive", () => {
-  it("treats EPERM as proof that the process exists", () => {
-    const probe = vi.fn(() => {
-      throw Object.assign(new Error("not permitted"), { code: "EPERM" });
-    });
-    expect(processIsAlive(42, probe)).toBe(true);
-  });
-
-  it("treats ESRCH as a dead process", () => {
-    const probe = vi.fn(() => {
-      throw Object.assign(new Error("not found"), { code: "ESRCH" });
-    });
-    expect(processIsAlive(42, probe)).toBe(false);
   });
 });
 

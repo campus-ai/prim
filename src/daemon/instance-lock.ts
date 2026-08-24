@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { processIsAlive } from "../lib/process-liveness.js";
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -53,15 +54,6 @@ function numericPid(path: string): number | undefined {
   }
 }
 
-export function daemonProcessIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function readDaemonOwner(configDir: string): DaemonOwnerRecord | undefined {
   return readLockRecord(join(configDir, "daemon.lock", "owner.json"));
 }
@@ -90,7 +82,7 @@ export function acquireDaemonOwnership(
 ): DaemonOwnership {
   const pid = opts.pid ?? process.pid;
   const now = opts.now ?? Date.now();
-  const isAlive = opts.isAlive ?? daemonProcessIsAlive;
+  const isAlive = opts.isAlive ?? processIsAlive;
   const lockDir = join(configDir, "daemon.lock");
   const ownerPath = join(lockDir, "owner.json");
   const pidPath = join(configDir, "daemon.pid");

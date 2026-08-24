@@ -45,6 +45,7 @@ import {
   pendingJournalStats,
 } from "./journal.js";
 import { withFileLock } from "./lib/file-lock.js";
+import { processIsAlive } from "./lib/process-liveness.js";
 import type { Move } from "./protocol/move.js";
 
 const BATCH_SIZE = 500;
@@ -250,19 +251,6 @@ async function drainPath(
   }
 
   return drainFlushingPath(tmpPath, client, binding);
-}
-
-export function processIsAlive(
-  pid: number,
-  probe: (pid: number, signal: 0) => true = process.kill,
-): boolean {
-  try {
-    probe(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM proves the process exists even though this user cannot signal it.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 /**

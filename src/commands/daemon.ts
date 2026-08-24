@@ -42,6 +42,7 @@ import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
+import { processIsAlive } from "../lib/process-liveness.js";
 import {
   type RepositoryBindingDiagnosticState,
   repositoryBindingDiagnosticLabel,
@@ -140,15 +141,6 @@ function readPidfile(): RunningPid | null {
     return null;
   }
   return { pid, alive: processIsAlive(pid) };
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function clearStaleArtifacts(): void {

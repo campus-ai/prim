@@ -20,6 +20,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { binFile, stableHookCommand } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { primConfigDirectory } from "../lib/paths.js";
+import { processIsAlive } from "../lib/process-liveness.js";
 import { compareSemver } from "../lib/semver.js";
 import { daemonRequest } from "./client.js";
 import { normalizeApiUrl } from "./env-binding.js";
@@ -634,15 +635,6 @@ async function inspectDaemon(timeoutMs: number): Promise<DaemonIdentity | null> 
   const value = await daemonRequest<Partial<DaemonIdentity>>("status_snapshot", {}, { timeoutMs });
   if (!value || !Number.isInteger(value.pid) || (value.pid ?? 0) <= 0) return null;
   return value as DaemonIdentity;
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 function canonicalProspectivePath(path: string): string {
