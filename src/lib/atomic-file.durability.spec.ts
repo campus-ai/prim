@@ -53,16 +53,25 @@ describe("atomicWriteFile durability", () => {
     expect(mockedCloseSync).toHaveBeenCalledWith(11);
   });
 
-  it("flushes the pre-existing parent when recursive mkdir creates the target directory", () => {
-    const target = "/private/config/prim/credential";
-    const parent = "/private/config/prim";
-    mockedMkdirSync.mockReturnValue(parent);
-    mockedOpenSync.mockReturnValueOnce(20).mockReturnValueOnce(10).mockReturnValueOnce(21);
+  it("flushes every recursive directory link before the target directory after rename", () => {
+    const target = "/private/config/prim/agent/credential";
+    const firstCreatedParent = "/private/config";
+    const parent = "/private/config/prim/agent";
+    // Node returns the first path recursive mkdir created, not the leaf.
+    mockedMkdirSync.mockReturnValue(firstCreatedParent);
+    mockedOpenSync
+      .mockReturnValueOnce(20)
+      .mockReturnValueOnce(21)
+      .mockReturnValueOnce(22)
+      .mockReturnValueOnce(10)
+      .mockReturnValueOnce(23);
 
     atomicWriteFile(target, "credential", { ensureParent: true });
 
-    expect(mockedOpenSync).toHaveBeenNthCalledWith(1, "/private/config", 0);
-    expect(mockedOpenSync).toHaveBeenNthCalledWith(3, parent, 0);
-    expect(mockedFsyncSync.mock.calls).toEqual([[20], [10], [21]]);
+    expect(mockedOpenSync).toHaveBeenNthCalledWith(1, "/private", 0);
+    expect(mockedOpenSync).toHaveBeenNthCalledWith(2, firstCreatedParent, 0);
+    expect(mockedOpenSync).toHaveBeenNthCalledWith(3, "/private/config/prim", 0);
+    expect(mockedOpenSync).toHaveBeenNthCalledWith(5, parent, 0);
+    expect(mockedFsyncSync.mock.calls).toEqual([[20], [21], [22], [10], [23]]);
   });
 });
