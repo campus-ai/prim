@@ -56,7 +56,7 @@ describe("bindRepository", () => {
       { repositoryFullName: "campus-ai/primitive" },
       { signal, quietRefresh: true },
     );
-    expect(setRepoSyncId).toHaveBeenCalledWith("/repo", "repoSync123");
+    expect(setRepoSyncId).toHaveBeenCalledWith("/repo", "repoSync123", "campus-ai/primitive");
     expect(setRepositoryBindingState).toHaveBeenCalledWith("/repo", "connected");
     expect(clearRepoSyncId).not.toHaveBeenCalled();
   });

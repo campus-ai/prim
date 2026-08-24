@@ -20,10 +20,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { gitToplevel } from "./git.js";
+import { gitToplevel, githubRepositoryFullName } from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
 export const PRIM_REPO_SYNC_ID_KEY = "prim.repoSyncId";
+export const PRIM_REPO_SYNC_REPOSITORY_KEY = "prim.repoSyncRepository";
 export const PRIM_REPO_BINDING_STATE_KEY = "prim.repoBindingState";
 const GIT_TIMEOUT_MS = 1_000;
 const REPO_SYNC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -95,18 +96,27 @@ function localGitConfigValue(cwd: string, key: string): string | undefined {
 
 /**
  * Read the server-issued repository binding already stored in local Git
- * config. This is only an attribution hint; the server remains authoritative.
+ * config, but only when the saved repository name matches the checkout's
+ * current GitHub origin. This is only an attribution hint; the server remains
+ * authoritative.
  */
 export function repoSyncId(cwd: string): string | undefined {
   const value = localGitConfigValue(cwd, PRIM_REPO_SYNC_ID_KEY);
-  return isValidRepoSyncId(value) ? value : undefined;
+  if (!isValidRepoSyncId(value)) return undefined;
+  const repositoryFullName = localGitConfigValue(cwd, PRIM_REPO_SYNC_REPOSITORY_KEY);
+  return repositoryFullName === githubRepositoryFullName(cwd) ? value : undefined;
 }
 
-export function setRepoSyncId(cwd: string, value: string): void {
+export function setRepoSyncId(cwd: string, value: string, repositoryFullName: string): void {
   if (!isValidRepoSyncId(value)) {
     throw new Error("invalid repository binding returned by server");
   }
   execFileSync("git", ["config", "--local", PRIM_REPO_SYNC_ID_KEY, value], {
+    cwd,
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
+  });
+  execFileSync("git", ["config", "--local", PRIM_REPO_SYNC_REPOSITORY_KEY, repositoryFullName], {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
     timeout: GIT_TIMEOUT_MS,
@@ -128,9 +138,9 @@ export function setRepositoryBindingState(cwd: string, state: LocalRepositoryBin
  * Read the checkout's last observed repository-binding state.
  *
  * This is diagnostics only: the cached repoSyncId remains an attribution hint
- * and the server re-authorizes it on every use. Legacy checkouts with a valid
- * id and no marker stay unspecified until their next successful bind; a
- * missing or malformed id is surfaced immediately.
+ * and the server re-authorizes it on every use. A legacy id without its saved
+ * repository name is withheld until the next successful bind; a missing or
+ * malformed id is surfaced immediately.
  */
 export function repositoryBindingState(cwd: string): LocalRepositoryBindingState | undefined {
   const rawId = localGitConfigValue(cwd, PRIM_REPO_SYNC_ID_KEY);
@@ -138,9 +148,24 @@ export function repositoryBindingState(cwd: string): LocalRepositoryBindingState
 
   if (rawId !== undefined && !isValidRepoSyncId(rawId)) return "invalid";
   if (marker === "unbound" || marker === "invalid") return marker;
-  if (marker === "connected") return isValidRepoSyncId(rawId) ? "connected" : "invalid";
+  if (marker === "connected") return repoSyncId(cwd) ? "connected" : "invalid";
   if (marker !== undefined) return "invalid";
-  return rawId === undefined ? "unbound" : undefined;
+  return rawId === undefined ? "unbound" : repoSyncId(cwd) ? undefined : "unbound";
+}
+
+function unsetLocalGitConfigValue(cwd: string, key: string): void {
+  try {
+    execFileSync("git", ["config", "--local", "--unset-all", key], {
+      cwd,
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 5) {
+      return;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -150,19 +175,8 @@ export function repositoryBindingState(cwd: string): LocalRepositoryBindingState
  * retain the last server-issued id and only mark the diagnostic state unbound.
  */
 export function clearRepoSyncId(cwd: string): void {
-  try {
-    execFileSync("git", ["config", "--local", "--unset-all", PRIM_REPO_SYNC_ID_KEY], {
-      cwd,
-      stdio: ["ignore", "ignore", "pipe"],
-      timeout: GIT_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "status" in error && error.status === 5) {
-      setRepositoryBindingState(cwd, "unbound");
-      return;
-    }
-    throw error;
-  }
+  unsetLocalGitConfigValue(cwd, PRIM_REPO_SYNC_ID_KEY);
+  unsetLocalGitConfigValue(cwd, PRIM_REPO_SYNC_REPOSITORY_KEY);
   setRepositoryBindingState(cwd, "unbound");
 }
 

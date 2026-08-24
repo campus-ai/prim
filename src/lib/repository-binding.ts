@@ -59,12 +59,12 @@ export async function bindRepository(
     throw error;
   }
   if (binding.status === "connected") {
-    setRepoSyncId(root, binding.repoSyncId);
+    setRepoSyncId(root, binding.repoSyncId, binding.repositoryFullName);
     setRepositoryBindingState(root, "connected");
   } else {
     // A 404 can be a transient server-side binding outage. Retain the last
-    // server-issued id so one failed SessionStart does not self-propagate the
-    // outage across later hooks; the server still validates the id on use.
+    // server-issued id for the same checkout origin so one failed SessionStart
+    // does not self-propagate the outage across later hooks.
     setRepositoryBindingState(root, "unbound");
   }
   return binding;
