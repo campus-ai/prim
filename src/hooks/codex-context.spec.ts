@@ -197,10 +197,9 @@ describe("renderDecisionDigest", () => {
 });
 
 describe("renderDecisionDraftDigest", () => {
-  it("renders a terminal-safe private draft with an exact publish command", () => {
+  it("renders a terminal-safe private draft with its full exact publish command", () => {
     const rendered = renderDecisionDraftDigest([
       row("draft-one", {
-        shortId: "a1b2c3d4",
         intent: "Use `stable` “API”\nwithout controls",
         intentKind: "change",
         authorIsSelf: true,
@@ -210,8 +209,8 @@ describe("renderDecisionDraftDigest", () => {
 
     expect(rendered).toEqual({
       message:
-        "[prim] private Decision dec_a1b2c3d4 · stage: draft · “Use 'stable' 'API'without controls”\n" +
-        "[prim] Run `prim decisions publish dec_a1b2c3d4` to share it with your team.",
+        "[prim] private Decision draft-one · stage: draft · “Use 'stable' 'API'without controls”\n" +
+        "[prim] Run `prim decisions publish draft-one` to share it with your team.",
       deliveredIds: ["draft-one"],
     });
   });
@@ -231,7 +230,7 @@ describe("renderDecisionDraftDigest", () => {
           authorIsSelf: true,
           intentKind: "exploration",
         }),
-        row("bad-short", { shortId: "not-safe", stage: "draft", authorIsSelf: true }),
+        row("bad\nidentifier", { stage: "draft", authorIsSelf: true }),
       ]),
     ).toBeUndefined();
   });
@@ -247,7 +246,7 @@ describe("renderDecisionDraftDigest", () => {
     const rendered = renderDecisionDraftDigest(rows, { pageTruncated: true });
 
     expect(rendered?.message).toContain("+1+ private Decision drafts remain");
-    expect(rendered?.message).not.toContain("dec_44444444");
+    expect(rendered?.message).not.toContain("prim decisions publish draft-4");
     expect(rendered?.deliveredIds).toEqual(["draft-1", "draft-2", "draft-3"]);
   });
 });
@@ -346,10 +345,10 @@ describe("Codex hook context", () => {
       sessionId: "session-drafts",
       startup: true,
     });
-    expect(first.context).toContain("prim decisions publish dec_11111111");
-    expect(first.context).toContain("prim decisions publish dec_33333333");
-    expect(first.context).not.toContain("dec_44444444");
-    expect(first.decisionDigest).toContain("prim decisions publish dec_11111111");
+    expect(first.context).toContain("prim decisions publish draft-1");
+    expect(first.context).toContain("prim decisions publish draft-3");
+    expect(first.context).not.toContain("prim decisions publish draft-4");
+    expect(first.decisionDigest).toContain("prim decisions publish draft-1");
     await first.acknowledge(false);
     expect(existsSync(stateDirectory())).toBe(false);
     expect(existsSync(draftStateDirectory())).toBe(false);
@@ -363,8 +362,8 @@ describe("Codex hook context", () => {
     expect(state.seenDraftIds).toEqual(["draft-1", "draft-2", "draft-3"]);
 
     const second = await prepareCodexContext({ cwd: "/repo", sessionId: "session-drafts" });
-    expect(second.context).toContain("prim decisions publish dec_44444444");
-    expect(second.context).not.toContain("dec_11111111");
+    expect(second.context).toContain("prim decisions publish draft-4");
+    expect(second.context).not.toContain("prim decisions publish draft-1");
     await second.acknowledge(true);
 
     const quiet = await prepareCodexContext({ cwd: "/repo", sessionId: "session-drafts" });
@@ -421,8 +420,44 @@ describe("Codex hook context", () => {
     expect(afterOldWriter.context).toBeUndefined();
     const privateState = JSON.parse(
       readFileSync(join(draftStateDirectory(), draftFile as string), "utf8"),
-    ) as { seenDraftIds: string[] };
+    ) as { version: number; credentialFingerprint: string; seenDraftIds: string[] };
+    expect(privateState.version).toBe(2);
+    expect(privateState.credentialFingerprint).toBe("1".repeat(64));
     expect(privateState.seenDraftIds).toEqual(["private-separated"]);
+  });
+
+  it("treats a legacy private delivery record as fresh", async () => {
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("legacy-private", {
+          authorIsSelf: true,
+          stage: "draft",
+          intentKind: "change",
+        }),
+      ],
+    });
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-legacy-private",
+      startup: true,
+    });
+    await first.acknowledge(true);
+
+    const draftFile = readdirSync(draftStateDirectory()).find((name) => name.endsWith(".json"));
+    const draftPath = join(draftStateDirectory(), draftFile as string);
+    const current = JSON.parse(readFileSync(draftPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(
+      draftPath,
+      `${JSON.stringify({ ...current, version: 1, credentialFingerprint: undefined })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+
+    const fresh = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-legacy-private",
+    });
+    expect(fresh.context).toContain("prim decisions publish legacy-private");
+    await fresh.acknowledge(true);
   });
 
   it("scopes private delivery state to the exact user and organization", async () => {
@@ -449,11 +484,46 @@ describe("Codex hook context", () => {
       cwd: "/repo",
       sessionId: "session-principal",
     });
-    expect(principalB.context).toContain("prim decisions publish dec_b1c2d3e4");
+    expect(principalB.context).toContain("prim decisions publish principal-scoped");
     await principalB.acknowledge(true);
     expect(
       readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json")),
     ).toHaveLength(2);
+  });
+
+  it("redelivers private drafts under a rotated credential for the same user and organization", async () => {
+    const privateRow = row("credential-generation", {
+      authorIsSelf: true,
+      stage: "draft",
+      intentKind: "change",
+    });
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({ decisions: [privateRow] });
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-credential-generation",
+      startup: true,
+    });
+    await first.acknowledge(true);
+
+    mocks.resolveDaemonPrincipal.mockReturnValue({
+      principalId: "a".repeat(64),
+      organizationId: "org-a",
+      credentialFingerprint: "2".repeat(64),
+    });
+    const rotated = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-credential-generation",
+    });
+    expect(rotated.context).toContain("prim decisions publish credential-generation");
+    await rotated.acknowledge(true);
+    await rotated.acknowledge(true);
+
+    const fingerprints = readdirSync(draftStateDirectory())
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => JSON.parse(readFileSync(join(draftStateDirectory(), name), "utf8")))
+      .map((state: { credentialFingerprint: string }) => state.credentialFingerprint)
+      .sort();
+    expect(fingerprints).toEqual(["1".repeat(64), "2".repeat(64)]);
   });
 
   it("withholds fetched organization state when the credential rotates in flight", async () => {
@@ -514,7 +584,7 @@ describe("Codex hook context", () => {
       cwd: "/repo",
       sessionId: "session-principal-drift",
     });
-    expect(stableB.context).toContain("prim decisions publish dec_d1e2f3a4");
+    expect(stableB.context).toContain("prim decisions publish private-drift");
   });
 
   it("withholds private commands when the caller has no exact local principal", async () => {
@@ -641,7 +711,7 @@ describe("Codex hook context", () => {
       startup: true,
     });
     expect(result.feedAvailable).toBe(false);
-    expect(result.context).toContain("prim decisions publish dec_a1b2c3d4");
+    expect(result.context).toContain("prim decisions publish private-1");
     await result.acknowledge(true);
 
     const teamFiles = readdirSync(stateDirectory()).filter((name) => name.endsWith(".json"));

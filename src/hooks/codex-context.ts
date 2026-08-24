@@ -51,9 +51,8 @@ export const CODEX_DIGEST_STATE_MAX_FILES = 256;
 
 const STATE_VERSION = 1;
 const STATE_DIRECTORY = ["codex", "decision-digests"] as const;
-const DRAFT_STATE_VERSION = 1;
+const DRAFT_STATE_VERSION = 2;
 const DRAFT_STATE_DIRECTORY = ["codex", "decision-draft-deliveries"] as const;
-const SHORT_DECISION_ID = /^[0-9a-f]{8}$/u;
 /**
  * watermarkMs sentinel: no feed page has been observed yet. The cursor is
  * server time — the highest `classifiedAt` seen — never the client clock, so
@@ -80,6 +79,8 @@ export interface CodexDecisionDraftDeliveryState {
   workspace: string;
   principalId: string;
   organizationId: string;
+  /** SHA-256 of the bearer generation; never the bearer itself. */
+  credentialFingerprint: string;
   /** Private drafts whose publish action was visibly handed off this session. */
   seenDraftIds: string[];
   updatedAt: number;
@@ -180,10 +181,11 @@ function draftStatePath(args: {
   siteUrl: string;
   principalId: string;
   organizationId: string;
+  credentialFingerprint: string;
 }): string {
   const identity =
     `${args.siteUrl}\0${workspaceFor(args.cwd)}\0${args.sessionId}` +
-    `\0${args.principalId}\0${args.organizationId}`;
+    `\0${args.principalId}\0${args.organizationId}\0${args.credentialFingerprint}`;
   const key = createHash("sha256").update(identity).digest("hex");
   return join(draftStateRoot(), `${key}.json`);
 }
@@ -227,6 +229,7 @@ function parseDraftState(value: unknown): CodexDecisionDraftDeliveryState | unde
     typeof record.workspace !== "string" ||
     typeof record.principalId !== "string" ||
     typeof record.organizationId !== "string" ||
+    typeof record.credentialFingerprint !== "string" ||
     !Array.isArray(record.seenDraftIds) ||
     !record.seenDraftIds.every((id) => typeof id === "string") ||
     typeof record.updatedAt !== "number"
@@ -240,6 +243,7 @@ function parseDraftState(value: unknown): CodexDecisionDraftDeliveryState | unde
     workspace: record.workspace,
     principalId: record.principalId,
     organizationId: record.organizationId,
+    credentialFingerprint: record.credentialFingerprint,
     seenDraftIds: record.seenDraftIds.slice(-CODEX_DRAFT_DIGEST_MAX_SEEN_IDS),
     updatedAt: record.updatedAt,
   };
@@ -414,8 +418,6 @@ function actionablePrivateDrafts(rows: readonly DecisionFeedRow[]): DecisionFeed
       row.authorIsSelf !== true ||
       row.stage !== "draft" ||
       (row.intentKind !== undefined && row.intentKind !== "change") ||
-      typeof row.shortId !== "string" ||
-      !SHORT_DECISION_ID.test(row.shortId) ||
       seen.has(row.id)
     ) {
       return false;
@@ -434,7 +436,7 @@ export function renderDecisionDraftDigest(
   if (eligible.length === 0) return undefined;
   const visible = eligible.slice(0, CODEX_DIGEST_VISIBLE_CAP);
   const lines = visible.flatMap((row) => {
-    const identifier = `dec_${row.shortId as string}`;
+    const identifier = row.id;
     const intent = safeInline(row.intent, "(untitled Decision)").replace(/[`“-‟″‶〝〞]/gu, "'");
     return [
       `[prim] private Decision ${identifier} · stage: draft · “${intent}”`,
@@ -524,6 +526,7 @@ function mergeDraftState(
     workspace: string;
     principalId: string;
     organizationId: string;
+    credentialFingerprint: string;
     deliveredIds: string[];
     now: number;
   },
@@ -537,6 +540,7 @@ function mergeDraftState(
     workspace: args.workspace,
     principalId: args.principalId,
     organizationId: args.organizationId,
+    credentialFingerprint: args.credentialFingerprint,
     seenDraftIds: [...seen].slice(-CODEX_DRAFT_DIGEST_MAX_SEEN_IDS),
     updatedAt: args.now,
   };
@@ -577,6 +581,7 @@ export async function prepareCodexContext(
         siteUrl,
         principalId: principal.principalId,
         organizationId: principal.organizationId,
+        credentialFingerprint: principal.credentialFingerprint,
       })
     : undefined;
   const previousDraft = privatePath ? readDraftState(privatePath) : undefined;
@@ -732,6 +737,7 @@ export async function prepareCodexContext(
             workspace,
             principalId: principal.principalId,
             organizationId: principal.organizationId,
+            credentialFingerprint: principal.credentialFingerprint,
             // Only IDs whose exact publish command was included in the
             // handed-off bytes may advance the private state.
             deliveredIds: draftDigest.deliveredIds,
