@@ -436,8 +436,8 @@ describe("daemon terminal-auth lifecycle", () => {
       const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
       daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`);
       await eventually(
-        () => existsSync(socketPath),
-        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+        () => existsSync(socketPath) && (statSync(socketPath).mode & 0o777) === 0o600,
+        () => `daemon socket was not secured: ${daemon?.stderr() ?? ""}`,
       );
       expect(statSync(config).mode & 0o777).toBe(0o700);
       expect(statSync(socketPath).mode & 0o777).toBe(0o600);
@@ -621,11 +621,13 @@ describe("daemon raw statusline socket", () => {
         socketPath,
         Array.from(raw, (byte) => Buffer.from([byte])),
       );
-      const linkedTeammate =
-        "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07" +
-        "\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07";
-      const expected = `primitive test (daemon: live, Decision ingestion enabled · team: ${linkedTeammate})`;
-      expect(fragmented.toString()).toBe(expected);
+      // Raw v1 carries only cwd + API URL, never a principal. It therefore
+      // remains compatible as a statusline protocol but cannot expose the
+      // daemon's tenant-bound roster.
+      const sameEnvExpected =
+        "primitive test (daemon: live, Decision ingestion enabled · presence: other account)";
+      expect(fragmented.toString()).toBe(sameEnvExpected);
+      expect(fragmented.toString()).not.toContain("Kasey");
 
       if (process.platform === "darwin") {
         const runtime = stageRuntime({
@@ -639,9 +641,12 @@ describe("daemon raw statusline socket", () => {
           execFileSync(runtime.paths.statuslineLauncher, [], {
             cwd: activeRepo,
             encoding: "utf8",
-            env: { ...process.env, PRIM_API_URL: apiUrl },
+            // The statusline process has another tenant's token, but v1 does
+            // not carry it over the socket and must not receive the daemon's
+            // cached roster.
+            env: { ...process.env, PRIM_API_URL: apiUrl, PRIM_TOKEN: tokenA },
           }),
-        ).toBe(expected);
+        ).toBe(sameEnvExpected);
         expect(
           execFileSync(runtime.paths.statuslineLauncher, [], {
             cwd: inactiveRepo,
@@ -649,7 +654,7 @@ describe("daemon raw statusline socket", () => {
             env: { ...process.env, PRIM_API_URL: apiUrl },
           }),
         ).toBe(
-          `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+          "primitive test (daemon: live, Decision ingestion disabled · presence: other account)",
         );
         const mismatchedEnv = { ...process.env };
         mismatchedEnv.PRIM_API_URL = undefined;
@@ -665,14 +670,14 @@ describe("daemon raw statusline socket", () => {
       const concurrent = await Promise.all(
         Array.from({ length: 23 }, () => rawStatuslineRequest(socketPath, [raw])),
       );
-      expect(concurrent.every((response) => response.toString() === expected)).toBe(true);
+      expect(concurrent.every((response) => response.toString() === sameEnvExpected)).toBe(true);
 
       expect(
         (
           await rawStatuslineRequest(socketPath, [statuslineRequest(inactiveRepo, apiUrl)])
         ).toString(),
       ).toBe(
-        `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+        "primitive test (daemon: live, Decision ingestion disabled · presence: other account)",
       );
       expect(
         (await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo)])).toString(),
@@ -681,10 +686,10 @@ describe("daemon raw statusline socket", () => {
         (
           await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo, apiUrl)])
         ).toString(),
-      ).toBe(expected);
+      ).toBe(sameEnvExpected);
 
       execFileSync("git", ["config", "--local", "prim.active", "false"], { cwd: activeRepo });
-      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
       await expect(daemonRequest(socketPath, "statusline_invalidate")).resolves.toEqual({
         ack: true,
       });
@@ -693,7 +698,7 @@ describe("daemon raw statusline socket", () => {
       );
       execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
       await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" });
-      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
 
       const relative = statuslineRequest("relative/path", apiUrl);
       await expect(rawStatuslineRequest(socketPath, [relative])).resolves.toEqual(Buffer.alloc(0));

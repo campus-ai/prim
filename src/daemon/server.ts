@@ -800,7 +800,14 @@ function handleConnection(conn: Socket): void {
     }
     try {
       const callerEnv = getSiteUrlForEnvironment(parsed.request.primApiUrl || undefined);
-      const snapshot = handleStatusSnapshot({ callerEnv });
+      // The legacy raw protocol has no caller-principal proof. Preserve its
+      // non-secret cross-environment state, but otherwise withhold this
+      // daemon's tenant-bound roster.
+      const snapshot = handleStatusSnapshot(
+        { callerEnv },
+        undefined,
+        !isCrossEnv(callerEnv, getSiteUrl()),
+      );
       const line = formatStatusline(runtimeVersion, snapshot, () =>
         statuslineIngestionCache.get(parsed.request.cwd),
       );
