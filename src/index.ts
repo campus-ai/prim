@@ -10,6 +10,7 @@
  *   prim claude install|uninstall|status   (or: prim codex ...)
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
+ *   prim github connect
  *   prim doctor
  *   prim uninstall
  *   prim decisions recent|show|cascade|check|publish|restore|supersede|confirm|create
@@ -31,6 +32,7 @@ import { registerCodexCommands } from "./commands/codex-install.js";
 import { registerDaemonCommands } from "./commands/daemon.js";
 import { registerDecisionsCommands } from "./commands/decisions.js";
 import { registerDoctorCommands } from "./commands/doctor.js";
+import { registerGithubCommands } from "./commands/github.js";
 import { registerHermesCommands } from "./commands/hermes-install.js";
 import { registerHooksCommands } from "./commands/hooks.js";
 import { registerMovesCommands } from "./commands/moves.js";
@@ -76,6 +78,7 @@ registerClaudeCommands(program);
 registerCodexCommands(program);
 registerHermesCommands(program);
 registerDaemonCommands(program);
+registerGithubCommands(program);
 registerDoctorCommands(program);
 registerReconcileCommands(program);
 registerStatuslineCommands(program);
