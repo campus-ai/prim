@@ -169,4 +169,33 @@ describe("GitHub install-intent protocol", () => {
       }),
     ).rejects.toThrow("invalid GitHub install-intent status");
   });
+
+  it("returns owned expiry without a post-deadline poll", async () => {
+    const api = client([]);
+    let clock = EXPIRES_AT - 500;
+
+    await expect(
+      pollGitHubInstallIntent(api, START, {
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+      }),
+    ).resolves.toMatchObject({ status: "expired", closedAt: EXPIRES_AT });
+
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("preserves an external cancellation rather than recasting it as expiry", async () => {
+    const api = client([]);
+    const controller = new AbortController();
+    const reason = new Error("cancelled by caller");
+    controller.abort(reason);
+
+    await expect(
+      pollGitHubInstallIntent(api, START, { signal: controller.signal, now: () => NOW }),
+    ).rejects.toBe(reason);
+
+    expect(api.get).not.toHaveBeenCalled();
+  });
 });

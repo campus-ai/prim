@@ -13,7 +13,10 @@ import {
   createGitHubInstallIntent,
   pollGitHubInstallIntent,
 } from "../lib/github-install-intent.js";
-import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
+import {
+  type RepositoryBindingResult,
+  bindRepositoryWithClient,
+} from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 import { openBrowser } from "./auth.js";
 
@@ -26,7 +29,7 @@ const EXIT_UNBOUND = 2;
 export type GithubConnectDependencies = {
   cwd: () => string;
   gitToplevel: typeof gitToplevel;
-  bindRepository: typeof bindRepository;
+  bindRepositoryWithClient: typeof bindRepositoryWithClient;
   getPinnedClient: typeof getPinnedClient;
   createInstallIntent: typeof createGitHubInstallIntent;
   pollInstallIntent: typeof pollGitHubInstallIntent;
@@ -37,7 +40,7 @@ export type GithubConnectDependencies = {
 const defaultDependencies: GithubConnectDependencies = {
   cwd: () => process.cwd(),
   gitToplevel,
-  bindRepository,
+  bindRepositoryWithClient,
   getPinnedClient,
   createInstallIntent: createGitHubInstallIntent,
   pollInstallIntent: pollGitHubInstallIntent,
@@ -95,9 +98,7 @@ async function completeInstallIntent(
 ): Promise<GitHubInstallIntentStatus> {
   process.stderr.write(`[prim] complete GitHub App installation at:\n${start.browserUrl}\n`);
   if (browser) dependencies.openBrowser(start.browserUrl);
-  const remaining = Math.max(1, start.expiresAt - dependencies.now());
   return dependencies.pollInstallIntent(client, start, {
-    signal: AbortSignal.timeout(remaining),
     now: dependencies.now,
   });
 }
@@ -115,7 +116,10 @@ export async function performGithubConnect(
   }
 
   try {
-    const existing = await dependencies.bindRepository(root, {
+    const client = await dependencies.getPinnedClient({
+      signal: AbortSignal.timeout(BIND_TIMEOUT_MS),
+    });
+    const existing = await dependencies.bindRepositoryWithClient(root, client, {
       signal: AbortSignal.timeout(BIND_TIMEOUT_MS),
     });
     if (existing.status === "connected") {
@@ -123,9 +127,6 @@ export async function performGithubConnect(
       return;
     }
 
-    const client = await dependencies.getPinnedClient({
-      signal: AbortSignal.timeout(START_TIMEOUT_MS),
-    });
     const start = await dependencies.createInstallIntent(client, {
       signal: AbortSignal.timeout(START_TIMEOUT_MS),
       now: dependencies.now(),
@@ -140,7 +141,7 @@ export async function performGithubConnect(
     process.stderr.write(
       `[prim] GitHub installation verified: ${status.adminRepositoryCount} admin repositories (${status.repositoryCount} total)\n`,
     );
-    const binding = await dependencies.bindRepository(root, {
+    const binding = await dependencies.bindRepositoryWithClient(root, client, {
       signal: AbortSignal.timeout(BIND_TIMEOUT_MS),
     });
     reportBinding(binding, true);

@@ -232,27 +232,7 @@ function defaultSleep(milliseconds: number, signal: AbortSignal): Promise<void> 
   });
 }
 
-export async function pollGitHubInstallIntent(
-  client: CliClient,
-  start: GitHubInstallIntentStart,
-  options: {
-    signal: AbortSignal;
-    now?: () => number;
-    sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
-  },
-): Promise<GitHubInstallIntentStatus> {
-  const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? defaultSleep;
-  const path = `${START_PATH}/${encodeURIComponent(start.intentId)}`;
-  while (now() < start.expiresAt) {
-    await sleep(Math.min(start.pollAfterMs, Math.max(0, start.expiresAt - now())), options.signal);
-    const raw = await client.get(path, {
-      signal: AbortSignal.any([options.signal, AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS)]),
-    });
-    const status = parseGitHubInstallIntentStatus(raw, start.expiresAt);
-    if (!status) throw new Error("server returned an invalid GitHub install-intent status");
-    if (status.status !== "pending" && status.status !== "claimed") return status;
-  }
+function expiredStatus(start: GitHubInstallIntentStart): GitHubInstallIntentStatus {
   return {
     protocolVersion: PROTOCOL_VERSION,
     mode: MODE,
@@ -261,4 +241,43 @@ export async function pollGitHubInstallIntent(
     expiresAt: start.expiresAt,
     closedAt: start.expiresAt,
   };
+}
+
+export async function pollGitHubInstallIntent(
+  client: CliClient,
+  start: GitHubInstallIntentStart,
+  options: {
+    signal?: AbortSignal;
+    now?: () => number;
+    sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  },
+): Promise<GitHubInstallIntentStatus> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? defaultSleep;
+  const signal = options.signal ?? new AbortController().signal;
+  const path = `${START_PATH}/${encodeURIComponent(start.intentId)}`;
+  while (true) {
+    const remainingBeforeSleep = start.expiresAt - now();
+    if (remainingBeforeSleep <= 0) return expiredStatus(start);
+    await sleep(Math.min(start.pollAfterMs, remainingBeforeSleep), signal);
+    const remainingBeforeRequest = start.expiresAt - now();
+    if (remainingBeforeRequest <= 0) return expiredStatus(start);
+
+    let raw: unknown;
+    try {
+      raw = await client.get(path, {
+        signal: AbortSignal.any([
+          signal,
+          AbortSignal.timeout(Math.min(POLL_REQUEST_TIMEOUT_MS, remainingBeforeRequest)),
+        ]),
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (now() >= start.expiresAt) return expiredStatus(start);
+      throw error;
+    }
+    const status = parseGitHubInstallIntentStatus(raw, start.expiresAt);
+    if (!status) throw new Error("server returned an invalid GitHub install-intent status");
+    if (status.status !== "pending" && status.status !== "claimed") return status;
+  }
 }

@@ -52,7 +52,7 @@ function dependencies(): GithubConnectDependencies {
   return {
     cwd: vi.fn(() => "/repo/packages/cli"),
     gitToplevel: vi.fn(() => "/repo"),
-    bindRepository: vi.fn(async () => CONNECTED),
+    bindRepositoryWithClient: vi.fn(async () => CONNECTED),
     getPinnedClient: vi.fn(async () => client),
     createInstallIntent: vi.fn(async () => START),
     pollInstallIntent: vi.fn(async () => CONSUMED),
@@ -94,11 +94,14 @@ describe("prim github connect", () => {
 
     await performGithubConnect(deps);
 
-    expect(deps.bindRepository).toHaveBeenCalledExactlyOnceWith(
+    expect(deps.getPinnedClient).toHaveBeenCalledExactlyOnceWith({
+      signal: expect.any(AbortSignal),
+    });
+    expect(deps.bindRepositoryWithClient).toHaveBeenCalledExactlyOnceWith(
       "/repo",
+      expect.objectContaining({ get: expect.any(Function), post: expect.any(Function) }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(deps.getPinnedClient).not.toHaveBeenCalled();
     expect(deps.createInstallIntent).not.toHaveBeenCalled();
     expect(deps.openBrowser).not.toHaveBeenCalled();
     expect(stderr).toHaveBeenCalledExactlyOnceWith(
@@ -110,13 +113,15 @@ describe("prim github connect", () => {
 
   it("runs the canonical intent, browser, poll, and final binding sequence", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockResolvedValueOnce(UNBOUND).mockResolvedValueOnce(CONNECTED);
+    vi.mocked(deps.bindRepositoryWithClient)
+      .mockResolvedValueOnce(UNBOUND)
+      .mockResolvedValueOnce(CONNECTED);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await performGithubConnect(deps);
 
-    expect(deps.bindRepository).toHaveBeenCalledTimes(2);
+    expect(deps.bindRepositoryWithClient).toHaveBeenCalledTimes(2);
     expect(deps.getPinnedClient).toHaveBeenCalledExactlyOnceWith({
       signal: expect.any(AbortSignal),
     });
@@ -128,7 +133,20 @@ describe("prim github connect", () => {
     expect(deps.pollInstallIntent).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ get: expect.any(Function), post: expect.any(Function) }),
       START,
-      { signal: expect.any(AbortSignal), now: deps.now },
+      { now: deps.now },
+    );
+    const pinnedClient = await vi.mocked(deps.getPinnedClient).mock.results[0]?.value;
+    expect(deps.bindRepositoryWithClient).toHaveBeenNthCalledWith(
+      1,
+      "/repo",
+      pinnedClient,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(deps.bindRepositoryWithClient).toHaveBeenNthCalledWith(
+      2,
+      "/repo",
+      pinnedClient,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(stderr.mock.calls.join("")).toContain(START.browserUrl);
     expect(stderr.mock.calls.join("")).toContain("1 admin repositories (2 total)");
@@ -138,7 +156,9 @@ describe("prim github connect", () => {
 
   it("prints but does not open the URL with --no-browser", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockResolvedValueOnce(UNBOUND).mockResolvedValueOnce(CONNECTED);
+    vi.mocked(deps.bindRepositoryWithClient)
+      .mockResolvedValueOnce(UNBOUND)
+      .mockResolvedValueOnce(CONNECTED);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -151,7 +171,9 @@ describe("prim github connect", () => {
 
   it("suppresses the browser in global non-interactive mode", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockResolvedValueOnce(UNBOUND).mockResolvedValueOnce(CONNECTED);
+    vi.mocked(deps.bindRepositoryWithClient)
+      .mockResolvedValueOnce(UNBOUND)
+      .mockResolvedValueOnce(CONNECTED);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -165,7 +187,7 @@ describe("prim github connect", () => {
 
   it("truthfully reports a consumed installation that did not bind this repository", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockResolvedValue(UNBOUND);
+    vi.mocked(deps.bindRepositoryWithClient).mockResolvedValue(UNBOUND);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -178,7 +200,7 @@ describe("prim github connect", () => {
 
   it("fails closed on a terminal installation failure without retrying the bind", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockResolvedValueOnce(UNBOUND);
+    vi.mocked(deps.bindRepositoryWithClient).mockResolvedValueOnce(UNBOUND);
     vi.mocked(deps.pollInstallIntent).mockResolvedValueOnce({
       protocolVersion: 1,
       mode: "install_intent_v1",
@@ -193,7 +215,7 @@ describe("prim github connect", () => {
 
     await performGithubConnect(deps, { browser: false });
 
-    expect(deps.bindRepository).toHaveBeenCalledOnce();
+    expect(deps.bindRepositoryWithClient).toHaveBeenCalledOnce();
     expect(stderr.mock.calls.join("")).toContain("GitHub installation failed: authority_changed");
     expect(stdout).toHaveBeenCalledExactlyOnceWith(
       JSON.stringify(
@@ -213,7 +235,7 @@ describe("prim github connect", () => {
 
     await performGithubConnect(deps);
 
-    expect(deps.bindRepository).not.toHaveBeenCalled();
+    expect(deps.bindRepositoryWithClient).not.toHaveBeenCalled();
     expect(deps.getPinnedClient).not.toHaveBeenCalled();
     expect(deps.openBrowser).not.toHaveBeenCalled();
     expect(stderr).toHaveBeenCalledExactlyOnceWith(
@@ -233,7 +255,7 @@ describe("prim github connect", () => {
 
   it("reports authentication errors without creating an intent", async () => {
     const deps = dependencies();
-    vi.mocked(deps.bindRepository).mockRejectedValueOnce(
+    vi.mocked(deps.bindRepositoryWithClient).mockRejectedValueOnce(
       new HttpError(401, "Authentication expired. Run `prim auth login` to re-authenticate."),
     );
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -253,6 +275,23 @@ describe("prim github connect", () => {
         null,
         2,
       ),
+    );
+  });
+
+  it("sanitizes terminal controls for people while retaining the raw JSON error", async () => {
+    const deps = dependencies();
+    const message = "origin campus\u202e-ai/pr\u200bimitive\nnot allowed";
+    vi.mocked(deps.bindRepositoryWithClient).mockRejectedValueOnce(new Error(message));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps);
+
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(
+      "[prim] github connect failed: origin campus-ai/primitive not allowed\n",
+    );
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ status: "error", error: message }, null, 2),
     );
   });
 });
