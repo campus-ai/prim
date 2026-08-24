@@ -37,9 +37,23 @@ describe("githubRepositoryFullName", () => {
     "https://github.com/campus\u202e-ai/primitive.git",
     "https://github.com/campus-ai/pr\u200bimitive.git",
     "https://github.com/campus-ai/primitive%20name.git",
+    "https://github.com/campus--ai/primitive.git",
+    "https://github.com/campus-ai-/primitive.git",
   ])("rejects unsupported repository identity %s", (remote) => {
     execFileSync("git", ["-C", root, "remote", "add", "origin", remote]);
     expect(githubRepositoryFullName(root)).toBeNull();
+  });
+
+  it("matches the server-owned repository-name grammar", () => {
+    execFileSync("git", [
+      "-C",
+      root,
+      "remote",
+      "add",
+      "origin",
+      "git@github.com:campus-ai/-repo.git",
+    ]);
+    expect(githubRepositoryFullName(root)).toBe("campus-ai/-repo");
   });
 });
 

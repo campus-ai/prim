@@ -4,8 +4,8 @@ import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const GIT_TIMEOUT_MS = 1_000;
-const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
-const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$/u;
+const GITHUB_OWNER_PATTERN = /^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u;
 
 /**
  * The repository's top-level working directory for `cwd` (default: process cwd),
