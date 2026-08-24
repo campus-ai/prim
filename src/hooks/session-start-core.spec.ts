@@ -232,8 +232,13 @@ describe("processSessionStart", () => {
       path: "/repo/.git/prim/workspace-id",
       created: false,
     });
-    vi.mocked(leaseDecisionFeedback).mockResolvedValue({ events: [], hasMore: false });
+    vi.mocked(leaseDecisionFeedback).mockResolvedValue({
+      protocolVersion: 2,
+      events: [],
+      hasMore: false,
+    });
     vi.mocked(renderFeedback).mockReturnValue({
+      protocolVersion: 2,
       systemMessage: "feedback",
       deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
     });
@@ -258,6 +263,7 @@ describe("processSessionStart", () => {
     await result.acknowledge?.();
     expect(acknowledgeDecisionFeedback).toHaveBeenCalledOnce();
     expect(acknowledgeDecisionFeedback).toHaveBeenCalledWith({
+      protocolVersion: 2,
       workspaceId: "00000000-0000-4000-8000-000000000001",
       deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
       signal: feedbackSignal,

@@ -178,7 +178,12 @@ async function main(): Promise<void> {
     rendered
       ? async () => {
           await acknowledgeDecisionFeedback(
-            { workspaceId, deliveries: rendered.deliveries, signal: feedbackSignal },
+            {
+              protocolVersion: rendered.protocolVersion,
+              workspaceId,
+              deliveries: rendered.deliveries,
+              signal: feedbackSignal,
+            },
             { onError: (error) => debug("feedback", error) },
           );
         }
