@@ -305,6 +305,42 @@ describe("client credential store", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("sanitizes broker refresh diagnostics without changing quiet refreshes", async () => {
+    writeFileSync(join(config, "token"), "old-access\n");
+    writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+    const esc = String.fromCharCode(0x1b);
+    const carriageReturn = String.fromCharCode(0x0d);
+    const lineFeed = String.fromCharCode(0x0a);
+    const bell = String.fromCharCode(0x07);
+    const bidiOverride = String.fromCodePoint(0x202e);
+    const unsafeStatus = `Bad${carriageReturn}${lineFeed}${esc}[2J${bidiOverride} Request`;
+    const unsafeDetail = `broker${carriageReturn}${lineFeed}${esc}]52;c;clipboard${bell}${esc}[31m${bidiOverride} failure`;
+    const brokerFailure = {
+      ok: false,
+      status: 400,
+      statusText: unsafeStatus,
+      text: async () => unsafeDetail,
+    } as unknown as Response;
+    const fetchMock = vi.fn(() => Promise.resolve(brokerFailure));
+    vi.stubGlobal("fetch", fetchMock);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(stderr).not.toHaveBeenCalled();
+
+    await expect(client.refreshToken({ force: true })).resolves.toBeUndefined();
+    const rendered = String(stderr.mock.calls[0]?.[0]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(rendered).toContain("[prim] token refresh rejected by broker: 400 Bad [2J Request");
+    expect(rendered).toContain("broker ]52;c;clipboard[31m failure");
+    expect(rendered).not.toContain(esc);
+    expect(rendered).not.toContain(bell);
+    expect(rendered).not.toContain(carriageReturn);
+    expect(rendered).not.toContain(bidiOverride);
+    expect(rendered.split(lineFeed)).toHaveLength(2);
+  });
+
   it("never performs proactive and reactive rotation twice in one request", async () => {
     writeFileSync(join(config, "token"), "old-access\n");
     writeFileSync(join(config, "refresh_token"), "old-refresh\n");

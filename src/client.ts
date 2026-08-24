@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
+import { terminalSafeLine } from "./lib/terminal-safe.js";
 
 const CONFIG_DIR_MODE = 0o700;
 const CREDENTIAL_FILE_MODE = 0o600;
@@ -290,10 +291,12 @@ function isTerminalRefreshResponse(response: Response, detail: string): boolean 
 
 function refreshDiagnostic(response: Response, detail: string, quiet: boolean | undefined): void {
   if (quiet) return;
+  const statusText = terminalSafeLine(response.statusText).slice(0, 120);
+  const safeDetail = terminalSafeLine(detail).slice(0, 200);
   process.stderr.write(
-    `[prim] token refresh rejected by broker: ${response.status} ${response.statusText}${
-      detail ? ` — ${detail}` : ""
-    }\n`,
+    `[prim] token refresh rejected by broker: ${response.status}${
+      statusText ? ` ${statusText}` : ""
+    }${safeDetail ? ` — ${safeDetail}` : ""}\n`,
   );
 }
 
