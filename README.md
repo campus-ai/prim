@@ -118,6 +118,17 @@ prim auth clear              # Remove saved tokens
 prim auth status             # Check authentication status
 ```
 
+### GitHub
+
+```bash
+prim github connect              # Install or reuse the Primitive GitHub App for this checkout
+prim github connect --no-browser # Print the GitHub authorization URL without opening it
+```
+
+The command uses one pinned authenticated deployment to create a server-owned GitHub App install
+intent, open (unless `--no-browser`) its browser URL, poll it, and durably bind the checkout. A
+completed installation without repository admin access remains unbound.
+
 ### Session integration
 
 Wires the agent's session hooks so the decisions you make are captured into the
