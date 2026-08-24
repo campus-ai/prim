@@ -101,9 +101,9 @@ export type PostRewriteHookInspection = ManagedHookInspection;
 
 function currentPostCommitBlock(): string {
   // This block is intentionally machine-independent. It uses the cache warmed
-  // by SessionStart first, then a checkout-local bin, then the exact package
-  // version that installed it. Every invocation is fail-soft and the block
-  // itself never exits the surrounding foreign hook.
+  // by SessionStart first, then the exact package version that installed it.
+  // Every invocation is fail-soft and the block itself never exits the
+  // surrounding foreign hook.
   return `${PRIM_POST_COMMIT_BLOCK_START}
 if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null) || prim_commit_sha=
@@ -122,14 +122,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
         prim_post_commit_ran=1
       fi
     fi
-    if [ "$prim_post_commit_ran" -eq 0 ]; then
-      if [ -x "./node_modules/.bin/prim-post-commit" ]; then
-        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &
-        prim_post_commit_ran=1
-      elif command -v npx >/dev/null 2>&1; then
-        ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ${pinnedNpxCommand("prim-post-commit")} ) </dev/null >/dev/null 2>&1 &
-        prim_post_commit_ran=1
-      fi
+    if [ "$prim_post_commit_ran" -eq 0 ] && command -v npx >/dev/null 2>&1; then
+      ( trap '' HUP; trap 'if [ -n "$prim_commit_observed_file" ]; then rm -f "$prim_commit_observed_file"; fi' 0; export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch" PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"; ${pinnedNpxCommand("prim-post-commit")} ) </dev/null >/dev/null 2>&1 &
+      prim_post_commit_ran=1
     fi
     if [ "$prim_post_commit_ran" -eq 0 ] && [ -n "$prim_commit_observed_file" ]; then
       rm -f "$prim_commit_observed_file"
@@ -175,14 +170,9 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
             prim_post_rewrite_ran=1
           fi
         fi
-        if [ "$prim_post_rewrite_ran" -eq 0 ]; then
-          if [ -x "./node_modules/.bin/prim-post-rewrite" ]; then
-            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ./node_modules/.bin/prim-post-rewrite ) </dev/null >/dev/null 2>&1 &
-            prim_post_rewrite_ran=1
-          elif command -v npx >/dev/null 2>&1; then
-            ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ${pinnedNpxCommand("prim-post-rewrite")} ) </dev/null >/dev/null 2>&1 &
-            prim_post_rewrite_ran=1
-          fi
+        if [ "$prim_post_rewrite_ran" -eq 0 ] && command -v npx >/dev/null 2>&1; then
+          ( trap '' HUP; trap 'if [ -n "$prim_rewrite_pairs_file" ]; then rm -f "$prim_rewrite_pairs_file"; fi' 0; export PRIM_REWRITE_SOURCE="$prim_rewrite_source" PRIM_REWRITE_BRANCH="$prim_rewrite_branch" PRIM_REWRITE_PAIRS_FILE="$prim_rewrite_pairs_file"; ${pinnedNpxCommand("prim-post-rewrite")} ) </dev/null >/dev/null 2>&1 &
+          prim_post_rewrite_ran=1
         fi
         if [ "$prim_post_rewrite_ran" -eq 0 ]; then
           rm -f "$prim_rewrite_pairs_file"

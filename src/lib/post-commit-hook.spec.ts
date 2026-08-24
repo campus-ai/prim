@@ -675,8 +675,6 @@ printf 'foreign tail\\n'
     expect(postCommitHookBlock()).toContain(
       '"$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &',
     );
-    expect(postCommitHookBlock()).toContain(
-      "./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &",
-    );
+    expect(postCommitHookBlock()).not.toContain("./node_modules/.bin/prim-post-commit");
   });
 });
