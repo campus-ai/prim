@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -83,6 +84,11 @@ export type StageHookRuntimeResult = {
   changed: boolean;
   releaseDir: string;
   manifest: HookRuntimeManifest;
+  paths: HookRuntimePaths;
+};
+
+export type RemoveHookRuntimeResult = {
+  changed: boolean;
   paths: HookRuntimePaths;
 };
 
@@ -458,4 +464,81 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
       paths,
     };
   });
+}
+
+function assertOwnedHookRuntime(paths: HookRuntimePaths): void {
+  if (existsSync(paths.launcher)) {
+    const launcher = lstatSync(paths.launcher);
+    if (
+      !launcher.isFile() ||
+      readFileSync(paths.launcher, "utf8") !== STABLE_HOOK_LAUNCHER_CONTENT
+    ) {
+      throw new Error(`refusing to remove unrecognized hook launcher at ${paths.launcher}`);
+    }
+  }
+  if (!existsSync(paths.runtimeDir)) return;
+  if (!lstatSync(paths.runtimeDir).isDirectory()) {
+    throw new Error(`refusing to remove non-directory hook runtime at ${paths.runtimeDir}`);
+  }
+
+  const allowed = new Set(["current", "releases", "selection.lock"]);
+  const unexpected = readdirSync(paths.runtimeDir).filter((entry) => !allowed.has(entry));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `refusing to remove hook runtime with unrecognized entries: ${unexpected.sort().join(", ")}`,
+    );
+  }
+
+  const currentExists = existsSync(paths.current);
+  const releasesExist = existsSync(paths.releasesDir);
+  if (currentExists) {
+    if (!lstatSync(paths.current).isFile() || !releasesExist || !readSelectedRelease(paths)) {
+      throw new Error(`refusing to remove malformed hook runtime selection at ${paths.current}`);
+    }
+  }
+  if (!releasesExist) return;
+  if (!lstatSync(paths.releasesDir).isDirectory()) {
+    throw new Error(`refusing to remove non-directory hook releases at ${paths.releasesDir}`);
+  }
+  for (const entry of readdirSync(paths.releasesDir, { withFileTypes: true })) {
+    const releaseDir = join(paths.releasesDir, entry.name);
+    if (
+      !entry.isDirectory() ||
+      !RELEASE_NAME_RE.test(entry.name) ||
+      !readReleaseManifest(releaseDir, entry.name)
+    ) {
+      throw new Error(`refusing to remove unrecognized hook release ${releaseDir}`);
+    }
+  }
+}
+
+/**
+ * Remove only a fully recognized immutable hook runtime.
+ *
+ * The selection lock serializes this contraction against a concurrent stage.
+ * Unknown launchers, releases, or co-located files abort before deletion.
+ */
+export function removeHookRuntime(
+  options: PrimConfigDirectoryOptions = {},
+): RemoveHookRuntimeResult {
+  const paths = hookRuntimePaths(options);
+  const hadLauncher = existsSync(paths.launcher);
+  const hadRuntime = existsSync(paths.runtimeDir);
+  if (!hadLauncher && !hadRuntime) return { changed: false, paths };
+
+  // Reject obvious foreign ownership before taking a lock inside the runtime.
+  assertOwnedHookRuntime(paths);
+  if (!hadRuntime) {
+    rmSync(paths.launcher, { force: true });
+    return { changed: hadLauncher, paths };
+  }
+
+  withFileLockSync(paths.selectionLock, () => {
+    assertOwnedHookRuntime(paths);
+    if (existsSync(paths.launcher)) rmSync(paths.launcher, { force: true });
+    const quarantined = `${paths.runtimeDir}.uninstall-${String(process.pid)}-${randomBytes(8).toString("hex")}`;
+    renameSync(paths.runtimeDir, quarantined);
+    rmSync(quarantined, { recursive: true, force: true });
+  });
+  return { changed: true, paths };
 }

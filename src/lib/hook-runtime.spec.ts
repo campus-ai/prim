@@ -20,6 +20,7 @@ import {
   HOOK_RUNTIME_ENTRIES,
   STABLE_HOOK_LAUNCHER_CONTENT,
   hookRuntimePaths,
+  removeHookRuntime,
   stageHookRuntime,
 } from "./hook-runtime.js";
 
@@ -383,5 +384,39 @@ describe("stageHookRuntime", () => {
     expect(() => hookRuntimePaths({ env: { HOME: "relative" } })).toThrow(
       "HOME is not an absolute path",
     );
+  });
+});
+
+describe("removeHookRuntime", () => {
+  it("removes only a fully recognized staged runtime", () => {
+    const root = temporaryRoot("prim-hook-runtime-uninstall-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+
+    expect(removeHookRuntime({ env }).changed).toBe(true);
+    expect(existsSync(staged.paths.launcher)).toBe(false);
+    expect(existsSync(staged.paths.runtimeDir)).toBe(false);
+    expect(removeHookRuntime({ env }).changed).toBe(false);
+  });
+
+  it("retains the entire runtime when an entry has ambiguous ownership", () => {
+    const root = temporaryRoot("prim-hook-runtime-uninstall-ambiguous-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+    writeFileSync(join(staged.paths.runtimeDir, "foreign.txt"), "keep me\n");
+
+    expect(() => removeHookRuntime({ env })).toThrow("unrecognized entries");
+    expect(existsSync(staged.paths.launcher)).toBe(true);
+    expect(existsSync(staged.paths.runtimeDir)).toBe(true);
   });
 });

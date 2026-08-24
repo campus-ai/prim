@@ -23,6 +23,7 @@ import {
   ensureMacDaemon,
   launchdPaths,
   parseLaunchdService,
+  removeDaemonRuntime,
   runtimePaths,
   runtimeStatuslineCommand,
   stageRuntime,
@@ -762,5 +763,55 @@ describe("failure safety, migration, and locking", () => {
     release();
     await Promise.all([first, second]);
     expect(secondEntered).toBe(true);
+  });
+});
+
+describe("removeDaemonRuntime", () => {
+  it("removes a recognized stopped daemon runtime without touching other config", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    const configDir = join(fake.homeDir, ".config", "prim");
+    mkdirSync(configDir, { recursive: true });
+    const retained = join(configDir, "token");
+    writeFileSync(retained, "credential\n");
+
+    const result = await removeDaemonRuntime({
+      homeDir: fake.homeDir,
+      env: fake.env,
+      uid: fake.uid,
+      label: fake.label,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(existsSync(staged.paths.runtimeDir)).toBe(false);
+    expect(readFileSync(retained, "utf8")).toBe("credential\n");
+  });
+
+  it("retains daemon runtime bytes when ownership is ambiguous", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    writeFileSync(join(staged.paths.runtimeDir, "foreign.txt"), "keep me\n");
+
+    await expect(
+      removeDaemonRuntime({
+        homeDir: fake.homeDir,
+        env: fake.env,
+        uid: fake.uid,
+        label: fake.label,
+      }),
+    ).rejects.toThrow("unrecognized entries");
+    expect(existsSync(staged.paths.runtimeDir)).toBe(true);
   });
 });

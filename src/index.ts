@@ -11,6 +11,7 @@
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
  *   prim doctor
+ *   prim uninstall
  *   prim decisions recent|show|cascade|check|publish|restore|supersede|confirm|create
  *   prim reconcile <id>
  *   prim welcome
@@ -38,13 +39,19 @@ import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerStatuslineCommands } from "./commands/statusline.js";
+import { UNINSTALL_ORCHESTRATOR_ENV, registerUninstallCommand } from "./commands/uninstall.js";
 import { registerWelcomeCommand } from "./commands/welcome.js";
 import { flushIfNeeded } from "./flusher.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
+const argv = process.argv.slice(2);
+const isExplicitFlush = argv[0] === "moves" && argv[1] === "flush";
+const isUninstall = argv[0] === "uninstall" || process.env[UNINSTALL_ORCHESTRATOR_ENV] === "1";
 
-updateNotifier({ pkg }).notify();
+// Uninstall is deliberately offline: neither the orchestrator nor its child
+// commands should check for updates or opportunistically drain journals.
+if (!isUninstall) updateNotifier({ pkg }).notify();
 
 const program = new Command();
 
@@ -74,6 +81,7 @@ registerReconcileCommands(program);
 registerStatuslineCommands(program);
 registerWelcomeCommand(program);
 registerSetupCommand(program);
+registerUninstallCommand(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
@@ -86,9 +94,7 @@ process.on("unhandledRejection", (err) => {
 // blocks the user's command behind the network drain, and is skipped for
 // the explicit `prim moves flush`, which drains directly (a concurrent
 // rotate-then-process drain would be harmless but redundant).
-const argv = process.argv.slice(2);
-const isExplicitFlush = argv[0] === "moves" && argv[1] === "flush";
-if (!isExplicitFlush) {
+if (!isExplicitFlush && !isUninstall) {
   flushIfNeeded().catch(() => {
     // Best-effort; flushIfNeeded already swallows its own failures.
   });
