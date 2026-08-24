@@ -38,6 +38,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ClaudeSettings,
@@ -142,6 +143,24 @@ function ownedRegistrationEntries(settings: ClaudeSettings): OwnedRegistrationEn
 
 export function hasAnyHookRegistration(settings: ClaudeSettings): boolean {
   return ownedRegistrationEntries(settings).length > 0;
+}
+
+/** Runtime requirements of Primitive hook commands already present in settings. */
+export function hookRuntimeResolutions(settings: ClaudeSettings): HookCommandResolution[] {
+  return hookCommandResolutions(
+    Object.values(settings.hooks ?? {}).flatMap((entries) =>
+      (entries ?? []).flatMap((entry) => (entry.hooks ?? []).map((hook) => hook.command)),
+    ),
+    PRIM_BINS,
+  );
+}
+
+/** Inspect hook runtime requirements without changing Codex settings. */
+export function inspectHookRuntimeResolutions(): HookCommandResolution[] {
+  return [
+    ...hookRuntimeResolutions(readSettings(USER_SCOPE_PATH)),
+    ...hookRuntimeResolutions(readSettings(projectScopePath())),
+  ];
 }
 
 function entryMatchesRegistration(

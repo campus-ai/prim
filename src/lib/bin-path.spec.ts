@@ -23,6 +23,8 @@ import {
   binFile,
   commandMatchesBin,
   detachedHookShimCommand,
+  hookCommandResolution,
+  hookCommandResolutions,
   packageVersion,
   pinnedHookCommand,
   pinnedNpxArgs,
@@ -325,5 +327,29 @@ describe("commandMatchesBin", () => {
   it("does not match a foreign command or undefined", () => {
     expect(commandMatchesBin("/usr/local/bin/other", "prim-hook")).toBe(false);
     expect(commandMatchesBin(undefined, "prim-hook")).toBe(false);
+  });
+});
+
+describe("hookCommandResolution", () => {
+  it("distinguishes immutable launchers from historical fallback commands", () => {
+    expect(hookCommandResolution(stableHookCommand("prim-hook"), "prim-hook")).toBe(
+      "stable_launcher",
+    );
+    expect(
+      hookCommandResolution(
+        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; else npx -p @primitive.ai/prim prim-hook; fi",
+        "prim-hook",
+      ),
+    ).toBe("npx_fallback");
+    expect(hookCommandResolution("/usr/local/bin/other", "prim-hook")).toBeUndefined();
+  });
+
+  it("collects only recognized Primitive commands", () => {
+    expect(
+      hookCommandResolutions(
+        [stableHookCommand("prim-hook"), "/usr/local/bin/other", "prim-pre-tool-use"],
+        ["prim-hook", "prim-pre-tool-use"],
+      ),
+    ).toEqual(["stable_launcher", "npx_fallback"]);
   });
 });
