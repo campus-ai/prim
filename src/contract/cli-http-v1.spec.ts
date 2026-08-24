@@ -220,4 +220,18 @@ describe("generated CLI HTTP request-core contract", () => {
       buildGeneratedOutputs(artifactBytes, Buffer.from(`${JSON.stringify(lock)}\n`)),
     ).rejects.toThrow("contract artifact checksum mismatch");
   });
+
+  it("requires a canonical source repository and artifact path", async () => {
+    const { artifact, lock } = artifactFixture();
+    await expect(
+      buildGeneratedOutputs(
+        ...generatedInput(artifact, { ...lock, sourceRepository: "example/test" }),
+      ),
+    ).rejects.toThrow("sourceRepository must be campus-ai/primitive");
+    await expect(
+      buildGeneratedOutputs(
+        ...generatedInput(artifact, { ...lock, sourcePath: "contracts/other.schema.json" }),
+      ),
+    ).rejects.toThrow("sourcePath must be contracts/cli-http-v1.schema.json");
+  });
 });
