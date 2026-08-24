@@ -51,6 +51,7 @@
     "build": "tsup src/index.ts src/hooks/pre-commit.ts src/hooks/post-commit.ts src/hooks/post-rewrite.ts src/hooks/prim-hook.ts src/hooks/pre-tool-use.ts src/hooks/post-tool-use.ts src/hooks/session-start.ts src/hooks/session-end.ts --format esm --clean && tsup src/statusline-main.ts src/daemon/server.ts --format esm --splitting false",
     "contracts:generate": "node scripts/generate-cli-contract.mjs --write",
     "contracts:check": "node scripts/generate-cli-contract.mjs --check",
+    "contracts:provenance": "node scripts/update-cli-contract.mjs --check",
     "contracts:update": "node scripts/update-cli-contract.mjs",
     "postbuild": "chmod +x ./dist/index.js ./dist/statusline-main.js ./dist/hooks/pre-commit.js ./dist/hooks/post-commit.js ./dist/hooks/post-rewrite.js ./dist/hooks/prim-hook.js ./dist/hooks/pre-tool-use.js ./dist/hooks/post-tool-use.js ./dist/hooks/session-start.js ./dist/hooks/session-end.js ./dist/daemon/server.js",
     "dev": "tsup src/index.ts src/statusline-main.ts src/hooks/pre-commit.ts src/hooks/post-commit.ts src/hooks/post-rewrite.ts src/hooks/prim-hook.ts src/hooks/pre-tool-use.ts src/hooks/post-tool-use.ts src/hooks/session-start.ts src/hooks/session-end.ts src/daemon/server.ts --format esm --watch --clean --splitting false",

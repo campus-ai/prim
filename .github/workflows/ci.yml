@@ -32,6 +32,9 @@ jobs:
 
       - run: pnpm contracts:check
 
+      - run: pnpm contracts:provenance
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 22
+
       - run: pnpm lint
 
       - run: pnpm format:check
