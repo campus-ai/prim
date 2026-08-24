@@ -1,17 +1,7 @@
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  closeSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { atomicWriteFile, ensureDurableDirectory, syncDirectory } from "../lib/atomic-file.js";
 import { type FileLockOptions, withFileLock } from "../lib/file-lock.js";
 
 const CONFIG_DIRECTORY_MODE = 0o700;
@@ -33,12 +23,13 @@ export function isClientInstanceId(value: unknown): value is string {
 }
 
 function ensurePrivateConfigDirectory(configDir: string): void {
-  mkdirSync(configDir, { recursive: true, mode: CONFIG_DIRECTORY_MODE });
+  ensureDurableDirectory(configDir, CONFIG_DIRECTORY_MODE);
   const metadata = lstatSync(configDir);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     throw new Error("prim config path must be a private directory");
   }
   chmodSync(configDir, CONFIG_DIRECTORY_MODE);
+  syncDirectory(configDir);
 }
 
 function readExisting(path: string): string | undefined {
@@ -69,24 +60,7 @@ function readExisting(path: string): string | undefined {
 }
 
 function atomicWrite(path: string, value: string): void {
-  const directory = dirname(path);
-  const temp = join(
-    directory,
-    `.client-instance.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
-  );
-  try {
-    const fd = openSync(temp, "wx", INSTANCE_FILE_MODE);
-    try {
-      writeFileSync(fd, `${value}\n`, { encoding: "utf8" });
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temp, path);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
+  atomicWriteFile(path, `${value}\n`, { mode: INSTANCE_FILE_MODE });
 }
 
 /**

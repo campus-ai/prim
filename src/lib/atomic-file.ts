@@ -59,6 +59,14 @@ function syncCreatedParentChain(firstCreatedParent: string, parent: string): voi
   }
 }
 
+/** Create a directory chain and durably publish every new directory entry. */
+export function ensureDurableDirectory(path: string, mode?: number): void {
+  const firstCreatedParent = mkdirSync(path, { recursive: true, mode });
+  if (firstCreatedParent) {
+    syncCreatedParentChain(firstCreatedParent, path);
+  }
+}
+
 /**
  * Replace one file with fully flushed bytes without ever following a temporary
  * path planted by another process. The temporary lives beside the target, so
@@ -70,12 +78,8 @@ export function atomicWriteFile(
   options: AtomicFileOptions = {},
 ): void {
   const parent = dirname(target);
-  let firstCreatedParent: string | undefined;
   if (options.ensureParent) {
-    firstCreatedParent = mkdirSync(parent, { recursive: true });
-    if (firstCreatedParent) {
-      syncCreatedParentChain(firstCreatedParent, parent);
-    }
+    ensureDurableDirectory(parent);
   }
 
   const temporaryPath = `${target}.${randomUUID()}.tmp`;

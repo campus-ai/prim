@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getOrCreateClientInstanceId, isClientInstanceId } from "./client-instance-id.js";
 
 const fsyncControl = vi.hoisted(() => ({ failNext: false }));
+const atomicCallOrder = vi.hoisted(() => [] as string[]);
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -31,6 +32,21 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/atomic-file.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/atomic-file.js")>();
+  return {
+    ...actual,
+    ensureDurableDirectory: (path: string) => {
+      atomicCallOrder.push(`directory:${path}`);
+      actual.ensureDurableDirectory(path);
+    },
+    atomicWriteFile: (...args: Parameters<typeof actual.atomicWriteFile>) => {
+      atomicCallOrder.push(`write:${args[0]}`);
+      actual.atomicWriteFile(...args);
+    },
+  };
+});
+
 describe("stable client instance identity", () => {
   const roots: string[] = [];
 
@@ -42,6 +58,7 @@ describe("stable client instance identity", () => {
 
   beforeEach(() => {
     fsyncControl.failNext = false;
+    atomicCallOrder.length = 0;
   });
 
   afterEach(() => {
@@ -66,6 +83,16 @@ describe("stable client instance identity", () => {
     expect(existsSync(join(configDir, "client-instance.lock"))).toBe(false);
   });
 
+  it("durably prepares the config directory before publishing an identity", async () => {
+    const configDir = tempConfig();
+    await getOrCreateClientInstanceId({ configDir });
+
+    expect(atomicCallOrder).toEqual([
+      `directory:${configDir}`,
+      `write:${join(configDir, "client_instance_id")}`,
+    ]);
+  });
+
   it("reuses an existing valid identity and repairs its file mode", async () => {
     const configDir = tempConfig();
     const initial = await getOrCreateClientInstanceId({ configDir });
@@ -76,7 +103,7 @@ describe("stable client instance identity", () => {
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
-  it("flushes the identity before publishing it and cleans up a failed write", async () => {
+  it("does not publish an identity after a durability failure", async () => {
     const configDir = tempConfig();
     fsyncControl.failNext = true;
 
