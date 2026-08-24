@@ -4,7 +4,6 @@ import { processCodexMessageContext } from "./codex-message-context.js";
 function prepared(overrides: Record<string, unknown> = {}) {
   return {
     context: undefined,
-    decisionDigest: undefined,
     feedAvailable: true,
     acknowledge: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -15,8 +14,6 @@ describe("processCodexMessageContext", () => {
   it("delivers cached context through UserPromptSubmit and acknowledges after handoff", async () => {
     const context = prepared({
       context: "[prim] Decisions captured since last message: Taylor — “Use the daemon cache”",
-      decisionDigest:
-        "[prim] Decisions captured since last message: Taylor — “Use the daemon cache”",
     });
     const prepare = vi.fn().mockResolvedValue(context);
 
@@ -57,8 +54,6 @@ describe("processCodexMessageContext", () => {
     const context = prepared({
       context:
         "primitive 1.2.3 (daemon: live)\n\n[prim] Decisions captured since last message: Taylor — “Use Stop as a backstop”",
-      decisionDigest:
-        "[prim] Decisions captured since last message: Taylor — “Use Stop as a backstop”",
     });
     const prepare = vi.fn().mockResolvedValue(context);
     const result = await processCodexMessageContext(
