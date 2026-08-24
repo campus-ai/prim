@@ -34,6 +34,32 @@ export function syncDirectory(path: string): void {
 }
 
 /**
+ * Persist every directory entry made by recursive mkdir before a subsequent
+ * atomic rename relies on the new leaf directory.
+ */
+function syncCreatedParentChain(firstCreatedParent: string, parent: string): void {
+  const createdDirectories: string[] = [];
+  let current = parent;
+  while (current !== firstCreatedParent) {
+    createdDirectories.push(current);
+    const next = dirname(current);
+    if (next === current) {
+      throw new Error("recursive mkdir returned a path outside the target parent chain");
+    }
+    current = next;
+  }
+  createdDirectories.push(firstCreatedParent);
+
+  // The first newly-created directory is linked from this pre-existing parent.
+  syncDirectory(dirname(firstCreatedParent));
+  // Each following created directory is linked from its predecessor. The final
+  // target parent is flushed after the file rename below, along with that entry.
+  for (const directory of createdDirectories.reverse().slice(0, -1)) {
+    syncDirectory(directory);
+  }
+}
+
+/**
  * Replace one file with fully flushed bytes without ever following a temporary
  * path planted by another process. The temporary lives beside the target, so
  * the final rename is atomic on the target filesystem.
@@ -48,7 +74,7 @@ export function atomicWriteFile(
   if (options.ensureParent) {
     firstCreatedParent = mkdirSync(parent, { recursive: true });
     if (firstCreatedParent) {
-      syncDirectory(dirname(firstCreatedParent));
+      syncCreatedParentChain(firstCreatedParent, parent);
     }
   }
 
