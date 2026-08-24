@@ -160,6 +160,23 @@ describe("prim github connect", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("sanitizes terminal controls for people while retaining the raw JSON error", async () => {
+    const deps = dependencies();
+    const message = "origin campus\u202e-ai/pr\u200bimitive\nnot allowed";
+    vi.mocked(deps.bindRepository).mockRejectedValueOnce(new Error(message));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps);
+
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(
+      "[prim] github connect failed: origin campus-ai/primitive not allowed\n",
+    );
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ status: "error", error: message }, null, 2),
+    );
+  });
+
   it("reports authentication errors with their HTTP status and no success output", async () => {
     const deps = dependencies();
     vi.mocked(deps.bindRepository).mockRejectedValueOnce(
