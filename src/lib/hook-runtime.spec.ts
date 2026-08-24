@@ -14,7 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as atomicFile from "./atomic-file.js";
 import { stableHookCommand } from "./bin-path.js";
 import {
   HOOK_RUNTIME_ENTRIES,
@@ -49,10 +50,45 @@ function sourceRuntime(root: string, label: string): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("stageHookRuntime", () => {
+  it("flushes every staged release entry before publishing its selector", () => {
+    const root = temporaryRoot("prim-hook-runtime-durability-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const paths = hookRuntimePaths({ env });
+    const syncFile = vi.spyOn(atomicFile, "syncFile");
+    const realSyncDirectory = atomicFile.syncDirectory;
+    const syncDirectory = vi.spyOn(atomicFile, "syncDirectory").mockImplementation((path) => {
+      if (path === paths.releasesDir) expect(existsSync(paths.current)).toBe(false);
+      realSyncDirectory(path);
+    });
+
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "durable"),
+      version: "1.0.0",
+      nodePath: process.execPath,
+      env,
+    });
+
+    const stagedFileSyncs = syncFile.mock.calls.filter(([path]) => path.includes("/.stage-"));
+    expect(stagedFileSyncs).toHaveLength(Object.keys(HOOK_RUNTIME_ENTRIES).length + 3);
+    const stagedDirectorySyncs = syncDirectory.mock.calls
+      .map(([path], index) => ({ path, index }))
+      .filter(({ path }) => path.includes("/.stage-"));
+    expect(stagedDirectorySyncs.length).toBeGreaterThan(0);
+
+    const releaseParentSync = syncDirectory.mock.calls.findIndex(
+      ([path]) => path === staged.paths.releasesDir,
+    );
+    expect(releaseParentSync).toBeGreaterThan(
+      Math.max(...stagedDirectorySyncs.map(({ index }) => index)),
+    );
+    expect(existsSync(staged.paths.current)).toBe(true);
+  });
+
   it("atomically selects immutable exact bytes behind one stable command", () => {
     const root = temporaryRoot("prim-hook-runtime-");
     const config = join(root, "config");

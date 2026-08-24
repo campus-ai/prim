@@ -33,6 +33,16 @@ export function syncDirectory(path: string): void {
   }
 }
 
+/** Flush copied immutable bytes before publishing their containing directory. */
+export function syncFile(path: string): void {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Persist every directory entry made by recursive mkdir before a subsequent
  * atomic rename relies on the new leaf directory.
