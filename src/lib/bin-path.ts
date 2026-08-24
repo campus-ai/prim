@@ -13,12 +13,6 @@ import { fileURLToPath } from "node:url";
 
 const PKG_NAME = "@primitive.ai/prim";
 const ROOT_WALK_LIMIT = 6;
-// Branch-0 resolved-path cache. The shell dir expression MUST mirror
-// binCacheDir() in bin-cache.ts byte-for-byte (a spec pins the pair). TTL is a
-// backstop only — SessionStart (cacheRead:false) refreshes the exact runtime
-// version per session.
-export const BIN_CACHE_DIR_SH = "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin";
-export const BIN_CACHE_TTL_MIN_DEFAULT = 1440;
 
 type PackageManifest = { name?: string; version?: string; bin?: Record<string, string> };
 
@@ -128,61 +122,15 @@ export function pinnedHookCommand(bin: string, args = ""): string {
   return `if [ -x ${shellQuote(process.execPath)} ] && [ -f ${shellQuote(file)} ]; then ${shellQuote(process.execPath)} ${shellQuote(file)}${suffix}; else ${fallback}; fi`;
 }
 
-/**
- * A self-resolving shell command for a settings.json hook: try the bin on PATH,
- * then a local `node_modules/.bin`, then the exact runtime version through
- * `npx --ignore-scripts`. Mirrors the
- * git-hook resolver (hooks.ts:hookShim) but — unlike it — adds no
- * `2>/dev/null || true`: a Claude Code / Codex hook's STDOUT (e.g. the gate's
- * permissionDecision) and exit code are load-bearing and must pass through.
- * That holds for the gate and statusline (stdout), post-tool-use (its stderr
- * verdict footer is a deliberate human signal), and session-start (its stdout
- * injects additionalContext under codex) — which is why they stay synchronous;
- *   hookShimCommand("prim-hook")                 // capture
- *   hookShimCommand("prim-hook", "--agent codex")// codex capture
- *   hookShimCommand("prim", "statusline")        // statusline
- *
- * cacheRead (default true) prepends branch-0: if the hooks have cached this
- * bin's resolved entry within TTL, `exec` it directly — turning a per-fire
- * npx resolution into a `cat` + exec (see lib/bin-cache.ts). It marks
- * the exec with PRIM_BIN_CACHE_HIT (so the warmer does not bump mtime and
- * freeze the TTL) and `exec` both preserves the hook's stdout/exit code AND
- * stops fallthrough to the ladder. Any doubt — kill switch (PRIM_BIN_CACHE=0),
- * missing/expired entry, an npx-GC'd target — fails open to the unchanged
- * ladder. Pass cacheRead:false to emit the bare ladder (SessionStart and the
- * detached wrapper).
- */
-export function hookShimCommand(
-  bin: string,
-  args = "",
-  opts: { cacheRead?: boolean } = {},
-): string {
-  const invoke = (cmd: string): string => (args ? `${cmd} ${args}` : cmd);
-  const ladder =
-    `if command -v ${bin} >/dev/null 2>&1; then ${invoke(bin)}; ` +
-    `elif [ -f "./node_modules/.bin/${bin}" ]; then ${invoke(`./node_modules/.bin/${bin}`)}; ` +
-    `else ${invoke(pinnedNpxCommand(bin))}; fi`;
-  if (opts.cacheRead === false) {
-    return ladder;
-  }
-  const execArgs = args ? ` ${args}` : "";
-  // One template literal (not a concat) so lint doesn't split hairs over the
-  // trailing `fi; ` operand; kept on a single logical line like the ladder.
-  const cacheBranch = `d="${BIN_CACHE_DIR_SH}"; if [ "\${PRIM_BIN_CACHE:-1}" != "0" ] && [ -f "$d/${bin}" ] && [ -f "$d/node" ] && [ -n "$(find "$d/${bin}" -mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${BIN_CACHE_TTL_MIN_DEFAULT}}" 2>/dev/null)" ]; then n=$(cat "$d/node"); p=$(cat "$d/${bin}"); if [ -x "$n" ] && [ -f "$p" ]; then export PRIM_BIN_CACHE_HIT=1; exec "$n" "$p"${execArgs}; fi; fi; `;
-  return cacheBranch + ladder;
-}
-
 export function detachedHookShimCommand(bin: string, args = ""): string {
   return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**
- * Does `command` invoke `bin`, in either the legacy bare form ("prim-hook",
- * "prim-hook --agent codex") or the current resolution shim? Matched on the
- * `command -v <bin>` token the shim always carries — the seam that lets a plain
- * re-install recognize and upgrade an older install, and uninstall strip it.
- * The five hook bin names are mutually non-substring, so the token never
- * cross-matches a sibling.
+ * Does `command` invoke `bin`, in a legacy bare/ladder form or the current
+ * exact-version pinned command? Recognizing the historical `command -v` token
+ * lets reinstall/uninstall migrate already-written settings without retaining
+ * the dead ladder generator in product code.
  */
 export function commandMatchesBin(command: string | undefined, bin: string): boolean {
   if (!command) {
