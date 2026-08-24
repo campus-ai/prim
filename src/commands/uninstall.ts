@@ -10,10 +10,14 @@
 
 import { spawnSync } from "node:child_process";
 import type { Command } from "commander";
-import { removeDaemonRuntime } from "../daemon/launchd.js";
+import { assertOwnedDaemonRuntime, removeDaemonRuntime } from "../daemon/launchd.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { gitToplevel } from "../lib/git.js";
-import { removeHookRuntime } from "../lib/hook-runtime.js";
+import {
+  assertOwnedHookRuntime,
+  hookRuntimePaths,
+  removeHookRuntime,
+} from "../lib/hook-runtime.js";
 
 const EXIT_INCOMPLETE = 1;
 const CHILD_TIMEOUT_MS = 30_000;
@@ -84,6 +88,18 @@ export function planUninstallSteps(inRepository: boolean): UninstallStep[] {
 
 export function uninstallStepSucceeded(step: UninstallStep, result: UninstallRunResult): boolean {
   if (result.code !== 0) return false;
+  if (step.key === "daemon") {
+    try {
+      const parsed = JSON.parse(result.stdout ?? "") as Record<string, unknown>;
+      return (
+        parsed.verified === true &&
+        ((parsed.stopped === true && parsed.wasRunning === true) ||
+          (parsed.stopped === false && parsed.wasRunning === false && parsed.absent === true))
+      );
+    } catch {
+      return false;
+    }
+  }
   if (
     !step.key.startsWith("claude-") &&
     !step.key.startsWith("codex-") &&
@@ -135,6 +151,11 @@ export function registerUninstallCommand(
       const removeRuntimes =
         dependencies.removeRuntimes ??
         (async () => {
+          // Verify both ownership surfaces before contracting either runtime.
+          // This prevents a daemon-stop false positive from deleting hooks
+          // before active daemon artifacts make the second deletion refuse.
+          assertOwnedHookRuntime(hookRuntimePaths());
+          assertOwnedDaemonRuntime({});
           const hookRuntime = removeHookRuntime();
           const daemonRuntime = await removeDaemonRuntime();
           return {

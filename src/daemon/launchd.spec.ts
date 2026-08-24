@@ -725,6 +725,14 @@ describe("failure safety, migration, and locking", () => {
     });
     expect(daemonExplicitlyDisabled(fake)).toBe(false);
   });
+  it("refuses an unverified legacy stop", async () => {
+    const fake = new FakeLaunchd();
+    fake.legacyIdentity = { pid: 700, version: "legacy" };
+
+    await expect(
+      bootoutMacDaemon(fake.options({ migrateLegacy: async () => false })),
+    ).rejects.toThrow("could not be verified stopped");
+  });
   it("migrates a released XDG disabled marker without staging", async () => {
     const fake = new FakeLaunchd();
     const legacyMarker = runtimePaths(fake).disabledMarker;

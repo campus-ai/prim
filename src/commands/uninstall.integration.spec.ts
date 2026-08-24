@@ -32,6 +32,9 @@ function hookSource(root: string): string {
 }
 
 function successfulOutput(args: string[]): string {
+  if (args[0] === "daemon") {
+    return JSON.stringify({ stopped: false, wasRunning: false, absent: true, verified: true });
+  }
   if (args[0] === "claude") {
     return JSON.stringify({ gate: false, capture: false, feedback: false, statusline: false });
   }

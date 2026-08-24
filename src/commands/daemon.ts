@@ -336,8 +336,36 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
 async function detachedDaemonStop(): Promise<void> {
   const existing = readPidfile();
   if (!existing) {
-    process.stderr.write("[prim] daemon not running (no pidfile)\n");
-    console.log(JSON.stringify({ stopped: false, wasRunning: false }, null, 2));
+    const socketOwner = await daemonRequest<StatusSnapshot>(
+      "status_snapshot",
+      {},
+      { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
+    );
+    if (existsSync(PID_PATH) || existsSync(SOCK_PATH) || socketOwner) {
+      process.stderr.write(
+        `[prim] refusing to verify daemon absence: ${
+          socketOwner ? `socket is owned by pid=${socketOwner.pid}` : "daemon artifacts remain"
+        }\n`,
+      );
+      console.log(
+        JSON.stringify(
+          {
+            stopped: false,
+            wasRunning: true,
+            ...(socketOwner ? { pid: socketOwner.pid } : {}),
+            verified: false,
+          },
+          null,
+          2,
+        ),
+      );
+      if (!process.exitCode) process.exitCode = EXIT_BOOTING;
+      return;
+    }
+    process.stderr.write("[prim] daemon not running (verified absent)\n");
+    console.log(
+      JSON.stringify({ stopped: false, wasRunning: false, absent: true, verified: true }, null, 2),
+    );
     return;
   }
   if (!existing.alive) {
@@ -346,18 +374,27 @@ async function detachedDaemonStop(): Promise<void> {
       {},
       { timeoutMs: STATUS_PROBE_TIMEOUT_MS },
     );
-    if (socketOwner) {
+    if (socketOwner || existsSync(SOCK_PATH)) {
       process.stderr.write(
-        `[prim] refusing to clear stale pidfile: socket is owned by pid=${socketOwner.pid}\n`,
+        `[prim] refusing to clear stale pidfile: ${
+          socketOwner ? `socket is owned by pid=${socketOwner.pid}` : "socket artifact remains"
+        }\n`,
       );
       console.log(
-        JSON.stringify({ stopped: false, pid: socketOwner.pid, verified: false }, null, 2),
+        JSON.stringify(
+          { stopped: false, pid: socketOwner?.pid ?? existing.pid, verified: false },
+          null,
+          2,
+        ),
       );
+      if (!process.exitCode) process.exitCode = EXIT_BOOTING;
       return;
     }
     clearStaleArtifacts();
     process.stderr.write("[prim] daemon not running (cleared stale pidfile)\n");
-    console.log(JSON.stringify({ stopped: false, wasRunning: false }, null, 2));
+    console.log(
+      JSON.stringify({ stopped: false, wasRunning: false, absent: true, verified: true }, null, 2),
+    );
     return;
   }
   const snapshot = await verifiedPid(existing);
@@ -375,7 +412,8 @@ async function detachedDaemonStop(): Promise<void> {
     process.stderr.write(
       `[prim] could not signal pid=${existing.pid}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-    console.log(JSON.stringify({ stopped: false, pid: existing.pid }, null, 2));
+    console.log(JSON.stringify({ stopped: false, pid: existing.pid, verified: false }, null, 2));
+    if (!process.exitCode) process.exitCode = EXIT_BOOTING;
     return;
   }
 
@@ -384,7 +422,13 @@ async function detachedDaemonStop(): Promise<void> {
     if (!processIsAlive(existing.pid)) {
       clearStaleArtifacts();
       process.stderr.write(`[prim] daemon stopped (pid=${existing.pid})\n`);
-      console.log(JSON.stringify({ stopped: true, pid: existing.pid }, null, 2));
+      console.log(
+        JSON.stringify(
+          { stopped: true, wasRunning: true, pid: existing.pid, absent: true, verified: true },
+          null,
+          2,
+        ),
+      );
       return;
     }
     await sleep(STOP_POLL_MS);
@@ -392,7 +436,7 @@ async function detachedDaemonStop(): Promise<void> {
   process.stderr.write(
     `[prim] daemon did not exit within ${STOP_TIMEOUT_MS}ms (pid=${existing.pid} still alive)\n`,
   );
-  console.log(JSON.stringify({ stopped: false, pid: existing.pid }, null, 2));
+  console.log(JSON.stringify({ stopped: false, pid: existing.pid, verified: false }, null, 2));
   if (!process.exitCode) process.exitCode = EXIT_BOOTING;
 }
 
@@ -472,6 +516,8 @@ async function daemonStop(): Promise<void> {
         wasRunning: result.wasLoaded || result.legacyStopped,
         supervised: true,
         disabled: true,
+        absent: true,
+        verified: true,
       },
       null,
       2,

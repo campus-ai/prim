@@ -466,7 +466,7 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
   });
 }
 
-function assertOwnedHookRuntime(paths: HookRuntimePaths): void {
+export function assertOwnedHookRuntime(paths: HookRuntimePaths): void {
   if (existsSync(paths.launcher)) {
     const launcher = lstatSync(paths.launcher);
     if (

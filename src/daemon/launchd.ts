@@ -490,7 +490,7 @@ function assertExactFile(path: string, expected: string, label: string): void {
   }
 }
 
-function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
+export function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
   const runtime = runtimePaths(options);
   const control = daemonControlPaths(options);
   const service = launchdPaths(options);
@@ -1366,8 +1366,16 @@ async function bootoutMacDaemonLocked(
       previousPid: service.pid,
     });
   }
-  const legacyStopped = (await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS)))
-    ? await migrateLegacy()
-    : false;
+  const legacy = await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS));
+  let legacyStopped = false;
+  if (legacy) {
+    legacyStopped = await migrateLegacy();
+    if (!legacyStopped) {
+      throw new Error(`legacy daemon pid=${legacy.pid} could not be verified stopped`);
+    }
+    if (await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS))) {
+      throw new Error("legacy daemon remained present after stop");
+    }
+  }
   return { wasLoaded, legacyStopped, service };
 }

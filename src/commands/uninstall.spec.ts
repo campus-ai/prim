@@ -7,6 +7,9 @@ import {
 } from "./uninstall.js";
 
 function successfulOutput(args: string[]): string {
+  if (args[0] === "daemon") {
+    return JSON.stringify({ stopped: false, wasRunning: false, absent: true, verified: true });
+  }
   if (args[0] === "claude") {
     return JSON.stringify({ gate: false, capture: false, feedback: false, statusline: false });
   }
@@ -61,6 +64,21 @@ describe("registerUninstallCommand", () => {
         stderr: "",
       }),
     ).toBe(true);
+  });
+
+  it.each([
+    ["EPERM stop failure", { stopped: false, pid: 42, verified: false }],
+    ["active socket without a pidfile", { stopped: false, wasRunning: true, verified: false }],
+  ])("rejects an ambiguous daemon stop after %s", (_name, stdout) => {
+    const daemon = planUninstallSteps(false).find((step) => step.key === "daemon");
+    expect(daemon).toBeDefined();
+    expect(
+      uninstallStepSucceeded(daemon as NonNullable<typeof daemon>, {
+        code: 0,
+        stdout: JSON.stringify(stdout),
+        stderr: "",
+      }),
+    ).toBe(false);
   });
 
   it("removes runtime state only after every integration removal succeeds", async () => {
@@ -128,6 +146,37 @@ describe("registerUninstallCommand", () => {
         status: "retained",
         reason: "one or more integration removals failed",
       },
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    ["EPERM", { stopped: false, pid: 42, verified: false }],
+    ["active socket without a pidfile", { stopped: false, wasRunning: true, verified: false }],
+  ])("retains both runtimes when daemon stop reports %s", async (_name, daemon) => {
+    const removeRuntimes = vi.fn();
+    const write = vi.fn();
+    const exit = vi.fn();
+    const program = new Command();
+    registerUninstallCommand(program, {
+      inRepository: () => false,
+      run: (args) => ({
+        code: 0,
+        stdout: args[0] === "daemon" ? JSON.stringify(daemon) : successfulOutput(args),
+        stderr: "",
+      }),
+      removeRuntimes,
+      note: vi.fn(),
+      write,
+      exit,
+    });
+
+    await program.parseAsync(["uninstall"], { from: "user" });
+
+    expect(removeRuntimes).not.toHaveBeenCalled();
+    expect(JSON.parse(String(write.mock.calls[0][0]))).toMatchObject({
+      uninstalled: false,
+      runtime: { status: "retained", reason: "one or more integration removals failed" },
     });
     expect(exit).toHaveBeenCalledWith(1);
   });
