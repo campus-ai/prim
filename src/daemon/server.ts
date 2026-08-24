@@ -688,6 +688,10 @@ async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonRespon
       }
       case "session_start": {
         assertCallerPrincipalMatches(req.caller);
+        if (typeof req.params?.callerEnv !== "string") {
+          throw new Error("daemon caller environment is required");
+        }
+        assertCallerEnvMatches(req.params.callerEnv, getSiteUrl());
         statuslineIngestionCache.clear();
         const sid = req.params?.sessionId;
         if (typeof sid === "string" && sid.length > 0) {

@@ -619,11 +619,32 @@ describe("daemon raw statusline socket", () => {
       });
 
       await expect(
-        daemonRequest(socketPath, "session_start", { sessionId: "session-b" }, callerB),
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-b", callerEnv: apiUrl },
+          callerB,
+        ),
       ).resolves.toEqual({ sessionId: "session-b" });
       await expect(
-        daemonRequest(socketPath, "session_start", { sessionId: "session-a" }, callerA),
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-a", callerEnv: apiUrl },
+          callerA,
+        ),
       ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "status_snapshot", { callerEnv: apiUrl }, callerB),
+      ).resolves.toMatchObject({ sessionId: "session-b" });
+      await expect(
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-staging", callerEnv: "https://staging.example.test" },
+          callerB,
+        ),
+      ).rejects.toThrow("env mismatch");
       await expect(
         daemonRequest(socketPath, "status_snapshot", { callerEnv: apiUrl }, callerB),
       ).resolves.toMatchObject({ sessionId: "session-b" });
@@ -709,7 +730,12 @@ describe("daemon raw statusline socket", () => {
         "Decision ingestion disabled",
       );
       execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
-      await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" }, callerB);
+      await daemonRequest(
+        socketPath,
+        "session_start",
+        { sessionId: "cache-reset", callerEnv: apiUrl },
+        callerB,
+      );
       expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
 
       const relative = statuslineRequest("relative/path", apiUrl);

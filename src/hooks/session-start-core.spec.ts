@@ -181,7 +181,7 @@ describe("processSessionStart", () => {
     expect(kickDaemonEnsure).toHaveBeenCalledOnce();
     expect(daemonRequest).toHaveBeenCalledWith(
       "session_start",
-      { sessionId: "session-1" },
+      { sessionId: "session-1", callerEnv: "https://app.getprimitive.ai" },
       { timeoutMs: 250 },
     );
     const kickOrder = vi.mocked(kickDaemonEnsure).mock.invocationCallOrder[0];
@@ -496,7 +496,7 @@ describe("processSessionStart", () => {
     expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
     expect(daemonRequest).toHaveBeenCalledWith(
       "session_start",
-      { sessionId: "session-1" },
+      { sessionId: "session-1", callerEnv: "https://app.getprimitive.ai" },
       { timeoutMs: 250 },
     );
   });

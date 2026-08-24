@@ -1,4 +1,4 @@
-import { isSessionEnded } from "../client.js";
+import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
 import { hasUsableCodexGuidance } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
@@ -130,7 +130,7 @@ export async function processSessionStart(
   // synchronous Git/filesystem work must not delay session presence.
   await daemonRequest(
     "session_start",
-    { sessionId: envelope.session_id },
+    { sessionId: envelope.session_id, callerEnv: getSiteUrl() },
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
 
