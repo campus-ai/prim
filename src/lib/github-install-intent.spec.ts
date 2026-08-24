@@ -198,4 +198,22 @@ describe("GitHub install-intent protocol", () => {
 
     expect(api.get).not.toHaveBeenCalled();
   });
+
+  it("does not poll when an external cancellation arrives during sleep", async () => {
+    const api = client([]);
+    const controller = new AbortController();
+    const reason = new Error("cancelled during wait");
+
+    await expect(
+      pollGitHubInstallIntent(api, START, {
+        signal: controller.signal,
+        now: () => NOW,
+        sleep: async () => {
+          controller.abort(reason);
+        },
+      }),
+    ).rejects.toBe(reason);
+
+    expect(api.get).not.toHaveBeenCalled();
+  });
 });

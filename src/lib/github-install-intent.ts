@@ -257,9 +257,11 @@ export async function pollGitHubInstallIntent(
   const signal = options.signal ?? new AbortController().signal;
   const path = `${START_PATH}/${encodeURIComponent(start.intentId)}`;
   while (true) {
+    if (signal.aborted) throw signal.reason;
     const remainingBeforeSleep = start.expiresAt - now();
     if (remainingBeforeSleep <= 0) return expiredStatus(start);
     await sleep(Math.min(start.pollAfterMs, remainingBeforeSleep), signal);
+    if (signal.aborted) throw signal.reason;
     const remainingBeforeRequest = start.expiresAt - now();
     if (remainingBeforeRequest <= 0) return expiredStatus(start);
 
