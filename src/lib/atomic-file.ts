@@ -23,6 +23,16 @@ export type AtomicFileOptions = {
 
 const DEFAULT_FILE_MODE = 0o666;
 
+/** Flush directory entries created by a rename or recursive mkdir. */
+export function syncDirectory(path: string): void {
+  const fd = openSync(path, constants.O_RDONLY);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Replace one file with fully flushed bytes without ever following a temporary
  * path planted by another process. The temporary lives beside the target, so
@@ -33,8 +43,13 @@ export function atomicWriteFile(
   content: string,
   options: AtomicFileOptions = {},
 ): void {
+  const parent = dirname(target);
+  let firstCreatedParent: string | undefined;
   if (options.ensureParent) {
-    mkdirSync(dirname(target), { recursive: true });
+    firstCreatedParent = mkdirSync(parent, { recursive: true });
+    if (firstCreatedParent) {
+      syncDirectory(dirname(firstCreatedParent));
+    }
   }
 
   const temporaryPath = `${target}.${randomUUID()}.tmp`;
@@ -53,6 +68,7 @@ export function atomicWriteFile(
 
     options.validate?.(temporaryPath);
     renameSync(temporaryPath, target);
+    syncDirectory(parent);
   } catch (error) {
     if (temporaryCreated) {
       try {
