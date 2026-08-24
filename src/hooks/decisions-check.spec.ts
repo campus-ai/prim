@@ -9,10 +9,26 @@ vi.mock("../daemon/client.js", () => ({
   daemonRequest: mockDaemonRequest,
 }));
 
-import { checkAffectedDecisions, formatDecisionsWarning } from "./decisions-check.js";
+import {
+  type CheckDeps,
+  checkAffectedDecisions,
+  formatDecisionsWarning,
+} from "./decisions-check.js";
+
+const REPO_SYNC_ID = "repoSync123";
 
 function clientWith(get: ReturnType<typeof vi.fn>): CliClient {
   return { get, post: vi.fn() } as unknown as CliClient;
+}
+
+function checkDeps(
+  get: ReturnType<typeof vi.fn>,
+  repositoryBinding: string | undefined = REPO_SYNC_ID,
+): CheckDeps {
+  return {
+    getClient: () => clientWith(get),
+    repoSyncId: () => repositoryBinding,
+  };
 }
 
 describe("checkAffectedDecisions", () => {
@@ -23,28 +39,48 @@ describe("checkAffectedDecisions", () => {
 
   it("returns a verified-clear result without calling the server when no files are supplied", async () => {
     const get = vi.fn();
-    const result = await checkAffectedDecisions([], { getClient: () => clientWith(get) });
+    const getClient = vi.fn(() => clientWith(get));
+    const getRepoSyncId = vi.fn(() => REPO_SYNC_ID);
+    const result = await checkAffectedDecisions([], {
+      getClient,
+      repoSyncId: getRepoSyncId,
+    });
     expect(result).toEqual({ decisions: [], truncated: false });
+    expect(getRepoSyncId).not.toHaveBeenCalled();
+    expect(getClient).not.toHaveBeenCalled();
     expect(get).not.toHaveBeenCalled();
   });
 
   it("sends one repeated files= param per path (never comma-joined)", async () => {
     const get = vi.fn().mockResolvedValue({ decisions: [], truncated: false });
-    await checkAffectedDecisions(["src/a.ts", "src/b.ts"], { getClient: () => clientWith(get) });
+    await checkAffectedDecisions(["src/a.ts", "src/b.ts"], checkDeps(get));
     const url = get.mock.calls[0][0] as string;
     expect(url).toContain("files=src%2Fa.ts");
     expect(url).toContain("files=src%2Fb.ts");
     expect(url).not.toContain("%2C");
   });
 
+  it("encodes file paths without allowing a second repository-binding parameter", async () => {
+    const get = vi.fn().mockResolvedValue({ decisions: [], truncated: false });
+    const file = "src/a&repoSyncId=foreign?name.ts";
+
+    await checkAffectedDecisions([file], checkDeps(get));
+
+    const requestUrl = new URL(get.mock.calls[0][0] as string, "https://example.test");
+    expect(requestUrl.searchParams.getAll("files")).toEqual([file]);
+    expect(requestUrl.searchParams.getAll("repoSyncId")).toEqual([REPO_SYNC_ID]);
+  });
+
   it("uses the daemon affecting proxy when available", async () => {
     mockDaemonRequest.mockResolvedValueOnce({ decisions: [], truncated: false });
     const get = vi.fn();
-    await checkAffectedDecisions(["src/a.ts"], { getClient: () => clientWith(get) });
+    await checkAffectedDecisions(["src/a.ts"], checkDeps(get));
 
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_affecting",
-      expect.objectContaining({ path: "/api/cli/decisions/affecting?files=src%2Fa.ts" }),
+      expect.objectContaining({
+        path: `/api/cli/decisions/affecting?files=src%2Fa.ts&repoSyncId=${REPO_SYNC_ID}`,
+      }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();
@@ -72,11 +108,38 @@ describe("checkAffectedDecisions", () => {
         ],
         truncated: false,
       });
-    const result = await checkAffectedDecisions(files, { getClient: () => clientWith(get) });
+    const result = await checkAffectedDecisions(files, checkDeps(get));
     expect(get).toHaveBeenCalledTimes(2);
+    const urls = get.mock.calls.map(([path]) => new URL(path as string, "https://example.test"));
+    expect(urls.map((url) => url.searchParams.getAll("files").length)).toEqual([25, 5]);
+    for (const url of urls) {
+      expect(url.searchParams.getAll("repoSyncId")).toEqual([REPO_SYNC_ID]);
+    }
     expect(result.decisions).toHaveLength(1);
     expect(result.decisions[0].matchedFiles).toEqual(["src/f0.ts", "src/f26.ts"]);
   });
+
+  it.each([undefined, "", "-leading", "a".repeat(65)])(
+    "returns UNKNOWN with zero transport calls for a missing or invalid binding (%s)",
+    async (repositoryBinding) => {
+      const get = vi.fn();
+      const getClient = vi.fn(() => clientWith(get));
+
+      const result = await checkAffectedDecisions(["src/a.ts"], {
+        getClient,
+        repoSyncId: () => repositoryBinding,
+      });
+
+      expect(result).toEqual({
+        decisions: [],
+        truncated: false,
+        unavailable: "repository binding is missing or invalid; run `prim enable`",
+      });
+      expect(getClient).not.toHaveBeenCalled();
+      expect(mockDaemonRequest).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+    },
+  );
 
   it("surfaces the server's unavailable (org-unbound) instead of a silent clear", async () => {
     const get = vi.fn().mockResolvedValue({
@@ -84,19 +147,33 @@ describe("checkAffectedDecisions", () => {
       truncated: false,
       unavailable: "no organization bound to this token",
     });
-    const result = await checkAffectedDecisions(["src/a.ts"], { getClient: () => clientWith(get) });
+    const result = await checkAffectedDecisions(["src/a.ts"], checkDeps(get));
     expect(result.unavailable).toBe("no organization bound to this token");
+  });
+
+  it("surfaces a server repository-binding mismatch as UNKNOWN", async () => {
+    const get = vi.fn().mockResolvedValue({
+      decisions: [],
+      truncated: false,
+      unavailable: "repository binding does not match the current repository",
+    });
+
+    const result = await checkAffectedDecisions(["src/a.ts"], checkDeps(get));
+
+    expect(result.decisions).toEqual([]);
+    expect(result.unavailable).toBe("repository binding does not match the current repository");
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it("propagates truncated when the server clips the result", async () => {
     const get = vi.fn().mockResolvedValue({ decisions: [], truncated: true });
-    const result = await checkAffectedDecisions(["src/a.ts"], { getClient: () => clientWith(get) });
+    const result = await checkAffectedDecisions(["src/a.ts"], checkDeps(get));
     expect(result.truncated).toBe(true);
   });
 
   it("reports UNKNOWN (not a silent all-clear) on a transport/auth failure", async () => {
     const get = vi.fn().mockRejectedValue(new Error("network down"));
-    const result = await checkAffectedDecisions(["src/a.ts"], { getClient: () => clientWith(get) });
+    const result = await checkAffectedDecisions(["src/a.ts"], checkDeps(get));
     expect(result.decisions).toEqual([]);
     expect(result.unavailable).toContain("network down");
   });
