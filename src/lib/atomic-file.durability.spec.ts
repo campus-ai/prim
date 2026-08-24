@@ -22,7 +22,7 @@ vi.mock("node:fs", () => ({
 }));
 
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync } from "node:fs";
-import { atomicWriteFile } from "./atomic-file.js";
+import { atomicWriteFile, ensureDurableDirectory } from "./atomic-file.js";
 
 const mockedCloseSync = vi.mocked(closeSync);
 const mockedFsyncSync = vi.mocked(fsyncSync);
@@ -36,6 +36,15 @@ beforeEach(() => {
 });
 
 describe("atomicWriteFile durability", () => {
+  it("creates explicit-mode directories without a permissive intermediate mode", () => {
+    ensureDurableDirectory("/private/config", 0o700);
+
+    expect(mockedMkdirSync).toHaveBeenCalledWith("/private/config", {
+      recursive: true,
+      mode: 0o700,
+    });
+  });
+
   it("flushes the target directory after the atomic rename", () => {
     const target = "/private/config/credential";
     const temporary = `${target}.${TEMP_ID}.tmp`;
