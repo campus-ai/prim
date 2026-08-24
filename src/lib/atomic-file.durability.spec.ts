@@ -21,8 +21,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
 }));
 
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync } from "node:fs";
-import { atomicWriteFile, ensureDurableDirectory } from "./atomic-file.js";
+import { constants, closeSync, fsyncSync, mkdirSync, openSync, renameSync } from "node:fs";
+import { atomicWriteFile, ensureDurableDirectory, syncFile } from "./atomic-file.js";
 
 const mockedCloseSync = vi.mocked(closeSync);
 const mockedFsyncSync = vi.mocked(fsyncSync);
@@ -43,6 +43,19 @@ describe("atomicWriteFile durability", () => {
       recursive: true,
       mode: 0o700,
     });
+  });
+
+  it("flushes a copied immutable file without following a symlink", () => {
+    mockedOpenSync.mockReturnValue(12);
+
+    syncFile("/private/config/release/dist/index.js");
+
+    expect(mockedOpenSync).toHaveBeenCalledWith(
+      "/private/config/release/dist/index.js",
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    expect(mockedFsyncSync).toHaveBeenCalledWith(12);
+    expect(mockedCloseSync).toHaveBeenCalledWith(12);
   });
 
   it("flushes the target directory after the atomic rename", () => {

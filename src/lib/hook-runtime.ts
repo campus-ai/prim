@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { atomicWriteFile } from "./atomic-file.js";
+import { atomicWriteFile, syncDirectory, syncFile } from "./atomic-file.js";
 import { STABLE_HOOK_LAUNCHER_NAME, packageRoot, packageVersion } from "./bin-path.js";
 import { withFileLockSync } from "./file-lock.js";
 import { type PrimConfigDirectoryOptions, primConfigDirectory } from "./paths.js";
@@ -332,6 +332,14 @@ function writeRelease(
   const stagingDir = mkdtempSync(join(releasesDir, ".stage-"));
   chmodSync(stagingDir, DIRECTORY_MODE);
   try {
+    const directories = new Set<string>([stagingDir]);
+    const syncStagedFile = (path: string) => {
+      syncFile(path);
+      for (let directory = dirname(path); ; directory = dirname(directory)) {
+        directories.add(directory);
+        if (directory === stagingDir) break;
+      }
+    };
     for (const [bin, targetRelative] of Object.entries(HOOK_RUNTIME_ENTRIES) as [
       HookRuntimeBin,
       string,
@@ -345,22 +353,32 @@ function writeRelease(
       if (sha256(target) !== manifest.files[bin]) {
         throw new Error(`cannot stage hook runtime: ${bin} changed while it was copied`);
       }
+      syncStagedFile(target);
     }
-    writeFileSync(join(stagingDir, "node"), `${manifest.nodePath}\n`, {
+    const nodePath = join(stagingDir, "node");
+    writeFileSync(nodePath, `${manifest.nodePath}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: DATA_FILE_MODE,
     });
-    writeFileSync(join(stagingDir, "package.json"), runtimePackageJson(manifest), {
+    syncStagedFile(nodePath);
+    const packageJsonPath = join(stagingDir, "package.json");
+    writeFileSync(packageJsonPath, runtimePackageJson(manifest), {
       encoding: "utf8",
       flag: "wx",
       mode: DATA_FILE_MODE,
     });
-    writeFileSync(join(stagingDir, "manifest.json"), exactManifest(manifest), {
+    syncStagedFile(packageJsonPath);
+    const manifestPath = join(stagingDir, "manifest.json");
+    writeFileSync(manifestPath, exactManifest(manifest), {
       encoding: "utf8",
       flag: "wx",
       mode: DATA_FILE_MODE,
     });
+    syncStagedFile(manifestPath);
+    for (const directory of [...directories].sort((left, right) => right.length - left.length)) {
+      syncDirectory(directory);
+    }
     try {
       renameSync(stagingDir, releaseDir);
     } catch (error) {
@@ -438,6 +456,9 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
       });
     }
     if (!selectorCurrent) {
+      // The selector is authority-bearing: make the entire immutable release
+      // durable before a crash can expose its name to the stable launcher.
+      syncDirectory(paths.releasesDir);
       atomicWriteFile(paths.current, `${finalRelease.name}\n`, {
         ensureParent: true,
         mode: DATA_FILE_MODE,
