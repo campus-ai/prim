@@ -14,6 +14,7 @@ export const REFRESH_TOKEN_PATH = join(CONFIG_DIRECTORY, "refresh_token");
 export const TOKEN_EXPIRES_PATH = join(CONFIG_DIRECTORY, "token_expires_at");
 export const TERMINAL_REFRESH_PATH = join(CONFIG_DIRECTORY, "refresh_terminal");
 export const CREDENTIAL_METADATA_PATH = join(CONFIG_DIRECTORY, "credential_metadata.json");
+export const CREDENTIAL_FAMILY_PATH = join(CONFIG_DIRECTORY, "credential_family.json");
 export const CREDENTIAL_LOCK_PATH = join(CONFIG_DIRECTORY, "credentials.lock");
 
 const MAX_CREDENTIAL_METADATA_BYTES = 4096;
@@ -30,10 +31,18 @@ export interface CredentialResolutionOptions {
   tokenFilePath?: string;
   refreshTokenPath?: string;
   metadataPath?: string;
+  familyPath?: string;
 }
 
+export type LegacyBrokerCredentialMetadata = Readonly<{
+  version: 1;
+  family: "legacy_broker";
+  accessTokenHash: string;
+  refreshTokenHash: string;
+}>;
+
 export type StoredCredentialMetadataResolution =
-  | Readonly<{ state: "legacy_broker" }>
+  | Readonly<{ state: "legacy_broker"; metadata?: LegacyBrokerCredentialMetadata }>
   | Readonly<{ state: "workos_connect"; metadata: WorkosConnectCredentialMetadata }>
   | Readonly<{ state: "invalid" }>;
 
@@ -55,8 +64,21 @@ export function resolveAuthCredential(
 
   const stored = readTrimmed(options.tokenFilePath ?? TOKEN_FILE_PATH);
   if (!stored) return undefined;
-  const metadata = readStoredCredentialMetadata(options.metadataPath ?? CREDENTIAL_METADATA_PATH);
+  const metadata = readStoredCredentialMetadata(
+    options.metadataPath ?? CREDENTIAL_METADATA_PATH,
+    options.familyPath ?? CREDENTIAL_FAMILY_PATH,
+  );
   if (metadata.state === "legacy_broker") {
+    if (metadata.metadata) {
+      const refreshToken = readTrimmed(options.refreshTokenPath ?? REFRESH_TOKEN_PATH);
+      if (
+        !refreshToken ||
+        metadata.metadata.accessTokenHash !== credentialFingerprint(stored) ||
+        metadata.metadata.refreshTokenHash !== credentialFingerprint(refreshToken)
+      ) {
+        return undefined;
+      }
+    }
     return { token: stored, source: "token_file" };
   }
   if (metadata.state === "invalid") return undefined;
@@ -75,26 +97,81 @@ function credentialFingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-/** Absence is the rolling-compatible legacy credential family; a present but
- * malformed file fails closed and is never reinterpreted as broker state. */
-export function readStoredCredentialMetadata(
-  path: string = CREDENTIAL_METADATA_PATH,
-): StoredCredentialMetadataResolution {
+function parseLegacyBrokerCredentialMetadata(value: unknown): LegacyBrokerCredentialMetadata {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("credential family is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    record.family !== "legacy_broker" ||
+    typeof record.accessTokenHash !== "string" ||
+    typeof record.refreshTokenHash !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(record.accessTokenHash) ||
+    !/^[a-f0-9]{64}$/u.test(record.refreshTokenHash)
+  ) {
+    throw new Error("credential family is invalid");
+  }
+  return {
+    version: 1,
+    family: "legacy_broker",
+    accessTokenHash: record.accessTokenHash,
+    refreshTokenHash: record.refreshTokenHash,
+  };
+}
+
+function readBoundedCredentialJson(path: string): unknown | undefined | null {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT"
-      ? { state: "legacy_broker" }
-      : { state: "invalid" };
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? undefined : null;
   }
-  if (Buffer.byteLength(raw, "utf8") > MAX_CREDENTIAL_METADATA_BYTES) {
+  if (Buffer.byteLength(raw, "utf8") > MAX_CREDENTIAL_METADATA_BYTES) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function readCredentialFamily(path: string): StoredCredentialMetadataResolution | undefined {
+  const parsed = readBoundedCredentialJson(path);
+  if (parsed === undefined) return undefined;
+  if (parsed === null) return { state: "invalid" };
+  try {
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).family === "legacy_broker"
+    ) {
+      return { state: "legacy_broker", metadata: parseLegacyBrokerCredentialMetadata(parsed) };
+    }
+    return {
+      state: "workos_connect",
+      metadata: parseWorkosConnectCredentialMetadata(parsed),
+    };
+  } catch {
     return { state: "invalid" };
   }
+}
+
+/** Absence is the rolling-compatible legacy credential family; a present but
+ * malformed file fails closed and is never reinterpreted as broker state. */
+export function readStoredCredentialMetadata(
+  metadataPath: string = CREDENTIAL_METADATA_PATH,
+  familyPath: string = CREDENTIAL_FAMILY_PATH,
+): StoredCredentialMetadataResolution {
+  const family = readCredentialFamily(familyPath);
+  if (family) return family;
+  const parsed = readBoundedCredentialJson(metadataPath);
+  if (parsed === undefined) return { state: "legacy_broker" };
+  if (parsed === null) return { state: "invalid" };
   try {
     return {
       state: "workos_connect",
-      metadata: parseWorkosConnectCredentialMetadata(JSON.parse(raw) as unknown),
+      metadata: parseWorkosConnectCredentialMetadata(parsed),
     };
   } catch {
     return { state: "invalid" };
@@ -112,6 +189,16 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | undef
   } catch {
     return undefined;
   }
+}
+
+/** A marker-less Connect access token must never be refreshed by the legacy broker. */
+export function isPotentialWorkosConnectAccessToken(token: string): boolean {
+  const audience = decodeJwtPayload(token)?.aud;
+  const values =
+    typeof audience === "string" ? [audience] : Array.isArray(audience) ? audience : [];
+  return values.some(
+    (value) => typeof value === "string" && /^client_[A-Za-z0-9_-]+$/u.test(value),
+  );
 }
 
 export function jwtExpiresAt(token: string): number | undefined {

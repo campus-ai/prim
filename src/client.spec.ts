@@ -42,6 +42,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function jwt(payload: unknown): string {
+  return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
+}
+
 async function eventually(assertion: () => void, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
@@ -115,6 +119,7 @@ describe("client credential store", () => {
 
     expect(client.TOKEN_FILE_PATH).toBe(join(explicitConfig, "token"));
     expect(client.REFRESH_TOKEN_PATH).toBe(join(explicitConfig, "refresh_token"));
+    expect(client.CREDENTIAL_FAMILY_PATH).toBe(join(explicitConfig, "credential_family.json"));
     expect(client.CREDENTIAL_LOCK_PATH).toBe(join(explicitConfig, "credentials.lock"));
   });
 
@@ -172,9 +177,14 @@ describe("client credential store", () => {
     expect(getTokenExpiresAt()).toBeUndefined();
   });
 
-  it("commits refresh, expiry, then access as mode-0600 files without temp residue", async () => {
-    const { TOKEN_EXPIRES_PATH, TOKEN_FILE_PATH, REFRESH_TOKEN_PATH, commitCredentials } =
-      await import("./client.js");
+  it("commits refresh, a hash-bound legacy family, expiry, and access", async () => {
+    const {
+      CREDENTIAL_FAMILY_PATH,
+      TOKEN_EXPIRES_PATH,
+      TOKEN_FILE_PATH,
+      REFRESH_TOKEN_PATH,
+      commitCredentials,
+    } = await import("./client.js");
     await commitCredentials({
       accessToken: "new-access",
       refreshToken: "new-refresh",
@@ -183,12 +193,24 @@ describe("client credential store", () => {
 
     expect(readFileSync(REFRESH_TOKEN_PATH, "utf8").trim()).toBe("new-refresh");
     expect(readFileSync(TOKEN_FILE_PATH, "utf8").trim()).toBe("new-access");
+    expect(JSON.parse(readFileSync(CREDENTIAL_FAMILY_PATH, "utf8"))).toMatchObject({
+      version: 1,
+      family: "legacy_broker",
+      accessTokenHash: createHash("sha256").update("new-access").digest("hex"),
+      refreshTokenHash: createHash("sha256").update("new-refresh").digest("hex"),
+    });
     expect(Number(readFileSync(TOKEN_EXPIRES_PATH, "utf8"))).toBeGreaterThan(Date.now());
-    for (const path of [REFRESH_TOKEN_PATH, TOKEN_FILE_PATH, TOKEN_EXPIRES_PATH]) {
+    for (const path of [
+      CREDENTIAL_FAMILY_PATH,
+      REFRESH_TOKEN_PATH,
+      TOKEN_FILE_PATH,
+      TOKEN_EXPIRES_PATH,
+    ]) {
       expect(statSync(path).mode & 0o777).toBe(0o600);
     }
     expect(renamedCredentialPaths).toEqual([
       REFRESH_TOKEN_PATH,
+      CREDENTIAL_FAMILY_PATH,
       TOKEN_EXPIRES_PATH,
       TOKEN_FILE_PATH,
     ]);
@@ -220,8 +242,11 @@ describe("client credential store", () => {
       accessTokenHash: createHash("sha256").update("connect-access").digest("hex"),
       refreshTokenHash: createHash("sha256").update("connect-refresh").digest("hex"),
     });
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_FAMILY_PATH, "utf8"))).toEqual(stored);
     expect(statSync(client.CREDENTIAL_METADATA_PATH).mode & 0o777).toBe(0o600);
-    expect(renamedCredentialPaths.slice(0, 4)).toEqual([
+    expect(statSync(client.CREDENTIAL_FAMILY_PATH).mode & 0o777).toBe(0o600);
+    expect(renamedCredentialPaths.slice(0, 5)).toEqual([
+      client.CREDENTIAL_FAMILY_PATH,
       client.CREDENTIAL_METADATA_PATH,
       client.REFRESH_TOKEN_PATH,
       client.TOKEN_EXPIRES_PATH,
@@ -259,6 +284,9 @@ describe("client credential store", () => {
     expect(JSON.parse(readFileSync(client.CREDENTIAL_METADATA_PATH, "utf8")).refreshTokenHash).toBe(
       createHash("sha256").update("rotated-refresh").digest("hex"),
     );
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_FAMILY_PATH, "utf8")).refreshTokenHash).toBe(
+      createHash("sha256").update("rotated-refresh").digest("hex"),
+    );
 
     await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBe(
       "unrotated-access",
@@ -267,6 +295,50 @@ describe("client credential store", () => {
     expect(JSON.parse(readFileSync(client.CREDENTIAL_METADATA_PATH, "utf8")).refreshTokenHash).toBe(
       createHash("sha256").update("rotated-refresh").digest("hex"),
     );
+  });
+
+  it("refreshes a Connect generation directly when its legacy metadata file is missing", async () => {
+    const client = await import("./client.js");
+    await client.commitCredentials({
+      accessToken: "connect-access",
+      refreshToken: "connect-refresh",
+      expiresIn: 300,
+      metadata: {
+        version: 1,
+        family: "workos_connect",
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+      },
+    });
+    rmSync(client.CREDENTIAL_METADATA_PATH);
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          access_token: "rotated-access",
+          refresh_token: "rotated-refresh",
+          expires_in: 300,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBe("rotated-access");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://auth.example.test/oauth2/token",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("/mcp/broker/refresh");
+  });
+
+  it("never sends an unmarked Connect-looking refresh token to the legacy broker", async () => {
+    writeFileSync(join(config, "token"), `${jwt({ aud: "client_cli" })}\n`);
+    writeFileSync(join(config, "refresh_token"), "connect-refresh\n");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = await import("./client.js");
+    await expect(client.refreshToken({ force: true, quiet: true })).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fails closed before I/O when Connect metadata is malformed or stale", async () => {
@@ -439,6 +511,11 @@ describe("client credential store", () => {
     await expect(client.refreshToken({ quiet: true })).resolves.toBe("new-access");
     expect(readFileSync(client.TOKEN_FILE_PATH, "utf8").trim()).toBe("new-access");
     expect(readFileSync(client.REFRESH_TOKEN_PATH, "utf8").trim()).toBe("new-refresh");
+    expect(JSON.parse(readFileSync(client.CREDENTIAL_FAMILY_PATH, "utf8"))).toMatchObject({
+      family: "legacy_broker",
+      accessTokenHash: createHash("sha256").update("new-access").digest("hex"),
+      refreshTokenHash: createHash("sha256").update("new-refresh").digest("hex"),
+    });
   });
 
   it("does not mark a newer disk generation terminal after a legacy 401 loser", async () => {
@@ -622,6 +699,7 @@ describe("client credential store", () => {
     writeFileSync(join(config, "refresh_token"), "old-refresh\n");
     writeFileSync(join(config, "token_expires_at"), "0\n");
     writeFileSync(join(config, "refresh_terminal"), "stale\n");
+    writeFileSync(join(config, "credential_family.json"), "stale\n");
     writeFileSync(join(config, "credential_metadata.json"), "stale\n");
     const client = await import("./client.js");
 
@@ -641,6 +719,21 @@ describe("client credential store", () => {
     expect(removed).toBe(true);
     expect(observed).toBeUndefined();
     expect(readdirSync(config)).toEqual([]);
+  });
+
+  it("does not classify a marker-less Connect-looking credential as broker state during clear", async () => {
+    writeFileSync(join(config, "token"), `${jwt({ aud: "client_cli" })}\n`);
+    writeFileSync(join(config, "refresh_token"), "connect-refresh\n");
+    const client = await import("./client.js");
+    let observed: unknown;
+
+    await client.clearStoredCredentials({
+      beforeClear: (_refreshToken, metadata) => {
+        observed = metadata;
+      },
+    });
+
+    expect(observed).toEqual({ state: "invalid" });
   });
 
   it("preserves the install identity across OAuth rotation, set-token, and clear", async () => {
