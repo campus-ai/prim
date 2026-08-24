@@ -161,13 +161,26 @@ function applyRules(input: string, rules: ReadonlyArray<RedactionRule>): string 
   return out;
 }
 
+const REDACTED_OBJECT_KEY = "<REDACTED:object-key>";
+
+function redactedObjectKey(input: string, transform: (input: string) => string): string {
+  return transform(input) === input ? input : REDACTED_OBJECT_KEY;
+}
+
+function uniqueObjectKey(output: Record<string, unknown>, key: string): string {
+  let candidate = key;
+  let suffix = 2;
+  while (Object.hasOwn(output, candidate)) candidate = `${key}_${suffix++}`;
+  return candidate;
+}
+
 function mapStrings(value: unknown, transform: (input: string) => string): unknown {
   if (typeof value === "string") return transform(value);
   if (Array.isArray(value)) return value.map((item) => mapStrings(item, transform));
   if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
+    const out: Record<string, unknown> = Object.create(null);
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = mapStrings(item, transform);
+      out[uniqueObjectKey(out, redactedObjectKey(key, transform))] = mapStrings(item, transform);
     }
     return out;
   }
@@ -188,22 +201,37 @@ function redactEveryString(value: unknown, reason: string): unknown {
 
 const WORKSPACE_REDACTION_WORKER = String.raw`
   const { parentPort, workerData } = require("node:worker_threads");
+  const REDACTED_OBJECT_KEY = "<REDACTED:object-key>";
   const rules = workerData.rules.map((rule) => ({
     pattern: new RegExp(rule.source, rule.flags),
     reason: rule.reason,
   }));
-  function walk(value) {
-    if (typeof value === "string") {
-      let output = value;
+  function redact(input) {
+      let output = input;
       for (const rule of rules) {
         output = output.replace(rule.pattern, "<REDACTED:" + rule.reason + ">");
       }
       return output;
+  }
+  function objectKey(input) {
+    return redact(input) === input ? input : REDACTED_OBJECT_KEY;
+  }
+  function uniqueKey(output, key) {
+    let candidate = key;
+    let suffix = 2;
+    while (Object.hasOwn(output, candidate)) candidate = key + "_" + suffix++;
+    return candidate;
+  }
+  function walk(value) {
+    if (typeof value === "string") {
+      return redact(value);
     }
     if (Array.isArray(value)) return value.map(walk);
     if (value && typeof value === "object") {
-      const output = {};
-      for (const [key, item] of Object.entries(value)) output[key] = walk(item);
+      const output = Object.create(null);
+      for (const [key, item] of Object.entries(value)) {
+        output[uniqueKey(output, objectKey(key))] = walk(item);
+      }
       return output;
     }
     return value;

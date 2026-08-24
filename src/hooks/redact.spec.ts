@@ -89,6 +89,25 @@ describe("scrub", () => {
     expect(scrub(undefined)).toBeUndefined();
   });
 
+  it("redacts secret-bearing object keys without collisions", () => {
+    const bearer = `Bearer ${"a".repeat(24)}`;
+    const apiKey = `sk-${"x".repeat(40)}`;
+    const marker = "<REDACTED:object-key>";
+    const result = scrub({
+      [marker]: "existing",
+      [bearer]: { [apiKey]: "nested" },
+      nested: { [bearer]: "value" },
+    });
+
+    expect(result).toEqual({
+      [marker]: "existing",
+      [`${marker}_2`]: { [marker]: "nested" },
+      nested: { [marker]: "value" },
+    });
+    expect(JSON.stringify(result)).not.toContain(bearer);
+    expect(JSON.stringify(result)).not.toContain(apiKey);
+  });
+
   it("exposes the complete stable default policy", () => {
     expect([...new Set(DEFAULT_RULES.map((rule) => rule.reason))].sort()).toEqual([
       "aws-access-key",
@@ -185,6 +204,34 @@ describe("scrubFromCwd workspace overrides", () => {
     );
   });
 
+  it("redacts workspace-matched object keys collision-safely", async () => {
+    const secretKey = "TENANT_SECRET_ABC";
+    const marker = "<REDACTED:object-key>";
+    writeConfig(
+      JSON.stringify({ rules: [{ pattern: "TENANT_SECRET_[A-Z]+", reason: "tenant-secret" }] }),
+    );
+
+    const result = await scrubFromCwd(
+      {
+        tool_input: {
+          [marker]: "existing",
+          [secretKey]: "first",
+          TENANT_SECRET_DEF: "second",
+        },
+      },
+      scratch,
+    );
+
+    expect(result).toEqual({
+      tool_input: {
+        [marker]: "existing",
+        [`${marker}_2`]: "first",
+        [`${marker}_3`]: "second",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(secretKey);
+  });
+
   it("falls back to defaults when the config is malformed", async () => {
     writeConfig("{ not json");
     await expect(scrubFromCwd(`key sk-${"x".repeat(40)}`, scratch)).resolves.toBe(
@@ -219,9 +266,12 @@ describe("scrubFromCwd workspace overrides", () => {
   it("terminates catastrophic workspace regexes and fails closed", async () => {
     writeConfig(JSON.stringify({ rules: [{ pattern: "(a+)+$", reason: "hostile" }] }));
     const startedAt = Date.now();
-    await expect(scrubFromCwd(`${"a".repeat(50_000)}!`, scratch)).resolves.toBe(
-      "<REDACTED:workspace-rule-failed>",
-    );
+    const bearerKey = `Bearer ${"b".repeat(24)}`;
+    const result = await scrubFromCwd({ [bearerKey]: `${"a".repeat(50_000)}!` }, scratch);
+    expect(result).toEqual({
+      "<REDACTED:object-key>": "<REDACTED:workspace-rule-failed>",
+    });
+    expect(JSON.stringify(result)).not.toContain(bearerKey);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 
