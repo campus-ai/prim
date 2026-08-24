@@ -20,6 +20,7 @@ import {
   applyUninstall,
   hasAnyHookRegistration,
   hasCompleteHookRegistration,
+  hookRuntimeResolutions,
   isCaptureInstalled,
   isGateInstalled,
   mergeKeepsYamlValid,
@@ -167,6 +168,7 @@ describe("applyInstall", () => {
         '"/tmp/prim-hermes-bijection/agent-hooks/prim-shim.sh" prim-pre-tool-use --agent hermes',
     });
     expect(hasCompleteHookRegistration(legacyTwin)).toBe(false);
+    expect(hookRuntimeResolutions(legacyTwin)).toContain("npx_fallback");
 
     const wrongTimeoutTwin = structuredClone(installed);
     wrongTimeoutTwin.pre_tool_call.push({ ...structuredClone(exactGate), timeout: 11 });

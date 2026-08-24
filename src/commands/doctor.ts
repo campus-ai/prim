@@ -43,7 +43,7 @@ import {
   repoSyncId,
 } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
-import { packageVersion } from "../lib/bin-path.js";
+import { type HookCommandResolution, packageVersion } from "../lib/bin-path.js";
 import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ManagedHookInspection,
@@ -56,9 +56,18 @@ import {
 } from "../lib/repository-binding.js";
 import { compareSemver } from "../lib/semver.js";
 import { inspectWorkspaceId } from "../lib/workspace-id.js";
-import { performStatus as claudeStatus } from "./claude-install.js";
-import { performStatus as codexStatus } from "./codex-install.js";
-import { performStatus as hermesStatus } from "./hermes-install.js";
+import {
+  inspectHookRuntimeResolutions as claudeHookRuntimeResolutions,
+  performStatus as claudeStatus,
+} from "./claude-install.js";
+import {
+  inspectHookRuntimeResolutions as codexHookRuntimeResolutions,
+  performStatus as codexStatus,
+} from "./codex-install.js";
+import {
+  inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
+  performStatus as hermesStatus,
+} from "./hermes-install.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -637,7 +646,16 @@ function checkAgentHooks(): Check[] {
   return checks;
 }
 
-export type HookRuntimeResolutionKind = "stable_launcher" | "npx_fallback";
+export type HookRuntimeResolutionKind = HookCommandResolution;
+export type HookRuntimeRequirement = HookRuntimeResolutionKind | "none";
+
+/** A stable registration wins: its runtime cannot be recovered through npx. */
+export function resolveHookRuntimeRequirement(
+  resolutions: readonly HookRuntimeResolutionKind[],
+): HookRuntimeRequirement {
+  if (resolutions.includes("stable_launcher")) return "stable_launcher";
+  return resolutions.includes("npx_fallback") ? "npx_fallback" : "none";
+}
 
 export function classifyHookRuntime(
   inspection: HookRuntimeInspection,
@@ -710,15 +728,50 @@ export function diagnoseHookRuntime(
   );
 }
 
+export function diagnoseRegisteredHookRuntime(
+  resolutions: readonly HookRuntimeResolutionKind[],
+  inspectRuntime: () => HookRuntimeInspection,
+  expectedVersion: () => string | null,
+  probeFallback: () => boolean,
+): Check {
+  const requirement = resolveHookRuntimeRequirement(resolutions);
+  if (requirement === "none") {
+    return {
+      name: "hook-runtime",
+      status: "ok",
+      detail: "not required: no Primitive hook registrations",
+    };
+  }
+  return diagnoseHookRuntime(inspectRuntime(), expectedVersion(), requirement, probeFallback);
+}
+
 function checkHookRuntime(): Check {
-  return diagnoseHookRuntime(inspectHookRuntime(), packageVersion(), "stable_launcher", () => {
-    const result = spawnSync("npx", ["--version"], {
-      encoding: "utf8",
-      stdio: "ignore",
-      timeout: NPX_PROBE_TIMEOUT_MS,
-    });
-    return result.status === 0 && result.error === undefined;
-  });
+  try {
+    return diagnoseRegisteredHookRuntime(
+      [
+        ...claudeHookRuntimeResolutions(),
+        ...codexHookRuntimeResolutions(),
+        ...hermesHookRuntimeResolutions(),
+      ],
+      inspectHookRuntime,
+      packageVersion,
+      () => {
+        const result = spawnSync("npx", ["--version"], {
+          encoding: "utf8",
+          stdio: "ignore",
+          timeout: NPX_PROBE_TIMEOUT_MS,
+        });
+        return result.status === 0 && result.error === undefined;
+      },
+    );
+  } catch (error) {
+    const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
+    return {
+      name: "hook-runtime",
+      status: "fail",
+      detail: detail ?? "hook configuration is unreadable",
+    };
+  }
 }
 
 function parseMovesStatus(value: unknown): MovesStatus {

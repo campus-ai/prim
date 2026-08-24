@@ -23,6 +23,8 @@ import {
   classifyPostCommitHook,
   classifyRepositoryBinding,
   diagnoseHookRuntime,
+  diagnoseRegisteredHookRuntime,
+  resolveHookRuntimeRequirement,
 } from "./doctor.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
@@ -296,6 +298,28 @@ describe("agent hook diagnostics", () => {
 });
 
 describe("hook runtime diagnostics", () => {
+  it("keeps no-hook installs neutral without touching a runtime or npx", () => {
+    const inspect = vi.fn(() => ({ state: "missing" }) as const);
+    const version = vi.fn(() => "1.2.3");
+    const probe = vi.fn(() => true);
+    expect(diagnoseRegisteredHookRuntime([], inspect, version, probe)).toEqual({
+      name: "hook-runtime",
+      status: "ok",
+      detail: "not required: no Primitive hook registrations",
+    });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(version).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("requires the immutable runtime whenever any installed hook uses it", () => {
+    expect(resolveHookRuntimeRequirement([])).toBe("none");
+    expect(resolveHookRuntimeRequirement(["npx_fallback"])).toBe("npx_fallback");
+    expect(resolveHookRuntimeRequirement(["npx_fallback", "stable_launcher"])).toBe(
+      "stable_launcher",
+    );
+  });
+
   it("accepts only the exact immutable runtime version", () => {
     expect(
       classifyHookRuntime({ state: "ready", version: "1.2.3" }, "1.2.3", "stable_launcher"),

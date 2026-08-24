@@ -30,7 +30,12 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { Document, isMap, isSeq, parseAllDocuments, stringify, visit } from "yaml";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { commandMatchesBin, stableHookCommand } from "../lib/bin-path.js";
+import {
+  type HookCommandResolution,
+  commandMatchesBin,
+  hookCommandResolutions,
+  stableHookCommand,
+} from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 
 const CAPTURE_BIN = "prim-hook";
@@ -212,6 +217,29 @@ function ownedRegistrationEntries(hooks: HooksMap): OwnedRegistrationEntry[] {
 
 export function hasAnyHookRegistration(hooks: HooksMap): boolean {
   return ownedRegistrationEntries(hooks).length > 0;
+}
+
+/** Runtime requirements of Primitive hook commands already present in config. */
+export function hookRuntimeResolutions(hooks: HooksMap): HookCommandResolution[] {
+  const resolutions = hookCommandResolutions(
+    Object.values(hooks).flatMap((entries) => entries.map((entry) => entry.command)),
+    PRIM_BINS,
+  );
+  for (const entries of Object.values(hooks)) {
+    for (const entry of entries) {
+      for (const bin of PRIM_BINS) {
+        if (entry.command === legacyCommandFor(bin)) resolutions.push("npx_fallback");
+      }
+    }
+  }
+  return resolutions;
+}
+
+/** Inspect hook runtime requirements without changing Hermes config. */
+export function inspectHookRuntimeResolutions(): HookCommandResolution[] {
+  const path = configPath();
+  if (!existsSync(path)) return [];
+  return hookRuntimeResolutions(readHooks(parseHermesDocument(readFileSync(path, "utf8"))));
 }
 
 function entryMatchesRegistration(owned: OwnedRegistrationEntry, registration: HermesReg): boolean {
