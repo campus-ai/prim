@@ -128,6 +128,15 @@ describe("listFlushingInDir", () => {
     expect(files[0].lineCount).toBe(1);
   });
 
+  it.each(["0", String(Number.MAX_SAFE_INTEGER + 1)])(
+    "treats invalid rotation pid %s as pid-less",
+    (pid) => {
+      writeFlushing(`journal.ndjson.flushing.1700000000000.${pid}`, sampleMove("Stop"));
+
+      expect(listFlushingInDir(dir, "_legacy")[0]?.pid).toBeUndefined();
+    },
+  );
+
   it("ignores the live journal and unrelated files", () => {
     appendMoveToPath(join(dir, "journal.ndjson"), sampleMove("PreToolUse"));
     writeFileSync(join(dir, "notes.txt"), "hello\n");

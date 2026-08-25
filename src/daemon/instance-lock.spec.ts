@@ -1,8 +1,20 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { acquireDaemonOwnership, releaseDaemonOwnership } from "./instance-lock.js";
+import {
+  DAEMON_STARTUP_GRACE_MS,
+  acquireDaemonOwnership,
+  releaseDaemonOwnership,
+} from "./instance-lock.js";
 
 describe("daemon instance ownership", () => {
   let dir: string;
@@ -46,6 +58,35 @@ describe("daemon instance ownership", () => {
     );
     expect(readFileSync(join(dir, "daemon.pid"), "utf-8")).toBe("42");
   });
+
+  it.each([0, Number.MAX_SAFE_INTEGER + 1])(
+    "applies startup grace before replacing an invalid owner pid %s",
+    (pid) => {
+      const lockDir = join(dir, "daemon.lock");
+      mkdirSync(lockDir);
+      writeFileSync(
+        join(lockDir, "owner.json"),
+        JSON.stringify({ pid, instanceId: "invalid", startedAt: Date.now() }),
+      );
+      const mtimeMs = statSync(lockDir).mtimeMs;
+
+      expect(() =>
+        acquireDaemonOwnership(dir, {
+          pid: 43,
+          now: mtimeMs + DAEMON_STARTUP_GRACE_MS - 1,
+          isAlive: () => false,
+        }),
+      ).toThrow("daemon startup already in progress");
+
+      const owner = acquireDaemonOwnership(dir, {
+        pid: 43,
+        now: mtimeMs + DAEMON_STARTUP_GRACE_MS,
+        isAlive: () => false,
+      });
+      expect(readFileSync(join(dir, "daemon.pid"), "utf-8")).toBe("43");
+      expect(releaseDaemonOwnership(owner)).toBe(true);
+    },
+  );
 
   it("atomically replaces a dead owner's lock", () => {
     acquireDaemonOwnership(dir, { pid: 42, isAlive: () => false });
