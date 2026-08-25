@@ -304,6 +304,12 @@ describe("formatDaemonSnapshotMessage", () => {
     );
   });
 
+  it("surfaces repository-unbound health with a fixed enforcement warning", () => {
+    const message = formatDaemonSnapshotMessage(healthy, false, "enabled", "unbound");
+    expect(message).toContain("repository: unbound (enforcement not evaluating)");
+    expect(message).not.toContain("repoSync");
+  });
+
   it("renders both socket-only success variants without a snapshot", () => {
     expect(formatDaemonSnapshotMessage(null, false, "enabled")).toBe(
       "[prim] ✓ daemon live, Decision ingestion enabled",
@@ -318,11 +324,13 @@ describe("formatDaemonSnapshotMessage", () => {
       { ...healthy, healthy: false, needsReauth: true },
       true,
       "enabled",
+      "unbound",
     );
     expect(message).toBe(
       "[prim] ✗ daemon unhealthy under launchd · pid=4242 · team: Alex, Maya · authentication requires `prim auth login`",
     );
     expect(message).not.toContain("Decision ingestion");
+    expect(message).not.toContain("repository:");
   });
 });
 

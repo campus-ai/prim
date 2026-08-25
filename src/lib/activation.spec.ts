@@ -14,7 +14,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   PRIM_ACTIVE_KEY,
+  PRIM_REPO_BINDING_STATE_KEY,
   PRIM_REPO_SYNC_ID_KEY,
+  PRIM_REPO_SYNC_REPOSITORY_KEY,
   clearRepoSyncId,
   decisionIngestionStatus,
   hasProjectPrimInstall,
@@ -23,8 +25,10 @@ import {
   isValidRepoSyncId,
   repoActiveFlag,
   repoSyncId,
+  repositoryBindingState,
   setRepoActive,
   setRepoSyncId,
+  setRepositoryBindingState,
 } from "./activation.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
@@ -102,7 +106,9 @@ describe("repository binding", () => {
     "rejects a malformed id (%s)",
     (value) => {
       expect(isValidRepoSyncId(value)).toBe(false);
-      expect(() => setRepoSyncId("/repo", value)).toThrow(/invalid repository binding/);
+      expect(() => setRepoSyncId("/repo", value, "campus-ai/primitive")).toThrow(
+        /invalid repository binding/,
+      );
     },
   );
 
@@ -112,12 +118,70 @@ describe("repository binding", () => {
   });
 
   it("persists a valid local binding", () => {
-    setRepoSyncId("/repo", "repoSync123");
+    setRepoSyncId("/repo", "repoSync123", "campus-ai/primitive");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
       ["config", "--local", "prim.repoSyncId", "repoSync123"],
       expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
     );
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", PRIM_REPO_SYNC_REPOSITORY_KEY, "campus-ai/primitive"],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
+  });
+
+  it("persists only a closed repository-binding diagnostic state", () => {
+    setRepositoryBindingState("/repo", "unbound");
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", PRIM_REPO_BINDING_STATE_KEY, "unbound"],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
+    expect(() =>
+      setRepositoryBindingState("/repo", "unbound\u001b]52;c;secret\u0007" as "unbound"),
+    ).toThrow("invalid repository binding state");
+  });
+
+  it.each([
+    { id: "repoSync123", marker: "connected", expected: "invalid" },
+    { id: "repoSync123", marker: "unbound", expected: "unbound" },
+    { id: "repoSync123", marker: "invalid", expected: "invalid" },
+    { id: "bad binding", marker: "connected", expected: "invalid" },
+    { id: undefined, marker: "connected", expected: "invalid" },
+    { id: undefined, marker: undefined, expected: "unbound" },
+    { id: "repoSync123", marker: undefined, expected: "unbound" },
+    { id: "repoSync123", marker: "forged\u001b[2J", expected: "invalid" },
+  ])("classifies local binding id=$id marker=$marker as $expected", ({ id, marker, expected }) => {
+    mockedExecFileSync.mockImplementation(((_command: string, args: string[]): string => {
+      const key = args.at(-1);
+      if (key === PRIM_REPO_SYNC_ID_KEY && id !== undefined) return `${id}\n`;
+      if (key === PRIM_REPO_BINDING_STATE_KEY && marker !== undefined) return `${marker}\n`;
+      throw Object.assign(new Error("unset"), { status: 1 });
+    }) as unknown as typeof execFileSync);
+
+    expect(repositoryBindingState("/repo")).toBe(expected);
+  });
+
+  it("withholds a retained 404 binding after the checkout origin changes", () => {
+    let current = "campus-ai/repository-a";
+    let marker = "connected";
+    mockedExecFileSync.mockImplementation(((_command: string, args: string[]): string => {
+      const key = args.at(-1);
+      if (key === PRIM_REPO_SYNC_ID_KEY) return "repoSyncA\n";
+      if (key === PRIM_REPO_SYNC_REPOSITORY_KEY) return "campus-ai/repository-a\n";
+      if (key === PRIM_REPO_BINDING_STATE_KEY) return `${marker}\n`;
+      if (key === "remote.origin.url") return `https://github.com/${current}.git\n`;
+      throw Object.assign(new Error("unset"), { status: 1 });
+    }) as unknown as typeof execFileSync);
+
+    expect(repoSyncId("/repo")).toBe("repoSyncA");
+    expect(repositoryBindingState("/repo")).toBe("connected");
+    marker = "unbound"; // authoritative 404 while the checkout still points at A
+    expect(repoSyncId("/repo")).toBe("repoSyncA");
+    current = "campus-ai/repository-b";
+    expect(repoSyncId("/repo")).toBeUndefined();
+    expect(repositoryBindingState("/repo")).toBe("unbound");
   });
 
   it("clears every cached local binding", () => {
@@ -127,13 +191,31 @@ describe("repository binding", () => {
       ["config", "--local", "--unset-all", PRIM_REPO_SYNC_ID_KEY],
       expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
     );
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", "--unset-all", PRIM_REPO_SYNC_REPOSITORY_KEY],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", PRIM_REPO_BINDING_STATE_KEY, "unbound"],
+      expect.objectContaining({ cwd: "/repo", timeout: 1_000 }),
+    );
   });
 
   it("is idempotent when the cached binding does not exist", () => {
-    stubGit(() => {
-      throw Object.assign(new Error("key does not exist"), { status: 5 });
-    });
+    mockedExecFileSync.mockImplementation(((_command: string, args: string[]): string => {
+      if (args.includes("--unset-all")) {
+        throw Object.assign(new Error("key does not exist"), { status: 5 });
+      }
+      return "";
+    }) as unknown as typeof execFileSync);
     expect(() => clearRepoSyncId("/repo")).not.toThrow();
+    expect(mockedExecFileSync).toHaveBeenCalledWith(
+      "git",
+      ["config", "--local", PRIM_REPO_BINDING_STATE_KEY, "unbound"],
+      expect.objectContaining({ cwd: "/repo" }),
+    );
   });
 
   it.each([1, 3, 4, 6, undefined])(
@@ -172,8 +254,14 @@ describe("setRepoActive", () => {
 });
 
 describe("repository binding", () => {
-  it("reads the worktree-local opaque id", () => {
-    stubGit(() => "sync-1\n");
+  it("reads an opaque id only when its saved origin matches", () => {
+    mockedExecFileSync.mockImplementation(((_command: string, args: string[]): string => {
+      const key = args.at(-1);
+      if (key === PRIM_REPO_SYNC_ID_KEY) return "sync-1\n";
+      if (key === PRIM_REPO_SYNC_REPOSITORY_KEY) return "campus-ai/primitive\n";
+      if (key === "remote.origin.url") return "https://github.com/campus-ai/primitive.git\n";
+      throw Object.assign(new Error("unset"), { status: 1 });
+    }) as unknown as typeof execFileSync);
     expect(repoSyncId("/repo")).toBe("sync-1");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
@@ -183,8 +271,10 @@ describe("repository binding", () => {
   });
 
   it("validates before persisting the id", () => {
-    expect(() => setRepoSyncId("/repo", "sync-1")).not.toThrow();
-    expect(() => setRepoSyncId("/repo", "bad\nid")).toThrow(/invalid repository binding/);
+    expect(() => setRepoSyncId("/repo", "sync-1", "campus-ai/primitive")).not.toThrow();
+    expect(() => setRepoSyncId("/repo", "bad\nid", "campus-ai/primitive")).toThrow(
+      /invalid repository binding/,
+    );
   });
 });
 

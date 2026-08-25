@@ -500,9 +500,33 @@ describe("daemon raw statusline socket", () => {
       mkdirSync(repo, { recursive: true });
       execFileSync("git", ["init", "--quiet"], { cwd: repo });
     }
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:campus-ai/active.git"], {
+      cwd: activeRepo,
+    });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:campus-ai/other.git"], {
+      cwd: otherEnvRepo,
+    });
     execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
+    execFileSync("git", ["config", "--local", "prim.repoSyncId", "repoSyncActive"], {
+      cwd: activeRepo,
+    });
+    execFileSync("git", ["config", "--local", "prim.repoSyncRepository", "campus-ai/active"], {
+      cwd: activeRepo,
+    });
+    execFileSync("git", ["config", "--local", "prim.repoBindingState", "connected"], {
+      cwd: activeRepo,
+    });
     execFileSync("git", ["config", "--local", "prim.active", "false"], { cwd: inactiveRepo });
     execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: otherEnvRepo });
+    execFileSync("git", ["config", "--local", "prim.repoSyncId", "repoSyncOther"], {
+      cwd: otherEnvRepo,
+    });
+    execFileSync("git", ["config", "--local", "prim.repoSyncRepository", "campus-ai/other"], {
+      cwd: otherEnvRepo,
+    });
+    execFileSync("git", ["config", "--local", "prim.repoBindingState", "connected"], {
+      cwd: otherEnvRepo,
+    });
     writeFileSync(join(otherEnvRepo, ".env"), "PRIM_API_URL=https://other.example.test\n");
     mkdirSync(config, { recursive: true });
     chmodSync(config, 0o777);
@@ -736,6 +760,21 @@ describe("daemon raw statusline socket", () => {
         { sessionId: "cache-reset", callerEnv: apiUrl },
         callerB,
       );
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
+
+      execFileSync("git", ["config", "--local", "prim.repoBindingState", "unbound"], {
+        cwd: activeRepo,
+      });
+      await expect(daemonRequest(socketPath, "statusline_invalidate")).resolves.toEqual({
+        ack: true,
+      });
+      const unboundStatus = (await rawStatuslineRequest(socketPath, [raw])).toString();
+      expect(unboundStatus).toContain("repository: unbound (enforcement not evaluating)");
+      expect(unboundStatus).not.toContain("repoSyncActive");
+      execFileSync("git", ["config", "--local", "prim.repoBindingState", "connected"], {
+        cwd: activeRepo,
+      });
+      await daemonRequest(socketPath, "statusline_invalidate");
       expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
 
       const relative = statuslineRequest("relative/path", apiUrl);
