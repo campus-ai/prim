@@ -29,7 +29,6 @@ import { type Command, Option } from "commander";
 import { pinnedHookCommand } from "../lib/bin-path.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
-import { primConfigDirectory } from "../lib/paths.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
@@ -243,8 +242,10 @@ export function projectHooksDir(gitRoot: string): string {
 // User scope — a global core.hooksPath that captures commits in every repo.
 // ---------------------------------------------------------------------------
 
-// Prim owns this dir (distinct from git's own configuration directory).
-export const PRIM_GIT_HOOKS_DIR = join(primConfigDirectory(), "git-hooks");
+// Prim owns this dir (distinct from git's own ~/.config/git/hooks). Mirrors the
+// ~/.config/prim convention used everywhere else; deliberately NOT XDG-aware,
+// since prim doesn't honor XDG_CONFIG_HOME anywhere.
+export const PRIM_GIT_HOOKS_DIR = join(homedir(), ".config", "prim", "git-hooks");
 
 // git stores core.hooksPath verbatim (a leading ~ is expanded by git at runtime,
 // not by us), so normalize before any filesystem use or equality check.

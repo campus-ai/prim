@@ -20,6 +20,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
@@ -32,7 +33,6 @@ import { decisionIngestionStatus } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
-import { primConfigDirectory } from "../lib/paths.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 import { terminalSafeText } from "../lib/terminal-safe.js";
 
@@ -48,7 +48,7 @@ export const CODEX_DIGEST_STATE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const CODEX_DIGEST_STATE_MAX_FILES = 256;
 
 const STATE_VERSION = 1;
-const STATE_DIRECTORY = ["codex", "decision-digests"] as const;
+const STATE_DIRECTORY = [".config", "prim", "codex", "decision-digests"] as const;
 /**
  * watermarkMs sentinel: no feed page has been observed yet. The cursor is
  * server time — the highest `classifiedAt` seen — never the client clock, so
@@ -71,6 +71,8 @@ export interface CodexDecisionDigestState {
 export interface CodexContextResult {
   /** The context block to add, or undefined when a later report is unchanged. */
   context?: string;
+  /** Digest-only portion, used by Stop to decide whether to continue. */
+  decisionDigest?: string;
   /** True when the feed was verified and the cursor may advance after handoff. */
   feedAvailable: boolean;
   /** Commit state only after the caller confirms stdout handoff succeeded. */
@@ -134,7 +136,7 @@ export function appendCodexContext<T>(output: T, context: string | undefined): T
 }
 
 function stateRoot(): string {
-  return join(primConfigDirectory(), ...STATE_DIRECTORY);
+  return join(homedir(), ...STATE_DIRECTORY);
 }
 
 function workspaceFor(cwd: string): string {
@@ -467,6 +469,7 @@ export async function prepareCodexContext(
   let acknowledged = false;
   return {
     context,
+    decisionDigest: digest,
     feedAvailable,
     acknowledge: async (handedOff) => {
       if (!handedOff || acknowledged) return;

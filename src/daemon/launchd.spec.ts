@@ -35,9 +35,6 @@ function sha256(value: string): string {
 function mode(path: string): number {
   return statSync(path).mode & 0o777;
 }
-function shellQuotedForTest(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
 interface Identity {
   pid: number;
   version?: string;
@@ -45,11 +42,9 @@ interface Identity {
 }
 interface LauncherMetadata {
   schemaVersion: number;
-  nodePath: string;
   daemonPath: string;
   runtimeVersion: string;
   apiUrl: string | null;
-  configDir?: string;
   revision: string;
 }
 function readLauncher(path: string): LauncherMetadata {
@@ -58,27 +53,6 @@ function readLauncher(path: string): LauncherMetadata {
   )?.[1];
   if (!encoded) throw new Error(`missing launcher metadata in ${path}`);
   return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as LauncherMetadata;
-}
-function legacyLauncher(config: LauncherMetadata): { content: string; revision: string } {
-  const metadata = {
-    schemaVersion: config.schemaVersion,
-    nodePath: config.nodePath,
-    daemonPath: config.daemonPath,
-    runtimeVersion: config.runtimeVersion,
-    apiUrl: config.apiUrl,
-  };
-  const revision = sha256(JSON.stringify(metadata));
-  const encoded = Buffer.from(JSON.stringify({ ...metadata, revision })).toString("base64url");
-  return {
-    revision,
-    content: `#!/bin/sh
-# prim-daemon-launcher: ${encoded}
-export PRIM_RUNTIME_VERSION=${shellQuotedForTest(config.runtimeVersion)}
-export PRIM_LAUNCH_REVISION=${shellQuotedForTest(revision)}
-${config.apiUrl ? `export PRIM_API_URL=${shellQuotedForTest(config.apiUrl)}` : "unset PRIM_API_URL"}
-exec ${shellQuotedForTest(config.nodePath)} ${shellQuotedForTest(config.daemonPath)}
-`,
-  };
 }
 function result(
   status: number | null,
@@ -295,29 +269,6 @@ describe("runtime staging", () => {
     expect(restaged.manifest.schemaVersion).toBe(3);
   });
 
-  it("routes the native statusline socket through the resolved config directory", () => {
-    const fake = new FakeLaunchd();
-    const configDir = join(fake.root, "isolated config");
-    const staged = stageRuntime(
-      fake.options({
-        version: "1.2.3",
-        env: { XDG_DATA_HOME: fake.dataHome, PRIM_CONFIG_DIR: configDir },
-      }),
-    );
-    const launcher = readFileSync(staged.paths.statuslineLauncher, "utf8");
-
-    expect(launcher).toContain(join(configDir, "sock").replaceAll("'", `'"'"'`));
-    expect(launcher).not.toContain(join(fake.homeDir, ".config", "prim", "sock"));
-    expect(
-      launchdPaths({
-        homeDir: fake.homeDir,
-        uid: UID,
-        label: fake.label,
-        env: { PRIM_CONFIG_DIR: configDir },
-      }).logPath,
-    ).toBe(join(configDir, "daemon.log"));
-  });
-
   macIt(
     "falls back within the deadline when an old daemon accepts but never responds",
     async () => {
@@ -409,14 +360,10 @@ describe("generated launchd contract", () => {
       schemaVersion: 1,
       runtimeVersion: "1.0.0",
       apiUrl: "https://api.test",
-      configDir: join(fake.homeDir, ".config", "prim"),
     });
     expect(launcherText).toContain(`export PRIM_RUNTIME_VERSION='1.0.0'`);
     expect(launcherText).toContain(`export PRIM_LAUNCH_REVISION='${launcher.revision}'`);
     expect(launcherText).toContain(`export PRIM_API_URL='https://api.test'`);
-    expect(launcherText).toContain(
-      `export PRIM_CONFIG_DIR=${shellQuotedForTest(join(fake.homeDir, ".config", "prim"))}`,
-    );
     expect(launcherText).toContain(`O'"'"'Brien`);
     expect(mode(fake.launcherPath)).toBe(0o700);
     const escapedLauncher = fake.launcherPath.replaceAll("&", "&amp;").replaceAll("'", "&apos;");
@@ -491,29 +438,6 @@ describe("launchd reconciliation", () => {
     fake.clearCommands();
     expect(await fake.ensure({ version: "nightly" })).toMatchObject({ action: "none" });
     expect(readLauncher(fake.launcherPath).runtimeVersion).toBe("1.0.0");
-  });
-  it("retains a newer schema-v1 launcher written before config-dir propagation", async () => {
-    const fake = new FakeLaunchd();
-    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
-    const selected = readLauncher(fake.launcherPath);
-    const legacy = legacyLauncher(selected);
-    writeFileSync(fake.launcherPath, legacy.content, { mode: 0o700 });
-    fake.runningIdentity = {
-      pid: fake.pid,
-      version: selected.runtimeVersion,
-      launchRevision: legacy.revision,
-    };
-    fake.clearCommands();
-
-    const retained = await fake.ensure({ version: "1.0.0" });
-
-    expect(retained.runtimeChanged).toBe(false);
-    expect(readLauncher(fake.launcherPath)).toMatchObject({
-      daemonPath: selected.daemonPath,
-      runtimeVersion: "2.0.0",
-      configDir: join(fake.homeDir, ".config", "prim"),
-    });
-    expect(fake.lifecycleCommands()).toEqual(["kickstart"]);
   });
   it("converges the bootout race with one bootout and bootstrap 5, 5, 0", async () => {
     const fake = new FakeLaunchd();

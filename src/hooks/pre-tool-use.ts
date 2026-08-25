@@ -29,6 +29,7 @@
  */
 
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { parseAgent } from "./agent.js";
 import {
@@ -154,6 +155,7 @@ async function emitUnverified(message: string, envelope?: PreToolUseInput): Prom
 }
 
 async function main(): Promise<void> {
+  warmBinCache();
   let raw: string;
   try {
     raw = await readStdin();

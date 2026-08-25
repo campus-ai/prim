@@ -25,13 +25,12 @@ vi.mock("node:fs", async () => {
   };
 });
 
-// Login opens a browser via execFile — never do that from a test run.
+// Login opens a browser via exec — never do that from a test run.
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return { ...actual, execFile: vi.fn() };
+  return { ...actual, exec: vi.fn() };
 });
 
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import {
@@ -42,73 +41,7 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
-import {
-  fetchAuthBrokerConfig,
-  openBrowser,
-  parseAuthBrokerConfig,
-  registerAuthCommands,
-  resolveCallbackPage,
-} from "./auth.js";
-
-describe("auth discovery and browser launch", () => {
-  const validConfig = {
-    authorization_server: "https://auth.example.test",
-    authorization_endpoint: "https://api.workos.com/user_management/authorize",
-    client_id: "client_test",
-    default_scopes: ["openid", "offline_access"],
-  };
-
-  afterEach(() => vi.clearAllMocks());
-
-  it("accepts the WorkOS authorization endpoint and a same-origin local endpoint", () => {
-    expect(parseAuthBrokerConfig(validConfig)).toMatchObject({
-      ...validConfig,
-      authorization_server: "https://auth.example.test/",
-    });
-    expect(
-      parseAuthBrokerConfig({
-        ...validConfig,
-        authorization_server: "http://127.0.0.1:4000",
-        authorization_endpoint: "http://127.0.0.1:4000/authorize",
-      }).authorization_endpoint,
-    ).toBe("http://127.0.0.1:4000/authorize");
-  });
-
-  it("rejects malicious or insecure discovery endpoints", () => {
-    expect(() =>
-      parseAuthBrokerConfig({
-        ...validConfig,
-        authorization_endpoint: "https://api.workos.com.attacker.test/authorize",
-      }),
-    ).toThrow("host is not trusted");
-    expect(() =>
-      parseAuthBrokerConfig({
-        ...validConfig,
-        authorization_endpoint: "http://api.workos.com/user_management/authorize",
-      }),
-    ).toThrow("must use HTTPS");
-    expect(() => parseAuthBrokerConfig({ ...validConfig, default_scopes: "openid" })).toThrow(
-      "string array",
-    );
-  });
-
-  it("rejects a non-success discovery response before parsing it", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(validConfig), { status: 503 }));
-    await expect(
-      fetchAuthBrokerConfig("https://api.example.test", fetchImpl as unknown as typeof fetch),
-    ).rejects.toThrow("HTTP 503");
-  });
-
-  it("passes the authorization URL as an argv value rather than shell text", () => {
-    const url = 'https://api.workos.com/authorize?state="; touch /tmp/pwned; #';
-    openBrowser(url);
-
-    const call = vi.mocked(execFile).mock.calls[0];
-    expect(call?.[0]).not.toContain(url);
-    expect(call?.[1]).toContain(url);
-    expect(call?.[2]).toMatchObject({ windowsHide: true });
-  });
-});
+import { registerAuthCommands, resolveCallbackPage } from "./auth.js";
 
 describe("registerAuthCommands", () => {
   it("registers the auth command group", () => {
@@ -642,7 +575,7 @@ describe("auth status --json", () => {
   });
 
   it("renders a concise verified verdict for fixed credentials", async () => {
-    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "environment", token: "fixed" });
+    vi.mocked(resolveAuthCredential).mockReturnValue({ source: "env_file", token: "fixed" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {

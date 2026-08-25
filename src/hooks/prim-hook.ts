@@ -7,9 +7,8 @@
  * NDJSON journal, exits 0. On Claude Stop it also leases any eventual
  * same-worktree Decision feedback and returns it as a human-visible
  * systemMessage. For Codex, UserPromptSubmit also injects the daemon-cached
- * organization Decision digest on every message. Codex Stop remains capture-
- * only so a digest cannot displace a completed assistant handoff. Capture and
- * delivery fail independently.
+ * organization Decision digest on every message, with Stop as a guarded
+ * continuation backstop. Capture and delivery fail independently.
  *
  * On a session-terminal event it spawns a detached `prim moves flush` so
  * the session's captured moves drain promptly — without dragging the
@@ -32,6 +31,7 @@ import {
 } from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
@@ -80,6 +80,9 @@ async function main(): Promise<void> {
   // point. It cannot preempt Node startup or synchronous filesystem work; see
   // the README's explicit timeout boundary.
   const feedbackSignal = AbortSignal.timeout(FEEDBACK_DEADLINE_MS);
+  // Refresh the resolved-path cache so subsequent hook fires skip npx (no-op on
+  // the cache-hit path and under the kill switch; never throws).
+  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   let parsed: Record<string, unknown>;
@@ -116,9 +119,10 @@ async function main(): Promise<void> {
     : null;
 
   try {
-    // Derive identity/control fields from the normalized event so org binding
-    // is independent of redaction. `toMove` removes user identity from local
-    // environment paths; the payload is scrubbed separately before persistence.
+    // Derive the envelope's identity/control fields (sessionId, eventType,
+    // env.cwd) from the (normalized) event so org binding is provably
+    // independent of redaction, then scrub ONLY the payload body that persists
+    // to the journal, transits to the server, and lands in the moves table.
     // Canonical refs are authoritative on every captured tool event. In
     // particular, PreToolUse can be selected as Decision evidence on its own;
     // leaving it raw would let the backend recreate a lexical ref that the
@@ -137,12 +141,12 @@ async function main(): Promise<void> {
       repository,
       invocationId,
     );
-    const scrubbed = await scrubFromCwd(enriched, cwd);
+    const scrubbed = scrubFromCwd(enriched, cwd);
     const move = {
       ...base,
       payload: enrichment ? preserveHookFileMetadata(scrubbed, enrichment.resolution) : scrubbed,
     };
-    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
+    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
     appendMove(move, orgId);
     if (shouldFlushAfter(move.eventType)) {
       spawnBackgroundFlush();

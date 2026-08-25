@@ -52,11 +52,4 @@ describe("deliverPostToolMove", () => {
     );
     expect(appendMove).toHaveBeenCalledWith(move, undefined);
   });
-
-  it("leaves a direct 409 in the journal for the replay flusher to quarantine", async () => {
-    post.mockRejectedValue(Object.assign(new Error("move_id_conflict"), { status: 409 }));
-
-    await expect(deliverPostToolMove(move, "org-1")).rejects.toMatchObject({ status: 409 });
-    expect(appendMove).toHaveBeenCalledWith(move, "org-1");
-  });
 });

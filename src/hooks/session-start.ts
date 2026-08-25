@@ -53,8 +53,8 @@ function readStdin(): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  // Refresh from the exact running package once per session so later Git hook
-  // calls can bypass npx without introducing a mutable dist-tag execution.
+  // SessionStart runs the bare ladder (cacheRead:false), so it always resolves
+  // @latest fresh — the authoritative once-per-session refresh of the bin cache.
   warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;

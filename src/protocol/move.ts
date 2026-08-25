@@ -34,15 +34,14 @@ export type ToolOutcome =
   | "unknown";
 
 export type MoveEnvironment = {
-  /** Username-bearing local path prefixes are scrubbed before persistence. */
   cwd: string;
   cliVersion: string;
   osPlatform: NodeJS.Platform;
-  /** Scrubbed git worktree root used only as a correlation hint. */
+  /** Canonical git worktree root used to derive every file reference. */
   repoRoot?: string;
   /** Opaque, credential-free repository identity shared across clones/worktrees. */
   repoKey?: string;
-  /** Scrubbed Git worktree root used by legacy commit correlation. */
+  /** Canonical Git worktree root used by commit correlation. */
   gitRoot?: string;
   /** Validated GitHub owner/repository name, when origin is GitHub. */
   repoFullName?: string;

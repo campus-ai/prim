@@ -11,9 +11,12 @@
  * synchronous ingest so the server can return an immediate verdict footer
  * without making recovery depend on HTTP.
  *
- * The move carries canonical repository-relative file refs for server joins.
- * Its payload and username-bearing local path identity are scrubbed before
- * leaving the machine, matching the passive capture path.
+ * The move carries the canonical envelope — including env.cwd — so the server
+ * can relativize the edited file into the repository-relative key its
+ * conflict / cascade joins are built on; without it the server can resolve no
+ * edited file and the verdict footer is permanently null. The payload is
+ * PII / secret scrubbed before it leaves the machine, matching the capture
+ * path.
  *
  * Fail-soft: every failure path exits 0 with empty JSON on stdout.
  *
@@ -30,6 +33,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
@@ -136,6 +140,7 @@ function debug(msg: string): void {
 }
 
 async function main(): Promise<void> {
+  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   try {
@@ -186,8 +191,8 @@ async function main(): Promise<void> {
     await emit();
     return;
   }
-  // Derive identity and repository context from the original cwd. `toMove`
-  // scrubs user identity from persisted environment paths.
+  // Derive identity + env.cwd from the ORIGINAL envelope, then scrub only the
+  // payload that persists — exactly as the capture hook does.
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
   if (!isRepoActiveForCapture(cwd)) {
@@ -231,7 +236,7 @@ async function main(): Promise<void> {
   // Reuse the invocationId declared above (the Hermes-denial guard needs it
   // early); toMove derives toolOutcome from the enriched envelope internally.
   const base = toMove(enriched, resolveCliVersion(), agent, workspaceId, repository, invocationId);
-  const scrubbed = await scrubFromCwd(enriched, cwd);
+  const scrubbed = scrubFromCwd(enriched, cwd);
   const move: Move = {
     ...base,
     payload: preserveHookFileMetadata(scrubbed, resolution),
@@ -240,7 +245,7 @@ async function main(): Promise<void> {
   // later replay carry this exact moveId, so a timeout/crash cannot create an
   // ingestion gap and a successful direct delivery deduplicates safely when
   // the daemon eventually drains the journal.
-  const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
+  const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd: move.env.cwd });
   let verdictFooter = false;
   try {
     const result = await deliverPostToolMove(move, orgId);

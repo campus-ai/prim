@@ -6,7 +6,7 @@
  * prim auth clear             — Remove the saved token
  */
 
-import { execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -39,14 +39,6 @@ const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8" } as const;
 const BASE64_PLUS_RE = /\+/g;
 const BASE64_SLASH_RE = /\//g;
 const BASE64_PAD_RE = /=+$/;
-const DEFAULT_WORKOS_AUTHORIZE_URL = "https://api.workos.com/user_management/authorize";
-
-export interface AuthBrokerConfig {
-  authorization_server: string;
-  authorization_endpoint: string;
-  client_id: string;
-  default_scopes: string[];
-}
 
 function base64url(buffer: Buffer): string {
   return buffer
@@ -62,81 +54,11 @@ function generatePkce(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-export function openBrowser(url: string): void {
+function openBrowser(url: string): void {
   const os = platform();
-  const command = os === "darwin" ? "open" : os === "win32" ? "rundll32.exe" : "xdg-open";
-  const args = os === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  execFile(command, args, { windowsHide: true }, () => {});
-}
+  const cmd = os === "darwin" ? "open" : os === "win32" ? "start" : "xdg-open";
 
-function parseHttpUrl(value: string, field: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${field} must be an absolute URL`);
-  }
-  if (url.username || url.password) throw new Error(`${field} must not contain credentials`);
-  const loopback =
-    url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    throw new Error(`${field} must use HTTPS`);
-  }
-  return url;
-}
-
-/** Validate the server's discovery document before opening an authorization URL. */
-export function parseAuthBrokerConfig(value: unknown): AuthBrokerConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("broker config must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  if (typeof record.authorization_server !== "string" || !record.authorization_server.trim()) {
-    throw new Error("authorization_server is required");
-  }
-  if (typeof record.client_id !== "string" || !record.client_id.trim()) {
-    throw new Error("client_id is required");
-  }
-  if (
-    !Array.isArray(record.default_scopes) ||
-    !record.default_scopes.every((scope) => typeof scope === "string" && scope.length > 0)
-  ) {
-    throw new Error("default_scopes must be a string array");
-  }
-
-  const authorizationServer = parseHttpUrl(record.authorization_server, "authorization_server");
-  const rawEndpoint =
-    record.authorization_endpoint === undefined
-      ? DEFAULT_WORKOS_AUTHORIZE_URL
-      : record.authorization_endpoint;
-  if (typeof rawEndpoint !== "string" || !rawEndpoint.trim()) {
-    throw new Error("authorization_endpoint must be a URL");
-  }
-  const authorizationEndpoint = parseHttpUrl(rawEndpoint, "authorization_endpoint");
-  if (
-    authorizationEndpoint.origin !== "https://api.workos.com" &&
-    authorizationEndpoint.origin !== authorizationServer.origin
-  ) {
-    throw new Error("authorization_endpoint host is not trusted");
-  }
-
-  return {
-    authorization_server: authorizationServer.toString(),
-    authorization_endpoint: authorizationEndpoint.toString(),
-    client_id: record.client_id.trim(),
-    default_scopes: [...record.default_scopes],
-  };
-}
-
-export async function fetchAuthBrokerConfig(
-  siteUrl: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<AuthBrokerConfig> {
-  const response = await fetchImpl(`${siteUrl}/mcp/config`, {
-    signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`broker discovery returned HTTP ${response.status}`);
-  return parseAuthBrokerConfig(await response.json());
+  exec(`${cmd} "${url}"`);
 }
 
 export type CallbackResult =
@@ -249,7 +171,7 @@ function hasStoredRefreshToken(): boolean {
 function authStatusResult(
   status: AuthVerificationStatus,
   reason: AuthVerificationReason,
-  source: "environment" | "token_file" | undefined,
+  source: "environment" | "token_file" | "env_file" | undefined,
   refreshTokenPresent: boolean,
 ): AuthStatusResult {
   const expiresAt = source === "token_file" ? getTokenExpiresAt() : undefined;
@@ -383,9 +305,16 @@ export function registerAuthCommands(program: Command) {
     .action(async () => {
       const siteUrl = getSiteUrl();
 
-      let config: AuthBrokerConfig;
+      // Fetch broker config
+      let config: {
+        authorization_server: string;
+        authorization_endpoint?: string;
+        client_id: string;
+        default_scopes: string[];
+      };
       try {
-        config = await fetchAuthBrokerConfig(siteUrl);
+        const res = await fetch(`${siteUrl}/mcp/config`);
+        config = (await res.json()) as typeof config;
       } catch {
         reportFailure(
           "config_fetch_failed",
@@ -393,6 +322,12 @@ export function registerAuthCommands(program: Command) {
         );
         return;
       }
+
+      if (!config.authorization_server || !config.client_id) {
+        reportFailure("broker_not_configured", "MCP broker is not configured on the server.");
+        return;
+      }
+
       const { verifier, challenge } = generatePkce();
       const state = base64url(randomBytes(16));
       const redirectUri = `http://${LOCALHOST}:${CALLBACK_PORT}/callback`;
@@ -451,7 +386,9 @@ export function registerAuthCommands(program: Command) {
         // Swallow late socket errors — the outcome/timeout still resolves.
       });
 
-      const authUrl = new URL(config.authorization_endpoint);
+      const authorizeUrl =
+        config.authorization_endpoint ?? "https://api.workos.com/user_management/authorize";
+      const authUrl = new URL(authorizeUrl);
       authUrl.searchParams.set("client_id", config.client_id);
       authUrl.searchParams.set("redirect_uri", redirectUri);
       authUrl.searchParams.set("response_type", "code");

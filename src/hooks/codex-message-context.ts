@@ -1,5 +1,7 @@
 import { prepareCodexContext } from "./codex-context.js";
 
+type CodexContextEvent = "UserPromptSubmit" | "Stop";
+
 export type CodexMessageContextOutput =
   | Record<string, never>
   | {
@@ -7,7 +9,8 @@ export type CodexMessageContextOutput =
         hookEventName: "UserPromptSubmit";
         additionalContext: string;
       };
-    };
+    }
+  | { decision: "block"; reason: string };
 
 export interface CodexMessageContextResult {
   output: CodexMessageContextOutput;
@@ -27,21 +30,22 @@ export interface CodexMessageContextDeps {
 
 const defaultDeps: CodexMessageContextDeps = { prepare: prepareCodexContext };
 
-/** Build the Codex protocol response for prompt-time Decision delivery. */
+const STOP_BACKSTOP_INSTRUCTION =
+  "A new Primitive Decision arrived during this turn. Incorporate it into the active task and proactively tell the user about it before finishing.";
+
+/** Build the Codex protocol response for the two Decision-delivery events. */
 export async function processCodexMessageContext(
   envelope: CodexMessageContextEnvelope,
   deps: CodexMessageContextDeps = defaultDeps,
 ): Promise<CodexMessageContextResult> {
   const event = envelope.hook_event_name;
-  // A blocking Stop response becomes a synthetic continuation prompt in Codex,
-  // displacing the assistant's completed handoff in current clients. Keep the
-  // digest pending and deliver it as additional context on the next real user
-  // prompt instead. Stop capture itself is handled independently by prim-hook.
-  if (event === "Stop") return { output: {} };
-  if (event !== "UserPromptSubmit") return { output: {} };
+  if (event !== "UserPromptSubmit" && event !== "Stop") return { output: {} };
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
     return { output: {} };
   }
+  // Codex re-runs Stop after a blocking Stop hook. Never recurse: the first
+  // response already handed off and acknowledged the Decision digest.
+  if (event === "Stop" && envelope.stop_hook_active === true) return { output: {} };
 
   let prepared: Awaited<ReturnType<typeof prepareCodexContext>>;
   try {
@@ -53,17 +57,34 @@ export async function processCodexMessageContext(
     return { output: {} };
   }
 
+  if (event === "UserPromptSubmit") {
+    return {
+      output: prepared.context
+        ? {
+            hookSpecificOutput: {
+              hookEventName: "UserPromptSubmit",
+              additionalContext: prepared.context,
+            },
+          }
+        : {},
+      // Even an empty prompt response is a successful handoff. Committing it
+      // advances verified feed state and report dedup without inventing output.
+      acknowledge: async () => {
+        await prepared.acknowledge(true);
+      },
+    };
+  }
+
+  if (!prepared.decisionDigest) {
+    // A status-only change was not delivered at Stop; leave it unacknowledged
+    // so the next UserPromptSubmit receives it as developer context.
+    return { output: {} };
+  }
   return {
-    output: prepared.context
-      ? {
-          hookSpecificOutput: {
-            hookEventName: "UserPromptSubmit",
-            additionalContext: prepared.context,
-          },
-        }
-      : {},
-    // Even an empty prompt response is a successful handoff. Committing it
-    // advances verified feed state and report dedup without inventing output.
+    output: {
+      decision: "block",
+      reason: `${prepared.context ?? prepared.decisionDigest}\n\n${STOP_BACKSTOP_INSTRUCTION}`,
+    },
     acknowledge: async () => {
       await prepared.acknowledge(true);
     },

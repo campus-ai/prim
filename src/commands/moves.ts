@@ -36,17 +36,12 @@ export function registerMovesCommands(program: Command): void {
     .command("flush")
     .description("Drain all local move journals to the server")
     .action(async () => {
-      const { flushed, quarantined, skipped } = await flush();
+      const { flushed, skipped } = await flush();
       if (skipped) {
         console.log("[prim] another flush is already draining; moves left journaled");
         return;
       }
       console.log(`[prim] flushed ${String(flushed)} move${flushed === 1 ? "" : "s"}`);
-      if (quarantined > 0) {
-        console.error(
-          `[prim] quarantined ${String(quarantined)} rejected move${quarantined === 1 ? "" : "s"}; inspect the bucket's dead-letter directory`,
-        );
-      }
     });
 
   moves

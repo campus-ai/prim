@@ -65,10 +65,8 @@ describe("client credential store", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     process.env = { ...originalEnv };
-    Reflect.deleteProperty(process.env, "PRIM_TOKEN");
-    Reflect.deleteProperty(process.env, "PRIM_API_URL");
-    Reflect.deleteProperty(process.env, "PRIM_CONFIG_DIR");
-    Reflect.deleteProperty(process.env, "XDG_CONFIG_HOME");
+    process.env.PRIM_TOKEN = undefined;
+    process.env.PRIM_API_URL = undefined;
     renamedCredentialPaths.length = 0;
     home = mkdtempSync(join(tmpdir(), "prim-client-test-"));
     mockedHome.value = home;
@@ -94,28 +92,15 @@ describe("client credential store", () => {
     });
   });
 
-  it("uses only an explicit API URL and ignores repository dotenv files", async () => {
+  it("resolves a supplied cwd and raw API URL with the existing env-file precedence", async () => {
     const repo = join(home, "repo");
     mkdirSync(repo);
     writeFileSync(join(repo, ".env.local"), "PRIM_API_URL=https://local.example.test\n");
     writeFileSync(join(repo, ".env"), "PRIM_API_URL=https://env.example.test\n");
-    const { getSiteUrlForEnvironment } = await import("./client.js");
+    const { getSiteUrlForCwd } = await import("./client.js");
 
-    expect(getSiteUrlForEnvironment("https://shell.example.test")).toBe(
-      "https://shell.example.test",
-    );
-    expect(getSiteUrlForEnvironment("")).toBe("https://api.getprimitive.ai");
-  });
-
-  it("uses PRIM_CONFIG_DIR for every credential artifact", async () => {
-    const explicitConfig = join(home, "private-config");
-    process.env.PRIM_CONFIG_DIR = explicitConfig;
-    vi.resetModules();
-    const client = await import("./client.js");
-
-    expect(client.TOKEN_FILE_PATH).toBe(join(explicitConfig, "token"));
-    expect(client.REFRESH_TOKEN_PATH).toBe(join(explicitConfig, "refresh_token"));
-    expect(client.CREDENTIAL_LOCK_PATH).toBe(join(explicitConfig, "credentials.lock"));
+    expect(getSiteUrlForCwd(repo, "https://shell.example.test")).toBe("https://shell.example.test");
+    expect(getSiteUrlForCwd(repo, "")).toBe("https://env.example.test");
   });
 
   it("does not use disk refresh state for an environment credential", async () => {
@@ -192,7 +177,7 @@ describe("client credential store", () => {
       TOKEN_EXPIRES_PATH,
       TOKEN_FILE_PATH,
     ]);
-    expect(readdirSync(config).some((name) => name.endsWith(".tmp"))).toBe(false);
+    expect(readdirSync(config).some((name) => name.includes(".tmp-"))).toBe(false);
   });
 
   it("persists only a terminal refresh fingerprint and suppresses replay after reload", async () => {
