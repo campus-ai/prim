@@ -1,19 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boundedHealthError } from "../lib/ansi.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
+import { scrub } from "./redact.js";
 
 const mocks = vi.hoisted(() => ({
   buildHookOutput: vi.fn(() => ({})),
   handoffHookOutput: vi.fn(),
   readFileSync: vi.fn(),
-  warmBinCache: vi.fn(),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual, readFileSync: mocks.readFileSync };
 });
-vi.mock("../lib/bin-cache.js", () => ({ warmBinCache: mocks.warmBinCache }));
 vi.mock("./decision-feedback-core.js", () => ({
   buildHookOutput: mocks.buildHookOutput,
   handoffHookOutput: mocks.handoffHookOutput,
@@ -72,7 +71,9 @@ describe("prim-hook debug output", () => {
     expect(line).not.toContain("\u202e");
     expect(line).not.toContain("\u200b");
     expect(line).not.toContain("\u2066");
-    expect(line).toBe(`${DEBUG_PREFIX}${boundedHealthError(terminalSafeLine(hostile))}`);
+    expect(line).toBe(
+      `[prim-hook] ${boundedHealthError(scrub(terminalSafeLine(`capture failed: ${hostile}`)) as string)}`,
+    );
   });
 
   it("keeps debug output disabled unless explicitly requested", async () => {

@@ -2,7 +2,30 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_RULES, scrub, scrubEnvironmentPaths, scrubFromCwd } from "./redact.js";
+import {
+  DEFAULT_RULES,
+  scrub,
+  scrubEnvironmentPaths,
+  scrubFromCwd,
+  writeHookDebug,
+} from "./redact.js";
+
+const originalDebug = process.env.PRIM_HOOK_DEBUG;
+let stderrWrites: string[] = [];
+
+function expectTerminalSafeDebugLine(output: string): void {
+  const escapeCharacter = String.fromCharCode(0x1b);
+  const bell = String.fromCharCode(0x07);
+  expect(output.endsWith("\n")).toBe(true);
+  expect(output.slice(0, -1)).not.toContain("\n");
+  expect(output).not.toContain(escapeCharacter);
+  expect(output).not.toContain(bell);
+  expect(output).not.toContain("\r");
+  expect(output).not.toContain("\u202e");
+  expect(output).not.toContain("\u200b");
+  expect(output).not.toContain("\u2066");
+  expect(output.length).toBeLessThanOrEqual(253);
+}
 
 describe("scrub", () => {
   it("redacts bearer and Basic authorization credentials case-insensitively", () => {
@@ -277,5 +300,55 @@ describe("scrubFromCwd workspace overrides", () => {
 
   it("uses only defaults when no workspace config exists", async () => {
     await expect(scrubFromCwd("Bearer abc.def", scratch)).resolves.toBe("<REDACTED:bearer-token>");
+  });
+});
+
+describe("writeHookDebug", () => {
+  beforeEach(() => {
+    stderrWrites = [];
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+  });
+
+  afterEach(() => {
+    if (originalDebug === undefined) Reflect.deleteProperty(process.env, "PRIM_HOOK_DEBUG");
+    else process.env.PRIM_HOOK_DEBUG = originalDebug;
+    vi.restoreAllMocks();
+  });
+
+  it("redacts and neutralizes hostile diagnostic detail", () => {
+    const escapeCharacter = String.fromCharCode(0x1b);
+    const bearer = "Bearer abc.def-ghi_jkl";
+    const splitBearer = `Bearer abc\u200b.${escapeCharacter}\u202edef-ghi_jkl`;
+    process.env.PRIM_HOOK_DEBUG = "1";
+
+    writeHookDebug(
+      "redaction config ignored",
+      new Error(
+        `before${escapeCharacter}[2J\r\n${splitBearer}\u202ereordered\u200bhidden\u2066${"x".repeat(300)}`,
+      ),
+    );
+
+    const output = stderrWrites.join("");
+    expect(output).toContain("<REDACTED:bearer-token>");
+    expect(output).not.toContain(bearer);
+    expect(output).not.toContain("def-ghi_jkl");
+    expectTerminalSafeDebugLine(output);
+  });
+
+  it("is silent unless debug output is explicitly enabled", () => {
+    Reflect.deleteProperty(process.env, "PRIM_HOOK_DEBUG");
+    writeHookDebug("capture failed", new Error("hostile\u001b[2J detail"));
+
+    expect(stderrWrites).toEqual([]);
+  });
+
+  it("omits a detail that normalizes to empty", () => {
+    process.env.PRIM_HOOK_DEBUG = "1";
+    writeHookDebug("capture failed", "\u001b\u0007\u202e\u200b\u2066");
+
+    expect(stderrWrites).toEqual(["[prim-hook] capture failed\n"]);
   });
 });

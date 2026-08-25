@@ -9,6 +9,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { boundedHealthError } from "../lib/ansi.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export type RedactionRule = {
   pattern: RegExp;
@@ -96,10 +98,9 @@ type SerializableRule = {
 };
 
 function debugRedaction(message: string): void {
-  if (!process.env.PRIM_HOOK_DEBUG) return;
   // Do not include exception messages here: RegExp syntax errors echo the raw
   // pattern, which may itself contain the secret the author meant to remove.
-  process.stderr.write(`[prim-hook] redaction: ${message}\n`);
+  writeHookDebug(`redaction: ${message}`);
 }
 
 function normalizedWorkspaceFlags(value: unknown): string | null {
@@ -193,6 +194,24 @@ export function scrub(
   rules: ReadonlyArray<RedactionRule> = DEFAULT_RULES,
 ): unknown {
   return mapStrings(value, (input) => applyRules(input, rules));
+}
+
+function debugDetail(value: unknown): string {
+  try {
+    return String(value instanceof Error ? value.message : value);
+  } catch {
+    return "unprintable detail";
+  }
+}
+
+/** Write one opt-in, default-redacted, terminal-safe hook diagnostic. */
+export function writeHookDebug(context: string, ...details: unknown[]): void {
+  if (!process.env.PRIM_HOOK_DEBUG) return;
+
+  const raw = details.length > 0 ? `${context}: ${details.map(debugDetail).join(": ")}` : context;
+  const normalized = terminalSafeLine(raw);
+  const message = boundedHealthError(scrub(normalized, DEFAULT_RULES) as string) ?? context;
+  process.stderr.write(`[prim-hook] ${message === `${context}:` ? context : message}\n`);
 }
 
 function redactEveryString(value: unknown, reason: string): unknown {
