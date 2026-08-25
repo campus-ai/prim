@@ -91,10 +91,15 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
     error.status === 409 &&
     typeof error.body === "object" &&
     error.body !== null &&
-    !Array.isArray(error.body) &&
-    (error.body as Record<string, unknown>).error === "move_id_conflict"
+    !Array.isArray(error.body)
   ) {
-    return "move_id_conflict";
+    const errorCode = (error.body as Record<string, unknown>).error;
+    if (errorCode === "move_id_conflict") {
+      return "move_id_conflict";
+    }
+    if (errorCode === "capture_authority_mismatch") {
+      return "tenant_mismatch";
+    }
   }
   return undefined;
 }

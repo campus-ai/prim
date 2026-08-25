@@ -270,6 +270,32 @@ describe("flush replay stability", () => {
     expect(statSync(deadLetterPathForMove(flushing, move("foreign"))).mode & 0o777).toBe(0o600);
   });
 
+  it("durably quarantines an exact capture authority mismatch as tenant_mismatch", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("wrong-tenant"));
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockRejectedValue(
+        new HttpError(409, "capture authority mismatch", {
+          error: "capture_authority_mismatch",
+        }),
+      ),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(existsSync(flushing)).toBe(false);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        version: 1,
+        reason: "tenant_mismatch",
+        move: expect.objectContaining({ moveId: "wrong-tenant" }),
+      }),
+    ]);
+  });
+
   it("bisects a versioned invalid-move batch, acknowledging valid neighbors and quarantining only poison", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     for (const item of [move("good-a"), move("poison"), move("good-b")]) {
@@ -302,6 +328,45 @@ describe("flush replay stability", () => {
     });
     expect(delivered).toEqual(["good-a", "good-b"]);
     expect(readDeadLetters(flushing).map((record) => record.move.moveId)).toEqual(["poison"]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("bisects an exact tenant mismatch while acknowledging valid neighbors", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    for (const item of [move("good-a"), move("wrong-tenant"), move("good-b")]) {
+      appendMoveToPath(flushing, item);
+    }
+    const delivered: string[] = [];
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.some((item) => item.moveId === "wrong-tenant")) {
+          return Promise.reject(
+            new HttpError(409, "capture authority mismatch", {
+              error: "capture_authority_mismatch",
+            }),
+          );
+        }
+        delivered.push(...body.batch.map((item) => item.moveId));
+        return Promise.resolve({
+          disposition: "persisted",
+          acknowledged: body.batch.length,
+          accepted: body.batch.length,
+        });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 1,
+    });
+    expect(delivered).toEqual(["good-a", "good-b"]);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        reason: "tenant_mismatch",
+        move: expect.objectContaining({ moveId: "wrong-tenant" }),
+      }),
+    ]);
     expect(existsSync(flushing)).toBe(false);
   });
 
@@ -424,6 +489,25 @@ describe("flush replay stability", () => {
     };
 
     await expect(drainFlushingPath(flushing, client)).rejects.toThrow("retry later");
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
+  it("retains a retryable 503 without splitting or quarantining the batch", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("retry-a"));
+    appendMoveToPath(flushing, move("retry-b"));
+    const post = vi.fn().mockRejectedValue(
+      new HttpError(503, "capture authority check unavailable", {
+        error: "capture_authority_check_unavailable",
+      }),
+    );
+    const client: CliClient = { get: vi.fn(), post };
+
+    await expect(drainFlushingPath(flushing, client)).rejects.toThrow(
+      "capture authority check unavailable",
+    );
+    expect(post).toHaveBeenCalledTimes(1);
     expect(existsSync(flushing)).toBe(true);
     expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
   });
