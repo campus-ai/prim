@@ -22,11 +22,19 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type Command, Option } from "commander";
-import { pinnedHookCommand } from "../lib/bin-path.js";
+import { commandMatchesBin, pinnedHookCommand } from "../lib/bin-path.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 import { primConfigDirectory } from "../lib/paths.js";
@@ -94,6 +102,19 @@ ${hookShim(spec.binName)}
 `;
 }
 
+function isOwnedStandalonePreCommit(content: string): boolean {
+  if (content === "#!/bin/sh\nprim-pre-commit\n") return true;
+  const prefix = `#!/bin/sh
+# prim pre-commit hook — installed by: prim hooks install (${PRIM_MANAGED_MARK})
+
+`;
+  const suffix = "; } || true\n";
+  if (!content.startsWith(prefix) || !content.endsWith(suffix)) return false;
+  const body = content.slice(prefix.length, -suffix.length);
+  if (!body.startsWith("{ ") || /[\r\n]/u.test(body)) return false;
+  return commandMatchesBin(body.slice(2), PRE_COMMIT.binName);
+}
+
 function huskyBlock(spec: HookSpec): string {
   if (spec.hookName === POST_COMMIT.hookName) return postCommitHookBlock();
   if (spec.hookName === POST_REWRITE.hookName) return postRewriteHookBlock();
@@ -115,28 +136,36 @@ ${gatedShim(spec.binName)}
 ${end}`;
 }
 
+function primBlockRange(
+  existing: string,
+  spec: HookSpec,
+): { start: number; through: number } | null {
+  const { start, end } = blockMarkers(spec);
+  const starts = existing.split(start).length - 1;
+  const ends = existing.split(end).length - 1;
+  if (starts === 0 && ends === 0) return null;
+  const from = existing.indexOf(start);
+  const endAt = existing.indexOf(end);
+  if (starts !== 1 || ends !== 1 || endAt < from) {
+    throw new Error(`malformed Prim hook markers for ${spec.hookName}`);
+  }
+  return { start: from, through: endAt + end.length };
+}
+
 // Append a marker-delimited block into a hook file, or create the file with a
 // shebang if absent. Idempotent (no-op when the bin is already present).
 // Returns whether it wrote. Shared by the husky and coexist-append paths.
-function mergePrimBlock(hookPath: string, block: string, binName: string): boolean {
+function mergePrimBlock(hookPath: string, block: string, spec: HookSpec): boolean {
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, "utf-8");
-    const start = block.slice(0, block.indexOf("\n"));
-    const end = block.slice(block.lastIndexOf("\n") + 1);
-    const starts = existing.split(start).length - 1;
-    const ends = existing.split(end).length - 1;
-    if (starts !== 0 || ends !== 0) {
-      if (starts !== 1 || ends !== 1 || existing.indexOf(end) < existing.indexOf(start)) {
-        throw new Error(`malformed Prim hook markers in ${hookPath}`);
-      }
-      const from = existing.indexOf(start);
-      const through = existing.indexOf(end) + end.length;
-      const refreshed = existing.slice(0, from) + block + existing.slice(through);
+    const range = primBlockRange(existing, spec);
+    if (range) {
+      const refreshed = existing.slice(0, range.start) + block + existing.slice(range.through);
       if (refreshed === existing) return false;
       writeFileSync(hookPath, refreshed, { mode: 0o755 });
       return true;
     }
-    if (containsPrimHook(existing, binName)) return false;
+    if (containsPrimHook(existing, spec.binName)) return false;
     const separator = existing.endsWith("\n") ? "\n" : "\n\n";
     writeFileSync(hookPath, `${existing}${separator}${block}\n`, { mode: 0o755 });
     return true;
@@ -188,7 +217,7 @@ export function containsPrimHook(content: string, binName: string = PRE_COMMIT.b
 export function installToHusky(gitRoot: string, spec: HookSpec = PRE_COMMIT): void {
   const hookPath = resolve(gitRoot, ".husky", spec.hookName);
   const existed = existsSync(hookPath);
-  const wrote = mergePrimBlock(hookPath, huskyBlock(spec), spec.binName);
+  const wrote = mergePrimBlock(hookPath, huskyBlock(spec), spec);
   if (!wrote) {
     console.log(`Prim ${spec.hookName} hook is already installed in .husky/${spec.hookName}.`);
   } else if (existed) {
@@ -348,10 +377,80 @@ exit 0
 `;
 }
 
-// The complete set of files prim owns in PRIM_GIT_HOOKS_DIR: its real hooks
-// plus a pass-through stub for every other client-side hook type.
-function ownedHookNames(): string[] {
-  return [...HOOKS.map((s) => s.hookName), ...PASSTHROUGH_HOOKS];
+function expectedOwnedHookContent(hookName: string): string | null {
+  const managed = HOOKS.find((spec) => spec.hookName === hookName);
+  if (managed) return globalHookScript(managed);
+  if ((PASSTHROUGH_HOOKS as readonly string[]).includes(hookName)) {
+    return passThroughScript(hookName);
+  }
+  return null;
+}
+
+const PINNED_PACKAGE_VERSION_RE =
+  /@primitive\.ai\/prim@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/gu;
+
+function normalizeOwnedGlobalHook(content: string, hookName: string): string | null {
+  if (hookName === PRE_COMMIT.hookName) {
+    const lines = content.split("\n");
+    const invocationIndexes = lines.flatMap((line, index) =>
+      line.startsWith("{ ") && line.endsWith("; } || true") ? [index] : [],
+    );
+    if (invocationIndexes.length !== 1) return null;
+    const invocationIndex = invocationIndexes[0];
+    const line = lines[invocationIndex];
+    const command = line.slice(2, -"; } || true".length);
+    if (!commandMatchesBin(command, PRE_COMMIT.binName)) return null;
+    lines[invocationIndex] = "{ <recognized Prim pre-commit invocation>; } || true";
+    return lines.join("\n");
+  }
+  return content.replace(PINNED_PACKAGE_VERSION_RE, "@primitive.ai/prim@<version>");
+}
+
+function isExpectedOwnedGlobalHook(content: string, hookName: string): boolean {
+  const expected = expectedOwnedHookContent(hookName);
+  if (expected === null) return false;
+  if (content === expected) return true;
+  const normalized = normalizeOwnedGlobalHook(content, hookName);
+  const normalizedExpected = normalizeOwnedGlobalHook(expected, hookName);
+  return normalized !== null && normalized === normalizedExpected;
+}
+
+function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
+function assertOwnedHooksDirectorySafeToRemove(): string[] {
+  const directory = lstatIfPresent(PRIM_GIT_HOOKS_DIR);
+  if (!directory) return [];
+  if (!directory.isDirectory() || directory.isSymbolicLink()) {
+    throw new Error(
+      `refusing to remove global hooks: ${PRIM_GIT_HOOKS_DIR} is not a Prim-owned directory`,
+    );
+  }
+  const entries = readdirSync(PRIM_GIT_HOOKS_DIR);
+  for (const name of entries) {
+    if (expectedOwnedHookContent(name) === null) {
+      throw new Error(
+        `refusing to remove global hooks: unexpected entry ${resolve(PRIM_GIT_HOOKS_DIR, name)}`,
+      );
+    }
+    const path = resolve(PRIM_GIT_HOOKS_DIR, name);
+    const stat = lstatSync(path);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      !isExpectedOwnedGlobalHook(readFileSync(path, "utf-8"), name)
+    ) {
+      throw new Error(`refusing to remove global hooks: ${path} is not an exact Prim-owned hook`);
+    }
+  }
+  return entries;
 }
 
 function writeOwnHooks(): void {
@@ -389,7 +488,7 @@ function appendPrimBlock(hookPath: string, spec: HookSpec): void {
     ensurePostRewriteHookAtPath(hookPath);
     return;
   }
-  mergePrimBlock(hookPath, gatedBlock(spec), spec.binName);
+  mergePrimBlock(hookPath, gatedBlock(spec), spec);
 }
 
 function stripPrimBlock(hookPath: string, spec: HookSpec): void {
@@ -404,11 +503,12 @@ function stripPrimBlock(hookPath: string, spec: HookSpec): void {
   if (!existsSync(hookPath)) return;
   const existing = readFileSync(hookPath, "utf-8");
   const primCreated = existing.includes(PRIM_CREATED_MARK);
-  const { start, end } = blockMarkers(spec);
-  const s = existing.indexOf(start);
-  const e = existing.indexOf(end);
-  if (s === -1 || e === -1) return;
-  const out = (existing.slice(0, s) + existing.slice(e + end.length)).replace(/\n{2,}$/, "\n");
+  const range = primBlockRange(existing, spec);
+  if (!range) return;
+  const out = (existing.slice(0, range.start) + existing.slice(range.through)).replace(
+    /\n{2,}$/,
+    "\n",
+  );
   // Remove the file only when PRIM created it (provenance marker) and nothing
   // but prim's own scaffold (shebang + marker) is left — NEVER a user's own
   // hook prim merely appended to, even if that hook was shebang-only.
@@ -418,6 +518,76 @@ function stripPrimBlock(hookPath: string, spec: HookSpec): void {
     return;
   }
   writeFileSync(hookPath, out, { mode: 0o755 });
+}
+
+type PreCommitRemovalPlan = {
+  path: string;
+  action: "missing" | "remove-owned-file" | "strip-block" | "leave-foreign";
+};
+
+function planPreCommitRemoval(
+  hookPath: string,
+  options: { allowOwnedStandalone: boolean },
+): PreCommitRemovalPlan {
+  if (!existsSync(hookPath)) return { path: hookPath, action: "missing" };
+  const existing = readFileSync(hookPath, "utf-8");
+  if (options.allowOwnedStandalone && isOwnedStandalonePreCommit(existing)) {
+    return { path: hookPath, action: "remove-owned-file" };
+  }
+  if (primBlockRange(existing, PRE_COMMIT)) {
+    return { path: hookPath, action: "strip-block" };
+  }
+  if (
+    existing.includes(PRE_COMMIT.binName) ||
+    existing.includes(PRIM_MANAGED_MARK) ||
+    existing.includes(PRIM_CREATED_MARK)
+  ) {
+    throw new Error(
+      `refusing to remove ambiguous pre-commit hook at ${hookPath}; Prim ownership could not be proven`,
+    );
+  }
+  return { path: hookPath, action: "leave-foreign" };
+}
+
+function applyPreCommitRemoval(plan: PreCommitRemovalPlan): void {
+  if (plan.action === "remove-owned-file") {
+    unlinkSync(plan.path);
+    console.log(`Removed pre-commit hook at ${plan.path}`);
+  } else if (plan.action === "strip-block") {
+    stripPrimBlock(plan.path, PRE_COMMIT);
+    console.log(`Removed the Prim pre-commit block from ${plan.path}.`);
+  } else if (plan.action === "leave-foreign") {
+    console.log(`Left pre-commit hook at ${plan.path} untouched (not a Prim hook).`);
+  }
+}
+
+export function uninstallProjectHooks(gitRoot: string): void {
+  // Preflight both possible pre-commit destinations before mutating either one.
+  // This prevents a malformed/ambiguous Husky hook from causing a partial
+  // deletion of the repository-owned .git hook (or vice versa).
+  const plans = [
+    planPreCommitRemoval(resolve(projectHooksDir(gitRoot), PRE_COMMIT.hookName), {
+      allowOwnedStandalone: true,
+    }),
+    planPreCommitRemoval(resolve(gitRoot, ".husky", PRE_COMMIT.hookName), {
+      allowOwnedStandalone: false,
+    }),
+  ];
+  for (const plan of plans) applyPreCommitRemoval(plan);
+
+  for (const [hookName, uninstall] of [
+    [POST_COMMIT.hookName, uninstallProjectPostCommitHook],
+    [POST_REWRITE.hookName, uninstallProjectPostRewriteHook],
+  ] as const) {
+    const result = uninstall(gitRoot);
+    if (!result.changed) {
+      console.log(`No Prim ${hookName} block found at ${result.path}.`);
+    } else if (result.removedFile) {
+      console.log(`Removed Prim-created ${hookName} hook at ${result.path}.`);
+    } else {
+      console.log(`Removed the Prim ${hookName} block from ${result.path}.`);
+    }
+  }
 }
 
 // Install prim's git hooks at USER scope via a global core.hooksPath. Coexists
@@ -469,10 +639,8 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
 export function uninstallGlobalHooks(): void {
   const global = gitConfigGet("--global");
   if (isOurHooksDir(global)) {
-    for (const name of ownedHookNames()) {
-      const p = resolve(PRIM_GIT_HOOKS_DIR, name);
-      if (existsSync(p)) unlinkSync(p);
-    }
+    const entries = assertOwnedHooksDirectorySafeToRemove();
+    for (const name of entries) unlinkSync(resolve(PRIM_GIT_HOOKS_DIR, name));
     // Only unset because the value is still ours (avoids the exit-5-on-absent
     // and multivar footguns of a blind --unset).
     execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
@@ -601,31 +769,6 @@ export function registerHooksCommands(program: Command) {
         uninstallGlobalHooks();
         return;
       }
-      const gitRoot = getGitRoot();
-      const hooksDir = projectHooksDir(gitRoot);
-      const preCommitPath = resolve(hooksDir, PRE_COMMIT.hookName);
-      if (!existsSync(preCommitPath)) {
-        console.log(`No ${PRE_COMMIT.hookName} hook found.`);
-      } else if (containsPrimHook(readFileSync(preCommitPath, "utf-8"), PRE_COMMIT.binName)) {
-        unlinkSync(preCommitPath);
-        console.log(`Removed ${PRE_COMMIT.hookName} hook at ${preCommitPath}`);
-      } else {
-        console.log(
-          `Left ${PRE_COMMIT.hookName} hook at ${preCommitPath} untouched (not a prim hook).`,
-        );
-      }
-      for (const [hookName, uninstall] of [
-        [POST_COMMIT.hookName, uninstallProjectPostCommitHook],
-        [POST_REWRITE.hookName, uninstallProjectPostRewriteHook],
-      ] as const) {
-        const result = uninstall(gitRoot);
-        if (!result.changed) {
-          console.log(`No Prim ${hookName} block found at ${result.path}.`);
-        } else if (result.removedFile) {
-          console.log(`Removed Prim-created ${hookName} hook at ${result.path}.`);
-        } else {
-          console.log(`Removed the Prim ${hookName} block from ${result.path}.`);
-        }
-      }
+      uninstallProjectHooks(getGitRoot());
     });
 }
