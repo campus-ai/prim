@@ -21,6 +21,7 @@ import {
   HOOK_RUNTIME_ENTRIES,
   STABLE_HOOK_LAUNCHER_CONTENT,
   hookRuntimePaths,
+  inspectHookRuntime,
   stageHookRuntime,
 } from "./hook-runtime.js";
 
@@ -87,6 +88,43 @@ describe("stageHookRuntime", () => {
       Math.max(...stagedDirectorySyncs.map(({ index }) => index)),
     );
     expect(existsSync(staged.paths.current)).toBe(true);
+  });
+
+  it("inspects the exact selected immutable runtime without repairing it", () => {
+    const root = temporaryRoot("prim-hook-inspect-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    expect(inspectHookRuntime({ env, homeDir: env.HOME })).toEqual({ state: "missing" });
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "inspect"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+    expect(inspectHookRuntime({ env, homeDir: env.HOME })).toEqual({
+      state: "ready",
+      version: "1.2.3",
+    });
+    chmodSync(staged.paths.launcher, 0o600);
+    expect(inspectHookRuntime({ env, homeDir: env.HOME })).toEqual({ state: "invalid" });
+  });
+
+  it("rejects a selected runtime whose recorded Node executable no longer works", () => {
+    const root = temporaryRoot("prim-hook-inspect-node-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const nodePath = join(root, "node");
+    writeFileSync(nodePath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    stageHookRuntime({
+      sourceDir: sourceRuntime(root, "inspect-node"),
+      version: "1.2.3",
+      nodePath,
+      env,
+    });
+    expect(inspectHookRuntime({ env, homeDir: env.HOME })).toEqual({
+      state: "ready",
+      version: "1.2.3",
+    });
+    chmodSync(nodePath, 0o600);
+    expect(inspectHookRuntime({ env, homeDir: env.HOME })).toEqual({ state: "invalid" });
   });
 
   it("atomically selects immutable exact bytes behind one stable command", () => {

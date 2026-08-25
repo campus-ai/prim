@@ -194,3 +194,37 @@ export function commandMatchesBin(command: string | undefined, bin: string): boo
     (c.includes(STABLE_HOOK_LAUNCHER_NAME) && exactBin.test(c))
   );
 }
+
+/** Runtime selection made by a recognized agent-hook command. */
+export type HookCommandResolution = "stable_launcher" | "npx_fallback";
+
+/**
+ * Classify a registered command without executing it. Historical managed
+ * commands retain an npx fallback; current launcher commands require the
+ * selected immutable runtime.
+ */
+export function hookCommandResolution(
+  command: string | undefined,
+  bin: string,
+): HookCommandResolution | undefined {
+  const trimmed = command?.trim();
+  if (!trimmed || !commandMatchesBin(trimmed, bin)) {
+    return undefined;
+  }
+  return trimmed.includes(STABLE_HOOK_LAUNCHER_NAME) ? "stable_launcher" : "npx_fallback";
+}
+
+/** Classify every Primitive command in an agent configuration. */
+export function hookCommandResolutions(
+  commands: Iterable<string | undefined>,
+  bins: readonly string[],
+): HookCommandResolution[] {
+  const resolutions: HookCommandResolution[] = [];
+  for (const command of commands) {
+    for (const bin of bins) {
+      const resolution = hookCommandResolution(command, bin);
+      if (resolution) resolutions.push(resolution);
+    }
+  }
+  return resolutions;
+}

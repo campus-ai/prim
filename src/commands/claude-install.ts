@@ -31,7 +31,13 @@ import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
+import {
+  type HookCommandResolution,
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookCommandResolutions,
+  stableHookCommand,
+} from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 
@@ -279,6 +285,24 @@ export function readSettings(path: string): ClaudeSettings {
 
 export function entryHasCommand(entry: HookEntry, bin: string): boolean {
   return entry.hooks?.some((h) => commandMatchesBin(h.command, bin)) ?? false;
+}
+
+/** Runtime requirements of Primitive hook commands already present in settings. */
+export function hookRuntimeResolutions(settings: ClaudeSettings): HookCommandResolution[] {
+  return hookCommandResolutions(
+    Object.values(settings.hooks ?? {}).flatMap((entries) =>
+      (entries ?? []).flatMap((entry) => (entry.hooks ?? []).map((hook) => hook.command)),
+    ),
+    PRIM_BINS,
+  );
+}
+
+/** Inspect hook runtime requirements without changing Claude settings. */
+export function inspectHookRuntimeResolutions(): HookCommandResolution[] {
+  return [
+    ...hookRuntimeResolutions(readSettings(USER_SCOPE_PATH)),
+    ...hookRuntimeResolutions(readSettings(projectScopePath())),
+  ];
 }
 
 function canonicalEntry(reg: Registration): HookEntry {
