@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -12,10 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseDocument } from "yaml";
-import { packageVersion } from "../lib/bin-path.js";
+import { stableHookCommand } from "../lib/bin-path.js";
 import {
   type HooksMap,
-  SHIM_SCRIPT,
   applyInstall,
   applyUninstall,
   isCaptureInstalled,
@@ -46,19 +46,28 @@ afterEach(() => {
 });
 
 describe("applyInstall", () => {
-  it("pins every hook entrypoint to this package and an exact-version fallback", () => {
-    for (const path of [
-      "prim-hook.js",
-      "pre-tool-use.js",
-      "post-tool-use.js",
-      "session-start.js",
-      "session-end.js",
+  it("keeps stable commands removable by the frozen pre-launcher Hermes reader", () => {
+    const legacyReaderUsesBin = (command: string, bin: string): boolean =>
+      new RegExp(`prim-shim\\.sh"?\\s+${bin}\\s`).test(command);
+    for (const bin of [
+      "prim-hook",
+      "prim-pre-tool-use",
+      "prim-post-tool-use",
+      "prim-session-start",
+      "prim-session-end",
     ]) {
-      expect(SHIM_SCRIPT).toContain(path);
+      expect(legacyReaderUsesBin(stableHookCommand(bin, "--agent hermes"), bin)).toBe(true);
     }
-    expect(SHIM_SCRIPT).toContain(`@primitive.ai/prim@${packageVersion()}`);
-    expect(SHIM_SCRIPT).toMatch(/\[ -x '.+node' \] && \[ -f '.+prim-hook\.js' \]/);
-    expect(SHIM_SCRIPT).not.toMatch(/@latest|command -v|node_modules\/\.bin/);
+  });
+
+  it("routes every hook through the byte-stable owner-only launcher", () => {
+    const hooks = applyInstall({}, false);
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        expect(entry.command).toContain("prim-hook-launcher-v1");
+        expect(entry.command).not.toMatch(/@latest|command -v|node_modules\/\.bin|npx/);
+      }
+    }
   });
 
   it("registers the gate, ingest, capture, and session hooks under --agent hermes", () => {
@@ -77,9 +86,11 @@ describe("applyInstall", () => {
     ]);
     expect(hooks.post_approval_response[0]).not.toHaveProperty("matcher");
     // Capture rides pre_tool_call alongside the gate (two entries on that event).
-    expect(hooks.pre_tool_call.some((e) => e.command.includes('prim-shim.sh" prim-hook '))).toBe(
-      true,
-    );
+    expect(
+      hooks.pre_tool_call.some(
+        (e) => e.command === stableHookCommand("prim-hook", "--agent hermes"),
+      ),
+    ).toBe(true);
   });
 
   it("registers the conflict gate with the spec-mandated timeout: 10 (and no timeout on ingest)", () => {
@@ -90,15 +101,13 @@ describe("applyInstall", () => {
     ).toBeUndefined();
   });
 
-  it("double-quotes the shim path so a spaced HERMES_HOME shlex-splits to one token", () => {
+  it("keeps command bytes independent of a spaced HERMES_HOME", () => {
     const prev = process.env.HERMES_HOME;
     process.env.HERMES_HOME = "/tmp/a b/.hermes";
     try {
       const hooks = applyInstall({}, false);
       const capture = hooks.pre_tool_call.find((e) => e.command.includes("prim-hook"));
-      expect(capture?.command).toBe(
-        '"/tmp/a b/.hermes/agent-hooks/prim-shim.sh" prim-hook --agent hermes',
-      );
+      expect(capture?.command).toBe(stableHookCommand("prim-hook", "--agent hermes"));
       // detection still recognizes the quoted form, so uninstall fully strips it
       expect(applyUninstall(hooks).pre_tool_call).toBeUndefined();
     } finally {
@@ -400,25 +409,45 @@ describe("mergePreservesHermesSemantics", () => {
 });
 
 describe("performInstall", () => {
-  it("atomically writes the config and executable shim without churning user comments", () => {
+  it("atomically writes config, removes the legacy shim, and preserves user comments", () => {
     testHome = mkdtempSync(join(tmpdir(), "prim-hermes-install-"));
     process.env.HERMES_HOME = testHome;
     const config = join(testHome, "config.yaml");
+    const shim = join(testHome, "agent-hooks", "prim-shim.sh");
     writeFileSync(
       config,
-      "# user header\nmodel: gpt-4\nhooks:\n  pre_tool_call:\n    # formatter\n    - command: /my/format.sh\n",
+      [
+        "# user header",
+        "model: gpt-4",
+        "hooks:",
+        "  pre_tool_call:",
+        "    # formatter",
+        "    - command: /my/format.sh",
+        `    - command: '"${shim}" prim-pre-tool-use --agent hermes'`,
+        "",
+      ].join("\n"),
     );
+    mkdirSync(join(testHome, "agent-hooks"));
+    writeFileSync(shim, "legacy", { mode: 0o755 });
 
-    const result = performInstall({ force: false, autoAccept: false });
+    let stageCalls = 0;
+    const result = performInstall({
+      force: false,
+      autoAccept: false,
+      stageRuntime: () => {
+        stageCalls += 1;
+      },
+    });
     const written = readFileSync(config, "utf8");
-    const shim = join(testHome, "agent-hooks", "prim-shim.sh");
 
     expect(result.changed).toBe(true);
     expect(written).toContain("# user header");
     expect(written).toContain("# formatter");
     expect(written).toContain("/my/format.sh");
-    expect(existsSync(shim)).toBe(true);
-    expect(statSync(shim).mode & 0o777).toBe(0o755);
+    expect(written).toContain("prim-hook-launcher-v1");
+    expect(written).not.toContain(`"${shim}" prim-pre-tool-use --agent hermes`);
+    expect(stageCalls).toBe(1);
+    expect(existsSync(shim)).toBe(false);
   });
 
   it("is byte-idempotent and preserves the existing config mode", () => {
@@ -428,9 +457,17 @@ describe("performInstall", () => {
     writeFileSync(config, "# owned by user\nmodel: gpt-4\n");
     chmodSync(config, 0o640);
 
-    const first = performInstall({ force: false, autoAccept: false });
+    const first = performInstall({
+      force: false,
+      autoAccept: false,
+      stageRuntime: () => undefined,
+    });
     const once = readFileSync(config, "utf8");
-    const second = performInstall({ force: false, autoAccept: false });
+    const second = performInstall({
+      force: false,
+      autoAccept: false,
+      stageRuntime: () => undefined,
+    });
 
     expect(first.changed).toBe(true);
     expect(second.changed).toBe(false);
@@ -445,11 +482,19 @@ describe("performInstall", () => {
     const config = join(testHome, "config.yaml");
     writeFileSync(config, "model: gpt-4\r\nhooks_auto_accept: false # user policy\r\n");
 
-    const withoutFlag = performInstall({ force: false, autoAccept: false });
+    const withoutFlag = performInstall({
+      force: false,
+      autoAccept: false,
+      stageRuntime: () => undefined,
+    });
     expect(withoutFlag.autoAccept).toBe(false);
     expect(readFileSync(config, "utf8")).toContain("hooks_auto_accept: false # user policy\r\n");
 
-    const withFlag = performInstall({ force: false, autoAccept: true });
+    const withFlag = performInstall({
+      force: false,
+      autoAccept: true,
+      stageRuntime: () => undefined,
+    });
     const written = readFileSync(config, "utf8");
     expect(withFlag.autoAccept).toBe(true);
     expect(written).toContain("hooks_auto_accept: true # user policy\r\n");
@@ -471,7 +516,9 @@ describe("performInstall", () => {
     const shim = join(testHome, "agent-hooks", "prim-shim.sh");
     writeFileSync(config, raw);
 
-    expect(() => performInstall({ force: false, autoAccept: false })).toThrow(message);
+    expect(() =>
+      performInstall({ force: false, autoAccept: false, stageRuntime: () => undefined }),
+    ).toThrow(message);
     expect(readFileSync(config, "utf8")).toBe(raw);
     expect(existsSync(shim)).toBe(false);
   });
@@ -553,9 +600,9 @@ describe("performUninstall", () => {
         "",
       ].join("\n"),
     );
-    performInstall({ force: false, autoAccept: false });
+    performInstall({ force: false, autoAccept: false, stageRuntime: () => undefined });
     const shim = join(testHome, "agent-hooks", "prim-shim.sh");
-    expect(existsSync(shim)).toBe(true);
+    expect(existsSync(shim)).toBe(false);
 
     const result = performUninstall();
     const written = readFileSync(config, "utf8");

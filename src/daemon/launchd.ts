@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { binFile } from "../lib/bin-path.js";
+import { binFile, stableHookCommand } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { compareSemver } from "../lib/semver.js";
@@ -406,7 +406,11 @@ fi
 
 /** Pure command rendering; callers stage first, then persist this command. */
 export function runtimeStatuslineCommand(options: RuntimePathOptions = {}): string {
-  return shellQuote(runtimePaths(options).statuslineLauncher);
+  // Keep settings.json bytes stable across versions, machines, and XDG roots.
+  // The resolver mirrors xdgDataHome(): only absolute XDG_DATA_HOME values are
+  // honored, otherwise an absolute HOME is required.
+  const resolver = `prim_data=\${XDG_DATA_HOME:-}; case "$prim_data" in /*) ;; *) case "\${HOME:-}" in /*) prim_data="$HOME/.local/share" ;; *) prim_data= ;; esac ;; esac; if [ -n "$prim_data" ] && [ -x "$prim_data/prim/runtime/prim-statusline" ]; then exec "$prim_data/prim/runtime/prim-statusline"; fi; exec ${stableHookCommand("prim-statusline")}`;
+  return `/bin/sh -c ${shellQuote(resolver)} prim-statusline`;
 }
 
 function generateDaemonLauncher(config: DaemonLauncherConfig) {

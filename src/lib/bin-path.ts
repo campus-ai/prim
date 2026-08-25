@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const PKG_NAME = "@primitive.ai/prim";
 const ROOT_WALK_LIMIT = 6;
+export const STABLE_HOOK_LAUNCHER_NAME = "prim-hook-launcher-v1";
 
 type PackageManifest = { name?: string; version?: string; bin?: Record<string, string> };
 
@@ -64,6 +65,11 @@ export function binFile(bin: string): string | null {
 
 export function packageVersion(): string | null {
   return locateRoot()?.version ?? null;
+}
+
+/** Package root containing the currently executing Primitive runtime. */
+export function packageRoot(): string | null {
+  return locateRoot()?.dir ?? null;
 }
 
 function shellQuote(value: string): string {
@@ -122,8 +128,47 @@ export function pinnedHookCommand(bin: string, args = ""): string {
   return `if [ -x ${shellQuote(process.execPath)} ] && [ -f ${shellQuote(file)} ]; then ${shellQuote(process.execPath)} ${shellQuote(file)}${suffix}; else ${fallback}; fi`;
 }
 
+const STABLE_HOOK_ARGUMENTS_RE = /^[-A-Za-z0-9_ ]*$/u;
+const STABLE_HOOK_BIN_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/u;
+
+/**
+ * Render the one machine-, config-root-, and package-version-independent hook
+ * command stored in agent configuration. The inline POSIX resolver mirrors
+ * `primConfigDirectory`: only absolute PRIM_CONFIG_DIR/XDG_CONFIG_HOME values
+ * are honored, with an absolute HOME fallback. `/bin/sh` is explicit because
+ * Hermes invokes configured commands with shell=false.
+ *
+ * The command itself never selects code. It enters the owner-only launcher,
+ * whose atomically selected immutable release pins the exact Node runtime and
+ * self-contained package bytes prepared by the installer.
+ */
+export function stableHookCommand(bin: string, args = ""): string {
+  if (!STABLE_HOOK_BIN_RE.test(bin) || !STABLE_HOOK_ARGUMENTS_RE.test(args)) {
+    throw new Error("invalid stable hook command");
+  }
+  const resolver = [
+    // #242 and earlier identify managed commands by this package marker. Keep
+    // it as inert data during the rolling window so an older uninstall or
+    // reinstall can remove the stable entry without invoking npm or PATH.
+    `prim_legacy_reader='-p ${PKG_NAME}@stable prim-shim.sh ${bin} '; `,
+    'prim_absolute() { case "$1" in /*) ;; *) return 1 ;; esac; ' +
+      'case "$1" in [[:space:]]*|*[[:space:]]|*//*|*/./*|*/../*|*/.|*/..|?*/) return 1 ;; esac; }; ',
+    'prim_config=${PRIM_CONFIG_DIR:-}; if ! prim_absolute "$prim_config"; then ' +
+      'prim_config=${XDG_CONFIG_HOME:-}; if prim_absolute "$prim_config"; then ',
+    'case "$prim_config" in /) prim_config=/prim ;; *) prim_config="$prim_config/prim" ;; esac; ',
+    'else prim_home=${HOME:-}; prim_absolute "$prim_home" || exit 78; ' +
+      'case "$prim_home" in /) prim_config=/.config/prim ;; *) prim_config="$prim_home/.config/prim" ;; esac; ',
+    "fi; fi; ",
+    `case "$prim_config" in /) prim_launcher=/${STABLE_HOOK_LAUNCHER_NAME} ;; ` +
+      `*) prim_launcher="$prim_config/${STABLE_HOOK_LAUNCHER_NAME}" ;; esac; `,
+    'exec "$prim_launcher" "$@"',
+  ].join("");
+  const suffix = args ? ` ${args}` : "";
+  return `/bin/sh -c ${shellQuote(resolver)} ${STABLE_HOOK_LAUNCHER_NAME} ${bin}${suffix}`;
+}
+
 export function detachedHookShimCommand(bin: string, args = ""): string {
-  return `payload=$(cat); { trap '' HUP; export npm_config_fetch_retries=2 npm_config_fetch_retry_mintimeout=10000 npm_config_fetch_retry_maxtimeout=10000 npm_config_fetch_timeout=60000; printf '%s' "$payload" | { ${pinnedHookCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
+  return `payload=$(cat); { trap '' HUP; printf '%s' "$payload" | { ${stableHookCommand(bin, args)}; }; } </dev/null >/dev/null 2>&1 &`;
 }
 
 /**
@@ -143,5 +188,9 @@ export function commandMatchesBin(command: string | undefined, bin: string): boo
   }
   // Resolution shim — keyed on its `command -v <bin> ` probe.
   const exactBin = new RegExp(`(?:^|\\s)${bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|;|$)`);
-  return c.includes(`command -v ${bin} `) || (c.includes(`-p ${PKG_NAME}@`) && exactBin.test(c));
+  return (
+    c.includes(`command -v ${bin} `) ||
+    (c.includes(`-p ${PKG_NAME}@`) && exactBin.test(c)) ||
+    (c.includes(STABLE_HOOK_LAUNCHER_NAME) && exactBin.test(c))
+  );
 }
