@@ -40,7 +40,7 @@ import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js"
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { postToolInvocationId, shouldFlushAfter, toMove } from "./prim-hook-core.js";
-import { scrubFromCwd } from "./redact.js";
+import { scrubFromCwd, writeHookDebug } from "./redact.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 let outputAttempted = false;
@@ -69,12 +69,6 @@ function spawnBackgroundFlush(): void {
   }).unref();
 }
 
-function debug(area: "capture" | "feedback", error: unknown): void {
-  if (!process.env.PRIM_HOOK_DEBUG) return;
-  const detail = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`[prim-hook] ${area} failed: ${detail}\n`);
-}
-
 async function main(): Promise<void> {
   // One absolute budget covers every feedback auth/HTTP operation after this
   // point. It cannot preempt Node startup or synchronous filesystem work; see
@@ -87,7 +81,7 @@ async function main(): Promise<void> {
     raw = readFileSync(0, "utf-8");
     parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
   } catch (error) {
-    debug("capture", error);
+    writeHookDebug("capture failed", error);
     await emitOutput(buildHookOutput({}));
     return;
   }
@@ -148,7 +142,7 @@ async function main(): Promise<void> {
       spawnBackgroundFlush();
     }
   } catch (error) {
-    debug("capture", error);
+    writeHookDebug("capture failed", error);
   }
 
   if (isCodexContextEvent) {
@@ -166,7 +160,7 @@ async function main(): Promise<void> {
 
   const lease = await leaseDecisionFeedback(
     { workspaceId, currentSessionId: sessionId, signal: feedbackSignal },
-    { onError: (error) => debug("feedback", error) },
+    { onError: (error) => writeHookDebug("feedback failed", error) },
   );
   const rendered = lease ? renderFeedback(lease) : undefined;
   await emitOutput(
@@ -175,7 +169,7 @@ async function main(): Promise<void> {
       ? async () => {
           await acknowledgeDecisionFeedback(
             { workspaceId, deliveries: rendered.deliveries, signal: feedbackSignal },
-            { onError: (error) => debug("feedback", error) },
+            { onError: (error) => writeHookDebug("feedback failed", error) },
           );
         }
       : undefined,
@@ -183,6 +177,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch(async (error: unknown) => {
-  debug("capture", error);
+  writeHookDebug("capture failed", error);
   if (!outputAttempted) await emitOutput(buildHookOutput({}));
 });
