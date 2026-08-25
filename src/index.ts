@@ -11,6 +11,7 @@
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status
  *   prim doctor
+ *   prim uninstall
  *   prim decisions recent|show|cascade|check|publish|restore|supersede|confirm|create
  *   prim reconcile <id>
  *   prim welcome
@@ -38,13 +39,17 @@ import { registerSessionCommands } from "./commands/session.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerStatuslineCommands } from "./commands/statusline.js";
+import { registerUninstallCommand } from "./commands/uninstall.js";
 import { registerWelcomeCommand } from "./commands/welcome.js";
 import { flushIfNeeded } from "./flusher.js";
+import { runStartupBackgroundWork } from "./lib/startup-background.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
-
-updateNotifier({ pkg }).notify();
+runStartupBackgroundWork(process.argv.slice(2), process.env, {
+  notify: () => updateNotifier({ pkg }).notify(),
+  flush: () => flushIfNeeded(),
+});
 
 const program = new Command();
 
@@ -74,6 +79,7 @@ registerReconcileCommands(program);
 registerStatuslineCommands(program);
 registerWelcomeCommand(program);
 registerSetupCommand(program);
+registerUninstallCommand(program);
 
 // Surface API / network errors as clean one-liners
 process.on("unhandledRejection", (err) => {
@@ -81,17 +87,5 @@ process.on("unhandledRejection", (err) => {
   console.error(msg);
   process.exit(1);
 });
-
-// Opportunistic, non-blocking drain of the Decision Event journal. Never
-// blocks the user's command behind the network drain, and is skipped for
-// the explicit `prim moves flush`, which drains directly (a concurrent
-// rotate-then-process drain would be harmless but redundant).
-const argv = process.argv.slice(2);
-const isExplicitFlush = argv[0] === "moves" && argv[1] === "flush";
-if (!isExplicitFlush) {
-  flushIfNeeded().catch(() => {
-    // Best-effort; flushIfNeeded already swallows its own failures.
-  });
-}
 
 program.parse();

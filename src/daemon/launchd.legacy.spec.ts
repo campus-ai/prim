@@ -69,7 +69,8 @@ function absentWithLegacyOwner(home: string, socketPid: number) {
     label: `ai.getprimitive.test-legacy-${process.pid}-${roots.length}`,
     env: { XDG_DATA_HOME: join(home, "..", "data") },
     runner: () => ABSENT,
-    inspectDaemon: async () => ({ pid: socketPid }),
+    // The post-stop probe must become absent once the real stand-in exits.
+    inspectDaemon: async () => (isAlive(socketPid) ? { pid: socketPid } : null),
   };
 }
 

@@ -94,6 +94,23 @@ Orchestrates auth → session hooks → supervised daemon → capture-health gat
 re-running each underlying command so every step behaves exactly as if run by
 hand (including the browser login). Idempotent — safe to re-run.
 
+### Uninstall
+
+```bash
+prim uninstall
+```
+
+Stops the companion daemon, removes the current repository's Prim-owned agent
+and Git-hook surfaces when run inside a Git repository, removes the user-scoped
+Claude, Codex, Hermes, and Git-hook surfaces, then deletes only schema-valid
+Prim runtime bytes. Foreign configuration is retained; ambiguous ownership
+makes the command fail closed and retain the runtimes. If a removal races or
+fails after one runtime changes, its JSON result reports each runtime's exact
+state so rerunning can safely finish cleanup. Authentication,
+undelivered journals, repository bindings, and agent skill guidance are kept.
+Use `prim skill uninstall --agent <claude|codex|hermes> --scope <project|user>`
+when you also want to remove a known skill target.
+
 ### Auth
 
 ```bash

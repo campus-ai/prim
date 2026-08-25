@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,6 +24,7 @@ import {
   ensureMacDaemon,
   launchdPaths,
   parseLaunchdService,
+  removeDaemonRuntime,
   runtimePaths,
   runtimeStatuslineCommand,
   stageRuntime,
@@ -724,6 +726,26 @@ describe("failure safety, migration, and locking", () => {
     });
     expect(daemonExplicitlyDisabled(fake)).toBe(false);
   });
+  it("does not stop a foreign program registered under Prim's launchd label", async () => {
+    const fake = new FakeLaunchd();
+    await fake.seed();
+    fake.setPresent("/foreign/daemon", fake.desiredIdentity());
+
+    await expect(bootoutMacDaemon(fake.options())).rejects.toThrow("unrecognized launchd program");
+
+    expect(fake.lifecycleCommands()).toEqual([]);
+    expect(fake.loaded).toBe(true);
+    expect(fake.program).toBe("/foreign/daemon");
+    expect(daemonExplicitlyDisabled(fake)).toBe(false);
+  });
+  it("refuses an unverified legacy stop", async () => {
+    const fake = new FakeLaunchd();
+    fake.legacyIdentity = { pid: 700, version: "legacy" };
+
+    await expect(
+      bootoutMacDaemon(fake.options({ migrateLegacy: async () => false })),
+    ).rejects.toThrow("could not be verified stopped");
+  });
   it("migrates a released XDG disabled marker without staging", async () => {
     const fake = new FakeLaunchd();
     const legacyMarker = runtimePaths(fake).disabledMarker;
@@ -762,5 +784,115 @@ describe("failure safety, migration, and locking", () => {
     release();
     await Promise.all([first, second]);
     expect(secondEntered).toBe(true);
+  });
+});
+
+describe("removeDaemonRuntime", () => {
+  it("removes a recognized stopped daemon runtime without touching other config", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    const configDir = join(fake.homeDir, ".config", "prim");
+    mkdirSync(configDir, { recursive: true });
+    const retained = join(configDir, "token");
+    writeFileSync(retained, "credential\n");
+
+    const result = await removeDaemonRuntime({
+      homeDir: fake.homeDir,
+      env: fake.env,
+      uid: fake.uid,
+      label: fake.label,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(existsSync(staged.paths.runtimeDir)).toBe(false);
+    expect(readFileSync(retained, "utf8")).toBe("credential\n");
+  });
+
+  it("retains daemon runtime bytes when ownership is ambiguous", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    writeFileSync(join(staged.paths.runtimeDir, "foreign.txt"), "keep me\n");
+
+    await expect(
+      removeDaemonRuntime({
+        homeDir: fake.homeDir,
+        env: fake.env,
+        uid: fake.uid,
+        label: fake.label,
+      }),
+    ).rejects.toThrow("unrecognized entries");
+    expect(existsSync(staged.paths.runtimeDir)).toBe(true);
+  });
+
+  it("retains every daemon artifact when a staged plist path is a dangling symlink", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    mkdirSync(join(fake.paths.plistPath, ".."), { recursive: true });
+    symlinkSync(join(fake.root, "missing-plist"), fake.paths.plistPath);
+
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    if (!platform) throw new Error("test runtime cannot override platform");
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+    try {
+      await expect(
+        removeDaemonRuntime({
+          homeDir: fake.homeDir,
+          env: fake.env,
+          uid: fake.uid,
+          label: fake.label,
+        }),
+      ).rejects.toThrow("non-file launchd property list");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+
+    expect(existsSync(staged.paths.runtimeDir)).toBe(true);
+    expect(lstatSync(fake.paths.plistPath).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not require a launchd uid when uninstalling on a non-Darwin runtime", async () => {
+    const fake = new FakeLaunchd();
+    const staged = stageRuntime({
+      daemonSource: fake.daemonSource,
+      nodePath: fake.nodePath,
+      version: fake.version,
+      homeDir: fake.homeDir,
+      env: fake.env,
+    });
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const getuid = Object.getOwnPropertyDescriptor(process, "getuid");
+    if (!platform || !getuid) throw new Error("test runtime cannot override platform identity");
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    Object.defineProperty(process, "getuid", { ...getuid, value: undefined });
+    try {
+      await expect(
+        removeDaemonRuntime({ homeDir: fake.homeDir, env: fake.env }),
+      ).resolves.toMatchObject({
+        changed: true,
+      });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      Object.defineProperty(process, "getuid", getuid);
+    }
+
+    expect(existsSync(staged.paths.runtimeDir)).toBe(false);
   });
 });

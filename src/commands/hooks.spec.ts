@@ -17,11 +17,13 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ""),
+  readdirSync: vi.fn(() => []),
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   chmodSync: vi.fn(),
   lstatSync: vi.fn(() => ({
+    isDirectory: () => true,
     isFile: () => true,
     isSymbolicLink: () => false,
     size: 100,
@@ -81,6 +83,12 @@ vi.mock("../lib/post-commit-hook.js", () => ({
 }));
 
 vi.mock("../lib/bin-path.js", () => ({
+  commandMatchesBin: vi.fn(
+    (command: string | undefined, bin: string) =>
+      typeof command === "string" &&
+      (command.trim() === bin ||
+        (command.includes("-p @primitive.ai/prim@") && command.includes(bin))),
+  ),
   pinnedHookCommand: vi.fn(
     (bin: string) =>
       `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/${bin}.js' ]; then '/opt/prim/node' '/opt/prim/${bin}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
@@ -88,7 +96,15 @@ vi.mock("../lib/bin-path.js", () => ({
 }));
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -114,7 +130,9 @@ import {
 } from "./hooks.js";
 
 const mockedExistsSync = vi.mocked(existsSync);
+const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReadFileSync = vi.mocked(readFileSync);
+const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedWriteFileSync = vi.mocked(writeFileSync);
 const mockedMkdirSync = vi.mocked(mkdirSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
@@ -136,6 +154,7 @@ const isSet = (args: readonly string[]): boolean =>
 beforeEach(() => {
   vi.resetAllMocks();
   mockedExistsSync.mockReturnValue(false);
+  mockedReaddirSync.mockReturnValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -188,6 +207,56 @@ describe("registerHooksCommands", () => {
     expect(mockedUnlinkSync).toHaveBeenCalledWith("/fake/main/.git/hooks/pre-commit");
     expect(mockedUninstallProjectPostCommitHook).toHaveBeenCalledWith("/fake/worktree");
     expect(mockedUninstallProjectPostRewriteHook).toHaveBeenCalledWith("/fake/worktree");
+  });
+
+  it("project uninstall recognizes an exact older pinned Prim pre-commit scaffold", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.git/hooks/pre-commit");
+    mockedReadFileSync.mockReturnValue(`#!/bin/sh
+# prim pre-commit hook — installed by: prim hooks install (prim-managed-hook)
+
+{ if [ -x '/old/node' ] && [ -f '/old/dist/hooks/pre-commit.js' ]; then '/old/node' '/old/dist/hooks/pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
+`);
+    const program = new Command();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "uninstall"], { from: "user" });
+
+    expect(mockedUnlinkSync).toHaveBeenCalledWith("/fake/root/.git/hooks/pre-commit");
+  });
+
+  it("project uninstall strips only Prim's block from a Husky pre-commit hook", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.husky/pre-commit");
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\nlint-staged\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
+    );
+    const program = new Command();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "uninstall"], { from: "user" });
+
+    expect(mockedUnlinkSync).not.toHaveBeenCalled();
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      "/fake/root/.husky/pre-commit",
+      expect.stringContaining("lint-staged"),
+      { mode: 0o755 },
+    );
+    expect(String(mockedWriteFileSync.mock.calls[0]?.[1])).not.toContain("prim-pre-commit");
+  });
+
+  it("project uninstall fails closed on an ambiguously modified Prim pre-commit hook", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.git/hooks/pre-commit");
+    mockedReadFileSync.mockReturnValue("#!/bin/sh\nprim-pre-commit --custom\nlint-staged\n");
+    const program = new Command().exitOverride();
+    registerHooksCommands(program);
+
+    await expect(program.parseAsync(["hooks", "uninstall"], { from: "user" })).rejects.toThrow(
+      /ownership could not be proven/,
+    );
+
+    expect(mockedUnlinkSync).not.toHaveBeenCalled();
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedUninstallProjectPostCommitHook).not.toHaveBeenCalled();
+    expect(mockedUninstallProjectPostRewriteHook).not.toHaveBeenCalled();
   });
 });
 
@@ -702,6 +771,22 @@ describe("uninstallGlobalHooks (user scope)", () => {
   it("removes prim scripts and unsets core.hooksPath when it is still ours", () => {
     stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
     mockedExistsSync.mockReturnValue(true);
+    installGlobalHooks();
+    const contentByPath = new Map(
+      mockedWriteFileSync.mock.calls.map((call) => [String(call[0]), String(call[1])]),
+    );
+    const postCommitCall = mockedEnsurePostCommitHookAtPath.mock.calls.find(
+      ([path]) => path === join(PRIM_GIT_HOOKS_DIR, "post-commit"),
+    );
+    contentByPath.set(String(postCommitCall?.[0]), String(postCommitCall?.[1]));
+    const names = [...contentByPath.keys()].map((path) =>
+      path.slice(`${PRIM_GIT_HOOKS_DIR}/`.length),
+    );
+    mockedReaddirSync.mockReturnValue(names);
+    mockedReadFileSync.mockImplementation((path) => contentByPath.get(String(path)) ?? "");
+    mockedExecFileSync.mockClear();
+    mockedUnlinkSync.mockClear();
+
     uninstallGlobalHooks();
     const unlinked = mockedUnlinkSync.mock.calls.map((c) => String(c[0]));
     expect(unlinked).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
@@ -715,6 +800,80 @@ describe("uninstallGlobalHooks (user scope)", () => {
       ["config", "--global", "--unset", "core.hooksPath"],
       expect.objectContaining({ timeout: 1_000 }),
     );
+  });
+
+  it("fails closed without unsetting core.hooksPath when Prim's directory has a foreign entry", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    mockedReaddirSync.mockReturnValue(["foreign-tool"]);
+
+    expect(() => uninstallGlobalHooks()).toThrow(/unexpected entry/);
+
+    expect(mockedUnlinkSync).not.toHaveBeenCalled();
+    expect(
+      mockedExecFileSync.mock.calls.some((call) =>
+        ((call[1] as string[] | undefined) ?? []).includes("--unset"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed when Prim's global hooks directory is a symlink", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedLstatSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => false,
+      isSymbolicLink: () => true,
+      size: 0,
+      mode: 0,
+    } as ReturnType<typeof lstatSync>);
+
+    expect(() => uninstallGlobalHooks()).toThrow(/not a Prim-owned directory/);
+
+    expect(mockedReaddirSync).not.toHaveBeenCalled();
+    expect(mockedUnlinkSync).not.toHaveBeenCalled();
+    expect(
+      mockedExecFileSync.mock.calls.some((call) =>
+        ((call[1] as string[] | undefined) ?? []).includes("--unset"),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed without deletion when an owned-name global hook was modified", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    mockedReaddirSync.mockReturnValue(["pre-commit"]);
+    mockedReadFileSync.mockReturnValue("#!/bin/sh\nforeign-tool\n");
+
+    expect(() => uninstallGlobalHooks()).toThrow(/not an exact Prim-owned hook/);
+
+    expect(mockedUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("recognizes an exact global pre-commit scaffold with an older pinned invocation", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    installGlobalHooks();
+    const current = String(
+      mockedWriteFileSync.mock.calls.find(
+        ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "pre-commit"),
+      )?.[1] ?? "",
+    );
+    const older = current
+      .replaceAll("/opt/prim/", "/old/prim/")
+      .replace("@primitive.ai/prim@0.1.0-alpha.55", "@primitive.ai/prim@0.1.0-alpha.54");
+    mockedReaddirSync.mockReturnValue(["pre-commit"]);
+    mockedReadFileSync.mockReturnValue(older);
+    mockedExecFileSync.mockClear();
+    mockedUnlinkSync.mockClear();
+
+    uninstallGlobalHooks();
+
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
+    expect(
+      mockedExecFileSync.mock.calls.some((call) =>
+        ((call[1] as string[] | undefined) ?? []).includes("--unset"),
+      ),
+    ).toBe(true);
   });
 
   it("strips the prim block from a foreign hook that has other content, leaving the file + pointer", () => {

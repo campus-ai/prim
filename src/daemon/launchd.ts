@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   constants,
   accessSync,
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -41,6 +44,7 @@ const RETRY_MAX_MS = 500;
 const SERVICE_NOT_FOUND = 113;
 const TRANSITION_IN_PROGRESS = 5;
 const OUTPUT_LIMIT = 4_096;
+const DAEMON_DISABLED_CONTENT = "disabled by `prim daemon stop`\n";
 
 export interface RuntimePathOptions {
   env?: NodeJS.ProcessEnv;
@@ -55,6 +59,11 @@ export interface RuntimePaths {
   statuslineLauncher: string;
   disabledMarker: string;
   lifecycleLockDir: string;
+}
+
+export interface RemoveDaemonRuntimeResult {
+  changed: boolean;
+  runtimePaths: RuntimePaths;
 }
 
 export interface RuntimeManifest {
@@ -252,6 +261,59 @@ function readRuntimeManifest(path: string): RuntimeManifest | null {
   }
 }
 
+const RUNTIME_RELEASE_RE = /^release-[0-9a-f]{16}$/u;
+
+function exactKeys(value: object, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function readOwnedRuntimeManifest(releaseDir: string): RuntimeManifest | null {
+  const manifestPath = join(releaseDir, "manifest.json");
+  const daemonPath = join(releaseDir, "prim-daemon-server");
+  try {
+    const raw = readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (
+      !exactKeys(parsed, [
+        "schemaVersion",
+        "version",
+        "nodePath",
+        "daemonFile",
+        "daemonSha256",
+        "stagedAt",
+      ])
+    ) {
+      return null;
+    }
+    const manifest = parsed as RuntimeManifest;
+    if (
+      manifest.schemaVersion !== RUNTIME_SCHEMA_VERSION ||
+      compareSemver(manifest.version, manifest.version) !== 0 ||
+      !isAbsolute(manifest.nodePath) ||
+      /[\r\n]/u.test(manifest.nodePath) ||
+      manifest.daemonFile !== "prim-daemon-server" ||
+      !/^[0-9a-f]{64}$/u.test(manifest.daemonSha256) ||
+      new Date(manifest.stagedAt).toISOString() !== manifest.stagedAt ||
+      raw !== `${JSON.stringify(manifest, null, 2)}\n` ||
+      !lstatSync(daemonPath).isFile() ||
+      sha256File(daemonPath) !== manifest.daemonSha256
+    ) {
+      return null;
+    }
+    const entries = readdirSync(releaseDir).sort();
+    return entries.length === 2 &&
+      entries[0] === "manifest.json" &&
+      entries[1] === "prim-daemon-server"
+      ? manifest
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function sameRuntime(
   current: RuntimeManifest | null,
   desired: RuntimeManifest,
@@ -412,6 +474,189 @@ export function runtimeStatuslineCommand(options: RuntimePathOptions = {}): stri
   // honored, otherwise an absolute HOME is required.
   const resolver = `prim_data=\${XDG_DATA_HOME:-}; case "$prim_data" in /*) ;; *) case "\${HOME:-}" in /*) prim_data="$HOME/.local/share" ;; *) prim_data= ;; esac ;; esac; if [ -n "$prim_data" ] && [ -x "$prim_data/prim/runtime/prim-statusline" ]; then exec "$prim_data/prim/runtime/prim-statusline"; fi; exec ${stableHookCommand("prim-statusline")}`;
   return `/bin/sh -c ${shellQuote(resolver)} prim-statusline`;
+}
+
+function assertRegularFile(path: string, label: string): void {
+  const stat = lstatIfPresent(path);
+  if (stat && !stat.isFile()) {
+    throw new Error(`refusing to remove non-file ${label} at ${path}`);
+  }
+}
+
+function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
+function assertExactFile(path: string, expected: string, label: string): void {
+  if (!lstatIfPresent(path)) return;
+  assertRegularFile(path, label);
+  if (readFileSync(path, "utf8") !== expected) {
+    throw new Error(`refusing to remove unrecognized ${label} at ${path}`);
+  }
+}
+
+export function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
+  const runtime = runtimePaths(options);
+  const control = daemonControlPaths(options);
+  const configDir = primConfigDirectory(options);
+  const service = process.platform === "darwin" ? launchdPaths(options) : undefined;
+  const logPath = service?.logPath ?? join(configDir, "daemon.log");
+
+  for (const activeArtifact of [
+    join(configDir, "daemon.pid"),
+    join(configDir, "sock"),
+    join(configDir, "daemon.lock"),
+    join(configDir, "client-instance.lock"),
+  ]) {
+    if (lstatIfPresent(activeArtifact)) {
+      throw new Error(`refusing runtime removal while daemon state remains at ${activeArtifact}`);
+    }
+  }
+
+  if (lstatIfPresent(control.launcher)) {
+    assertRegularFile(control.launcher, "daemon launcher");
+    if (!readDaemonLauncher(control.launcher)) {
+      throw new Error(`refusing to remove unrecognized daemon launcher at ${control.launcher}`);
+    }
+  }
+  assertExactFile(control.disabledMarker, DAEMON_DISABLED_CONTENT, "daemon disable marker");
+  if (control.legacyDisabledMarker !== control.disabledMarker) {
+    assertExactFile(
+      control.legacyDisabledMarker,
+      DAEMON_DISABLED_CONTENT,
+      "legacy daemon disable marker",
+    );
+  }
+  assertRegularFile(logPath, "daemon log");
+  assertRegularFile(join(configDir, "daemon-health.json"), "daemon health snapshot");
+  assertRegularFile(join(configDir, "client_instance_id"), "daemon client instance id");
+
+  if (service && lstatIfPresent(service.plistPath)) {
+    assertRegularFile(service.plistPath, "launchd property list");
+    const expected = generateLaunchAgentPlist({
+      launcherPath: control.launcher,
+      logPath,
+      workingDirectory: options.homeDir ?? homedir(),
+      label: options.label,
+    });
+    if (readFileSync(service.plistPath, "utf8") !== expected) {
+      throw new Error(
+        `refusing to remove unrecognized launchd property list at ${service.plistPath}`,
+      );
+    }
+  }
+
+  const runtimeDirectory = lstatIfPresent(runtime.runtimeDir);
+  if (!runtimeDirectory) return;
+  if (!runtimeDirectory.isDirectory()) {
+    throw new Error(`refusing to remove non-directory daemon runtime at ${runtime.runtimeDir}`);
+  }
+  const allowed = new Set(["current", "prim-statusline", "releases"]);
+  const unexpected = readdirSync(runtime.runtimeDir).filter((entry) => !allowed.has(entry));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `refusing to remove daemon runtime with unrecognized entries: ${unexpected.sort().join(", ")}`,
+    );
+  }
+
+  const manifests = new Map<string, RuntimeManifest>();
+  const releasesDirectory = lstatIfPresent(runtime.releasesDir);
+  if (releasesDirectory) {
+    if (!releasesDirectory.isDirectory()) {
+      throw new Error(`refusing to remove non-directory daemon releases at ${runtime.releasesDir}`);
+    }
+    for (const entry of readdirSync(runtime.releasesDir, { withFileTypes: true })) {
+      const releaseDir = join(runtime.releasesDir, entry.name);
+      const manifest =
+        entry.isDirectory() && RUNTIME_RELEASE_RE.test(entry.name)
+          ? readOwnedRuntimeManifest(releaseDir)
+          : null;
+      if (!manifest) {
+        throw new Error(`refusing to remove unrecognized daemon release ${releaseDir}`);
+      }
+      manifests.set(entry.name, manifest);
+    }
+  }
+
+  let selected: RuntimeManifest | undefined;
+  const currentLink = lstatIfPresent(runtime.currentLink);
+  if (currentLink) {
+    if (!currentLink.isSymbolicLink()) {
+      throw new Error(
+        `refusing to remove malformed daemon runtime selector ${runtime.currentLink}`,
+      );
+    }
+    const target = readlinkSync(runtime.currentLink);
+    const releaseName = basename(target);
+    if (target !== join("releases", releaseName) || !RUNTIME_RELEASE_RE.test(releaseName)) {
+      throw new Error(
+        `refusing to remove malformed daemon runtime selector ${runtime.currentLink}`,
+      );
+    }
+    selected = manifests.get(releaseName);
+    if (!selected) {
+      throw new Error(`refusing to remove missing selected daemon release ${releaseName}`);
+    }
+  }
+  if (lstatIfPresent(runtime.statuslineLauncher)) {
+    if (!selected) {
+      throw new Error(
+        `refusing to remove daemon statusline without a selected runtime at ${runtime.statuslineLauncher}`,
+      );
+    }
+    assertExactFile(
+      runtime.statuslineLauncher,
+      statuslineLauncherContent(selected.version, options),
+      "daemon statusline launcher",
+    );
+  }
+}
+
+export type RemoveDaemonRuntimeOptions = LaunchdPathOptions & {
+  lifecycleLock?: LifecycleLockControl;
+};
+
+/** Remove only stopped, schema-valid daemon/runtime artifacts owned by Prim. */
+export async function removeDaemonRuntime(
+  options: RemoveDaemonRuntimeOptions = {},
+): Promise<RemoveDaemonRuntimeResult> {
+  const runtime = runtimePaths(options);
+  const control = daemonControlPaths(options);
+  const configDir = primConfigDirectory(options);
+  const service = process.platform === "darwin" ? launchdPaths(options) : undefined;
+  const logPath = service?.logPath ?? join(configDir, "daemon.log");
+  const ownedArtifacts = [
+    runtime.runtimeDir,
+    control.launcher,
+    control.disabledMarker,
+    control.legacyDisabledMarker,
+    ...(service ? [service.plistPath] : []),
+    logPath,
+    join(configDir, "daemon-health.json"),
+    join(configDir, "client_instance_id"),
+  ];
+  if (!ownedArtifacts.some((path) => lstatIfPresent(path))) {
+    return { changed: false, runtimePaths: runtime };
+  }
+
+  return withDaemonLifecycleLock(async () => {
+    assertOwnedDaemonRuntime(options);
+    for (const path of ownedArtifacts.filter((candidate) => candidate !== runtime.runtimeDir)) {
+      rmSync(path, { force: true });
+    }
+    if (lstatIfPresent(runtime.runtimeDir)) {
+      const quarantined = `${runtime.runtimeDir}.uninstall-${String(process.pid)}-${randomBytes(8).toString("hex")}`;
+      renameSync(runtime.runtimeDir, quarantined);
+      rmSync(quarantined, { recursive: true, force: true });
+    }
+    return { changed: true, runtimePaths: runtime };
+  }, options);
 }
 
 function generateDaemonLauncher(config: DaemonLauncherConfig) {
@@ -930,7 +1175,7 @@ export function setDaemonExplicitlyDisabled(
     rmSync(paths.legacyDisabledMarker, { force: true });
     return;
   }
-  const content = "disabled by `prim daemon stop`\n";
+  const content = DAEMON_DISABLED_CONTENT;
   if (paths.legacyDisabledMarker !== paths.disabledMarker) {
     atomicWrite(paths.legacyDisabledMarker, content, RUNTIME_FILE_MODE);
   }
@@ -1103,7 +1348,6 @@ interface BootoutMacDaemonOptions extends LaunchdPathOptions {
 async function bootoutMacDaemonLocked(
   options: BootoutMacDaemonOptions,
 ): Promise<{ wasLoaded: boolean; legacyStopped: boolean; service: LaunchdService }> {
-  setDaemonExplicitlyDisabled(true, options);
   const runner = options.runner ?? runLaunchctl;
   const inspect = options.inspectDaemon ?? inspectDaemon;
   const sleep = options.sleep ?? defaultSleep;
@@ -1114,6 +1358,20 @@ async function bootoutMacDaemonLocked(
     options.migrateLegacy ?? (() => stopVerifiedLegacyDaemon(options, deadlineMs, nowMs, sleep));
   const service = getLaunchdService({ ...options, runner });
   const wasLoaded = service.loaded;
+  if (wasLoaded) {
+    const control = daemonControlPaths(options);
+    const launcher = lstatIfPresent(control.launcher);
+    if (
+      service.program !== control.launcher ||
+      !launcher?.isFile() ||
+      readDaemonLauncher(control.launcher) === null
+    ) {
+      throw new Error(
+        `refusing to stop unrecognized launchd program ${service.program ?? "(missing)"}`,
+      );
+    }
+  }
+  setDaemonExplicitlyDisabled(true, options);
   if (wasLoaded) {
     const result = runner(["bootout", paths.serviceTarget], timeoutMs(nowMs, deadlineMs));
     if (result.status !== 0) {
@@ -1137,8 +1395,16 @@ async function bootoutMacDaemonLocked(
       previousPid: service.pid,
     });
   }
-  const legacyStopped = (await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS)))
-    ? await migrateLegacy()
-    : false;
+  const legacy = await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS));
+  let legacyStopped = false;
+  if (legacy) {
+    legacyStopped = await migrateLegacy();
+    if (!legacyStopped) {
+      throw new Error(`legacy daemon pid=${legacy.pid} could not be verified stopped`);
+    }
+    if (await inspect(timeoutMs(nowMs, deadlineMs, READY_PROBE_TIMEOUT_MS))) {
+      throw new Error("legacy daemon remained present after stop");
+    }
+  }
   return { wasLoaded, legacyStopped, service };
 }
