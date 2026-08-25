@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { pinnedNpxCommand } from "./bin-path.js";
 import {
   PRIM_POST_REWRITE_BLOCK_END,
   PRIM_POST_REWRITE_BLOCK_START,
@@ -63,9 +64,10 @@ function initializedRepository(): HookRepo {
   git(root, ["config", "commit.gpgsign", "false"]);
   git(root, ["config", "prim.active", "true"]);
   git(root, ["config", "core.hooksPath", ".git/hooks"]);
-  const binDir = join(root, "node_modules", ".bin");
+  const cacheHome = temporaryDirectory("prim-post-rewrite-cache-");
+  const binDir = join(cacheHome, "prim", "bin");
   mkdirSync(binDir, { recursive: true });
-  const fakeDriver = join(binDir, "prim-post-rewrite");
+  const fakeDriver = join(cacheHome, "prim-post-rewrite");
   writeFileSync(
     fakeDriver,
     `#!/bin/sh
@@ -79,6 +81,8 @@ printf '%s\\n' "$PRIM_REWRITE_PAIRS_FILE" >> "$PRIM_TEST_PAIRS_PATH_LOG"
     { mode: 0o755 },
   );
   chmodSync(fakeDriver, 0o755);
+  writeFileSync(join(binDir, "node"), "/bin/sh\n");
+  writeFileSync(join(binDir, "prim-post-rewrite"), `${fakeDriver}\n`);
   const capturePath = join(root, "rewrite-capture.txt");
   const pairsPathLog = join(root, "rewrite-pairs-paths.txt");
   const tempDir = join(root, "hook-tmp");
@@ -90,7 +94,8 @@ printf '%s\\n' "$PRIM_REWRITE_PAIRS_FILE" >> "$PRIM_TEST_PAIRS_PATH_LOG"
     tempDir,
     env: {
       ...process.env,
-      PRIM_BIN_CACHE: "0",
+      PRIM_BIN_CACHE: "1",
+      XDG_CACHE_HOME: cacheHome,
       PRIM_TEST_DRIVER_CAPTURE: capturePath,
       PRIM_TEST_PAIRS_PATH_LOG: pairsPathLog,
       TMPDIR: tempDir,
@@ -156,8 +161,10 @@ describe("post-rewrite managed hook", () => {
     );
     expect(block).toContain("chmod 600");
     expect(block).toContain('"$prim_cache_dir/prim-post-rewrite"');
-    expect(block).toContain("./node_modules/.bin/prim-post-rewrite");
-    expect(block).toContain("@primitive.ai/prim@latest prim-post-rewrite");
+    expect(block).toContain(pinnedNpxCommand("prim-post-rewrite"));
+    expect(block).toContain("--ignore-scripts");
+    expect(block).not.toContain("@latest");
+    expect(block).not.toContain("./node_modules/.bin/prim-post-rewrite");
     expect(block).toContain("rm -f");
   });
 

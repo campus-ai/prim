@@ -24,7 +24,6 @@ import type { Command } from "commander";
 import { getSiteUrl } from "../client.js";
 import { daemonRequest } from "../daemon/client.js";
 import { decisionIngestionStatus } from "../lib/activation.js";
-import { warmBinCache } from "../lib/bin-cache.js";
 import { type StatusSnapshot, formatStatusline } from "../lib/statusline-render.js";
 
 const STATUSLINE_TIMEOUT_MS = 200;
@@ -84,9 +83,6 @@ export function registerStatuslineCommands(program: Command): void {
     .description("Render the Claude Code statusLine for the prim companion daemon")
     .action(async () => {
       try {
-        // Status refresh is the highest-frequency shim caller; keep the bin cache
-        // warm so it execs directly instead of re-resolving npx each tick.
-        warmBinCache();
         const line = await renderStatusline();
         process.stdout.write(line);
       } catch {

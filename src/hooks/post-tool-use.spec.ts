@@ -27,7 +27,6 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: mocks.isRepoActiveForCapture,
   repoSyncId: mocks.repoSyncId,
 }));
-vi.mock("../lib/bin-cache.js", () => ({ warmBinCache: vi.fn() }));
 vi.mock("../lib/git.js", () => ({ resolveRepositoryContext: mocks.resolveRepositoryContext }));
 vi.mock("../lib/workspace-id.js", () => ({
   getOrCreateWorkspaceId: vi.fn(() => ({ status: "not_git" })),
