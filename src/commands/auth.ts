@@ -25,6 +25,12 @@ import {
   setStoredToken,
 } from "../client.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
+import {
+  WorkosConnectProtocolError,
+  discoverWorkosConnect,
+  pollWorkosDeviceAuthorization,
+  requestWorkosDeviceAuthorization,
+} from "../lib/workos-connect.js";
 import { printJson } from "../output.js";
 import { FAILURE_HTML, STATE_MISMATCH_HTML, SUCCESS_HTML } from "./auth-pages.js";
 
@@ -380,8 +386,53 @@ export function registerAuthCommands(program: Command) {
   auth
     .command("login")
     .description("Authenticate via browser (WorkOS OAuth)")
-    .action(async () => {
+    .option("--no-browser", "Print the verification URL without opening a browser")
+    .action(async (options: { browser: boolean }) => {
       const siteUrl = getSiteUrl();
+
+      let discovery: Awaited<ReturnType<typeof discoverWorkosConnect>>;
+      try {
+        discovery = await discoverWorkosConnect(siteUrl);
+      } catch (error) {
+        reportFailure(
+          error instanceof WorkosConnectProtocolError ? error.code : "config_fetch_failed",
+          error instanceof Error ? error.message : "Connect discovery failed",
+        );
+        return;
+      }
+
+      if (discovery.state === "available") {
+        try {
+          const authorization = await requestWorkosDeviceAuthorization(discovery.configuration);
+          const verificationUrl =
+            authorization.verificationUriComplete ?? authorization.verificationUri;
+          console.error(`Authenticate at:\n${verificationUrl}`);
+          console.error(`Verification code: ${authorization.userCode}`);
+          if (options.browser) openBrowser(verificationUrl);
+          const tokens = await pollWorkosDeviceAuthorization(
+            discovery.configuration,
+            authorization,
+          );
+          await commitCredentials({
+            ...tokens,
+            metadata: {
+              version: 1,
+              family: "workos_connect",
+              issuer: discovery.configuration.issuer,
+              clientId: discovery.configuration.clientId,
+            },
+          });
+          reportSuccess();
+        } catch (error) {
+          reportFailure(
+            error instanceof WorkosConnectProtocolError
+              ? error.code
+              : "device_authorization_failed",
+            error instanceof Error ? error.message : "Device authorization failed",
+          );
+        }
+        return;
+      }
 
       let config: AuthBrokerConfig;
       try {
@@ -463,8 +514,10 @@ export function registerAuthCommands(program: Command) {
 
       // Guidance is for the human at the browser, so it rides STDERR — STDOUT
       // stays reserved for the machine-readable result line emitted on success.
-      console.error("Opening browser for authentication...");
-      openBrowser(authUrl.toString());
+      if (options.browser) {
+        console.error("Opening browser for authentication...");
+        openBrowser(authUrl.toString());
+      }
       console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
       console.error("Waiting for callback...");
 
@@ -509,8 +562,8 @@ export function registerAuthCommands(program: Command) {
     .description("Remove the saved authentication token")
     .action(async () => {
       const removed = await clearStoredCredentials({
-        beforeClear: async (refreshTokenValue) => {
-          if (!refreshTokenValue) return;
+        beforeClear: async (refreshTokenValue, metadata) => {
+          if (!refreshTokenValue || metadata.state !== "legacy_broker") return;
           try {
             const siteUrl = getSiteUrl();
             const res = await fetch(`${siteUrl}/mcp/broker/revoke`, {
