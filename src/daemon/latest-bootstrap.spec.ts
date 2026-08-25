@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { packageVersion } from "../lib/bin-path.js";
 import { runLatestDaemonBootstrap } from "./latest-bootstrap.js";
 
 const roots: string[] = [];
@@ -23,8 +24,8 @@ afterEach(() => {
   }
 });
 
-describe("latest daemon bootstrap", () => {
-  it("ensures current first, then revalidates latest with bounded npm retries", async () => {
+describe("pinned daemon bootstrap", () => {
+  it("ensures current first, then revalidates its exact version with bounded npm retries", async () => {
     const order: string[] = [];
     const child = new FakeChild();
     const spawnProcess = vi.fn((_command, _args, _options) => {
@@ -52,14 +53,16 @@ describe("latest daemon bootstrap", () => {
     expect(command).toBe("npx");
     expect(args).toEqual([
       "--yes",
+      "--ignore-scripts",
       "--prefer-online",
       "-p",
-      "@primitive.ai/prim@latest",
+      `@primitive.ai/prim@${packageVersion()}`,
       "prim",
       "daemon",
       "ensure",
     ]);
     expect(args).not.toContain("--latest-bootstrap");
+    expect(args.join(" ")).not.toContain("@latest");
     expect(options).toMatchObject({
       stdio: "ignore",
       env: {

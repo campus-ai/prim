@@ -6,20 +6,15 @@
  * prim skill status    — Report whether the skill block is installed
  */
 
-import { randomUUID } from "node:crypto";
 import {
   constants,
   closeSync,
   existsSync,
   fstatSync,
-  fsyncSync,
   lstatSync,
   openSync,
   readFileSync,
   readSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -27,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { createPatch } from "diff";
 import { parse as parseYaml } from "yaml";
+import { atomicWriteFile } from "../lib/atomic-file.js";
 import { printJson } from "../output.js";
 import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
 
@@ -214,31 +210,7 @@ export function removeBlock(existing: string): string | null {
 }
 
 export function atomicWrite(target: string, content: string): void {
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  let temporaryCreated = false;
-  try {
-    // O_EXCL prevents a pre-planted link from turning an automatic refresh
-    // into a write through an attacker-chosen path. A unique name also keeps
-    // concurrent SessionStart refreshes from sharing one temporary file.
-    const fd = openSync(tmp, "wx");
-    temporaryCreated = true;
-    try {
-      writeFileSync(fd, content);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(tmp, target);
-  } catch (error) {
-    if (temporaryCreated) {
-      try {
-        rmSync(tmp, { force: true });
-      } catch {
-        // Preserve the write failure; cleanup is best-effort.
-      }
-    }
-    throw error;
-  }
+  atomicWriteFile(target, content);
 }
 
 function resolveTarget(

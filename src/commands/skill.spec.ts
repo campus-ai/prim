@@ -5,10 +5,18 @@ const TMP_ID = "00000000-0000-4000-8000-000000000001";
 
 vi.mock("node:crypto", () => ({ randomUUID: vi.fn(() => TMP_ID) }));
 vi.mock("node:fs", () => ({
-  constants: { O_RDONLY: 0, O_NOFOLLOW: 0x20000 },
+  constants: {
+    O_RDONLY: 0,
+    O_WRONLY: 1,
+    O_CREAT: 0x200,
+    O_EXCL: 0x800,
+    O_NOFOLLOW: 0x100,
+  },
   existsSync: vi.fn(() => false),
+  fchmodSync: vi.fn(),
   fstatSync: vi.fn(),
   lstatSync: vi.fn(),
+  mkdirSync: vi.fn(),
   readFileSync: vi.fn(() => ""),
   readSync: vi.fn(() => 0),
   writeFileSync: vi.fn(),
@@ -105,7 +113,12 @@ function guidanceFixture(entries: Record<string, GuidanceEntry>): void {
     } as ReturnType<typeof lstatSync>;
   });
   mockedOpenSync.mockImplementation((path, flags) => {
-    if (flags === "wx") return 1;
+    if (
+      flags ===
+      (constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW)
+    ) {
+      return 1;
+    }
     const entry = entries[String(path)];
     if (!entry || entry.kind === "unreadable") {
       throw Object.assign(new Error("unreadable"), { code: "EACCES" });
@@ -438,7 +451,11 @@ describe("atomicWrite", () => {
     atomicWrite("/repo/CLAUDE.md", "next");
 
     expect(mockedRandomUUID).toHaveBeenCalledOnce();
-    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "wx");
+    expect(mockedOpenSync).toHaveBeenCalledWith(
+      tmpFor("/repo/CLAUDE.md"),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    );
     expect(mockedWriteFileSync).toHaveBeenCalledWith(1, "next");
     expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "/repo/CLAUDE.md");
   });
@@ -497,7 +514,11 @@ describe("runInstall", () => {
     expect(runInstall("/repo", {})).toBe(0);
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
     const [, content] = mockedWriteFileSync.mock.calls[0];
-    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "wx");
+    expect(mockedOpenSync).toHaveBeenCalledWith(
+      tmpFor("/repo/CLAUDE.md"),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    );
     expect(String(content)).toContain(SKILL_BEGIN);
     expect(String(content)).toContain(SKILL_END);
     expect(mockedRenameSync).toHaveBeenCalledWith(tmpFor("/repo/CLAUDE.md"), "/repo/CLAUDE.md");
@@ -538,7 +559,11 @@ describe("runInstall", () => {
     fsFixture({ target: "/repo/custom/rules.md", targetContent: "" });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(runInstall("/repo", { target: "custom/rules.md" })).toBe(0);
-    expect(mockedOpenSync).toHaveBeenCalledWith(tmpFor("/repo/custom/rules.md"), "wx");
+    expect(mockedOpenSync).toHaveBeenCalledWith(
+      tmpFor("/repo/custom/rules.md"),
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o666,
+    );
     expect(mockedRenameSync).toHaveBeenCalledWith(
       tmpFor("/repo/custom/rules.md"),
       "/repo/custom/rules.md",

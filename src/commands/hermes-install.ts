@@ -16,30 +16,20 @@
  *   - prim-session-start / prim-session-end on the session boundaries, so the
  *     daemon's presence reflects live Hermes sessions.
  *
- * The target is YAML, not JSON, and a file the user hand-maintains. We
- *      rewrite ONLY the text of its top-level `hooks:` block (a byte-level
- *      splice, not a document re-serialize), so the user's providers, models,
- *      comments, and formatting everywhere else survive byte-for-byte.
+ * The target is YAML, not JSON, and a file the user hand-maintains. We rewrite
+ * ONLY the text of its top-level `hooks:` block (a byte-level splice, not a
+ * document re-serialize), so the user's providers, models, comments, and
+ * formatting everywhere else survive byte-for-byte.
  *
  * Writes atomically (tmp + fsync + rename). AX contract (matches `prim claude`
  * / `prim codex`): STDOUT is the JSON result; STDERR is the human verdict.
  */
-import {
-  chmodSync,
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { Command } from "commander";
-import { Document, parseDocument, stringify } from "yaml";
+import { Document, isMap, isSeq, parseAllDocuments, stringify, visit } from "yaml";
+import { atomicWriteFile } from "../lib/atomic-file.js";
 import { binFile, packageVersion } from "../lib/bin-path.js";
 
 const CAPTURE_BIN = "prim-hook";
@@ -51,6 +41,7 @@ const HERMES_ARGS = "--agent hermes";
 const EDIT_MATCHER = "write_file|patch";
 const JSON_INDENT = 2;
 const SHIM_MODE = 0o755;
+const CONFIG_MODE = 0o600;
 const PRIM_BINS = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, SESSION_START_BIN, SESSION_END_BIN];
 const PINNED_VERSION = packageVersion();
 if (!PINNED_VERSION) throw new Error("cannot determine Primitive package version");
@@ -96,12 +87,11 @@ function commandFor(bin: string): string {
   return `"${shimPath()}" ${bin} ${HERMES_ARGS}`;
 }
 
-// A hook command is prim's when it routes `bin` through the prim shim. The
-// shim name + bin token is stable regardless of the (machine-specific) home
-// prefix; the optional `"` tolerates the quoted-path form, and the five bin
-// names are mutually non-substring.
+// A hook command is prim's only when it exactly names the shim this install
+// owns. A shape or suffix match could delete a user's unrelated shim under a
+// different agent-hooks directory.
 function commandUsesBin(command: string, bin: string): boolean {
-  return new RegExp(`prim-shim\\.sh"?\\s+${bin}\\s`).test(command);
+  return command === commandFor(bin);
 }
 
 // The Hermes lifecycle events the capture hook rides — the Hermes-named
@@ -135,8 +125,37 @@ const REGISTRATIONS: HermesReg[] = [
   { event: "on_session_end", bin: SESSION_END_BIN },
 ];
 
-export type HookEntry = { matcher?: string; command: string; timeout?: number };
+export type HookEntry = {
+  matcher?: string;
+  command: string;
+  timeout?: number;
+  [key: string]: unknown;
+};
 export type HooksMap = Record<string, HookEntry[]>;
+
+type YamlValue = {
+  toJSON?: () => unknown;
+  anchor?: string | null;
+  comment?: string | null;
+  commentBefore?: string | null;
+  range?: [number, number, number];
+  spaceBefore?: boolean;
+};
+
+function yamlValue(node: unknown): unknown {
+  return typeof (node as YamlValue | null)?.toJSON === "function"
+    ? (node as YamlValue).toJSON?.()
+    : node;
+}
+
+function hookEntry(node: unknown): HookEntry | null {
+  const value = yamlValue(node);
+  return typeof value === "object" &&
+    value !== null &&
+    typeof (value as HookEntry).command === "string"
+    ? (value as HookEntry)
+    : null;
+}
 
 function entryFor(reg: HermesReg): HookEntry {
   const command = commandFor(reg.bin);
@@ -199,31 +218,66 @@ export function isCaptureInstalled(hooks: HooksMap): boolean {
   );
 }
 
-// Parse the document, preserving everything outside `hooks`. A missing or empty
-// file yields a fresh document.
+const INVALID_CONFIG_MESSAGE =
+  "Hermes config must be valid, single-document YAML with a top-level mapping";
+const ALIAS_CONFIG_MESSAGE =
+  "Hermes hook aliases are not supported; expand aliases inside the hooks mapping before retrying";
+
+/**
+ * Parse the one Hermes config document we can update without guessing. Comment-
+ * only and empty files are valid empty configs. Malformed streams, multiple
+ * documents, and non-mapping roots fail before either config or shim is touched.
+ */
+function parseHermesDocument(raw: string): Document {
+  const documents = parseAllDocuments(raw);
+  if (documents.length === 0) return new Document();
+  if (documents.length !== 1) {
+    throw new Error(`${INVALID_CONFIG_MESSAGE}; found ${String(documents.length)} documents`);
+  }
+  const doc = documents[0];
+  const firstError = doc.errors[0];
+  if (firstError) {
+    throw new Error(`${INVALID_CONFIG_MESSAGE}: ${firstError.message}`);
+  }
+  if (doc.contents !== null && !isMap(doc.contents)) {
+    throw new Error(`${INVALID_CONFIG_MESSAGE}; the document root is not a mapping`);
+  }
+
+  const hooksNode = doc.get("hooks", true);
+  if (hooksNode !== undefined) {
+    if (!isMap(hooksNode)) {
+      throw new Error("cannot merge Primitive hooks into a non-mapping hooks value");
+    }
+    let aliasFound = false;
+    visit(hooksNode, {
+      Alias() {
+        aliasFound = true;
+        return visit.BREAK;
+      },
+    });
+    if (aliasFound) throw new Error(ALIAS_CONFIG_MESSAGE);
+  }
+  return doc;
+}
+
+// Parse the document, preserving everything outside `hooks`. A missing file
+// yields a fresh document.
 function readDoc(path: string): Document {
   if (!existsSync(path)) {
     return new Document();
   }
-  const raw = readFileSync(path, "utf-8");
-  return raw.trim().length === 0 ? new Document() : parseDocument(raw);
+  return parseHermesDocument(readFileSync(path, "utf-8"));
 }
 
 export function readHooks(doc: Document): HooksMap {
-  const root = doc.toJS() as Record<string, unknown> | null;
-  const hooks = root?.hooks;
-  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
-    return {};
-  }
+  const hooks = doc.get("hooks", true);
+  if (!isMap(hooks)) return {};
+
   const out: HooksMap = {};
-  for (const [event, list] of Object.entries(hooks as Record<string, unknown>)) {
-    if (!Array.isArray(list)) {
-      continue;
-    }
-    const entries = list.filter(
-      (e): e is HookEntry =>
-        typeof e === "object" && e !== null && typeof (e as HookEntry).command === "string",
-    );
+  for (const pair of hooks.items) {
+    const event = yamlValue(pair.key);
+    if (typeof event !== "string" || !isSeq(pair.value)) continue;
+    const entries = pair.value.items.map(hookEntry).filter((entry) => entry !== null);
     if (entries.length > 0) {
       out[event] = entries;
     }
@@ -244,7 +298,7 @@ function locateHooksBlock(raw: string): { start: number; end: number } | null {
     const lineStart = offset;
     offset += line.length + 1; // +1 for the "\n" split removed
     if (start === -1) {
-      if (/^hooks:(\s|$)/.test(line)) {
+      if (/^(?:hooks|"hooks"|'hooks'):(\s|$)/.test(line)) {
         start = lineStart;
       }
     } else if (/^\S/.test(line) && !line.startsWith("#")) {
@@ -268,78 +322,294 @@ function serializeHooks(hooks: HooksMap): string {
   return stringify({ hooks }, { lineWidth: 0 });
 }
 
+function isPrimEntry(entry: HookEntry): boolean {
+  return PRIM_BINS.some((bin) => commandUsesBin(entry.command, bin));
+}
+
+function entryKey(entry: HookEntry): string {
+  return JSON.stringify(entry);
+}
+
+function copyComments(source: unknown, target: unknown): void {
+  const from = source as YamlValue | null;
+  const to = target as YamlValue | null;
+  if (!from || !to) return;
+  if (from.anchor !== undefined && to.anchor === undefined) {
+    to.anchor = from.anchor;
+  }
+  if (from.commentBefore !== undefined && to.commentBefore === undefined) {
+    to.commentBefore = from.commentBefore;
+  }
+  if (from.comment !== undefined && to.comment === undefined) {
+    to.comment = from.comment;
+  }
+  if (from.spaceBefore !== undefined && to.spaceBefore === undefined) {
+    to.spaceBefore = from.spaceBefore;
+  }
+}
+
+/**
+ * Reconcile one sequence without rebuilding user-owned nodes. Valid entries
+ * follow the merge helper's requested order; malformed/foreign nodes retain
+ * their original AST nodes, comments, and relative positions.
+ */
+function reconcileSequence(
+  doc: Document,
+  sequence: { items: unknown[] },
+  desired: HookEntry[],
+): void {
+  const available = new Map<string, unknown[]>();
+  const displacedPrim: unknown[] = [];
+  for (const node of sequence.items) {
+    const entry = hookEntry(node);
+    if (!entry) continue;
+    const key = entryKey(entry);
+    const nodes = available.get(key) ?? [];
+    nodes.push(node);
+    available.set(key, nodes);
+  }
+
+  const desiredNodes = desired.map((entry) => {
+    const candidates = available.get(entryKey(entry));
+    const reused = candidates?.shift();
+    return reused ?? doc.createNode(entry);
+  });
+
+  for (const nodes of available.values()) {
+    for (const node of nodes) {
+      const entry = hookEntry(node);
+      if (entry && isPrimEntry(entry)) displacedPrim.push(node);
+    }
+  }
+
+  const newPrimNodes = desiredNodes.filter((node) => {
+    const entry = hookEntry(node);
+    return entry !== null && isPrimEntry(entry) && !sequence.items.includes(node);
+  });
+  for (let i = 0; i < Math.min(displacedPrim.length, newPrimNodes.length); i += 1) {
+    copyComments(displacedPrim[i], newPrimNodes[i]);
+  }
+
+  const next: unknown[] = [];
+  let desiredIndex = 0;
+  for (const node of sequence.items) {
+    if (hookEntry(node) === null) {
+      next.push(node);
+    } else if (desiredIndex < desiredNodes.length) {
+      next.push(desiredNodes[desiredIndex]);
+      desiredIndex += 1;
+    }
+  }
+  next.push(...desiredNodes.slice(desiredIndex));
+  sequence.items = next;
+}
+
+/** Rewrite only the hooks AST, retaining comments and unrecognized user data. */
+function reconcileHooksDocument(doc: Document, desired: HooksMap): boolean {
+  const hooksNode = doc.get("hooks", true);
+  if (hooksNode === undefined) {
+    if (Object.keys(desired).length === 0) return false;
+    doc.set("hooks", desired);
+    return true;
+  }
+  if (!isMap(hooksNode)) {
+    if (Object.keys(desired).length === 0) return false;
+    throw new Error("cannot merge Primitive hooks into a non-mapping hooks value");
+  }
+
+  const seen = new Set<string>();
+  for (const pair of [...hooksNode.items]) {
+    const event = yamlValue(pair.key);
+    if (typeof event !== "string") continue;
+    if (seen.has(event)) {
+      throw new Error(`cannot safely merge duplicate Hermes hook event ${JSON.stringify(event)}`);
+    }
+    seen.add(event);
+
+    const expected = desired[event] ?? [];
+    if (!isSeq(pair.value)) {
+      if (expected.length > 0) {
+        throw new Error(
+          `cannot merge Primitive hooks into non-list event ${JSON.stringify(event)}`,
+        );
+      }
+      continue;
+    }
+    const hasManagedEntry = pair.value.items.some((node) => {
+      const entry = hookEntry(node);
+      return entry !== null && isPrimEntry(entry);
+    });
+    // Empty and otherwise-unrecognized events are user-owned. Only reconcile
+    // an existing sequence when Primitive already owns an entry in it or the
+    // requested install needs to add one.
+    if (!hasManagedEntry && expected.length === 0) continue;
+    reconcileSequence(doc, pair.value, expected);
+    if (pair.value.items.length === 0) {
+      hooksNode.delete(event);
+    }
+  }
+
+  for (const [event, entries] of Object.entries(desired)) {
+    if (!seen.has(event)) {
+      hooksNode.set(event, doc.createNode(entries));
+    }
+  }
+
+  if (hooksNode.items.length === 0) {
+    doc.delete("hooks");
+    return false;
+  }
+  return true;
+}
+
 // Replace ONLY the `hooks:` block with `hooks`'s serialization (or remove it
 // when empty), preserving every other byte of the file. Appends the block when
 // the file has none.
 export function spliceHooks(raw: string, hooks: HooksMap): string {
-  const block = serializeHooks(hooks);
+  const doc = parseHermesDocument(raw);
   const loc = locateHooksBlock(raw);
-  if (loc) {
-    return raw.slice(0, loc.start) + block + raw.slice(loc.end);
+  if (!loc) {
+    const block = serializeHooks(hooks);
+    if (block.length === 0) return raw;
+    if (doc.get("hooks", true) !== undefined) {
+      throw new Error("Hermes hooks must use a block-style top-level hooks key");
+    }
+    if (isMap(doc.contents) && doc.contents.flow) {
+      throw new Error("cannot append Primitive hooks to a flow-style Hermes root mapping");
+    }
+    const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+    const normalizedBlock = block.replaceAll("\n", newline);
+    const endMarker = /^(?:\.\.\.)[ \t]*(?:#.*)?(?:\r?\n|$)/m.exec(raw);
+    const insertAt = endMarker?.index ?? raw.length;
+    const beforeEnd = raw.slice(0, insertAt);
+    const afterEnd = raw.slice(insertAt);
+    const sep = beforeEnd.length === 0 || beforeEnd.endsWith("\n") ? "" : newline;
+    return `${beforeEnd}${sep}${normalizedBlock}${afterEnd}`;
   }
-  if (block.length === 0) {
-    return raw;
-  }
-  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  return `${raw}${sep}${block}`;
-}
 
-function hasAutoAccept(raw: string): boolean {
-  return /^hooks_auto_accept:/m.test(raw);
+  const hooksRemovalEnd = (doc.get("hooks", true) as YamlValue | undefined)?.range?.[2] ?? loc.end;
+  const hasHooks = reconcileHooksDocument(doc, hooks);
+  if (!hasHooks) {
+    // The node range ends before comments attached to the next key (or the
+    // document), while the textual block locator intentionally includes them.
+    // Use the AST boundary when removing hooks so those user comments survive.
+    return raw.slice(0, loc.start) + raw.slice(hooksRemovalEnd);
+  }
+  const serialized = doc.toString({ lineWidth: 0 });
+  const serializedLoc = locateHooksBlock(serialized);
+  if (!serializedLoc) {
+    throw new Error("Hermes hooks merge lost the hooks mapping");
+  }
+  const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+  const block = serialized.slice(serializedLoc.start, serializedLoc.end).replaceAll("\n", newline);
+  return raw.slice(0, loc.start) + block + raw.slice(loc.end);
 }
 
 // Ensure `hooks_auto_accept: true` is present — replacing an existing value or
 // appending the key, touching only that one line.
 function setAutoAccept(raw: string): string {
-  if (hasAutoAccept(raw)) {
-    return raw.replace(/^hooks_auto_accept:.*$/m, "hooks_auto_accept: true");
+  const boolLine =
+    /^((?:hooks_auto_accept|"hooks_auto_accept"|'hooks_auto_accept'):[ \t]*)(?:true|false)([ \t]*(?:#.*)?)$/m;
+  if (boolLine.test(raw)) {
+    return raw.replace(boolLine, "$1true$2");
   }
-  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  return `${raw}${sep}hooks_auto_accept: true\n`;
+  if (parseHermesDocument(raw).get("hooks_auto_accept", true) !== undefined) {
+    throw new Error("hooks_auto_accept must be a block-style boolean value");
+  }
+  const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+  const sep = raw.length === 0 || raw.endsWith("\n") ? "" : newline;
+  return `${raw}${sep}hooks_auto_accept: true${newline}`;
 }
 
-function atomicWriteFile(path: string, content: string): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const tmp = `${path}.tmp.${String(process.pid)}`;
-  writeFileSync(tmp, content, "utf-8");
-  const fd = openSync(tmp, "r+");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmp, path);
-}
-
-// True when the merged content is at least as parseable as the original — i.e.
-// the splice introduced no NEW structural error. Comparing error COUNTS (not
-// just "is it clean now") means a pre-existing ambiguity the user's YAML loader
-// already tolerates (e.g. a duplicate top-level key, which PyYAML reads
-// last-wins) is never mistaken for our corruption and never blocks the install.
+// The updater has one explicit parser contract: both snapshots must be valid,
+// single-document mappings. Malformed or ambiguous source is never rewritten.
 export function mergeKeepsYamlValid(before: string, after: string): boolean {
-  return parseDocument(after).errors.length <= parseDocument(before).errors.length;
+  try {
+    parseHermesDocument(before);
+    parseHermesDocument(after);
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+/** A syntactically valid write must also contain exactly the requested valid hooks. */
+export function mergePreservesHermesSemantics(
+  before: string,
+  after: string,
+  expectedHooks: HooksMap,
+): boolean {
+  if (!mergeKeepsYamlValid(before, after)) return false;
+  try {
+    return JSON.stringify(readHooksFromRaw(after)) === JSON.stringify(expectedHooks);
+  } catch {
+    return false;
+  }
+}
+
+const INVALID_MERGE_MESSAGE =
+  "[prim] aborted: the merge would change unrelated Hermes config; config left unchanged";
 
 // Defense in depth: abort (leaving the file byte-untouched) if the splice
 // introduced a new YAML error, rather than persist a config we made worse.
-function assertMergeValid(before: string, after: string): void {
-  if (!mergeKeepsYamlValid(before, after)) {
-    console.error("[prim] aborted: the merge would introduce invalid YAML; config left unchanged");
+function assertMergeValid(before: string, after: string, expectedHooks: HooksMap): void {
+  if (!mergePreservesHermesSemantics(before, after, expectedHooks)) {
+    console.error(INVALID_MERGE_MESSAGE);
     process.exit(1);
   }
 }
 
+export type HermesConfigSnapshot = {
+  exists: boolean;
+  mode: number;
+  raw: string;
+};
+
+function readConfigSnapshot(path: string): HermesConfigSnapshot {
+  if (!existsSync(path)) return { exists: false, mode: CONFIG_MODE, raw: "" };
+  return {
+    exists: true,
+    mode: statSync(path).mode & 0o777,
+    raw: readFileSync(path, "utf8"),
+  };
+}
+
+const CONCURRENT_CONFIG_MESSAGE =
+  "Hermes config changed during update; concurrent changes were preserved, retry the command";
+
+/**
+ * Atomically commit one already-validated snapshot after a best-effort stale
+ * snapshot check. The final rename is atomic, but it is not a filesystem CAS:
+ * an arbitrary editor can still write between validation and rename.
+ */
+export function writeHermesConfigSnapshot(
+  path: string,
+  before: HermesConfigSnapshot,
+  after: string,
+  expectedHooks: HooksMap,
+): void {
+  atomicWriteFile(path, after, {
+    ensureParent: true,
+    mode: before.mode,
+    validate(temporaryPath) {
+      const flushed = readFileSync(temporaryPath, "utf8");
+      if (!mergePreservesHermesSemantics(before.raw, flushed, expectedHooks)) {
+        throw new Error(INVALID_MERGE_MESSAGE);
+      }
+      const current = readConfigSnapshot(path);
+      const unchanged =
+        current.exists === before.exists &&
+        current.raw === before.raw &&
+        current.mode === before.mode;
+      const alreadyDesired =
+        current.exists && current.raw === after && current.mode === before.mode;
+      if (!unchanged && !alreadyDesired) throw new Error(CONCURRENT_CONFIG_MESSAGE);
+    },
+  });
+}
+
 function writeShim(): void {
-  const path = shimPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, SHIM_SCRIPT, "utf-8");
-  chmodSync(path, SHIM_MODE);
+  atomicWriteFile(shimPath(), SHIM_SCRIPT, { ensureParent: true, mode: SHIM_MODE });
 }
 
 function removeShim(): void {
@@ -350,12 +620,14 @@ function autoAcceptOf(raw: string): boolean {
   if (raw.trim().length === 0) {
     return false;
   }
-  return (parseDocument(raw).toJS() as Record<string, unknown> | null)?.hooks_auto_accept === true;
+  return (
+    (parseHermesDocument(raw).toJS() as Record<string, unknown> | null)?.hooks_auto_accept === true
+  );
 }
 
 // Read the existing hooks from raw config text (empty when the file is blank).
 function readHooksFromRaw(raw: string): HooksMap {
-  return readHooks(raw.trim().length > 0 ? parseDocument(raw) : new Document());
+  return readHooks(parseHermesDocument(raw));
 }
 
 export type InstallResult = {
@@ -368,7 +640,8 @@ export type InstallResult = {
 
 export function performInstall(opts: { force: boolean; autoAccept: boolean }): InstallResult {
   const path = configPath();
-  const raw = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  const snapshot = readConfigSnapshot(path);
+  const raw = snapshot.raw;
   const existing = readHooksFromRaw(raw);
   const desired = applyInstall(existing, opts.force);
   let next = raw;
@@ -378,13 +651,13 @@ export function performInstall(opts: { force: boolean; autoAccept: boolean }): I
   if (opts.autoAccept) {
     next = setAutoAccept(next);
   }
+  const changed = next !== raw;
+  if (changed) assertMergeValid(raw, next, desired);
   // The shim is what the hook commands point at; write it whenever installing,
   // idempotently, so a config-unchanged re-install still heals a missing shim.
   writeShim();
-  const changed = next !== raw;
   if (changed) {
-    assertMergeValid(raw, next);
-    atomicWriteFile(path, next);
+    writeHermesConfigSnapshot(path, snapshot, next, desired);
   }
   return {
     path,
@@ -401,15 +674,16 @@ export function performUninstall(): InstallResult {
     removeShim();
     return { path, gate: false, capture: false, autoAccept: false, changed: false };
   }
-  const raw = readFileSync(path, "utf-8");
+  const snapshot = readConfigSnapshot(path);
+  const raw = snapshot.raw;
   const existing = readHooksFromRaw(raw);
   const remaining = applyUninstall(existing);
   const next =
     JSON.stringify(existing) === JSON.stringify(remaining) ? raw : spliceHooks(raw, remaining);
   const changed = next !== raw;
   if (changed) {
-    assertMergeValid(raw, next);
-    atomicWriteFile(path, next);
+    assertMergeValid(raw, next, remaining);
+    writeHermesConfigSnapshot(path, snapshot, next, remaining);
   }
   // Every prim hook is gone now, so the shim it routed through is unused. The
   // user's hooks_auto_accept (if any) is left as their trust setting.
