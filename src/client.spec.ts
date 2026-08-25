@@ -177,7 +177,7 @@ describe("client credential store", () => {
       TOKEN_EXPIRES_PATH,
       TOKEN_FILE_PATH,
     ]);
-    expect(readdirSync(config).some((name) => name.includes(".tmp-"))).toBe(false);
+    expect(readdirSync(config).some((name) => name.endsWith(".tmp"))).toBe(false);
   });
 
   it("persists only a terminal refresh fingerprint and suppresses replay after reload", async () => {
