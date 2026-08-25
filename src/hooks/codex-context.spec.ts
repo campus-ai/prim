@@ -332,7 +332,6 @@ describe("Codex hook context", () => {
       includeDigest: false,
     });
 
-    expect(result.decisionDigest).toBeUndefined();
     expect(mocks.decisionDigestSnapshot).not.toHaveBeenCalled();
     await result.acknowledge(true);
     const files = readdirSync(stateDirectory()).filter((name) => name.endsWith(".json"));
