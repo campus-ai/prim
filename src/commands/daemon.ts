@@ -20,7 +20,6 @@
 
 import { type SpawnOptions, spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Command, Option } from "commander";
 import { daemonIsLive, daemonRequest } from "../daemon/client.js";
@@ -41,10 +40,11 @@ import {
 import { decisionIngestionStatus } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
+import { primConfigDirectory } from "../lib/paths.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
 
 const DAEMON_BIN = "prim-daemon-server";
-const CONFIG_DIR = join(homedir(), ".config", "prim");
+const CONFIG_DIR = primConfigDirectory();
 const PID_PATH = join(CONFIG_DIR, "daemon.pid");
 const SOCK_PATH = join(CONFIG_DIR, "sock");
 const LOG_PATH = join(CONFIG_DIR, "daemon.log");
@@ -298,7 +298,7 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
     return;
   }
 
-  // Hand the detached child an append fd to ~/.config/prim/daemon.log for
+  // Hand the detached child an append fd to the resolved daemon log for
   // stdout+stderr so its heartbeat/crash lines survive instead of going to
   // /dev/null. Fail-soft: if the log can't be opened, discard rather than
   // block startup.

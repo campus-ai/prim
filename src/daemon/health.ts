@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { primConfigDirectory } from "../lib/paths.js";
 
 const CONFIG_DIR_MODE = 0o700;
 const HEALTH_FILE_MODE = 0o600;
@@ -10,7 +10,7 @@ export const HEARTBEAT_RETRY_CAP_MS = 30_000;
 export const INGESTION_RETRY_BASE_MS = 5_000;
 export const INGESTION_RETRY_CAP_MS = 15_000;
 
-export const DAEMON_HEALTH_PATH = join(homedir(), ".config", "prim", "daemon-health.json");
+export const DAEMON_HEALTH_PATH = join(primConfigDirectory(), "daemon-health.json");
 
 export interface DaemonHeartbeatHealth {
   healthy: boolean;
