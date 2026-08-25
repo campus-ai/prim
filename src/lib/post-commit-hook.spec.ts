@@ -14,7 +14,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { packageVersion, pinnedNpxCommand } from "./bin-path.js";
 import {
   PRIM_POST_COMMIT_BLOCK_END,
   PRIM_POST_COMMIT_BLOCK_START,
@@ -655,10 +654,7 @@ printf 'foreign tail\\n'
   it("keeps the portable block free of checkout-specific absolute paths", () => {
     const root = repository("portable");
     expect(postCommitHookBlock()).not.toContain(root);
-    expect(postCommitHookBlock()).toContain(pinnedNpxCommand("prim-post-commit"));
-    expect(postCommitHookBlock()).toContain(`@primitive.ai/prim@${packageVersion()}`);
-    expect(postCommitHookBlock()).toContain("--ignore-scripts");
-    expect(postCommitHookBlock()).not.toContain("@latest");
+    expect(postCommitHookBlock()).toContain("@primitive.ai/prim@latest");
     expect(postCommitHookBlock()).toContain("prim-post-commit");
     expect(postCommitHookBlock()).toContain(
       "prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null)",
@@ -675,6 +671,8 @@ printf 'foreign tail\\n'
     expect(postCommitHookBlock()).toContain(
       '"$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &',
     );
-    expect(postCommitHookBlock()).not.toContain("./node_modules/.bin/prim-post-commit");
+    expect(postCommitHookBlock()).toContain(
+      "./node_modules/.bin/prim-post-commit ) </dev/null >/dev/null 2>&1 &",
+    );
   });
 });

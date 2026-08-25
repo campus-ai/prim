@@ -3,7 +3,7 @@
  *
  * Resolves the owning organization of a captured move via a priority chain:
  *
- *   1. Explicit session marker — <prim-config>/sessions/<sessionId>.json
+ *   1. Explicit session marker — ~/.config/prim/sessions/<sessionId>.json
  *      written by `prim session start`.
  *   2. Workspace pin — .prim/workspace.json, walking up from cwd.
  *   3. Default org — the org_id claim in the auth token's JWT. Covers the
@@ -11,18 +11,26 @@
  *   4. Unbound — undefined; the move journals to _unbound/ and
  *      `prim moves bind` can retroactively attribute it.
  *
- * Everything here is pure file IO + JWT base64 decoding. No network or HTTP
- * client imports — safe to call from prim-hook on the per-tool-call cold path.
+ * Everything here is pure file IO + JWT base64 decoding. No network, no
+ * client/auth imports — safe to call from prim-hook on the per-tool-call
+ * cold path.
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { jwtOrganizationId, resolveAuthCredential } from "./lib/credentials.js";
-import { primConfigDirectory } from "./lib/paths.js";
 
-const PRIM_CONFIG_DIR = primConfigDirectory();
+const PRIM_CONFIG_DIR = join(homedir(), ".config", "prim");
+const TOKEN_PATH = join(PRIM_CONFIG_DIR, "token");
 export const SESSIONS_DIR = join(PRIM_CONFIG_DIR, "sessions");
 const WORKSPACE_FILE = ".prim/workspace.json";
+
+const JWT_PARTS = 3;
+const BASE64_PAD_4 = 4;
+const ENV_TOKEN_LINE = /^\s*PRIM_TOKEN\s*=\s*(.*)$/m;
+const SURROUNDING_QUOTES = /^["']|["']$/g;
+const BASE64URL_MINUS = /-/g;
+const BASE64URL_UNDERSCORE = /_/g;
 
 type SessionMarker = { orgId?: string };
 type WorkspaceConfig = { orgId?: string };
@@ -61,9 +69,54 @@ export function fromWorkspaceFile(startDir: string): string | undefined {
   }
 }
 
-export function fromDefaultOrg(_cwd: string): string | undefined {
-  const credential = resolveAuthCredential();
-  return credential ? jwtOrganizationId(credential.token) : undefined;
+/**
+ * Resolve the bearer token the same way the HTTP client does — PRIM_TOKEN
+ * env first (the preferred headless/CI path), then the token file, then a
+ * PRIM_TOKEN line in the cwd's .env.local — without importing the client
+ * (which would pull the auth/HTTP graph onto the hook cold path).
+ */
+function readToken(cwd: string): string | undefined {
+  const fromEnv = process.env.PRIM_TOKEN;
+  if (fromEnv) {
+    return fromEnv.trim();
+  }
+  if (existsSync(TOKEN_PATH)) {
+    return readFileSync(TOKEN_PATH, "utf-8").trim();
+  }
+  const envLocal = join(cwd, ".env.local");
+  if (existsSync(envLocal)) {
+    const match = readFileSync(envLocal, "utf-8").match(ENV_TOKEN_LINE);
+    if (match) {
+      return match[1].trim().replace(SURROUNDING_QUOTES, "");
+    }
+  }
+  return;
+}
+
+function base64UrlDecode(s: string): string {
+  const padded = s.padEnd(
+    s.length + ((BASE64_PAD_4 - (s.length % BASE64_PAD_4)) % BASE64_PAD_4),
+    "=",
+  );
+  const normalized = padded.replace(BASE64URL_MINUS, "+").replace(BASE64URL_UNDERSCORE, "/");
+  return Buffer.from(normalized, "base64").toString("utf-8");
+}
+
+export function fromDefaultOrg(cwd: string): string | undefined {
+  const token = readToken(cwd);
+  if (!token) {
+    return;
+  }
+  const parts = token.split(".");
+  if (parts.length !== JWT_PARTS) {
+    return;
+  }
+  try {
+    const claims = JSON.parse(base64UrlDecode(parts[1])) as { org_id?: string };
+    return claims.org_id;
+  } catch {
+    return;
+  }
 }
 
 export type ResolvedBinding = {

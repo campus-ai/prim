@@ -4,6 +4,7 @@ import { processCodexMessageContext } from "./codex-message-context.js";
 function prepared(overrides: Record<string, unknown> = {}) {
   return {
     context: undefined,
+    decisionDigest: undefined,
     feedAvailable: true,
     acknowledge: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -14,6 +15,8 @@ describe("processCodexMessageContext", () => {
   it("delivers cached context through UserPromptSubmit and acknowledges after handoff", async () => {
     const context = prepared({
       context: "[prim] Decisions captured since last message: Taylor — “Use the daemon cache”",
+      decisionDigest:
+        "[prim] Decisions captured since last message: Taylor — “Use the daemon cache”",
     });
     const prepare = vi.fn().mockResolvedValue(context);
 
@@ -50,23 +53,26 @@ describe("processCodexMessageContext", () => {
     expect(context.acknowledge).toHaveBeenCalledWith(true);
   });
 
-  it("does not continue Stop when a Decision appeared after the prompt", async () => {
+  it("blocks Stop once when a Decision appeared after the prompt", async () => {
     const context = prepared({
       context:
         "primitive 1.2.3 (daemon: live)\n\n[prim] Decisions captured since last message: Taylor — “Use Stop as a backstop”",
+      decisionDigest:
+        "[prim] Decisions captured since last message: Taylor — “Use Stop as a backstop”",
     });
-    const prepare = vi.fn().mockResolvedValue(context);
     const result = await processCodexMessageContext(
       { hook_event_name: "Stop", session_id: "session-2", stop_hook_active: false },
-      { prepare },
+      { prepare: vi.fn().mockResolvedValue(context) },
     );
 
-    expect(result).toEqual({ output: {} });
-    expect(prepare).not.toHaveBeenCalled();
-    expect(context.acknowledge).not.toHaveBeenCalled();
+    expect(result.output).toMatchObject({ decision: "block" });
+    expect((result.output as { reason: string }).reason).toContain("Use Stop as a backstop");
+    expect((result.output as { reason: string }).reason).toContain("proactively tell the user");
+    await result.acknowledge?.();
+    expect(context.acknowledge).toHaveBeenCalledWith(true);
   });
 
-  it("does not inspect context when Codex marks the Stop hook active", async () => {
+  it("does not recurse when Codex marks the Stop hook active", async () => {
     const prepare = vi.fn();
     const result = await processCodexMessageContext(
       { hook_event_name: "Stop", session_id: "session-3", stop_hook_active: true },
@@ -78,13 +84,11 @@ describe("processCodexMessageContext", () => {
 
   it("leaves a status-only Stop unacknowledged for the next prompt", async () => {
     const context = prepared({ context: "primitive 1.2.3 (daemon: down)" });
-    const prepare = vi.fn().mockResolvedValue(context);
     const result = await processCodexMessageContext(
       { hook_event_name: "Stop", session_id: "session-4" },
-      { prepare },
+      { prepare: vi.fn().mockResolvedValue(context) },
     );
     expect(result).toEqual({ output: {} });
-    expect(prepare).not.toHaveBeenCalled();
     expect(context.acknowledge).not.toHaveBeenCalled();
   });
 

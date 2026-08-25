@@ -3,7 +3,7 @@
  *
  * Moves are journaled under a per-ENVIRONMENT, per-org bucket layout:
  *
- *   <prim-config>/moves/
+ *   ~/.config/prim/moves/
  *     <envSlug>/                — one partition per API deployment (envSlug)
  *       <orgId>/journal.ndjson  — moves bound to a known org
  *       _unbound/journal.ndjson — moves captured without a resolved org
@@ -35,12 +35,12 @@ import {
   readSync,
   readdirSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getSiteUrl } from "./client.js";
-import { primConfigDirectory } from "./lib/paths.js";
 import type { Move } from "./protocol/move.js";
 
-export const JOURNAL_DIR = join(primConfigDirectory(), "moves");
+export const JOURNAL_DIR = join(homedir(), ".config", "prim", "moves");
 const UNBOUND_BUCKET = "_unbound";
 const JOURNAL_BASENAME = "journal.ndjson";
 export const JOURNAL_STATS_SAMPLE_BYTES = 64 * 1024;

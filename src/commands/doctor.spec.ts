@@ -54,7 +54,7 @@ describe("classifyDoctor", () => {
 
 describe("auth source diagnostics", () => {
   it("ignores stale browser metadata for selected fixed credentials", () => {
-    for (const source of ["environment"] as const) {
+    for (const source of ["environment", "env_file"] as const) {
       expect(classifyAuthCredential({ token: "fixed", source }, 0, true)).toEqual({
         name: "auth",
         status: "ok",

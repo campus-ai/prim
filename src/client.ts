@@ -1,21 +1,17 @@
 /** REST client and shared credential store for the prim CLI. */
 
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { atomicWriteFile } from "./lib/atomic-file.js";
-import {
-  type AuthCredential,
-  type AuthCredentialSource,
-  CREDENTIAL_LOCK_PATH,
-  REFRESH_TOKEN_PATH,
-  TERMINAL_REFRESH_PATH,
-  TOKEN_EXPIRES_PATH,
-  TOKEN_FILE_PATH,
-  jwtExpiresAt,
-  resolveAuthCredential,
-} from "./lib/credentials.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
 import { terminalSafeLine } from "./lib/terminal-safe.js";
 
@@ -25,15 +21,35 @@ const REFRESH_THRESHOLD_MS = 60_000;
 const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
-export {
-  CREDENTIAL_LOCK_PATH,
-  REFRESH_TOKEN_PATH,
-  resolveAuthCredential,
-  TERMINAL_REFRESH_PATH,
-  TOKEN_EXPIRES_PATH,
-  TOKEN_FILE_PATH,
-};
-export type { AuthCredential, AuthCredentialSource };
+function loadEnvFile(cwd = process.cwd()): Record<string, string> {
+  const envVars: Record<string, string> = {};
+  for (const file of [".env.local", ".env"]) {
+    const filePath = resolve(cwd, file);
+    if (!existsSync(filePath)) continue;
+    const content = readFileSync(filePath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      envVars[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+    }
+  }
+  return envVars;
+}
+
+export const TOKEN_FILE_PATH = join(homedir(), ".config", "prim", "token");
+export const REFRESH_TOKEN_PATH = join(dirname(TOKEN_FILE_PATH), "refresh_token");
+export const TOKEN_EXPIRES_PATH = join(dirname(TOKEN_FILE_PATH), "token_expires_at");
+export const TERMINAL_REFRESH_PATH = join(dirname(TOKEN_FILE_PATH), "refresh_terminal");
+export const CREDENTIAL_LOCK_PATH = join(dirname(TOKEN_FILE_PATH), "credentials.lock");
+
+export type AuthCredentialSource = "environment" | "token_file" | "env_file";
+
+export interface AuthCredential {
+  token: string;
+  source: AuthCredentialSource;
+}
 
 export interface StoredCredentials {
   accessToken: string;
@@ -52,22 +68,49 @@ function readTrimmed(path: string): string | undefined {
   }
 }
 
+/** Resolve the selected credential without conflating fixed tokens with browser OAuth. */
+export function resolveAuthCredential(): AuthCredential | undefined {
+  if (process.env.PRIM_TOKEN) {
+    return { token: process.env.PRIM_TOKEN, source: "environment" };
+  }
+
+  const stored = readTrimmed(TOKEN_FILE_PATH);
+  if (stored) {
+    return { token: stored, source: "token_file" };
+  }
+
+  const envToken = loadEnvFile().PRIM_TOKEN;
+  return envToken ? { token: envToken, source: "env_file" } : undefined;
+}
+
 /** Backwards-compatible token-only resolver. */
 export function getAuthToken(): string | undefined {
   return resolveAuthCredential()?.token;
 }
 
 export function getSiteUrl(): string {
-  return getSiteUrlForEnvironment(process.env.PRIM_API_URL);
+  return getSiteUrlForCwd(process.cwd(), process.env.PRIM_API_URL);
 }
 
-/** Resolve a deployment from explicit process state, never repository files. */
-export function getSiteUrlForEnvironment(primApiUrl?: string): string {
-  return primApiUrl?.trim() || DEFAULT_API_URL;
+/** Resolve a caller's deployment using the CLI's existing cwd/env precedence. */
+export function getSiteUrlForCwd(cwd: string, primApiUrl?: string): string {
+  if (primApiUrl) return primApiUrl;
+  return loadEnvFile(cwd).PRIM_API_URL ?? DEFAULT_API_URL;
+}
+
+function getJwtExpiry(token: string): number | undefined {
+  const parts = token.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as { exp?: number };
+    return payload.exp ? payload.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function expiresAtFor(token: string, expiresIn?: number): number | undefined {
-  return expiresIn === undefined ? jwtExpiresAt(token) : Date.now() + expiresIn * 1000;
+  return expiresIn === undefined ? getJwtExpiry(token) : Date.now() + expiresIn * 1000;
 }
 
 function ensureConfigDirectory(): void {
@@ -78,7 +121,21 @@ function ensureConfigDirectory(): void {
 
 function atomicWrite(path: string, content: string): void {
   ensureConfigDirectory();
-  atomicWriteFile(path, content, { mode: CREDENTIAL_FILE_MODE });
+  const temp = join(
+    dirname(path),
+    `.${path.slice(dirname(path).length + 1)}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  try {
+    writeFileSync(temp, content, {
+      encoding: "utf8",
+      mode: CREDENTIAL_FILE_MODE,
+      flag: "wx",
+    });
+    renameSync(temp, path);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 function removeCredentialFile(path: string): boolean {

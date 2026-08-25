@@ -1,5 +1,5 @@
 /**
- * `bin-cache` coverage — the SessionStart writer for live Git hook readers.
+ * `bin-cache` coverage — the write side of the shim's branch-0.
  *
  * Runs against the `src/` layout (like bin-path.spec): binFile() resolves the
  * real `dist/` entries from the repo's own bin map, so the cached paths are the
@@ -19,16 +19,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  GIT_HOOK_CACHE_SHELL_DIR,
-  GIT_HOOK_CACHE_TTL_MINUTES,
-  binCacheDir,
-  warmBinCache,
-} from "./bin-cache.js";
+import { binCacheDir, warmBinCache } from "./bin-cache.js";
 import { binFile } from "./bin-path.js";
-import { postCommitHookBlock, postRewriteHookBlock } from "./post-commit-hook.js";
 
-const ENV_KEYS = ["XDG_CACHE_HOME", "HOME", "PRIM_BIN_CACHE"] as const;
+const ENV_KEYS = ["XDG_CACHE_HOME", "HOME", "PRIM_BIN_CACHE", "PRIM_BIN_CACHE_HIT"] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const saved: Record<string, string | undefined> = {};
@@ -48,9 +42,9 @@ function restoreEnv(saved: Record<string, string | undefined>): void {
   }
 }
 
-// Evaluate the canonical live-reader expression in a real shell.
+// Evaluate the exact dir expression the shim embeds, in a real shell.
 function shellCacheDir(env: NodeJS.ProcessEnv): string {
-  return spawnSync("sh", ["-c", `printf %s "${GIT_HOOK_CACHE_SHELL_DIR}"`], {
+  return spawnSync("sh", ["-c", 'printf %s "${XDG_CACHE_HOME:-$HOME/.cache}/prim/bin"'], {
     env,
     encoding: "utf-8",
   }).stdout;
@@ -88,13 +82,6 @@ describe("binCacheDir", () => {
       restoreEnv(saved);
     }
   });
-
-  it("keeps both live Git hook readers coupled to the canonical dir and TTL", () => {
-    for (const block of [postCommitHookBlock(), postRewriteHookBlock()]) {
-      expect(block).toContain(`prim_cache_dir="${GIT_HOOK_CACHE_SHELL_DIR}"`);
-      expect(block).toContain(`-mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${GIT_HOOK_CACHE_TTL_MINUTES}}"`);
-    }
-  });
 });
 
 describe("warmBinCache", () => {
@@ -105,6 +92,8 @@ describe("warmBinCache", () => {
     saved = snapshotEnv();
     // biome-ignore lint/performance/noDelete: env teardown requires actual removal
     delete process.env.PRIM_BIN_CACHE;
+    // biome-ignore lint/performance/noDelete: env teardown requires actual removal
+    delete process.env.PRIM_BIN_CACHE_HIT;
     dir = mkdtempSync(join(tmpdir(), "prim-warm-"));
     process.env.XDG_CACHE_HOME = dir;
   });
@@ -114,17 +103,12 @@ describe("warmBinCache", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("writes only the node runtime and live Git hook entries", () => {
+  it("writes the node runtime and each cached bin's resolved entry", () => {
     warmBinCache();
     const cacheDir = join(dir, "prim", "bin");
     expect(readFileSync(join(cacheDir, "node"), "utf-8")).toBe(process.execPath);
-    for (const bin of ["prim-post-commit", "prim-post-rewrite"]) {
+    for (const bin of ["prim", "prim-hook", "prim-pre-tool-use", "prim-post-tool-use"]) {
       expect(readFileSync(join(cacheDir, bin), "utf-8")).toBe(binFile(bin));
-      expect(statSync(join(cacheDir, bin)).mode & 0o777).toBe(0o600);
-    }
-    expect(statSync(join(cacheDir, "node")).mode & 0o777).toBe(0o600);
-    for (const obsolete of ["prim", "prim-hook", "prim-pre-tool-use", "prim-post-tool-use"]) {
-      expect(existsSync(join(cacheDir, obsolete))).toBe(false);
     }
   });
 
@@ -137,6 +121,12 @@ describe("warmBinCache", () => {
     chmodSync(cacheDir, 0o755);
     warmBinCache();
     expect(statSync(cacheDir).mode & 0o777).toBe(0o700);
+  });
+
+  it("is a no-op on the cache-hit path (so it never bumps mtime / freezes TTL)", () => {
+    process.env.PRIM_BIN_CACHE_HIT = "1";
+    warmBinCache();
+    expect(existsSync(join(dir, "prim", "bin", "node"))).toBe(false);
   });
 
   it("is a no-op under the PRIM_BIN_CACHE=0 kill switch", () => {

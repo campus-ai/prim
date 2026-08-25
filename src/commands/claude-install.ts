@@ -25,12 +25,20 @@
  * (tmp + fsync + rename) so a crash can never leave a torn settings.json. AX
  * contract: STDOUT is the resulting JSON; STDERR is the human verdict.
  */
-import { existsSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
 import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
-import { atomicWriteFile } from "../lib/atomic-file.js";
 import { commandMatchesBin, detachedHookShimCommand, pinnedHookCommand } from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
 
@@ -549,9 +557,21 @@ export function isGateInstalled(settings: ClaudeSettings): boolean {
 }
 
 export function atomicWrite(path: string, content: ClaudeSettings): void {
-  atomicWriteFile(path, `${JSON.stringify(content, null, JSON_INDENT)}\n`, {
-    ensureParent: true,
-  });
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const tmp = `${path}.tmp.${String(Date.now())}`;
+  writeFileSync(tmp, `${JSON.stringify(content, null, JSON_INDENT)}\n`, "utf-8");
+  // fsync the tmp file before the rename so a crash can't leave a torn
+  // settings.json — the rename only ever swaps in fully-flushed bytes.
+  const fd = openSync(tmp, "r+");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, path);
 }
 
 export type ScopeStatus = {

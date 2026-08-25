@@ -22,6 +22,7 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActive: mocks.isRepoActive,
   repoSyncId: mocks.repoSyncId,
 }));
+vi.mock("../lib/bin-cache.js", () => ({ warmBinCache: vi.fn() }));
 vi.mock("../lib/bin-path.js", () => ({ packageVersion: vi.fn(() => "1.2.3") }));
 vi.mock("./agent.js", () => ({ parseAgent: mocks.parseAgent }));
 vi.mock("./codex-context.js", async (importOriginal) => {

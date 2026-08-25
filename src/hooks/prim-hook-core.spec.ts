@@ -89,28 +89,6 @@ describe("toMove", () => {
     });
   });
 
-  it("scrubs local user identity from agent environment paths without changing correlation IDs", () => {
-    const move = toMove(
-      { session_id: "s", cwd: "/Users/alice/work/repo/subdir" },
-      "x",
-      "claude_code",
-      "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
-      {
-        repoRoot: "/Users/alice/work/repo",
-        repoKey: "repo_v1_key",
-        repoSyncId: "repoSync123",
-      },
-    );
-    expect(move.env).toMatchObject({
-      cwd: "/Users/__redacted_user__/work/repo/subdir",
-      repoRoot: "/Users/__redacted_user__/work/repo",
-      gitRoot: "/Users/__redacted_user__/work/repo",
-      repoKey: "repo_v1_key",
-      repoSyncId: "repoSync123",
-      workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
-    });
-  });
-
   it("uses a stable PostToolUse identity when the producer supplied an invocation id", () => {
     const parsed = {
       session_id: "s",
@@ -143,22 +121,6 @@ describe("toMove", () => {
     expect(first.moveId).toMatch(/^posttool:v1:/);
     expect(first.moveId).toBe(replay.moveId);
     expect(first.moveId).not.toBe(success.moveId);
-  });
-
-  it("keeps duplicate post-tool capture deterministic when invocation identity is absent", () => {
-    const parsed = {
-      session_id: "session-1",
-      turn_id: "turn-1",
-      hook_event_name: "PostToolUse",
-      tool_name: "apply_patch",
-      tool_input: { patch: "*** Begin Patch" },
-    };
-    const passive = toMove(parsed, "x", "codex");
-    const direct = toMove(parsed, "x", "codex");
-
-    expect(passive.moveId).toMatch(/^posttool:fallback:v1:[0-9a-f]{64}$/u);
-    expect(direct.moveId).toBe(passive.moveId);
-    expect(passive).not.toHaveProperty("invocationId");
   });
 });
 
@@ -393,23 +355,6 @@ describe("toCommitMove", () => {
     });
   });
 
-  it("scrubs commit environment paths without changing commit identity inputs", () => {
-    const move = toCommitMove(commit, "1.2.3", "/home/alice/repo", {
-      repository: { repoRoot: "/home/alice/repo", repoKey: "repo_v1_key" },
-      repoSyncId,
-      workspaceId,
-    });
-    expect(move.env).toMatchObject({
-      cwd: "/home/__redacted_user__/repo",
-      repoRoot: "/home/__redacted_user__/repo",
-      gitRoot: "/home/__redacted_user__/repo",
-      repoKey: "repo_v1_key",
-      repoSyncId,
-      workspaceId,
-    });
-    expect(move.moveId).toMatch(/^commit:v2:[0-9a-f]{64}$/u);
-  });
-
   it("emits V3 only for one valid Claude/Codex session hint", () => {
     const attribution = commitAttributionFromEnvironment(
       { CLAUDE_CODE_SESSION_ID: "claude-session" },
@@ -569,26 +514,5 @@ describe("toRewriteMove", () => {
     expect(toRewriteMove(rewrite, "x", "/repo", { ...context, workspaceId: undefined })).toEqual(
       [],
     );
-  });
-
-  it("scrubs rewrite environment paths while retaining immutable correlation", () => {
-    const [move] = toRewriteMove(
-      { source: "amend", pairs: [{ oldSha: oldA, newSha: landed }] },
-      "x",
-      "C:\\Users\\alice\\repo",
-      {
-        ...context,
-        repository: { repoRoot: "C:\\Users\\alice\\repo", repoKey: "repo_v1_key" },
-      },
-    );
-    expect(move.env).toMatchObject({
-      cwd: "C:\\Users\\__redacted_user__\\repo",
-      repoRoot: "C:\\Users\\__redacted_user__\\repo",
-      gitRoot: "C:\\Users\\__redacted_user__\\repo",
-      repoKey: "repo_v1_key",
-      repoSyncId,
-      workspaceId,
-    });
-    expect(move.moveId).toMatch(/^rewrite:v1:[0-9a-f]{64}$/u);
   });
 });

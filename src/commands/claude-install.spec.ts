@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandMatchesBin, detachedHookShimCommand, pinnedHookCommand } from "../lib/bin-path.js";
+import {
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookShimCommand,
+  pinnedHookCommand,
+} from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
   PRIM_AUTOMODE_TRUST,
@@ -44,13 +49,6 @@ function commandsFor(settings: ClaudeSettings, event: string): string[] {
 
 function hasBin(settings: ClaudeSettings, event: string, bin: string): boolean {
   return commandsFor(settings, event).some((c) => commandMatchesBin(c, bin));
-}
-
-// Historical settings fixture only. Product code no longer generates this
-// PATH/local/@latest ladder, but reinstall and uninstall must still recognize
-// commands already written by an older CLI.
-function legacyHookShimCommand(bin: string): string {
-  return `if command -v ${bin} >/dev/null 2>&1; then ${bin}; elif [ -f "./node_modules/.bin/${bin}" ]; then ./node_modules/.bin/${bin}; else npx --yes -p @primitive.ai/prim@latest ${bin}; fi`;
 }
 
 /**
@@ -608,20 +606,14 @@ describe("SessionEnd detached registrations", () => {
     const preDetach: ClaudeSettings = {
       hooks: {
         SessionEnd: [
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
           {
             matcher: "*",
-            hooks: [{ type: "command", command: legacyHookShimCommand("prim-hook") }],
-          },
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: legacyHookShimCommand("prim-session-end") }],
+            hooks: [{ type: "command", command: hookShimCommand("prim-session-end") }],
           },
         ],
         Stop: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: legacyHookShimCommand("prim-hook") }],
-          },
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
         ],
       },
     };
@@ -651,10 +643,7 @@ describe("SessionEnd detached registrations", () => {
             matcher: "*",
             hooks: [{ type: "command", command: detachedHookShimCommand("prim-hook") }],
           },
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: legacyHookShimCommand("prim-hook") }],
-          },
+          { matcher: "*", hooks: [{ type: "command", command: hookShimCommand("prim-hook") }] },
           {
             matcher: "*",
             hooks: [{ type: "command", command: detachedHookShimCommand("prim-session-end") }],

@@ -1,163 +1,83 @@
+/**
+ * PII / secrets scrubbing tests.
+ *
+ * Covers each default rule + the recursive payload walk + non-string
+ * passthrough, the workspace-override loader (valid / malformed / invalid
+ * regex), and the oversized-input guard.
+ */
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_RULES, scrub, scrubEnvironmentPaths, scrubFromCwd } from "./redact.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_RULES, scrub, scrubFromCwd } from "./redact.js";
 
 describe("scrub", () => {
-  it("redacts bearer and Basic authorization credentials case-insensitively", () => {
-    expect(scrub("authorization: bearer abc.def-ghi_jkl")).toBe(
-      "authorization: <REDACTED:bearer-token>",
-    );
-    expect(scrub("Authorization: Basic dXNlcjpwYXNz")).toBe("Authorization: <REDACTED:basic-auth>");
-    expect(scrub("https://alice:p%40ss@example.test/path")).toBe(
-      "<REDACTED:basic-auth>example.test/path",
-    );
+  it("redacts Bearer tokens in plain strings", () => {
+    const out = scrub("Authorization: Bearer abc.def-ghi_jkl");
+    expect(out).toBe("Authorization: <REDACTED:bearer-token>");
   });
 
-  it("redacts legacy, Anthropic, and OpenAI project API keys", () => {
-    for (const key of [
-      `sk-${"x".repeat(40)}`,
-      `sk-ant-api03-${"A_b-".repeat(12)}`,
-      `sk-proj-${"Z9_-".repeat(12)}`,
-    ]) {
-      expect(scrub(`API_KEY=${key}`)).toBe("API_KEY=<REDACTED:sk-api-key>");
-    }
+  it("redacts sk- API keys", () => {
+    const key = `sk-${"x".repeat(40)}`;
+    const out = scrub(`OPENAI=${key}`);
+    expect(out).toBe("OPENAI=<REDACTED:sk-api-key>");
   });
 
-  it("redacts AWS, GCP, and JWT credentials", () => {
-    const awsAccessKey = `AKIA${"A1".repeat(8)}`;
-    const awsSecret = "aB3/".repeat(10);
-    const gcpApiKey = `AIza${"A_b9-".repeat(7)}`;
-    const gcpOauth = `ya29.${"A_b9-".repeat(6)}`;
-    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature_value";
-    const unsignedJwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ.";
-
-    expect(scrub(`AWS_ACCESS_KEY_ID=${awsAccessKey}`)).toBe(
-      "AWS_ACCESS_KEY_ID=<REDACTED:aws-access-key>",
-    );
-    expect(scrub(`AWS_SECRET_ACCESS_KEY=${awsSecret}`)).toBe("<REDACTED:aws-secret>");
-    expect(scrub(`key=${gcpApiKey}`)).toBe("key=<REDACTED:gcp-api-key>");
-    expect(scrub(`token=${gcpOauth}`)).toBe("token=<REDACTED:gcp-oauth-token>");
-    expect(scrub(`cookie=${jwt}`)).toBe("cookie=<REDACTED:jwt>");
-    expect(scrub(`cookie=${unsignedJwt}`)).toBe("cookie=<REDACTED:jwt>");
-  });
-
-  it("redacts an entire private-key block including newlines", () => {
-    const key = [
+  it("redacts an entire PRIVATE KEY block, including newlines", () => {
+    const pk = [
       "-----BEGIN RSA PRIVATE KEY-----",
       "MIIEpAIBAAKCAQEA...",
       "...zlGzr+w==",
       "-----END RSA PRIVATE KEY-----",
     ].join("\n");
-    expect(scrub(`Config: ${key}\nDone`)).toBe("Config: <REDACTED:private-key>\nDone");
+    const out = scrub(`Config: ${pk}\nDone`);
+    expect(out).toBe("Config: <REDACTED:private-key>\nDone");
   });
 
-  it("redacts Slack and current GitHub token forms", () => {
+  it("redacts Slack and GitHub PATs", () => {
     expect(scrub(`token=xoxb-${"x".repeat(20)}`)).toBe("token=<REDACTED:slack-token>");
     expect(scrub(`pat=ghp_${"X".repeat(40)}`)).toBe("pat=<REDACTED:github-pat>");
-    expect(scrub(`pat=github_pat_${"X_".repeat(30)}`)).toBe("pat=<REDACTED:github-pat>");
   });
 
-  it("removes username-bearing home path prefixes", () => {
-    expect(scrub("file=/Users/alice/work/repo/src/a.ts")).toBe(
-      "file=/Users/__redacted_user__/work/repo/src/a.ts",
-    );
-    expect(scrub("file=C:\\Users\\alice\\repo\\a.ts")).toBe(
-      "file=C:\\Users\\__redacted_user__\\repo\\a.ts",
-    );
-  });
-
-  it("walks arrays and objects recursively while preserving non-string scalars", () => {
-    expect(
-      scrub({
-        tool: "Read",
-        headers: ["Bearer abc.def.ghi"],
-        nested: { secret: `sk-${"x".repeat(40)}` },
-        count: 42,
-        active: true,
-        missing: null,
-      }),
-    ).toEqual({
+  it("walks arrays and objects recursively", () => {
+    const out = scrub({
+      tool: "Read",
+      headers: ["Bearer abc.def.ghi"],
+      nested: { secret: `sk-${"x".repeat(40)}` },
+    });
+    expect(out).toEqual({
       tool: "Read",
       headers: ["<REDACTED:bearer-token>"],
       nested: { secret: "<REDACTED:sk-api-key>" },
-      count: 42,
-      active: true,
-      missing: null,
     });
+  });
+
+  it("passes non-string scalars through unchanged", () => {
+    expect(scrub(42)).toBe(42);
+    expect(scrub(true)).toBe(true);
+    expect(scrub(null)).toBeNull();
     expect(scrub(undefined)).toBeUndefined();
   });
 
-  it("redacts secret-bearing object keys without collisions", () => {
-    const bearer = `Bearer ${"a".repeat(24)}`;
-    const apiKey = `sk-${"x".repeat(40)}`;
-    const marker = "<REDACTED:object-key>";
-    const result = scrub({
-      [marker]: "existing",
-      [bearer]: { [apiKey]: "nested" },
-      nested: { [bearer]: "value" },
-    });
-
-    expect(result).toEqual({
-      [marker]: "existing",
-      [`${marker}_2`]: { [marker]: "nested" },
-      nested: { [marker]: "value" },
-    });
-    expect(JSON.stringify(result)).not.toContain(bearer);
-    expect(JSON.stringify(result)).not.toContain(apiKey);
-  });
-
-  it("exposes the complete stable default policy", () => {
-    expect([...new Set(DEFAULT_RULES.map((rule) => rule.reason))].sort()).toEqual([
-      "aws-access-key",
-      "aws-secret",
-      "basic-auth",
+  it("exposes a stable default rule set", () => {
+    expect(DEFAULT_RULES.map((r) => r.reason).sort()).toEqual([
       "bearer-token",
-      "gcp-api-key",
-      "gcp-oauth-token",
       "github-pat",
-      "jwt",
       "private-key",
       "sk-api-key",
       "slack-token",
-      "user-home-path",
     ]);
   });
 });
 
-describe("resource bounds", () => {
-  it("redacts an oversized string wholesale", () => {
+describe("oversized input guard", () => {
+  it("redacts an oversized string wholesale (fail-closed, bounded cold path)", () => {
     expect(scrub("a".repeat(300_000))).toBe("<REDACTED:oversized>");
   });
 
   it("leaves normal-sized strings intact", () => {
     expect(scrub("normal text")).toBe("normal text");
-  });
-});
-
-describe("scrubEnvironmentPaths", () => {
-  it("scrubs only local path identity and preserves correlation fields", () => {
-    const environment = scrubEnvironmentPaths({
-      cwd: "/Users/alice/work/repo/subdir",
-      repoRoot: "/Users/alice/work/repo",
-      gitRoot: "/Users/alice/work/repo",
-      repoKey: "repo_v1_opaque",
-      repoSyncId: "repoSync123",
-      repoFullName: "campus-ai/primitive",
-      workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
-    });
-    expect(environment).toEqual({
-      cwd: "/Users/__redacted_user__/work/repo/subdir",
-      repoRoot: "/Users/__redacted_user__/work/repo",
-      gitRoot: "/Users/__redacted_user__/work/repo",
-      repoKey: "repo_v1_opaque",
-      repoSyncId: "repoSync123",
-      repoFullName: "campus-ai/primitive",
-      workspaceId: "d84b97dc-b69f-4b59-9d0a-f6b3436239a4",
-    });
-    const payloadPath = scrub("/Users/alice/work/repo/src/a.ts");
-    expect(payloadPath).toBe(`${environment.repoRoot}/src/a.ts`);
   });
 });
 
@@ -169,8 +89,6 @@ describe("scrubFromCwd workspace overrides", () => {
   });
 
   afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
     rmSync(scratch, { recursive: true, force: true });
   });
 
@@ -179,103 +97,31 @@ describe("scrubFromCwd workspace overrides", () => {
     writeFileSync(join(scratch, ".prim", "redaction.json"), content);
   }
 
-  it("applies a valid workspace rule on top of the defaults", async () => {
+  it("applies a valid workspace rule on top of the defaults", () => {
     writeConfig(JSON.stringify({ rules: [{ pattern: "ACME-[0-9]+", reason: "acme-id" }] }));
-    await expect(scrubFromCwd("ticket ACME-42 with Bearer abc.def", scratch)).resolves.toBe(
+    expect(scrubFromCwd("ticket ACME-42 with Bearer abc.def", scratch)).toBe(
       "ticket <REDACTED:acme-id> with <REDACTED:bearer-token>",
     );
   });
 
-  it("forces workspace matching to be global when callers supply other flags", async () => {
-    writeConfig(
-      JSON.stringify({ rules: [{ pattern: "secret", reason: "workspace", flags: "i" }] }),
-    );
-    await expect(scrubFromCwd("SECRET and secret", scratch)).resolves.toBe(
-      "<REDACTED:workspace> and <REDACTED:workspace>",
-    );
-  });
-
-  it("keeps an explicitly global workspace rule global", async () => {
-    writeConfig(
-      JSON.stringify({ rules: [{ pattern: "secret", reason: "workspace", flags: "gi" }] }),
-    );
-    await expect(scrubFromCwd("SECRET and secret", scratch)).resolves.toBe(
-      "<REDACTED:workspace> and <REDACTED:workspace>",
-    );
-  });
-
-  it("redacts workspace-matched object keys collision-safely", async () => {
-    const secretKey = "TENANT_SECRET_ABC";
-    const marker = "<REDACTED:object-key>";
-    writeConfig(
-      JSON.stringify({ rules: [{ pattern: "TENANT_SECRET_[A-Z]+", reason: "tenant-secret" }] }),
-    );
-
-    const result = await scrubFromCwd(
-      {
-        tool_input: {
-          [marker]: "existing",
-          [secretKey]: "first",
-          TENANT_SECRET_DEF: "second",
-        },
-      },
-      scratch,
-    );
-
-    expect(result).toEqual({
-      tool_input: {
-        [marker]: "existing",
-        [`${marker}_2`]: "first",
-        [`${marker}_3`]: "second",
-      },
-    });
-    expect(JSON.stringify(result)).not.toContain(secretKey);
-  });
-
-  it("falls back to defaults when the config is malformed", async () => {
+  it("falls back to the defaults only when the config is malformed", () => {
     writeConfig("{ not json");
-    await expect(scrubFromCwd(`key sk-${"x".repeat(40)}`, scratch)).resolves.toBe(
-      "key <REDACTED:sk-api-key>",
-    );
+    expect(scrubFromCwd(`key sk-${"x".repeat(40)}`, scratch)).toBe("key <REDACTED:sk-api-key>");
   });
 
-  it("skips invalid rules without logging their raw pattern", async () => {
-    const rawSecret = "DO_NOT_LOG_THIS_SECRET(";
+  it("skips an invalid-regex rule but keeps the valid ones", () => {
     writeConfig(
       JSON.stringify({
         rules: [
-          { pattern: rawSecret, reason: "broken" },
+          { pattern: "(", reason: "broken" },
           { pattern: "WIDGET-[0-9]+", reason: "widget" },
         ],
       }),
     );
-    vi.stubEnv("PRIM_HOOK_DEBUG", "1");
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-
-    await expect(scrubFromCwd("WIDGET-7", scratch)).resolves.toBe("<REDACTED:widget>");
-    expect(stderr.mock.calls.flat().join(" ")).not.toContain(rawSecret);
+    expect(scrubFromCwd("WIDGET-7", scratch)).toBe("<REDACTED:widget>");
   });
 
-  it("rejects unsafe metadata rather than allowing replacement-marker injection", async () => {
-    writeConfig(
-      JSON.stringify({ rules: [{ pattern: "secret", reason: "bad>marker", flags: "y" }] }),
-    );
-    await expect(scrubFromCwd("secret", scratch)).resolves.toBe("secret");
-  });
-
-  it("terminates catastrophic workspace regexes and fails closed", async () => {
-    writeConfig(JSON.stringify({ rules: [{ pattern: "(a+)+$", reason: "hostile" }] }));
-    const startedAt = Date.now();
-    const bearerKey = `Bearer ${"b".repeat(24)}`;
-    const result = await scrubFromCwd({ [bearerKey]: `${"a".repeat(50_000)}!` }, scratch);
-    expect(result).toEqual({
-      "<REDACTED:object-key>": "<REDACTED:workspace-rule-failed>",
-    });
-    expect(JSON.stringify(result)).not.toContain(bearerKey);
-    expect(Date.now() - startedAt).toBeLessThan(2_000);
-  });
-
-  it("uses only defaults when no workspace config exists", async () => {
-    await expect(scrubFromCwd("Bearer abc.def", scratch)).resolves.toBe("<REDACTED:bearer-token>");
+  it("uses only the defaults when no workspace config exists", () => {
+    expect(scrubFromCwd("Bearer abc.def", scratch)).toBe("<REDACTED:bearer-token>");
   });
 });

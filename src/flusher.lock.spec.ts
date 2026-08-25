@@ -35,10 +35,8 @@ describe("flush lock", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     process.env = { ...originalEnv };
-    Reflect.deleteProperty(process.env, "PRIM_TOKEN");
-    Reflect.deleteProperty(process.env, "PRIM_API_URL");
-    Reflect.deleteProperty(process.env, "PRIM_CONFIG_DIR");
-    Reflect.deleteProperty(process.env, "XDG_CONFIG_HOME");
+    process.env.PRIM_TOKEN = undefined;
+    process.env.PRIM_API_URL = undefined;
     home = mkdtempSync(join(tmpdir(), "prim-flush-lock-"));
     mockedHome.value = home;
     config = join(home, ".config", "prim");
@@ -79,7 +77,7 @@ describe("flush lock", () => {
       "org1",
     );
 
-    await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
+    await expect(flush()).resolves.toEqual({ flushed: 1 });
     expect(posts.some((u) => u.endsWith("/api/cli/moves/ingest"))).toBe(true);
   });
 
@@ -115,7 +113,7 @@ describe("flush lock", () => {
     );
 
     const { flush } = await import("./flusher.js");
-    await expect(flush()).resolves.toEqual({ flushed: 0, quarantined: 0, skipped: true });
+    await expect(flush()).resolves.toEqual({ flushed: 0, skipped: true });
     // No POST fired, and the move is still journaled for the lock holder.
     expect(fetchMock).not.toHaveBeenCalled();
     expect(readMovesFromPath(bucketPath).map((m) => m.moveId)).toEqual(["m1"]);

@@ -3,8 +3,8 @@
  *
  * Filesystem fixtures live under a temp dir; the default-org tier is
  * driven through the PRIM_TOKEN env var (the preferred headless path),
- * which the shared credential resolver checks before its token file — so
- * these runs never read the real token file or session markers.
+ * which `readToken` consults before any ~/.config/prim file — so these
+ * runs never read the real token file or session markers.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
