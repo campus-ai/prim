@@ -32,7 +32,9 @@ import {
 } from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { boundedHealthError } from "../lib/ansi.js";
 import { resolveRepositoryContext } from "../lib/git.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { processCodexMessageContext } from "./codex-message-context.js";
@@ -71,8 +73,10 @@ function spawnBackgroundFlush(): void {
 
 function debug(area: "capture" | "feedback", error: unknown): void {
   if (!process.env.PRIM_HOOK_DEBUG) return;
-  const detail = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`[prim-hook] ${area} failed: ${detail}\n`);
+  const detail = boundedHealthError(
+    terminalSafeLine(error instanceof Error ? error.message : String(error)),
+  );
+  process.stderr.write(`[prim-hook] ${area} failed${detail ? `: ${detail}` : ""}\n`);
 }
 
 async function main(): Promise<void> {
