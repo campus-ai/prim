@@ -85,6 +85,7 @@ function row(id: string, overrides: Partial<DecisionFeedRow> = {}): DecisionFeed
 beforeEach(() => {
   temporaryHome = mkdtempSync(join(tmpdir(), "prim-codex-context-"));
   vi.stubEnv("HOME", temporaryHome);
+  vi.stubEnv("PRIM_CONFIG_DIR", join(temporaryHome, ".config", "prim"));
   vi.resetAllMocks();
   mocks.getSiteUrl.mockReturnValue("https://app.getprimitive.ai");
   mocks.gitToplevel.mockReturnValue("/repo");

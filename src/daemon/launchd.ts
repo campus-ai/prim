@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { binFile } from "../lib/bin-path.js";
 import { withFileLock } from "../lib/file-lock.js";
+import { primConfigDirectory } from "../lib/paths.js";
 import { compareSemver } from "../lib/semver.js";
 import { daemonRequest } from "./client.js";
 import { normalizeApiUrl } from "./env-binding.js";
@@ -90,6 +91,7 @@ interface DaemonLauncherConfig {
   daemonPath: string;
   runtimeVersion: string;
   apiUrl?: string;
+  configDir?: string;
 }
 
 export interface LaunchctlResult {
@@ -195,7 +197,7 @@ export function runtimePaths(options: RuntimePathOptions = {}): RuntimePaths {
 }
 
 function daemonControlPaths(options: RuntimePathOptions = {}) {
-  const configDir = join(options.homeDir ?? homedir(), ".config", "prim");
+  const configDir = primConfigDirectory(options);
   const legacy = runtimePaths(options);
   return {
     launcher: join(configDir, `prim-daemon-launcher-v${LAUNCHER_SCHEMA_VERSION}`),
@@ -323,7 +325,7 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     const manifest = current as RuntimeManifest;
     atomicWrite(
       paths.statuslineLauncher,
-      statuslineLauncherContent(manifest.version, options.homeDir),
+      statuslineLauncherContent(manifest.version, options),
       RUNTIME_LAUNCHER_MODE,
     );
     return {
@@ -365,7 +367,7 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
     atomicSymlink(join("releases", releaseName), paths.currentLink);
     atomicWrite(
       paths.statuslineLauncher,
-      statuslineLauncherContent(desired.version, options.homeDir),
+      statuslineLauncherContent(desired.version, options),
       RUNTIME_LAUNCHER_MODE,
     );
   } catch (error) {
@@ -385,8 +387,8 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function statuslineLauncherContent(version: string, homeDir = homedir()): string {
-  const socketPath = join(homeDir, ".config", "prim", "sock");
+function statuslineLauncherContent(version: string, options: RuntimePathOptions = {}): string {
+  const socketPath = join(primConfigDirectory(options), "sock");
   const fallback = `primitive ${version} (daemon: down)`;
   return `#!/bin/sh
 response=$(
@@ -415,6 +417,7 @@ function generateDaemonLauncher(config: DaemonLauncherConfig) {
     daemonPath: config.daemonPath,
     runtimeVersion: config.runtimeVersion,
     apiUrl: apiUrl ?? null,
+    ...(config.configDir ? { configDir: config.configDir } : {}),
   };
   const revision = createHash("sha256").update(JSON.stringify(metadata)).digest("hex");
   const encoded = Buffer.from(JSON.stringify({ ...metadata, revision })).toString("base64url");
@@ -425,7 +428,7 @@ function generateDaemonLauncher(config: DaemonLauncherConfig) {
 export PRIM_RUNTIME_VERSION=${shellQuote(config.runtimeVersion)}
 export PRIM_LAUNCH_REVISION=${shellQuote(revision)}
 ${apiUrl ? `export PRIM_API_URL=${shellQuote(apiUrl)}` : "unset PRIM_API_URL"}
-exec ${shellQuote(config.nodePath)} ${shellQuote(config.daemonPath)}
+${config.configDir ? `export PRIM_CONFIG_DIR=${shellQuote(config.configDir)}\n` : ""}exec ${shellQuote(config.nodePath)} ${shellQuote(config.daemonPath)}
 `,
   };
 }
@@ -445,6 +448,8 @@ function readDaemonLauncher(path: string): DaemonLauncherConfig | null {
       typeof value.daemonPath !== "string" ||
       typeof value.runtimeVersion !== "string" ||
       (value.apiUrl !== null && typeof value.apiUrl !== "string") ||
+      (value.configDir !== undefined &&
+        (typeof value.configDir !== "string" || !isAbsolute(value.configDir))) ||
       typeof value.revision !== "string"
     ) {
       return null;
@@ -454,6 +459,7 @@ function readDaemonLauncher(path: string): DaemonLauncherConfig | null {
       daemonPath: value.daemonPath,
       runtimeVersion: value.runtimeVersion,
       ...(value.apiUrl === null ? {} : { apiUrl: value.apiUrl }),
+      ...(typeof value.configDir === "string" ? { configDir: value.configDir } : {}),
     };
     const expected = generateDaemonLauncher(config);
     return expected.revision === value.revision && expected.content === content ? config : null;
@@ -524,6 +530,7 @@ export function generateLaunchAgentPlist(config: LaunchAgentConfig): string {
 
 export function launchdPaths(options: LaunchdPathOptions = {}): LaunchdPaths {
   const home = options.homeDir ?? homedir();
+  const configDir = primConfigDirectory(options);
   const uid = options.uid ?? process.getuid?.();
   const label = options.label ?? LAUNCHD_LABEL;
   if (uid === undefined) throw new Error("cannot determine uid for launchd user domain");
@@ -531,7 +538,7 @@ export function launchdPaths(options: LaunchdPathOptions = {}): LaunchdPaths {
     domainTarget: `gui/${uid}`,
     serviceTarget: `gui/${uid}/${label}`,
     plistPath: join(home, "Library", "LaunchAgents", `${label}.plist`),
-    logPath: join(home, ".config", "prim", "daemon.log"),
+    logPath: join(configDir, "daemon.log"),
   };
 }
 
@@ -670,12 +677,12 @@ export async function withDaemonLifecycleLock<T>(
 }
 
 async function stopVerifiedLegacyDaemon(
-  homeDir: string,
+  options: RuntimePathOptions,
   deadlineMs: number,
   nowMs: () => number,
   sleep: (ms: number) => Promise<void>,
 ): Promise<boolean> {
-  const pidPath = join(homeDir, ".config", "prim", "daemon.pid");
+  const pidPath = join(primConfigDirectory(options), "daemon.pid");
   let pid: number;
   try {
     pid = Number(readFileSync(pidPath, "utf8").trim());
@@ -981,6 +988,7 @@ async function ensureMacDaemonLocked(
   let daemonConfig: DaemonLauncherConfig;
   const configuredApiUrl = (options.env ?? process.env).PRIM_API_URL;
   const apiUrl = configuredApiUrl ? normalizeApiUrl(configuredApiUrl) || undefined : undefined;
+  const configDir = primConfigDirectory(options);
   if (retainSelected && selected) {
     const usable = readUsableDaemonConfig(control.launcher);
     if (!usable) {
@@ -993,6 +1001,7 @@ async function ensureMacDaemonLocked(
       daemonPath: usable.daemonPath,
       runtimeVersion: usable.runtimeVersion,
       ...(apiUrl ? { apiUrl } : {}),
+      configDir,
     };
   } else {
     runtime = stageRuntime({ ...options, version: requestedVersion });
@@ -1001,6 +1010,7 @@ async function ensureMacDaemonLocked(
       daemonPath: runtime.daemonPath,
       runtimeVersion: runtime.manifest.version,
       ...(apiUrl ? { apiUrl } : {}),
+      configDir,
     };
   }
 
@@ -1038,8 +1048,7 @@ async function ensureMacDaemonLocked(
     revision: launcher.revision,
   };
   const migrateLegacy =
-    options.migrateLegacy ??
-    (() => stopVerifiedLegacyDaemon(options.homeDir ?? homedir(), deadlineMs, nowMs, sleep));
+    options.migrateLegacy ?? (() => stopVerifiedLegacyDaemon(options, deadlineMs, nowMs, sleep));
   let action: EnsureMacDaemonResult["action"] = "none";
 
   const observed = await observe(transition);
@@ -1102,8 +1111,7 @@ async function bootoutMacDaemonLocked(
   const deadlineMs = nowMs() + TRANSITION_TIMEOUT_MS;
   const paths = launchdPaths(options);
   const migrateLegacy =
-    options.migrateLegacy ??
-    (() => stopVerifiedLegacyDaemon(options.homeDir ?? homedir(), deadlineMs, nowMs, sleep));
+    options.migrateLegacy ?? (() => stopVerifiedLegacyDaemon(options, deadlineMs, nowMs, sleep));
   const service = getLaunchdService({ ...options, runner });
   const wasLoaded = service.loaded;
   if (wasLoaded) {
