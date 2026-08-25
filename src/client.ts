@@ -8,16 +8,33 @@ import { atomicWriteFile } from "./lib/atomic-file.js";
 import {
   type AuthCredential,
   type AuthCredentialSource,
+  CREDENTIAL_FAMILY_PATH,
   CREDENTIAL_LOCK_PATH,
+  CREDENTIAL_METADATA_PATH,
+  CREDENTIAL_MIGRATION_PATH,
+  CREDENTIAL_MIGRATION_STATE,
+  CREDENTIAL_MIGRATION_VERSION,
+  type LegacyBrokerCredentialMetadata,
   REFRESH_TOKEN_PATH,
+  type StoredCredentialMetadataResolution,
   TERMINAL_REFRESH_PATH,
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
   jwtExpiresAt,
+  readCredentialMigrationState,
+  readStoredCredentialMetadata,
   resolveAuthCredential,
 } from "./lib/credentials.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
 import { terminalSafeLine } from "./lib/terminal-safe.js";
+import {
+  WORKOS_CONNECT_RESPONSE_MAX_BYTES,
+  type WorkosConnectCredentialContext,
+  type WorkosConnectCredentialMetadata,
+  parseWorkosConnectTokens,
+  readBoundedJson,
+  workosConnectTokenEndpoint,
+} from "./lib/workos-connect.js";
 
 const CONFIG_DIR_MODE = 0o700;
 const CREDENTIAL_FILE_MODE = 0o600;
@@ -26,6 +43,9 @@ const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
 export {
+  CREDENTIAL_FAMILY_PATH,
+  CREDENTIAL_METADATA_PATH,
+  CREDENTIAL_MIGRATION_PATH,
   CREDENTIAL_LOCK_PATH,
   REFRESH_TOKEN_PATH,
   resolveAuthCredential,
@@ -33,12 +53,20 @@ export {
   TOKEN_EXPIRES_PATH,
   TOKEN_FILE_PATH,
 };
-export type { AuthCredential, AuthCredentialSource };
+export type {
+  AuthCredential,
+  AuthCredentialSource,
+  LegacyBrokerCredentialMetadata,
+  StoredCredentialMetadataResolution,
+  WorkosConnectCredentialContext,
+  WorkosConnectCredentialMetadata,
+};
 
 export interface StoredCredentials {
   accessToken: string;
   refreshToken: string;
   expiresIn?: number;
+  metadata?: WorkosConnectCredentialContext;
 }
 
 export type CredentialLockOptions = FileLockOptions;
@@ -104,6 +132,81 @@ function refreshFingerprint(refreshToken: string): string {
   return createHash("sha256").update(refreshToken).digest("hex");
 }
 
+function legacyBrokerCredentialMetadata(
+  accessToken: string,
+  refreshToken: string,
+): LegacyBrokerCredentialMetadata {
+  return {
+    version: 1,
+    family: "legacy_broker",
+    accessTokenHash: refreshFingerprint(accessToken),
+    refreshTokenHash: refreshFingerprint(refreshToken),
+  };
+}
+
+function credentialFamilyMetadata(
+  accessToken: string,
+  refreshToken: string,
+  metadata: WorkosConnectCredentialContext | undefined,
+): WorkosConnectCredentialMetadata | LegacyBrokerCredentialMetadata {
+  const hashes = {
+    accessTokenHash: refreshFingerprint(accessToken),
+    refreshTokenHash: refreshFingerprint(refreshToken),
+  };
+  return metadata === undefined
+    ? legacyBrokerCredentialMetadata(accessToken, refreshToken)
+    : { ...metadata, ...hashes };
+}
+
+function writeCredentialMigrationSentinel(): void {
+  atomicWrite(
+    CREDENTIAL_MIGRATION_PATH,
+    `${JSON.stringify({
+      version: CREDENTIAL_MIGRATION_VERSION,
+      state: CREDENTIAL_MIGRATION_STATE,
+    })}\n`,
+  );
+}
+
+/** Bind the only supported marker-less generation before broker egress. */
+function bindLegacyBrokerGeneration(
+  accessToken: string | undefined,
+  refreshToken: string | undefined,
+  metadata: StoredCredentialMetadataResolution,
+): StoredCredentialMetadataResolution {
+  if (metadata.state !== "legacy_broker" || !accessToken || !refreshToken) {
+    return { state: "invalid" };
+  }
+  const familyMetadata = legacyBrokerCredentialMetadata(accessToken, refreshToken);
+  if (
+    metadata.metadata !== undefined &&
+    (metadata.metadata.accessTokenHash !== familyMetadata.accessTokenHash ||
+      metadata.metadata.refreshTokenHash !== familyMetadata.refreshTokenHash)
+  ) {
+    return { state: "invalid" };
+  }
+  if (metadata.metadata === undefined) {
+    // Preserve the known-legacy generation before a sentinel can make missing
+    // family metadata fail closed.
+    atomicWrite(CREDENTIAL_FAMILY_PATH, `${JSON.stringify(familyMetadata)}\n`);
+  }
+  const migrationState = readCredentialMigrationState();
+  if (migrationState === "invalid") return { state: "invalid" };
+  if (migrationState === "absent") writeCredentialMigrationSentinel();
+  return { state: "legacy_broker", metadata: familyMetadata };
+}
+
+/** Preserve an interrupted first Connect commit's preceding legacy generation. */
+function preserveMarkerlessLegacyGeneration(): void {
+  const metadata = readStoredCredentialMetadata();
+  if (metadata.state !== "legacy_broker" || metadata.metadata !== undefined) return;
+  const accessToken = readTrimmed(TOKEN_FILE_PATH);
+  const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+  if (!(accessToken && refreshToken)) return;
+  const familyMetadata = legacyBrokerCredentialMetadata(accessToken, refreshToken);
+  atomicWrite(CREDENTIAL_FAMILY_PATH, `${JSON.stringify(familyMetadata)}\n`);
+}
+
 function terminalFingerprint(): string | undefined {
   return readTrimmed(TERMINAL_REFRESH_PATH);
 }
@@ -138,9 +241,24 @@ function commitCredentialsUnlocked(credentials: StoredCredentials): void {
     throw new Error("OAuth credentials require both access and refresh tokens");
   }
 
-  // Access is the commit marker. Readers cannot observe a new access token
-  // paired with the previous one-use refresh generation.
-  atomicWrite(REFRESH_TOKEN_PATH, `${refreshToken}\n`);
+  // Access is the commit marker. A Connect family is written before either
+  // token so a missing old metadata file cannot reclassify it as legacy. A
+  // legacy family follows its replacement refresh, so a crash cannot mark an
+  // old Connect refresh as broker-owned. The old Connect metadata remains for
+  // rolling-client compatibility until the legacy generation is ready.
+  const familyMetadata = credentialFamilyMetadata(accessToken, refreshToken, credentials.metadata);
+  if (credentials.metadata !== undefined) {
+    preserveMarkerlessLegacyGeneration();
+    // Persist the exact marker before any Connect state reaches disk.
+    writeCredentialMigrationSentinel();
+    atomicWrite(CREDENTIAL_FAMILY_PATH, `${JSON.stringify(familyMetadata)}\n`);
+    atomicWrite(CREDENTIAL_METADATA_PATH, `${JSON.stringify(familyMetadata)}\n`);
+    atomicWrite(REFRESH_TOKEN_PATH, `${refreshToken}\n`);
+  } else {
+    atomicWrite(REFRESH_TOKEN_PATH, `${refreshToken}\n`);
+    atomicWrite(CREDENTIAL_FAMILY_PATH, `${JSON.stringify(familyMetadata)}\n`);
+    removeCredentialFile(CREDENTIAL_METADATA_PATH);
+  }
   const expiresAt = expiresAtFor(accessToken, credentials.expiresIn);
   if (expiresAt === undefined) removeCredentialFile(TOKEN_EXPIRES_PATH);
   else atomicWrite(TOKEN_EXPIRES_PATH, `${expiresAt}\n`);
@@ -167,14 +285,23 @@ export async function setStoredToken(
   await withCredentialLock(() => {
     removeCredentialFile(REFRESH_TOKEN_PATH);
     removeCredentialFile(TOKEN_EXPIRES_PATH);
+    removeCredentialFile(CREDENTIAL_FAMILY_PATH);
+    removeCredentialFile(CREDENTIAL_METADATA_PATH);
     clearTerminalFingerprint();
+    // Refresh is already gone, so an interrupted replacement cannot broker
+    // egress. Clear the marker before writing the fixed bearer to keep it
+    // usable after a crash.
+    removeCredentialFile(CREDENTIAL_MIGRATION_PATH);
     atomicWrite(TOKEN_FILE_PATH, `${value}\n`);
     _cachedCredential = { token: value, source: "token_file" };
   }, options);
 }
 
 export interface ClearStoredCredentialsOptions extends CredentialLockOptions {
-  beforeClear?: (refreshToken: string | undefined) => Promise<void> | void;
+  beforeClear?: (
+    refreshToken: string | undefined,
+    metadata: StoredCredentialMetadataResolution,
+  ) => Promise<void> | void;
 }
 
 /** Revoke/inspect and delete one coherent credential generation under one lock. */
@@ -183,20 +310,33 @@ export async function clearStoredCredentials(
 ): Promise<boolean> {
   const { beforeClear, ...lockOptions } = options;
   return withCredentialLock(async () => {
+    const accessToken = readTrimmed(TOKEN_FILE_PATH);
     const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+    const metadata = readStoredCredentialMetadata();
+    let protectedMetadata = metadata;
+    if (metadata.state === "legacy_broker") {
+      try {
+        protectedMetadata = bindLegacyBrokerGeneration(accessToken, refreshToken, metadata);
+      } catch {
+        protectedMetadata = { state: "invalid" };
+      }
+    }
     let callbackError: unknown;
     try {
-      await beforeClear?.(refreshToken);
+      await beforeClear?.(refreshToken, protectedMetadata);
     } catch (error) {
       callbackError = error;
     }
 
     let removed = false;
     for (const path of [
-      TOKEN_FILE_PATH,
       REFRESH_TOKEN_PATH,
       TOKEN_EXPIRES_PATH,
+      CREDENTIAL_FAMILY_PATH,
+      CREDENTIAL_METADATA_PATH,
       TERMINAL_REFRESH_PATH,
+      TOKEN_FILE_PATH,
+      CREDENTIAL_MIGRATION_PATH,
     ]) {
       removed = removeCredentialFile(path) || removed;
     }
@@ -232,14 +372,89 @@ function isTerminalRefreshResponse(response: Response, detail: string): boolean 
   }
 }
 
-function refreshDiagnostic(response: Response, detail: string, quiet: boolean | undefined): void {
+function workosConnectRefreshErrorCode(value: unknown): "invalid_grant" | "" {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return "";
+  return (value as Record<string, unknown>).error === "invalid_grant" ? "invalid_grant" : "";
+}
+
+function refreshDiagnostic(
+  response: Response,
+  detail: string,
+  quiet: boolean | undefined,
+  provider: "broker" | "WorkOS Connect",
+): void {
   if (quiet) return;
   const statusText = terminalSafeLine(response.statusText).slice(0, 120);
   const safeDetail = terminalSafeLine(detail).slice(0, 200);
   process.stderr.write(
-    `[prim] token refresh rejected by broker: ${response.status}${
+    `[prim] token refresh rejected by ${provider}: ${response.status}${
       statusText ? ` ${statusText}` : ""
     }${safeDetail ? ` — ${safeDetail}` : ""}\n`,
+  );
+}
+
+function metadataMatchesCredentialGeneration(
+  expected: StoredCredentialMetadataResolution,
+  accessToken: string,
+  refreshToken: string,
+): boolean {
+  const current = readStoredCredentialMetadata();
+  if (expected.state === "legacy_broker") {
+    if (current.state !== "legacy_broker") return false;
+    if (!expected.metadata) return current.metadata === undefined;
+    return (
+      current.metadata !== undefined &&
+      current.metadata.accessTokenHash === refreshFingerprint(accessToken) &&
+      current.metadata.accessTokenHash === expected.metadata.accessTokenHash &&
+      current.metadata.refreshTokenHash === refreshFingerprint(refreshToken) &&
+      current.metadata.refreshTokenHash === expected.metadata.refreshTokenHash
+    );
+  }
+  if (expected.state !== "workos_connect" || current.state !== "workos_connect") return false;
+  return (
+    current.metadata.issuer === expected.metadata.issuer &&
+    current.metadata.clientId === expected.metadata.clientId &&
+    current.metadata.accessTokenHash === refreshFingerprint(accessToken) &&
+    current.metadata.accessTokenHash === expected.metadata.accessTokenHash &&
+    current.metadata.refreshTokenHash === refreshFingerprint(refreshToken) &&
+    current.metadata.refreshTokenHash === expected.metadata.refreshTokenHash
+  );
+}
+
+/**
+ * Return an old client's replacement access token for this in-flight retry
+ * without classifying its replacement refresh token. The original generation
+ * was marker-less pre-#251 legacy and has already been bound; a later
+ * marker-less generation is deliberately left fail-closed for refresh/revoke.
+ */
+function uncoordinatedLegacyWinnerAccessToken(
+  expected: LegacyBrokerCredentialMetadata | undefined,
+  currentGeneration: string,
+): string | undefined {
+  if (!expected || readCredentialMigrationState() !== "valid") return undefined;
+  const stored = readStoredCredentialMetadata();
+  if (
+    stored.state !== "legacy_broker" ||
+    stored.metadata === undefined ||
+    stored.metadata.accessTokenHash !== expected.accessTokenHash ||
+    stored.metadata.refreshTokenHash !== expected.refreshTokenHash
+  ) {
+    return undefined;
+  }
+  const replacementRefreshToken = readTrimmed(REFRESH_TOKEN_PATH);
+  if (!replacementRefreshToken || replacementRefreshToken === currentGeneration) return undefined;
+  return readTrimmed(TOKEN_FILE_PATH);
+}
+
+function winnerAfterRefreshRace(
+  currentGeneration: string,
+  expectedLegacyGeneration: LegacyBrokerCredentialMetadata | undefined,
+): string | undefined {
+  if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) return undefined;
+  const winner = resolveAuthCredential();
+  return (
+    (winner?.source === "token_file" ? winner.token : undefined) ??
+    uncoordinatedLegacyWinnerAccessToken(expectedLegacyGeneration, currentGeneration)
   );
 }
 
@@ -271,68 +486,182 @@ async function performTokenRefresh(options: RefreshOptions = {}): Promise<string
       }
       if (isSessionEnded()) return undefined;
 
-      const response = await fetch(`${getSiteUrl()}/mcp/broker/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: currentGeneration }),
-        signal: options.signal,
-      });
+      let metadata = readStoredCredentialMetadata();
+      const markerlessLegacyAtStart =
+        metadata.state === "legacy_broker" && metadata.metadata === undefined;
+      if (
+        metadata.state === "invalid" ||
+        (metadata.state === "workos_connect" &&
+          (metadata.metadata.accessTokenHash !== refreshFingerprint(currentCredential.token) ||
+            metadata.metadata.refreshTokenHash !== refreshFingerprint(currentGeneration)))
+      ) {
+        return undefined;
+      }
+      if (metadata.state === "legacy_broker") {
+        try {
+          metadata = bindLegacyBrokerGeneration(
+            currentCredential.token,
+            currentGeneration,
+            metadata,
+          );
+        } catch {
+          return undefined;
+        }
+        if (metadata.state !== "legacy_broker") return undefined;
+      }
+      const expectedLegacyGeneration =
+        markerlessLegacyAtStart && metadata.state === "legacy_broker"
+          ? metadata.metadata
+          : undefined;
+
+      const connectContext =
+        metadata.state === "workos_connect"
+          ? {
+              version: 1 as const,
+              family: "workos_connect" as const,
+              issuer: metadata.metadata.issuer,
+              clientId: metadata.metadata.clientId,
+            }
+          : undefined;
+      const response = await fetch(
+        connectContext
+          ? workosConnectTokenEndpoint(connectContext.issuer)
+          : `${getSiteUrl()}/mcp/broker/refresh`,
+        connectContext
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                grant_type: "refresh_token",
+                refresh_token: currentGeneration,
+                client_id: connectContext.clientId,
+              }),
+              signal: options.signal,
+            }
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: currentGeneration }),
+              signal: options.signal,
+            },
+      );
+
+      let directResponse: unknown;
+      if (connectContext) {
+        try {
+          directResponse = await readBoundedJson(response, WORKOS_CONNECT_RESPONSE_MAX_BYTES);
+        } catch {
+          if (
+            response.ok &&
+            readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+            metadataMatchesCredentialGeneration(
+              metadata,
+              currentCredential.token,
+              currentGeneration,
+            )
+          ) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
+      }
 
       if (!response.ok) {
-        const detail = (await response.text().catch(() => "")).slice(0, 200);
+        let detail = "";
+        if (connectContext) {
+          // Failed Connect responses are untrusted. Never reflect their body.
+          detail = workosConnectRefreshErrorCode(directResponse);
+        } else {
+          detail = (await response.text().catch(() => "")).slice(0, 200);
+        }
         // An older uncoordinated client could have replaced the files while the
         // request was in flight. Never poison that newer generation.
         if (
           isTerminalRefreshResponse(response, detail) &&
-          readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration
+          readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+          metadataMatchesCredentialGeneration(metadata, currentCredential.token, currentGeneration)
         ) {
           writeTerminalFingerprint(currentGeneration);
         }
-        refreshDiagnostic(response, detail, options.quiet);
-        const winner = resolveAuthCredential();
-        return readTrimmed(REFRESH_TOKEN_PATH) !== currentGeneration &&
-          winner?.source === "token_file"
-          ? winner.token
-          : undefined;
+        refreshDiagnostic(
+          response,
+          detail,
+          options.quiet,
+          connectContext ? "WorkOS Connect" : "broker",
+        );
+        return winnerAfterRefreshRace(currentGeneration, expectedLegacyGeneration);
       }
 
-      let data: unknown;
-      try {
-        data = await response.json();
-      } catch {
-        // A 2xx means the one-use generation may have been consumed. Fail
-        // closed rather than replaying it after a malformed response.
-        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
-          writeTerminalFingerprint(currentGeneration);
+      let accessToken: string;
+      let replacementRefreshToken: string;
+      let expiresIn: number | undefined;
+      if (connectContext) {
+        try {
+          const tokens = parseWorkosConnectTokens(directResponse, {
+            fallbackRefreshToken: currentGeneration,
+          });
+          accessToken = tokens.accessToken;
+          replacementRefreshToken = tokens.refreshToken;
+          expiresIn = tokens.expiresIn;
+        } catch {
+          if (
+            readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration &&
+            metadataMatchesCredentialGeneration(
+              metadata,
+              currentCredential.token,
+              currentGeneration,
+            )
+          ) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
         }
-        return undefined;
+      } else {
+        let data: unknown;
+        try {
+          data = await response.json();
+        } catch {
+          if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
+        const record =
+          typeof data === "object" && data !== null && !Array.isArray(data)
+            ? (data as Record<string, unknown>)
+            : undefined;
+        accessToken = typeof record?.access_token === "string" ? record.access_token.trim() : "";
+        replacementRefreshToken =
+          typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
+        expiresIn =
+          typeof record?.expires_in === "number" && Number.isFinite(record.expires_in)
+            ? record.expires_in
+            : undefined;
+        if (!(accessToken && replacementRefreshToken)) {
+          if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
+            writeTerminalFingerprint(currentGeneration);
+          }
+          return undefined;
+        }
       }
-      const record =
-        typeof data === "object" && data !== null && !Array.isArray(data)
-          ? (data as Record<string, unknown>)
-          : undefined;
-      const accessToken =
-        typeof record?.access_token === "string" ? record.access_token.trim() : "";
-      const replacementRefreshToken =
-        typeof record?.refresh_token === "string" ? record.refresh_token.trim() : "";
-      // WorkOS rotation is optional: a successful refresh may return the SAME
-      // refresh token (AuthKit: "Refresh tokens may be rotated after use").
-      // Require both fields, but accept an unchanged token — poisoning a
-      // same-value replacement would strand a session the broker still honors.
-      if (!(accessToken && replacementRefreshToken)) {
-        if (readTrimmed(REFRESH_TOKEN_PATH) === currentGeneration) {
-          writeTerminalFingerprint(currentGeneration);
-        }
-        return undefined;
+
+      const latestCredential = resolveAuthCredential();
+      if (
+        readTrimmed(REFRESH_TOKEN_PATH) !== currentGeneration ||
+        latestCredential?.source !== "token_file" ||
+        latestCredential.token !== currentCredential.token ||
+        !metadataMatchesCredentialGeneration(metadata, currentCredential.token, currentGeneration)
+      ) {
+        return latestCredential?.source === "token_file"
+          ? latestCredential.token
+          : winnerAfterRefreshRace(currentGeneration, expectedLegacyGeneration);
       }
 
       commitCredentialsUnlocked({
         accessToken,
         refreshToken: replacementRefreshToken,
-        expiresIn:
-          typeof record?.expires_in === "number" && Number.isFinite(record.expires_in)
-            ? record.expires_in
-            : undefined,
+        expiresIn,
+        metadata: connectContext,
       });
       return accessToken;
     },

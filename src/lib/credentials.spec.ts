@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { jwtExpiresAt, jwtOrganizationId, resolveAuthCredential } from "./credentials.js";
+import {
+  CREDENTIAL_MIGRATION_STATE,
+  CREDENTIAL_MIGRATION_VERSION,
+  jwtExpiresAt,
+  jwtOrganizationId,
+  resolveAuthCredential,
+} from "./credentials.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -52,6 +58,59 @@ describe("credential resolution", () => {
         tokenFilePath: join(repository, "nested", "missing-token"),
       }),
     ).toBeUndefined();
+  });
+
+  it("recognizes marker-less credentials only before the exact migration sentinel", () => {
+    const directory = temporaryDirectory();
+    const tokenFilePath = join(directory, "token");
+    const refreshTokenPath = join(directory, "refresh_token");
+    const migrationPath = join(directory, "credential_migration.json");
+    writeFileSync(tokenFilePath, "legacy-access\n");
+    writeFileSync(refreshTokenPath, "legacy-refresh\n");
+    const options = {
+      env: {},
+      tokenFilePath,
+      refreshTokenPath,
+      metadataPath: join(directory, "credential_metadata.json"),
+      familyPath: join(directory, "credential_family.json"),
+      migrationPath,
+    };
+
+    expect(resolveAuthCredential(options)).toEqual({
+      token: "legacy-access",
+      source: "token_file",
+    });
+
+    writeFileSync(
+      migrationPath,
+      JSON.stringify({
+        version: CREDENTIAL_MIGRATION_VERSION,
+        state: CREDENTIAL_MIGRATION_STATE,
+      }),
+    );
+    expect(resolveAuthCredential(options)).toBeUndefined();
+
+    writeFileSync(
+      migrationPath,
+      JSON.stringify({
+        version: CREDENTIAL_MIGRATION_VERSION + 1,
+        state: CREDENTIAL_MIGRATION_STATE,
+      }),
+    );
+    expect(resolveAuthCredential(options)).toBeUndefined();
+
+    writeFileSync(
+      migrationPath,
+      JSON.stringify({
+        version: CREDENTIAL_MIGRATION_VERSION,
+        state: CREDENTIAL_MIGRATION_STATE,
+        extra: true,
+      }),
+    );
+    expect(resolveAuthCredential(options)).toBeUndefined();
+
+    writeFileSync(migrationPath, "not-json\n");
+    expect(resolveAuthCredential(options)).toBeUndefined();
   });
 });
 
