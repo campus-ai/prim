@@ -101,6 +101,9 @@ prim auth login              # Authenticate via browser
 prim auth set-token <token>  # Save a bearer token (e.g. for CI)
 prim auth clear              # Remove saved tokens
 prim auth status             # Check authentication status
+prim auth api-keys mint --name <name> [--expires-at <epoch-ms>] # Mint a user key; secret prints once
+prim auth api-keys list [--limit <count>] [--after <api-key-id>] # List user-key metadata
+prim auth api-keys revoke <api-key-id> # Revoke a user key
 ```
 
 ### Session integration
