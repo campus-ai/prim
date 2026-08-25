@@ -37,10 +37,15 @@ describe("toMove", () => {
   });
 
   it("falls back without throwing when fields are absent", () => {
-    const move = toMove({}, "x");
-    expect(move.sessionId).toBe("");
-    expect(move.eventType).toBe("unknown");
-    expect(move.env.cwd).toBe(process.cwd());
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/home/runner/work/prim/prim");
+    try {
+      const move = toMove({}, "x");
+      expect(move.sessionId).toBe("");
+      expect(move.eventType).toBe("unknown");
+      expect(move.env.cwd).toBe("/home/__redacted_user__/work/prim/prim");
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it("stamps an explicit V3 producer for Claude Code", () => {
