@@ -32,8 +32,24 @@ jobs:
 
       - run: pnpm contracts:check
 
-      - run: pnpm contracts:provenance
+      - name: Verify canonical contract provenance
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == 22
+        shell: bash
+        env:
+          PRIMITIVE_CONTRACT_READ_TOKEN: ${{ secrets.PRIMITIVE_CONTRACT_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PRIMITIVE_CONTRACT_READ_TOKEN:-}" ]]; then
+            echo "PRIMITIVE_CONTRACT_READ_TOKEN is required for canonical contract provenance" >&2
+            exit 1
+          fi
+          basic_auth="$(printf 'x-access-token:%s' "$PRIMITIVE_CONTRACT_READ_TOKEN" | base64 | tr -d '\n')"
+          printf '::add-mask::%s\n' "$basic_auth"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0='http.https://github.com/campus-ai/primitive.git.extraheader'
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_auth"
+          export GIT_TERMINAL_PROMPT=0
+          pnpm contracts:provenance
 
       - run: pnpm lint
 
