@@ -6,7 +6,7 @@
  * conflict with prior team decisions, and reports team presence.
  *
  * Usage:
- *   prim auth login|set-token|clear|status
+ *   prim auth login|set-token|clear|status|api-keys
  *   prim claude install|uninstall|status   (or: prim codex ...)
  *   prim hooks install|uninstall
  *   prim daemon start|stop|status

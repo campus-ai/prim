@@ -698,9 +698,39 @@ export class HttpError extends Error {
   }
 }
 
+export class CliManagementResponseError extends Error {
+  constructor() {
+    super("Invalid API-key management response");
+    this.name = "CliManagementResponseError";
+  }
+}
+
 export interface CliClient {
   get(path: string, options?: RequestOptions): Promise<unknown>;
   post(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
+}
+
+export interface CliManagementClient extends CliClient {
+  delete(path: string, body?: unknown, options?: RequestOptions): Promise<unknown>;
+}
+
+const CLI_MANAGEMENT_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+
+async function managementResponseValue(response: Response): Promise<unknown> {
+  if (response.status === 401) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  let value: unknown;
+  try {
+    value = await readBoundedJson(response, CLI_MANAGEMENT_RESPONSE_MAX_BYTES);
+  } catch {
+    if (response.ok) throw new CliManagementResponseError();
+    throw new HttpError(response.status, `HTTP ${response.status}`, null);
+  }
+  if (!response.ok) {
+    throw new HttpError(response.status, `HTTP ${response.status}`, value);
+  }
+  return value;
 }
 
 let _cachedCredential: AuthCredential | undefined;
@@ -717,13 +747,32 @@ function selectedCredential(): AuthCredential | undefined {
   return _cachedCredential;
 }
 
+function fetchWithToken(
+  method: string,
+  path: string,
+  body: unknown,
+  options: RequestOptions | undefined,
+  token: string,
+  siteUrl: string,
+): Promise<Response> {
+  return fetch(`${siteUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: options?.signal,
+  });
+}
+
 async function request(
   method: string,
   path: string,
   body?: unknown,
   options?: RequestOptions,
 ): Promise<unknown> {
-  const url = `${getSiteUrl()}${path}`;
+  const siteUrl = getSiteUrl();
   let credential = selectedCredential();
   let refreshAttempted = false;
 
@@ -752,19 +801,8 @@ async function request(
     throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
   }
 
-  const doFetch = (token: string | undefined) => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: options?.signal,
-    });
-  };
-
-  const tokenUsed = credential?.token;
-  let response = await doFetch(tokenUsed);
+  const tokenUsed = credential.token;
+  let response = await fetchWithToken(method, path, body, options, tokenUsed, siteUrl);
   if (response.status === 401) {
     const latest = resolveAuthCredential();
     let retryToken = latest?.token !== tokenUsed ? latest?.token : undefined;
@@ -777,7 +815,7 @@ async function request(
         token: retryToken,
         source: latest?.source === "token_file" ? "token_file" : (latest?.source ?? "token_file"),
       };
-      response = await doFetch(retryToken);
+      response = await fetchWithToken(method, path, body, options, retryToken, siteUrl);
     }
   }
 
@@ -801,5 +839,41 @@ export function getClient(): CliClient {
   return {
     get: (path, options) => request("GET", path, undefined, options),
     post: (path, body, options) => request("POST", path, body, options),
+  };
+}
+
+/**
+ * Pin one credential and deployment for a management operation without a
+ * post-response retry: a lost mint result may still have created a key.
+ */
+export async function getPinnedManagementClient(
+  options: RequestOptions = {},
+): Promise<CliManagementClient> {
+  const siteUrl = getSiteUrl();
+  let credential = selectedCredential();
+  if (credential && isTokenExpiringSoon(credential)) {
+    const token = await refreshToken({
+      signal: options.signal,
+      quiet: options.quietRefresh,
+    });
+    if (token) credential = { token, source: "token_file" };
+  }
+  if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  const token = credential.token;
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    managementResponseValue(
+      await fetchWithToken(method, path, body, requestOptions, token, siteUrl),
+    );
+  return {
+    delete: (path, body, requestOptions) => pinnedRequest("DELETE", path, body, requestOptions),
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
   };
 }

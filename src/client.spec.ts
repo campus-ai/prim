@@ -182,6 +182,76 @@ describe("client credential store", () => {
     });
   });
 
+  it("pins management mutations and never retries a mint after a 401 response", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ error: "authentication_required" }, 401)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getPinnedManagementClient } = await import("./client.js");
+    const client = await getPinnedManagementClient();
+
+    await expect(
+      client.post("/api/cli/auth/api-keys", {
+        requestId: "a".repeat(64),
+        name: "Primitive CLI",
+      }),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("sends management revocation as one pinned DELETE with a JSON receipt", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ apiKeyId: "api_key_example123", revoked: true })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getPinnedManagementClient } = await import("./client.js");
+    const client = await getPinnedManagementClient();
+
+    await expect(
+      client.delete("/api/cli/auth/api-keys/api_key_example123", {
+        requestId: "b".repeat(64),
+      }),
+    ).resolves.toEqual({ apiKeyId: "api_key_example123", revoked: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.getprimitive.ai/api/cli/auth/api-keys/api_key_example123",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: {
+          Authorization: "Bearer fixed-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ requestId: "b".repeat(64) }),
+      }),
+    );
+  });
+
+  it("rejects oversized and non-UTF-8 management responses", async () => {
+    process.env.PRIM_TOKEN = "fixed-token";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response("{}", {
+          headers: { "Content-Length": String(2 * 1024 * 1024 + 1) },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d])),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { CliManagementResponseError, getPinnedManagementClient } = await import("./client.js");
+    const client = await getPinnedManagementClient();
+
+    await expect(client.get("/api/cli/auth/api-keys")).rejects.toBeInstanceOf(
+      CliManagementResponseError,
+    );
+    await expect(client.get("/api/cli/auth/api-keys")).rejects.toBeInstanceOf(
+      CliManagementResponseError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("returns undefined when no expiry metadata exists", async () => {
     const { getTokenExpiresAt } = await import("./client.js");
     expect(getTokenExpiresAt()).toBeUndefined();
