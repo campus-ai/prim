@@ -60,6 +60,10 @@ import {
   releaseDaemonOwnership,
 } from "./instance-lock.js";
 import {
+  buildPresenceHeartbeatRequest,
+  normalizePresenceHeartbeatResponse,
+} from "./presence-heartbeat.js";
+import {
   daemonPrincipalsMatch,
   resolveDaemonCredentialKey,
   resolveDaemonPrincipal,
@@ -141,6 +145,13 @@ let activeCredentialKey = resolveDaemonCredentialKey();
 // server-side 500 flood — while the slower token-check loop keeps running to
 // auto-resume once `prim auth login` rotates in a fresh token.
 let reauthHold = false;
+
+function clearPresenceCache(): void {
+  lastHeartbeatAt = undefined;
+  lastOnlineCount = undefined;
+  lastOnlineNames = undefined;
+  lastOnlineTeammates = undefined;
+}
 
 function resolveRuntimeVersion(): string {
   if (process.env.PRIM_RUNTIME_VERSION) {
@@ -345,23 +356,14 @@ async function performHeartbeat(): Promise<void> {
   daemonHealth.heartbeat.lastAttemptAt = Date.now();
   persistHealth();
   try {
-    // The body is `{ sessionId }` ONLY — the server derives identity and the
-    // display names from the authenticated token. The ack carries the online
-    // count and the teammate names, which we cache for the statusline and
-    // daemon status.
-    const result = (await client.post(
+    // The lifecycle version is an additive capability hint. Legacy servers
+    // ignore the unknown field; identity and display names remain derived
+    // solely from the authenticated token.
+    const response = await client.post(
       "/api/cli/presence/heartbeat",
-      { sessionId: activeSessionId },
+      buildPresenceHeartbeatRequest(activeSessionId),
       { signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) },
-    )) as {
-      accepted?: boolean;
-      lastHeartbeatAt?: number;
-      created?: boolean;
-      onlineCount?: number;
-      onlineNames?: string[];
-      onlineTeammates?: Teammate[];
-      unavailable?: string;
-    };
+    );
     synchronizeDaemonCredential();
     if (requestCredentialKey !== activeCredentialKey) {
       // Never publish a heartbeat response from the credential generation
@@ -369,26 +371,27 @@ async function performHeartbeat(): Promise<void> {
       heartbeatRerunRequested = true;
       return;
     }
+    const result = normalizePresenceHeartbeatResponse(response);
+    if (!result) {
+      clearPresenceCache();
+      throw new Error("invalid heartbeat response");
+    }
     if (result.accepted) {
       const now = Date.now();
       lastOkAtLocal = now;
       daemonHealth.heartbeat.lastSuccessAt = now;
       daemonHealth.heartbeat.lastError = undefined;
       daemonHealth.heartbeat.consecutiveFailures = 0;
-      if (typeof result.lastHeartbeatAt === "number") {
-        lastHeartbeatAt = result.lastHeartbeatAt;
-      }
       // Count, names, and teammates(+area) ride the SAME ack — cache them
       // atomically (clearing on absence), never overwrite-only. Otherwise a
       // partial ack from an older or rolled-back server (mixed-version deploy)
       // advances the freshness clock while a prior roster stays frozen, and the
       // statusline would render that stale list as fresh instead of falling
       // back down the ladder (teammates → names → count).
-      lastOnlineCount = typeof result.onlineCount === "number" ? result.onlineCount : undefined;
-      lastOnlineNames = Array.isArray(result.onlineNames) ? result.onlineNames : undefined;
-      lastOnlineTeammates = Array.isArray(result.onlineTeammates)
-        ? result.onlineTeammates
-        : undefined;
+      lastHeartbeatAt = result.lastHeartbeatAt;
+      lastOnlineCount = result.onlineCount;
+      lastOnlineNames = result.onlineNames;
+      lastOnlineTeammates = result.onlineTeammates;
     } else {
       daemonHealth.heartbeat.lastRejectedAt = Date.now();
       daemonHealth.heartbeat.lastError =

@@ -1,42 +1,76 @@
-/** Stable facade over the generated request-core contract. */
+/** Stable facade over the generated critical-path contract. */
 
 import type {
-  CliErrorResponse,
-  DurableMoveIngestResponse,
+  DecisionCreateRequest,
+  DecisionsRecentResponse,
   FeedbackAckRequest,
+  FeedbackAckResponse,
   FeedbackLeaseRequest,
-  MoveIngestRequest,
+  FeedbackLeaseResponse,
   PreflightRequestV3,
-  RepositoryBindRequest,
 } from "../generated/cli-http-v1.types.js";
 import {
   isCliErrorResponse,
+  isDecisionCascadeResponse,
+  isDecisionConfirmRequest,
+  isDecisionConfirmSuccessResponse,
+  isDecisionCreateRequestStructure,
+  isDecisionCreateResponse,
+  isDecisionDetailResponse,
+  isDecisionEditRequest,
+  isDecisionIdRequest,
+  isDecisionRelateRequest,
+  isDecisionRelateSuccessResponse,
+  isDecisionStageSuccessResponse,
+  isDecisionSupersedeRequest,
+  isDecisionsAffectingResponse,
+  isDecisionsRecentResponseStructure,
   isDurableMoveIngestResponse,
   isFeedbackAckRequestStructure,
+  isFeedbackAckResponseStructure,
   isFeedbackLeaseRequestStructure,
+  isFeedbackLeaseResponseStructure,
+  isFeedbackStatusResponse,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
+  isPreflightResponseV3,
+  isPresenceHeartbeatRequest,
+  isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
+  isRepositoryBindResponse,
 } from "../generated/cli-http-v1.validators.js";
 
-export type {
-  CliErrorResponse,
-  DurableMoveIngestResponse,
-  FeedbackAckRequest,
-  FeedbackLeaseRequest,
-  MoveIngestRequest,
-  PreflightRequestV3,
-  RepositoryBindRequest,
-};
+export type * from "../generated/cli-http-v1.types.js";
 
 export {
   isCliErrorResponse,
+  isDecisionCascadeResponse,
+  isDecisionConfirmRequest,
+  isDecisionConfirmSuccessResponse,
+  isDecisionCreateRequestStructure,
+  isDecisionCreateResponse,
+  isDecisionDetailResponse,
+  isDecisionEditRequest,
+  isDecisionIdRequest,
+  isDecisionRelateRequest,
+  isDecisionRelateSuccessResponse,
+  isDecisionStageSuccessResponse,
+  isDecisionSupersedeRequest,
+  isDecisionsAffectingResponse,
+  isDecisionsRecentResponseStructure,
   isDurableMoveIngestResponse,
   isFeedbackAckRequestStructure,
+  isFeedbackAckResponseStructure,
   isFeedbackLeaseRequestStructure,
+  isFeedbackLeaseResponseStructure,
+  isFeedbackStatusResponse,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
+  isPreflightResponseV3,
+  isPresenceHeartbeatRequest,
+  isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
+  isRepositoryBindResponse,
 };
 
 const MAX_REPOSITORY_PATH_CHARS = 4_096;
@@ -82,10 +116,9 @@ function hasUnsafeFeedbackIdentifierCharacter(value: string): boolean {
 }
 
 /**
- * Validate the canonical outbound V3 request, including every named semantic
- * refinement in the server artifact. The server-only
- * `degrade_invalid_rollout_fields` transform is deliberately not mirrored:
- * this producer emits canonical annotations and never parses untrusted ones.
+ * Validate the canonical outbound V3 request, including every producer-side
+ * refinement. The server-only rollout-field degradation transform is not
+ * mirrored: this producer emits canonical annotations.
  */
 export function isPreflightRequestV3(value: unknown): value is PreflightRequestV3 {
   if (!isPreflightRequestV3Structure(value)) {
@@ -125,3 +158,96 @@ export function isFeedbackAckRequest(value: unknown): value is FeedbackAckReques
     ) && new Set(eventIds).size === eventIds.length
   );
 }
+
+/**
+ * The server degrades invalid optional rollout fields instead of rejecting the
+ * request. CLI producers already emit the canonical subset, so structural
+ * validation is the correct non-mutating producer check.
+ */
+export function isDecisionCreateRequest(value: unknown): value is DecisionCreateRequest {
+  return isDecisionCreateRequestStructure(value);
+}
+
+export function isFeedbackLeaseResponse(value: unknown): value is FeedbackLeaseResponse {
+  if (!isFeedbackLeaseResponseStructure(value)) {
+    return false;
+  }
+  if (value.status !== "leased") {
+    return true;
+  }
+  const eventIds = value.events.map(({ eventId }) => eventId);
+  if (new Set(eventIds).size !== eventIds.length) {
+    return false;
+  }
+  if (value.protocolVersion === 1) {
+    return value.events.every(({ kind }) => kind !== "publish_prompt");
+  }
+  return value.events.every(({ kind }) => kind !== undefined);
+}
+
+export function isFeedbackAckResponse(value: unknown): value is FeedbackAckResponse {
+  if (!isFeedbackAckResponseStructure(value)) {
+    return false;
+  }
+  return (
+    value.status !== "acked" ||
+    new Set(value.acknowledgedEventIds).size === value.acknowledgedEventIds.length
+  );
+}
+
+export function isDecisionsRecentResponse(value: unknown): value is DecisionsRecentResponse {
+  if (!isDecisionsRecentResponseStructure(value)) {
+    return false;
+  }
+  const authorFields = [value.authorHasDecisions, value.windowTotal, value.windowTotalCapped];
+  if (value.unavailable !== undefined) {
+    return (
+      value.decisions.length === 0 &&
+      value.viewerHasDecisions === undefined &&
+      value.author === undefined &&
+      authorFields.every((field) => field === undefined)
+    );
+  }
+  if (value.viewerHasDecisions === undefined) {
+    return false;
+  }
+  const hasEveryAuthorField =
+    value.author !== undefined && authorFields.every((field) => field !== undefined);
+  const hasNoAuthorField =
+    value.author === undefined && authorFields.every((field) => field === undefined);
+  return hasEveryAuthorField || hasNoAuthorField;
+}
+
+/** Complete definition registry used by shared cross-repository fixtures. */
+export const cliHttpV1Validators = {
+  CliErrorResponse: isCliErrorResponse,
+  DecisionCascadeResponse: isDecisionCascadeResponse,
+  DecisionConfirmRequest: isDecisionConfirmRequest,
+  DecisionConfirmSuccessResponse: isDecisionConfirmSuccessResponse,
+  DecisionCreateRequest: isDecisionCreateRequest,
+  DecisionCreateResponse: isDecisionCreateResponse,
+  DecisionDetailResponse: isDecisionDetailResponse,
+  DecisionEditRequest: isDecisionEditRequest,
+  DecisionIdRequest: isDecisionIdRequest,
+  DecisionRelateRequest: isDecisionRelateRequest,
+  DecisionRelateSuccessResponse: isDecisionRelateSuccessResponse,
+  DecisionStageSuccessResponse: isDecisionStageSuccessResponse,
+  DecisionSupersedeRequest: isDecisionSupersedeRequest,
+  DecisionsAffectingResponse: isDecisionsAffectingResponse,
+  DecisionsRecentResponse: isDecisionsRecentResponse,
+  DurableMoveIngestResponse: isDurableMoveIngestResponse,
+  FeedbackAckRequest: isFeedbackAckRequest,
+  FeedbackAckResponse: isFeedbackAckResponse,
+  FeedbackLeaseRequest: isFeedbackLeaseRequest,
+  FeedbackLeaseResponse: isFeedbackLeaseResponse,
+  FeedbackStatusResponse: isFeedbackStatusResponse,
+  MoveIngestRequest: isMoveIngestRequest,
+  PreflightRequestV3: isPreflightRequestV3,
+  PreflightResponseV3: isPreflightResponseV3,
+  PresenceHeartbeatRequest: isPresenceHeartbeatRequest,
+  PresenceHeartbeatResponse: isPresenceHeartbeatResponse,
+  RepositoryBindRequest: isRepositoryBindRequest,
+  RepositoryBindResponse: isRepositoryBindResponse,
+} as const satisfies Record<string, (value: unknown) => boolean>;
+
+export type CliHttpV1DefinitionName = keyof typeof cliHttpV1Validators;
