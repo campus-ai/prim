@@ -251,7 +251,9 @@ function parseFlushingPid(name: string): number | undefined {
   // trailing all-digits segment beyond the timestamp as the owning pid.
   const segments = name.slice(FLUSHING_PREFIX.length).split(".");
   const last = segments.length >= 2 ? segments[segments.length - 1] : undefined;
-  return last !== undefined && /^[0-9]+$/.test(last) ? Number(last) : undefined;
+  if (last === undefined || !/^[0-9]+$/.test(last)) return undefined;
+  const pid = Number(last);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
 /**

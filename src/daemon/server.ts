@@ -35,6 +35,7 @@ import { pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import type { Teammate } from "../lib/presence.js";
+import { processIsAlive } from "../lib/process-liveness.js";
 import {
   type StatusSnapshot,
   StatuslineIngestionCache,
@@ -55,7 +56,6 @@ import {
   DAEMON_STARTUP_GRACE_MS,
   type DaemonOwnership,
   acquireDaemonOwnership,
-  daemonProcessIsAlive,
   readDaemonOwner,
   readDaemonPid,
   releaseDaemonOwnership,
@@ -298,7 +298,7 @@ async function takeOwnership(): Promise<void> {
   const recordedPid = readDaemonPid(CONFIG_DIR);
   const candidatePids = new Set(
     [recordedOwner?.pid, recordedPid?.pid].filter(
-      (pid): pid is number => pid !== undefined && daemonProcessIsAlive(pid),
+      (pid): pid is number => pid !== undefined && processIsAlive(pid),
     ),
   );
 
