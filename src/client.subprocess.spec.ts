@@ -1,12 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +20,7 @@ import { pathToFileURL } from "node:url";
 import { build } from "tsup";
 import { describe, expect, it } from "vitest";
 import { stageRuntime } from "./daemon/launchd.js";
+import type { DaemonPrincipal } from "./daemon/principal.js";
 
 type ChildResult = { code: number | null; stdout: string; stderr: string };
 type RunningChild = {
@@ -25,6 +28,26 @@ type RunningChild = {
   exited: Promise<number | null>;
   stderr: () => string;
 };
+
+const TEST_ISSUER = "https://issuer.test";
+
+function testJwt(subject: string, organizationId: string, generation: string): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+    Buffer.from(
+      JSON.stringify({ iss: TEST_ISSUER, sub: subject, org_id: organizationId, generation }),
+    ).toString("base64url"),
+    "signature",
+  ].join(".");
+}
+
+function daemonCaller(token: string, subject: string, organizationId: string): DaemonPrincipal {
+  return {
+    principalId: createHash("sha256").update(`${TEST_ISSUER}\0${subject}`).digest("hex"),
+    organizationId,
+    credentialFingerprint: createHash("sha256").update(token).digest("hex"),
+  };
+}
 
 function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Promise<ChildResult> {
   const source = `
@@ -161,6 +184,7 @@ function daemonRequest(
   socketPath: string,
   method: string,
   params: Record<string, unknown> = {},
+  caller?: DaemonPrincipal,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
@@ -174,7 +198,7 @@ function daemonRequest(
       reject(error);
     });
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ id: 1, method, params })}\n`);
+      socket.write(`${JSON.stringify({ id: 1, method, params, ...(caller ? { caller } : {}) })}\n`);
     });
     socket.on("data", (chunk) => {
       response += chunk.toString();
@@ -412,13 +436,17 @@ describe("daemon terminal-auth lifecycle", () => {
       const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
       daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`);
       await eventually(
-        () => existsSync(socketPath),
-        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+        () => existsSync(socketPath) && (statSync(socketPath).mode & 0o777) === 0o600,
+        () => `daemon socket was not secured: ${daemon?.stderr() ?? ""}`,
       );
+      expect(statSync(config).mode & 0o777).toBe(0o700);
+      expect(statSync(socketPath).mode & 0o777).toBe(0o600);
 
       const held = await daemonRequest(socketPath, "status_snapshot");
       expect(held.needsReauth).toBe(true);
-      await daemonRequest(socketPath, "session_start", { sessionId: "held-session" });
+      await expect(
+        daemonRequest(socketPath, "session_start", { sessionId: "held-session" }),
+      ).rejects.toThrow("principal or organization mismatch");
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(networkCalls).toBe(0);
       expect(
@@ -464,6 +492,10 @@ describe("daemon raw statusline socket", () => {
     const activeRepo = join(home, "active repo");
     const inactiveRepo = join(home, "inactive");
     const otherEnvRepo = join(home, "other-env");
+    const tokenA = testJwt("user-a", "org-a", "1");
+    const tokenB = testJwt("user-b", "org-b", "1");
+    const callerA = daemonCaller(tokenA, "user-a", "org-a");
+    const callerB = daemonCaller(tokenB, "user-b", "org-b");
     for (const repo of [activeRepo, inactiveRepo, otherEnvRepo]) {
       mkdirSync(repo, { recursive: true });
       execFileSync("git", ["init", "--quiet"], { cwd: repo });
@@ -473,7 +505,8 @@ describe("daemon raw statusline socket", () => {
     execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: otherEnvRepo });
     writeFileSync(join(otherEnvRepo, ".env"), "PRIM_API_URL=https://other.example.test\n");
     mkdirSync(config, { recursive: true });
-    writeFileSync(join(config, "token"), "test-token\n");
+    chmodSync(config, 0o777);
+    writeFileSync(join(config, "token"), `${tokenB}\n`);
 
     const server = createServer((request, response) => {
       request.resume();
@@ -500,12 +533,16 @@ describe("daemon raw statusline socket", () => {
         request.method === "GET" &&
         request.url === "/api/cli/decisions/recent?limit=100&since=24h"
       ) {
+        const decisionId =
+          request.headers.authorization === `Bearer ${tokenA}`
+            ? "cached-decision-a"
+            : "cached-decision-b";
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
             decisions: [
               {
-                id: "cached-decision",
+                id: decisionId,
                 intent: "Read Decisions from the daemon cache",
                 userId: "user-kasey",
                 authorName: "Kasey",
@@ -558,27 +595,72 @@ describe("daemon raw statusline socket", () => {
 
       await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
 
+      await expect(
+        daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }),
+      ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }, callerA),
+      ).rejects.toThrow("principal or organization mismatch");
+
       const digestSnapshot = await eventuallyValue(
         async () =>
-          await daemonRequest(socketPath, "decision_digest_snapshot", { callerEnv: apiUrl }),
+          await daemonRequest(
+            socketPath,
+            "decision_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerB,
+          ),
         (value) => Array.isArray(value.decisions) && value.decisions.length === 1,
         () => `daemon Decision cache did not warm: ${daemon?.stderr() ?? ""}`,
       );
       expect(digestSnapshot).toMatchObject({
-        decisions: [{ id: "cached-decision" }],
+        decisions: [{ id: "cached-decision-b" }],
         cachedAt: expect.any(Number),
       });
+
+      await expect(
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-b", callerEnv: apiUrl },
+          callerB,
+        ),
+      ).resolves.toEqual({ sessionId: "session-b" });
+      await expect(
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-a", callerEnv: apiUrl },
+          callerA,
+        ),
+      ).rejects.toThrow("principal or organization mismatch");
+      await expect(
+        daemonRequest(socketPath, "status_snapshot", { callerEnv: apiUrl }, callerB),
+      ).resolves.toMatchObject({ sessionId: "session-b" });
+      await expect(
+        daemonRequest(
+          socketPath,
+          "session_start",
+          { sessionId: "session-staging", callerEnv: "https://staging.example.test" },
+          callerB,
+        ),
+      ).rejects.toThrow("env mismatch");
+      await expect(
+        daemonRequest(socketPath, "status_snapshot", { callerEnv: apiUrl }, callerB),
+      ).resolves.toMatchObject({ sessionId: "session-b" });
 
       const raw = statuslineRequest(activeRepo, apiUrl);
       const fragmented = await rawStatuslineRequest(
         socketPath,
         Array.from(raw, (byte) => Buffer.from([byte])),
       );
-      const linkedTeammate =
-        "\x1b]8;;https://app.getprimitive.ai/decisions/kasey-decision\x07" +
-        "\x1b[34;4mKasey - auth\x1b[0m\x1b]8;;\x07";
-      const expected = `primitive test (daemon: live, Decision ingestion enabled · team: ${linkedTeammate})`;
-      expect(fragmented.toString()).toBe(expected);
+      // Raw v1 carries only cwd + API URL, never a principal. It therefore
+      // remains compatible as a statusline protocol but cannot expose the
+      // daemon's tenant-bound roster.
+      const sameEnvExpected =
+        "primitive test (daemon: live, Decision ingestion enabled · presence: other account)";
+      expect(fragmented.toString()).toBe(sameEnvExpected);
+      expect(fragmented.toString()).not.toContain("Kasey");
 
       if (process.platform === "darwin") {
         const runtime = stageRuntime({
@@ -592,9 +674,12 @@ describe("daemon raw statusline socket", () => {
           execFileSync(runtime.paths.statuslineLauncher, [], {
             cwd: activeRepo,
             encoding: "utf8",
-            env: { ...process.env, PRIM_API_URL: apiUrl },
+            // The statusline process has another tenant's token, but v1 does
+            // not carry it over the socket and must not receive the daemon's
+            // cached roster.
+            env: { ...process.env, PRIM_API_URL: apiUrl, PRIM_TOKEN: tokenA },
           }),
-        ).toBe(expected);
+        ).toBe(sameEnvExpected);
         expect(
           execFileSync(runtime.paths.statuslineLauncher, [], {
             cwd: inactiveRepo,
@@ -602,7 +687,7 @@ describe("daemon raw statusline socket", () => {
             env: { ...process.env, PRIM_API_URL: apiUrl },
           }),
         ).toBe(
-          `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+          "primitive test (daemon: live, Decision ingestion disabled · presence: other account)",
         );
         const mismatchedEnv = { ...process.env };
         mismatchedEnv.PRIM_API_URL = undefined;
@@ -618,14 +703,14 @@ describe("daemon raw statusline socket", () => {
       const concurrent = await Promise.all(
         Array.from({ length: 23 }, () => rawStatuslineRequest(socketPath, [raw])),
       );
-      expect(concurrent.every((response) => response.toString() === expected)).toBe(true);
+      expect(concurrent.every((response) => response.toString() === sameEnvExpected)).toBe(true);
 
       expect(
         (
           await rawStatuslineRequest(socketPath, [statuslineRequest(inactiveRepo, apiUrl)])
         ).toString(),
       ).toBe(
-        `primitive test (daemon: live, Decision ingestion disabled · team: ${linkedTeammate})`,
+        "primitive test (daemon: live, Decision ingestion disabled · presence: other account)",
       );
       expect(
         (await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo)])).toString(),
@@ -634,10 +719,10 @@ describe("daemon raw statusline socket", () => {
         (
           await rawStatuslineRequest(socketPath, [statuslineRequest(otherEnvRepo, apiUrl)])
         ).toString(),
-      ).toBe(expected);
+      ).toBe(sameEnvExpected);
 
       execFileSync("git", ["config", "--local", "prim.active", "false"], { cwd: activeRepo });
-      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
       await expect(daemonRequest(socketPath, "statusline_invalidate")).resolves.toEqual({
         ack: true,
       });
@@ -645,8 +730,13 @@ describe("daemon raw statusline socket", () => {
         "Decision ingestion disabled",
       );
       execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: activeRepo });
-      await daemonRequest(socketPath, "session_start", { sessionId: "cache-reset" });
-      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(expected);
+      await daemonRequest(
+        socketPath,
+        "session_start",
+        { sessionId: "cache-reset", callerEnv: apiUrl },
+        callerB,
+      );
+      expect((await rawStatuslineRequest(socketPath, [raw])).toString()).toBe(sameEnvExpected);
 
       const relative = statuslineRequest("relative/path", apiUrl);
       await expect(rawStatuslineRequest(socketPath, [relative])).resolves.toEqual(Buffer.alloc(0));
@@ -655,6 +745,39 @@ describe("daemon raw statusline socket", () => {
         Buffer.alloc(65_536, "x"),
       ]);
       await expect(rawStatuslineRequest(socketPath, [oversized])).resolves.toEqual(Buffer.alloc(0));
+
+      // Rotate from org B to org A. The first org-A read may see only the
+      // warming sentinel; it must never see the retained org-B page.
+      writeFileSync(join(config, "token"), `${tokenA}\n`);
+      const afterRotation = await daemonRequest(
+        socketPath,
+        "decision_digest_snapshot",
+        { callerEnv: apiUrl },
+        callerA,
+      );
+      expect(afterRotation).not.toMatchObject({ decisions: [{ id: "cached-decision-b" }] });
+      const rotatedDigest = await eventuallyValue(
+        async () =>
+          await daemonRequest(
+            socketPath,
+            "decision_digest_snapshot",
+            { callerEnv: apiUrl },
+            callerA,
+          ),
+        (value) =>
+          Array.isArray(value.decisions) &&
+          (value.decisions as Array<{ id?: string }>).some(
+            (decision) => decision.id === "cached-decision-a",
+          ),
+        () => `daemon Decision cache did not re-key: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(rotatedDigest).toMatchObject({ decisions: [{ id: "cached-decision-a" }] });
+
+      // The JSON protocol has its own byte budget and a bad client cannot
+      // wedge the listener for subsequent calls.
+      await expect(
+        rawStatuslineRequest(socketPath, [Buffer.alloc(64 * 1024 + 1, "x")]),
+      ).resolves.toEqual(Buffer.alloc(0));
       await expect(daemonRequest(socketPath, "ping")).resolves.toEqual({ pong: true });
     } finally {
       if (daemon) {

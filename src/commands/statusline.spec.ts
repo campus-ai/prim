@@ -232,6 +232,17 @@ describe("renderStatusline", () => {
     expect(line).not.toContain("\x1b]8;;");
   });
 
+  it("withholds another authenticated account's presence", async () => {
+    mockDaemonRequest.mockResolvedValue({
+      ...snapshot(2, ["Kasey"]),
+      principalMismatch: true,
+    });
+    const line = await renderStatusline();
+    expect(line).toContain("daemon: live, Decision ingestion enabled");
+    expect(line).toContain("presence: other account");
+    expect(line).not.toContain("team:");
+  });
+
   it("renders 'presence: stale' (never a frozen count) when the daemon flags staleness", async () => {
     // Daemon alive but heartbeats failing: it drops the count and sets
     // presenceStale, so the statusline must not render a confident "team: N".
