@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -23,6 +24,7 @@ import {
   HOOK_RUNTIME_ENTRIES,
   STABLE_HOOK_LAUNCHER_CONTENT,
   hookRuntimePaths,
+  inspectHookRuntime,
   removeHookRuntime,
   stageHookRuntime,
 } from "./hook-runtime.js";
@@ -422,6 +424,79 @@ describe("stageHookRuntime", () => {
     expect(() => hookRuntimePaths({ env: { HOME: "relative" } })).toThrow(
       "HOME is not an absolute path",
     );
+  });
+});
+
+describe("inspectHookRuntime", () => {
+  it("accepts a private staged runtime with its recorded Node executable", () => {
+    const root = temporaryRoot("prim-hook-runtime-inspect-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+
+    expect(inspectHookRuntime({ env })).toEqual({ state: "ready", version: "1.2.3" });
+  });
+
+  it("fails closed for unsafe runtime-root mode or symlink drift", () => {
+    const root = temporaryRoot("prim-hook-runtime-inspect-drift-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+
+    writeFileSync(join(staged.paths.runtimeDir, "foreign.txt"), "foreign\n");
+    expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
+    rmSync(join(staged.paths.runtimeDir, "foreign.txt"));
+    chmodSync(staged.paths.runtimeDir, 0o777);
+    expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
+    chmodSync(staged.paths.runtimeDir, 0o700);
+    const moved = join(root, "runtime-target");
+    renameSync(staged.paths.runtimeDir, moved);
+    symlinkSync(moved, staged.paths.runtimeDir);
+    expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
+  });
+
+  it("rejects a spoofing recorded executable without running it", () => {
+    const root = temporaryRoot("prim-hook-runtime-inspect-node-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const fakeNode = join(root, "fake-node");
+    const invoked = join(root, "fake-node-invoked");
+    writeFileSync(fakeNode, `#!/bin/sh\nprintf '22.0.0'\nprintf invoked > ${invoked}\n`, {
+      mode: 0o700,
+    });
+    stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: fakeNode,
+      env,
+    });
+
+    expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
+    expect(existsSync(invoked)).toBe(false);
+  });
+
+  it("rejects a selected release whose nested runtime directory is a symlink", () => {
+    const root = temporaryRoot("prim-hook-runtime-inspect-nested-link-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+    const dist = join(staged.releaseDir, "dist");
+    const external = join(root, "external-dist");
+    renameSync(dist, external);
+    symlinkSync(external, dist);
+
+    expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
   });
 });
 

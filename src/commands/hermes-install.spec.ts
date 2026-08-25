@@ -18,6 +18,9 @@ import {
   type HooksMap,
   applyInstall,
   applyUninstall,
+  hasAnyHookRegistration,
+  hasCompleteHookRegistration,
+  hookRuntimeResolutions,
   isCaptureInstalled,
   isGateInstalled,
   mergeKeepsYamlValid,
@@ -118,6 +121,34 @@ describe("applyInstall", () => {
   it("is idempotent", () => {
     const once = applyInstall({}, false);
     expect(applyInstall(once, false)).toEqual(once);
+  });
+
+  it("requires every lifecycle entry with its exact matcher and timeout", () => {
+    const installed = applyInstall({}, false);
+    expect(hasCompleteHookRegistration(installed)).toBe(true);
+
+    const missingLifecycle = structuredClone(installed);
+    missingLifecycle.on_session_end?.splice(1, 1);
+    expect(hasAnyHookRegistration(missingLifecycle)).toBe(true);
+    expect(hasCompleteHookRegistration(missingLifecycle)).toBe(false);
+
+    const driftedTimeout = structuredClone(installed);
+    const gate = driftedTimeout.pre_tool_call?.find((entry) =>
+      entry.command.includes("prim-pre-tool-use"),
+    );
+    if (!gate) throw new Error("Expected Hermes gate registration");
+    gate.timeout = 11;
+    expect(hasCompleteHookRegistration(driftedTimeout)).toBe(false);
+
+    process.env.HERMES_HOME = "/tmp/.hermes";
+    const legacy = {
+      pre_tool_call: [
+        {
+          command: '"/tmp/.hermes/agent-hooks/prim-shim.sh" prim-pre-tool-use --agent hermes',
+        },
+      ],
+    };
+    expect(hookRuntimeResolutions(legacy)).toContainEqual({ kind: "legacy_path" });
   });
 
   it("preserves a user's non-prim hook under a shared event", () => {
