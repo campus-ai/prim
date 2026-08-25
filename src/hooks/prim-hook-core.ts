@@ -20,6 +20,7 @@ import {
   type ToolOutcome,
 } from "../protocol/move.js";
 import type { Agent } from "./agent.js";
+import { scrubEnvironmentPaths } from "./redact.js";
 
 const CORRELATED_TOOL_EVENTS = new Set([
   "PostToolUse",
@@ -109,19 +110,37 @@ export function toMove(
   const sessionId = (parsed.session_id as string | undefined) ?? "";
   const eventType = (parsed.hook_event_name as string | undefined) ?? "unknown";
   const toolOutcome = toolOutcomeFor(parsed, agent);
-  const moveId =
-    CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && invocationId
-      ? `posttool:v1:${createHash("sha256")
-          .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
-          .digest("hex")}`
-      : randomUUID();
+  let moveId: string;
+  if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && invocationId) {
+    moveId = `posttool:v1:${createHash("sha256")
+      .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
+      .digest("hex")}`;
+  } else if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId) {
+    // Malformed/older host envelopes can omit the invocation id. Keep the two
+    // independent capture paths idempotent by hashing the stable tool facts;
+    // the dedicated prefix cannot collide with a host-provided identity.
+    moveId = `posttool:fallback:v1:${createHash("sha256")
+      .update(
+        JSON.stringify([
+          agent,
+          sessionId,
+          eventType,
+          parsed.turn_id ?? null,
+          parsed.tool_name ?? null,
+          parsed.tool_input ?? null,
+        ]),
+      )
+      .digest("hex")}`;
+  } else {
+    moveId = randomUUID();
+  }
   return {
     moveId,
     capturedAt: Date.now(),
     sessionId,
     eventType,
     payload: parsed,
-    env: {
+    env: scrubEnvironmentPaths({
       cwd: (parsed.cwd as string | undefined) ?? process.cwd(),
       cliVersion,
       osPlatform: platform(),
@@ -135,7 +154,7 @@ export function toMove(
           }
         : {}),
       ...(workspaceId ? { workspaceId } : {}),
-    },
+    }),
     envelopeVersion: AGENT_ENVELOPE_VERSION,
     producer: agent,
     ...(invocationId ? { invocationId } : {}),
@@ -284,7 +303,7 @@ export function toCommitMove(
       changedFiles: commit.files,
       changedFilesComplete: commit.filesComplete,
     },
-    env: {
+    env: scrubEnvironmentPaths({
       cwd,
       cliVersion,
       osPlatform: platform(),
@@ -298,7 +317,7 @@ export function toCommitMove(
       ...(repoFullName ? { repoFullName } : {}),
       ...(validatedRepoSyncId ? { repoSyncId: validatedRepoSyncId } : {}),
       ...(validatedWorkspaceId ? { workspaceId: validatedWorkspaceId } : {}),
-    },
+    }),
   };
   return validatedAttribution
     ? {
@@ -381,7 +400,7 @@ export function toRewriteMove(
         pairs: sortedPairs,
         ...(branch ? { branch } : {}),
       },
-      env: {
+      env: scrubEnvironmentPaths({
         cwd,
         cliVersion,
         osPlatform: platform(),
@@ -395,7 +414,7 @@ export function toRewriteMove(
         ...(repoFullName ? { repoFullName } : {}),
         repoSyncId,
         workspaceId,
-      },
+      }),
       envelopeVersion: ENVELOPE_VERSION,
     });
   }
