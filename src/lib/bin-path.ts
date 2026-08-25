@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareSemver } from "./semver.js";
 
 const PKG_NAME = "@primitive.ai/prim";
 const ROOT_WALK_LIMIT = 6;
@@ -193,4 +194,62 @@ export function commandMatchesBin(command: string | undefined, bin: string): boo
     (c.includes(`-p ${PKG_NAME}@`) && exactBin.test(c)) ||
     (c.includes(STABLE_HOOK_LAUNCHER_NAME) && exactBin.test(c))
   );
+}
+
+/** Runtime selection made by a recognized agent-hook command. */
+export type HookCommandResolution =
+  | Readonly<{ kind: "stable_launcher" }>
+  | Readonly<{ kind: "exact_npx_fallback"; version: string }>
+  | Readonly<{ kind: "legacy_path" }>;
+
+function exactPinnedNpxVersion(command: string, bin: string): string | undefined {
+  // Recognize only the generated npx grammar. In particular, do not mistake a
+  // package selection followed by an arbitrary shell program for Prim's bin.
+  // Doctor never executes this fallback; this classification is only enough to
+  // describe the persisted registration accurately.
+  const escapedBin = bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const shellQuoted = "'(?:[^']|'\"'\"')*'";
+  const safeArgs = "(?: [A-Za-z0-9_@%+=:,./-]+)*";
+  const direct = new RegExp(
+    `^npx --yes --ignore-scripts -p @primitive\\.ai/prim@(?<version>[0-9A-Za-z.+-]+) ${escapedBin}${safeArgs}$`,
+    "u",
+  ).exec(command);
+  const wrapped = new RegExp(
+    `^if \\[ -x (?<node>${shellQuoted}) \\] && \\[ -f (?<entry>${shellQuoted}) \\]; then \\k<node> \\k<entry>(?<args>${safeArgs}); else npx --yes --ignore-scripts -p @primitive\\.ai/prim@(?<version>[0-9A-Za-z.+-]+) ${escapedBin}\\k<args>; fi$`,
+    "u",
+  ).exec(command);
+  const version = direct?.groups?.version ?? wrapped?.groups?.version;
+  return version && compareSemver(version, version) !== undefined ? version : undefined;
+}
+
+/**
+ * Classify a registered command without executing it. Current launchers require
+ * the selected immutable runtime; exact npx fallbacks are retained for
+ * migration diagnostics but remain fail-closed because doctor will not run
+ * persisted commands.
+ */
+export function hookCommandResolution(
+  command: string | undefined,
+  bin: string,
+): HookCommandResolution | undefined {
+  const trimmed = command?.trim();
+  if (!trimmed || !commandMatchesBin(trimmed, bin)) return undefined;
+  if (trimmed.includes(STABLE_HOOK_LAUNCHER_NAME)) return { kind: "stable_launcher" };
+  const version = exactPinnedNpxVersion(trimmed, bin);
+  return version ? { kind: "exact_npx_fallback", version } : { kind: "legacy_path" };
+}
+
+/** Classify every Primitive command in an agent configuration. */
+export function hookCommandResolutions(
+  commands: Iterable<string | undefined>,
+  bins: readonly string[],
+): HookCommandResolution[] {
+  const resolutions: HookCommandResolution[] = [];
+  for (const command of commands) {
+    for (const bin of bins) {
+      const resolution = hookCommandResolution(command, bin);
+      if (resolution) resolutions.push(resolution);
+    }
+  }
+  return resolutions;
 }

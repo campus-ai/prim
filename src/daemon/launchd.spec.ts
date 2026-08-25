@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type EnsureMacDaemonOptions,
@@ -351,26 +351,43 @@ describe("runtime staging", () => {
   it.each([
     ["missing", {}],
     ["relative", { HOME: "relative-home", XDG_DATA_HOME: "relative-data" }],
-  ])(
-    "falls back to the stable hook runtime when the data-root environment is %s",
-    (_label, environment) => {
-      const root = mkdtempSync(join(tmpdir(), "prim-statusline-root-"));
-      temporaryRoots.push(root);
-      const configDir = join(root, "config");
-      const launcher = join(configDir, "prim-hook-launcher-v1");
-      mkdirSync(configDir, { recursive: true });
-      writeFileSync(launcher, '#!/bin/sh\nprintf "stable:%s" "$1"\n', { mode: 0o700 });
+  ])("uses the stable hook runtime when the data-root environment is %s", (_label, environment) => {
+    const root = mkdtempSync(join(tmpdir(), "prim-statusline-root-"));
+    temporaryRoots.push(root);
+    const configDir = join(root, "config");
+    const launcher = join(configDir, "prim-hook-launcher-v1");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(launcher, '#!/bin/sh\nprintf "stable:%s" "$1"\n', { mode: 0o700 });
 
-      const command = runtimeStatuslineCommand();
-      expect(command).toContain("prim-hook-launcher-v1");
-      expect(
-        execFileSync("/bin/sh", ["-c", command], {
-          env: { ...environment, PRIM_CONFIG_DIR: configDir },
-          encoding: "utf8",
-        }),
-      ).toBe("stable:prim-statusline");
-    },
-  );
+    const command = runtimeStatuslineCommand();
+    expect(command).toContain("prim-hook-launcher-v1");
+    expect(
+      execFileSync("/bin/sh", ["-c", command], {
+        env: { ...environment, PRIM_CONFIG_DIR: configDir },
+        encoding: "utf8",
+      }),
+    ).toBe("stable:prim-statusline");
+  });
+
+  it("does not prefer an executable data-runtime statusline over the stable hook runtime", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-statusline-foreign-"));
+    temporaryRoots.push(root);
+    const configDir = join(root, "config");
+    const launcher = join(configDir, "prim-hook-launcher-v1");
+    const dataRoot = join(root, "data");
+    const foreign = join(dataRoot, "prim", "runtime", "prim-statusline");
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dirname(foreign), { recursive: true });
+    writeFileSync(launcher, '#!/bin/sh\nprintf "stable:%s" "$1"\n', { mode: 0o700 });
+    writeFileSync(foreign, "#!/bin/sh\nprintf foreign\n", { mode: 0o700 });
+
+    expect(
+      execFileSync("/bin/sh", ["-c", runtimeStatuslineCommand()], {
+        env: { HOME: join(root, "home"), PRIM_CONFIG_DIR: configDir, XDG_DATA_HOME: dataRoot },
+        encoding: "utf8",
+      }),
+    ).toBe("stable:prim-statusline");
+  });
 
   macIt(
     "falls back within the deadline when an old daemon accepts but never responds",

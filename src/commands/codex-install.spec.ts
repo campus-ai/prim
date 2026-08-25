@@ -11,7 +11,14 @@
 import { describe, expect, it } from "vitest";
 import { commandMatchesBin, stableHookCommand } from "../lib/bin-path.js";
 import type { ClaudeSettings } from "./claude-install.js";
-import { applyInstall, applyUninstall, isGateInstalled, resolveScope } from "./codex-install.js";
+import {
+  applyInstall,
+  applyUninstall,
+  hasAnyHookRegistration,
+  hasCompleteHookRegistration,
+  isGateInstalled,
+  resolveScope,
+} from "./codex-install.js";
 
 const EMPTY: ClaudeSettings = {};
 
@@ -97,6 +104,31 @@ describe("codex applyInstall", () => {
     const once = applyInstall(EMPTY);
     const twice = applyInstall(once);
     expect(JSON.stringify(once)).toBe(JSON.stringify(twice));
+  });
+
+  it("requires the complete lifecycle with exact matchers", () => {
+    const installed = applyInstall(EMPTY);
+    expect(hasCompleteHookRegistration(installed)).toBe(true);
+
+    const missingLifecycle = structuredClone(installed);
+    missingLifecycle.hooks?.SessionStart?.splice(1, 1);
+    expect(hasAnyHookRegistration(missingLifecycle)).toBe(true);
+    expect(hasCompleteHookRegistration(missingLifecycle)).toBe(false);
+
+    const driftedMatcher = structuredClone(installed);
+    const gate = driftedMatcher.hooks?.PreToolUse?.find((entry) =>
+      entry.hooks?.some((hook) => commandMatchesBin(hook.command, "prim-pre-tool-use")),
+    );
+    if (!gate) throw new Error("Expected Codex gate registration");
+    gate.matcher = "Bash";
+    expect(hasCompleteHookRegistration(driftedMatcher)).toBe(false);
+
+    const foreignSibling = structuredClone(installed);
+    foreignSibling.hooks?.PreToolUse?.push({
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "/usr/local/bin/unrelated-hook" }],
+    });
+    expect(hasCompleteHookRegistration(foreignSibling)).toBe(true);
   });
 
   it("upgrades a legacy bare-name Codex install in place", () => {

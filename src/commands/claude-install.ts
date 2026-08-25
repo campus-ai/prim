@@ -29,9 +29,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
-import { runtimeStatuslineCommand, stageRuntime } from "../daemon/launchd.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
+import {
+  type HookCommandResolution,
+  commandMatchesBin,
+  detachedHookShimCommand,
+  hookCommandResolution,
+  hookCommandResolutions,
+  stableHookCommand,
+} from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 
@@ -281,6 +287,45 @@ export function entryHasCommand(entry: HookEntry, bin: string): boolean {
   return entry.hooks?.some((h) => commandMatchesBin(h.command, bin)) ?? false;
 }
 
+type OwnedRegistrationEntry = Readonly<{ event: string; entry: HookEntry }>;
+
+function ownedRegistrationEntries(settings: ClaudeSettings): OwnedRegistrationEntry[] {
+  return Object.entries(settings.hooks ?? {}).flatMap(([event, entries]) =>
+    (entries ?? [])
+      .filter((entry) => PRIM_BINS.some((bin) => entryHasCommand(entry, bin)))
+      .map((entry) => ({ event, entry })),
+  );
+}
+
+export function hasAnyHookRegistration(settings: ClaudeSettings): boolean {
+  return ownedRegistrationEntries(settings).length > 0;
+}
+
+function entryMatchesRegistration(
+  owned: OwnedRegistrationEntry,
+  registration: Registration,
+): boolean {
+  return (
+    owned.event === registration.event &&
+    owned.entry.matcher === registration.matcher &&
+    owned.entry.hooks?.length === 1 &&
+    owned.entry.hooks[0].type === "command" &&
+    owned.entry.hooks[0].command === registration.command
+  );
+}
+
+/** Exact bijection over owned hooks; arbitrary foreign entries remain neutral. */
+export function hasCompleteHookRegistration(settings: ClaudeSettings): boolean {
+  const owned = ownedRegistrationEntries(settings);
+  return (
+    owned.length === REGISTRATIONS.length &&
+    REGISTRATIONS.every(
+      (registration) =>
+        owned.filter((entry) => entryMatchesRegistration(entry, registration)).length === 1,
+    )
+  );
+}
+
 function canonicalEntry(reg: Registration): HookEntry {
   return { matcher: reg.matcher, hooks: [{ type: "command", command: reg.command }] };
 }
@@ -356,6 +401,28 @@ function isPrimStatusLine(settings: ClaudeSettings): boolean {
     (c.includes("prim-hook-launcher-v1") && commandMatchesBin(c, STATUSLINE_BIN)) ||
     RUNTIME_STATUSLINE_SUFFIXES.some((suffix) => c.includes(suffix))
   );
+}
+
+/** Runtime requirements of Primitive hooks and a persisted Primitive statusline. */
+export function hookRuntimeResolutions(settings: ClaudeSettings): HookCommandResolution[] {
+  const resolutions = hookCommandResolutions(
+    Object.values(settings.hooks ?? {}).flatMap((entries) =>
+      (entries ?? []).flatMap((entry) => (entry.hooks ?? []).map((hook) => hook.command)),
+    ),
+    PRIM_BINS,
+  );
+  if (!isPrimStatusLine(settings)) return resolutions;
+  const statusline = hookCommandResolution(settings.statusLine?.command, STATUSLINE_BIN);
+  resolutions.push(statusline ?? { kind: "legacy_path" });
+  return resolutions;
+}
+
+/** Inspect hook runtime requirements without changing Claude settings. */
+export function inspectHookRuntimeResolutions(): HookCommandResolution[] {
+  return [
+    ...hookRuntimeResolutions(readSettings(USER_SCOPE_PATH)),
+    ...hookRuntimeResolutions(readSettings(projectScopePath())),
+  ];
 }
 
 /**
@@ -559,9 +626,11 @@ export function atomicWrite(path: string, content: ClaudeSettings): void {
 
 export type ScopeStatus = {
   path: string;
+  present: boolean;
   gate: boolean;
   capture: boolean;
   feedback: boolean;
+  complete: boolean;
   statusline: boolean;
   statuslineState: StatuslineState;
 };
@@ -597,29 +666,9 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     scope,
     scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
   );
-  let statuslineCommand = STATUSLINE_COMMAND;
-  // A long-lived Claude setting must not point into an npx cache that package
-  // cleanup can remove. On macOS, stage the socket launcher beside the
-  // supervised daemon runtime and persist that stable path. Custom slots are left
-  // entirely untouched, so there is nothing to stage for them.
-  if (
-    !blockedByUserStatusline &&
-    process.platform === "darwin" &&
-    (!before.statusLine || isPrimStatusLine(before))
-  ) {
-    try {
-      stageRuntime();
-      statuslineCommand = runtimeStatuslineCommand();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      process.stderr.write(
-        `[prim] ⚠ could not stage the lightweight statusline runtime (${detail}); using the stable hook runtime\n`,
-      );
-    }
-  }
   const after = applyInstall(before, {
     force,
-    statuslineCommand,
+    statuslineCommand: STATUSLINE_COMMAND,
     installStatusline: !blockedByUserStatusline,
   });
   const changed = JSON.stringify(before) !== JSON.stringify(after);
@@ -697,9 +746,11 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
     const settings = readSettings(path);
     return {
       path,
+      present: hasAnyHookRegistration(settings) || statuslineInstalled(settings),
       gate: isGateInstalled(settings),
       capture: captureInstalled(settings),
       feedback: feedbackInstalled(settings),
+      complete: hasCompleteHookRegistration(settings),
       statusline: statuslineInstalled(settings),
       statuslineState: statuslineState(settings),
     };

@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  constants,
+  accessSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -8,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -92,6 +95,10 @@ export type RemoveHookRuntimeResult = {
   paths: HookRuntimePaths;
 };
 
+export type HookRuntimeInspection =
+  | Readonly<{ state: "ready"; version: string }>
+  | Readonly<{ state: "missing" | "invalid" }>;
+
 export function hookRuntimePaths(options: PrimConfigDirectoryOptions = {}): HookRuntimePaths {
   // The persisted POSIX launcher can only resolve its default from HOME. Pass
   // that exact environment value into the shared canonical path resolver so
@@ -146,6 +153,7 @@ function runtimePackageJson(manifest: HookRuntimeManifest): string {
 
 function validateRelease(releaseDir: string, manifest: HookRuntimeManifest): boolean {
   try {
+    if (!directReleaseLayout(releaseDir)) return false;
     if (readFileSync(join(releaseDir, "manifest.json"), "utf8") !== exactManifest(manifest)) {
       return false;
     }
@@ -160,9 +168,29 @@ function validateRelease(releaseDir: string, manifest: HookRuntimeManifest): boo
       string,
     ][]) {
       const target = join(releaseDir, relativePath);
-      if (!statSync(target).isFile() || sha256(target) !== manifest.files[bin]) return false;
+      if (sha256(target) !== manifest.files[bin]) return false;
     }
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function directReleaseLayout(releaseDir: string): boolean {
+  try {
+    const directories = new Set([releaseDir]);
+    for (const relativePath of Object.values(HOOK_RUNTIME_ENTRIES)) {
+      for (
+        let directory = dirname(relativePath);
+        directory !== ".";
+        directory = dirname(directory)
+      ) {
+        directories.add(join(releaseDir, directory));
+      }
+    }
+    if (![...directories].every((directory) => lstatSync(directory).isDirectory())) return false;
+    const files = ["manifest.json", "package.json", "node", ...Object.values(HOOK_RUNTIME_ENTRIES)];
+    return files.every((relativePath) => lstatSync(join(releaseDir, relativePath)).isFile());
   } catch {
     return false;
   }
@@ -328,6 +356,92 @@ case "$prim_node" in /*) ;; *) exit 69 ;; esac
 [ -x "$prim_node" ] && [ -f "$prim_entry" ] || exit 69
 exec "$prim_node" "$prim_entry" "$@"
 `;
+
+function privateDirectory(path: string): boolean {
+  const stat = lstatIfPresent(path);
+  if (!stat?.isDirectory()) return false;
+  if (process.platform === "win32") return true;
+  const uid = process.getuid?.();
+  return (Number(stat.mode) & 0o777) === DIRECTORY_MODE && (uid === undefined || stat.uid === uid);
+}
+
+function privateFile(path: string, mode: number): boolean {
+  const stat = lstatIfPresent(path);
+  if (!stat?.isFile()) return false;
+  if (process.platform === "win32") return true;
+  const uid = process.getuid?.();
+  return (Number(stat.mode) & 0o777) === mode && (uid === undefined || stat.uid === uid);
+}
+
+function hasSafeRuntimeLayout(paths: HookRuntimePaths, selected: SelectedRelease): boolean {
+  const releaseDirectories = new Set([selected.dir]);
+  for (const relativePath of Object.values(HOOK_RUNTIME_ENTRIES)) {
+    for (let directory = dirname(relativePath); directory !== "."; directory = dirname(directory)) {
+      releaseDirectories.add(join(selected.dir, directory));
+    }
+  }
+  if (
+    !privateDirectory(paths.configDir) ||
+    !privateDirectory(paths.runtimeDir) ||
+    !privateDirectory(paths.releasesDir) ||
+    ![...releaseDirectories].every(privateDirectory) ||
+    !privateFile(paths.launcher, LAUNCHER_MODE) ||
+    !privateFile(paths.current, DATA_FILE_MODE) ||
+    !privateFile(join(selected.dir, "manifest.json"), DATA_FILE_MODE) ||
+    !privateFile(join(selected.dir, "package.json"), DATA_FILE_MODE) ||
+    !privateFile(join(selected.dir, "node"), DATA_FILE_MODE)
+  ) {
+    return false;
+  }
+  return Object.values(HOOK_RUNTIME_ENTRIES).every((relativePath) =>
+    privateFile(join(selected.dir, relativePath), DATA_FILE_MODE),
+  );
+}
+
+function recordedNodeMatchesCurrentProcess(nodePath: string): boolean {
+  try {
+    if (!statSync(nodePath).isFile()) return false;
+    accessSync(nodePath, constants.X_OK);
+    // The immutable launcher will execute this path later. A diagnostic must
+    // not execute manifest-controlled bytes to find out whether that is safe;
+    // accept only the Node executable already running this CLI.
+    return realpathSync(nodePath) === realpathSync(process.execPath);
+  } catch {
+    return false;
+  }
+}
+
+/** Inspect the selected immutable hook runtime without staging or repairing it. */
+export function inspectHookRuntime(
+  options: PrimConfigDirectoryOptions = {},
+): HookRuntimeInspection {
+  let paths: HookRuntimePaths;
+  try {
+    paths = hookRuntimePaths(options);
+  } catch {
+    return { state: "invalid" };
+  }
+
+  const launcher = lstatIfPresent(paths.launcher);
+  const selector = lstatIfPresent(paths.current);
+  if (!(launcher || selector)) return { state: "missing" };
+  if (!(launcher && selector)) return { state: "invalid" };
+
+  try {
+    if (readFileSync(paths.launcher, "utf8") !== STABLE_HOOK_LAUNCHER_CONTENT) {
+      return { state: "invalid" };
+    }
+    const selected = readSelectedRelease(paths);
+    if (!selected) return { state: "invalid" };
+    assertOwnedHookRuntime(paths);
+    if (!hasSafeRuntimeLayout(paths, selected)) return { state: "invalid" };
+    return recordedNodeMatchesCurrentProcess(selected.manifest.nodePath)
+      ? { state: "ready", version: selected.manifest.version }
+      : { state: "invalid" };
+  } catch {
+    return { state: "invalid" };
+  }
+}
 
 function writeRelease(
   sourceDir: string,

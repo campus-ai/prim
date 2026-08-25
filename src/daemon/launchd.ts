@@ -468,12 +468,11 @@ fi
 }
 
 /** Pure command rendering; callers stage first, then persist this command. */
-export function runtimeStatuslineCommand(options: RuntimePathOptions = {}): string {
-  // Keep settings.json bytes stable across versions, machines, and XDG roots.
-  // The resolver mirrors xdgDataHome(): only absolute XDG_DATA_HOME values are
-  // honored, otherwise an absolute HOME is required.
-  const resolver = `prim_data=\${XDG_DATA_HOME:-}; case "$prim_data" in /*) ;; *) case "\${HOME:-}" in /*) prim_data="$HOME/.local/share" ;; *) prim_data= ;; esac ;; esac; if [ -n "$prim_data" ] && [ -x "$prim_data/prim/runtime/prim-statusline" ]; then exec "$prim_data/prim/runtime/prim-statusline"; fi; exec ${stableHookCommand("prim-statusline")}`;
-  return `/bin/sh -c ${shellQuote(resolver)} prim-statusline`;
+export function runtimeStatuslineCommand(_options: RuntimePathOptions = {}): string {
+  // Persist one inspected runtime path. The older data-runtime preference was
+  // only gated by `-x`, so a stale or substituted executable could run before
+  // the stable immutable launcher had a chance to fail closed.
+  return stableHookCommand("prim-statusline");
 }
 
 function assertRegularFile(path: string, label: string): void {

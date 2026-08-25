@@ -7,17 +7,29 @@
  * (actionable, not broken), and the checks pass through verbatim for machine
  * consumers.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { stableHookCommand } from "../lib/bin-path.js";
+import {
+  applyInstall as applyClaudeInstall,
+  hookRuntimeResolutions as claudeRuntimeResolutions,
+  feedbackInstalled,
+  hasCompleteHookRegistration as hasCompleteClaudeHooks,
+} from "./claude-install.js";
 import {
   type Check,
   type MovesStatus,
   classifyAuthCredential,
+  classifyClaudeHooks,
+  classifyCodexHooks,
   classifyDaemonHealth,
   classifyDoctor,
+  classifyHermesHooks,
+  classifyHookRuntime,
   classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
   classifyRepositoryBinding,
+  diagnoseRegisteredHookRuntime,
 } from "./doctor.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
@@ -173,6 +185,142 @@ describe("daemon health diagnostics", () => {
         { service: { loaded: true, pid: 42 }, ingestionStatus: "enabled" },
       ),
     ).toEqual({ name: "daemon", status: "fail", detail: "health state is not ready" });
+  });
+
+  it("fails deployment, principal, and both daemon/package version skew directions", () => {
+    const service = { loaded: true, pid: 42 };
+    expect(classifyDaemonHealth({ ...healthy, envMismatch: true }, { service }).detail).toContain(
+      "deployment differs",
+    );
+    expect(
+      classifyDaemonHealth({ ...healthy, principalMismatch: true }, { service }).detail,
+    ).toContain("credential or organization");
+    expect(
+      classifyDaemonHealth({ ...healthy, version: "1.2.2" }, { service, expectedVersion: "1.2.3" })
+        .detail,
+    ).toContain("older");
+    expect(
+      classifyDaemonHealth({ ...healthy, version: "1.2.4" }, { service, expectedVersion: "1.2.3" })
+        .detail,
+    ).toContain("newer");
+    expect(
+      classifyDaemonHealth(
+        { ...healthy, version: "invalid" },
+        { service, expectedVersion: "1.2.3" },
+      ).detail,
+    ).toContain("malformed");
+  });
+});
+
+describe("agent hook diagnostics", () => {
+  it("requires every Claude registration and includes a persisted statusline runtime", () => {
+    const installed = applyClaudeInstall({});
+    expect(hasCompleteClaudeHooks(installed)).toBe(true);
+    const partial = structuredClone(installed);
+    partial.hooks?.PostToolUseFailure?.splice(0, 1);
+    expect(feedbackInstalled(partial)).toBe(true);
+    expect(hasCompleteClaudeHooks(partial)).toBe(false);
+    expect(
+      claudeRuntimeResolutions({
+        statusLine: { type: "command", command: stableHookCommand("prim-statusline") },
+      }),
+    ).toEqual([{ kind: "stable_launcher" }]);
+  });
+
+  it("fails incomplete Claude, Codex, and Hermes lifecycles", () => {
+    expect(
+      classifyClaudeHooks([{ present: true, gate: true, capture: true, complete: false }]),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining("Claude lifecycle") });
+    expect(
+      classifyCodexHooks([{ present: true, gate: true, capture: true, complete: false }]).status,
+    ).toBe("fail");
+    expect(
+      classifyHermesHooks({
+        present: true,
+        gate: true,
+        capture: true,
+        complete: false,
+        autoAccept: true,
+      }).status,
+    ).toBe("fail");
+  });
+
+  it("keeps unused optional agents neutral and describes trust state", () => {
+    expect(
+      classifyCodexHooks([{ present: false, gate: false, capture: false, complete: false }]).status,
+    ).toBe("ok");
+    expect(
+      classifyHermesHooks({
+        present: false,
+        gate: false,
+        capture: false,
+        complete: false,
+        autoAccept: false,
+      }).status,
+    ).toBe("ok");
+  });
+});
+
+describe("hook runtime diagnostics", () => {
+  const stable = [{ kind: "stable_launcher" }] as const;
+  const exactNpx = [{ kind: "exact_npx_fallback", version: "1.2.3" }] as const;
+  const legacy = [{ kind: "legacy_path" }] as const;
+
+  it("does not touch runtime state when no Primitive registration exists", () => {
+    const inspect = vi.fn(() => ({ state: "missing" }) as const);
+    const version = vi.fn(() => "1.2.3");
+    expect(diagnoseRegisteredHookRuntime([], inspect, version)).toEqual({
+      name: "hook-runtime",
+      status: "ok",
+      detail: "not required: no Primitive hook registrations",
+    });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(version).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an exact npx fallback without executing it", () => {
+    const inspect = vi.fn(() => ({ state: "ready", version: "1.2.2" }) as const);
+    expect(diagnoseRegisteredHookRuntime(exactNpx, inspect, () => "1.2.3")).toEqual({
+      name: "hook-runtime",
+      status: "fail",
+      detail: expect.stringContaining("cannot be safely verified"),
+    });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a bare PATH hook without executing it", () => {
+    const inspect = vi.fn(() => ({ state: "ready", version: "1.2.3" }) as const);
+    expect(diagnoseRegisteredHookRuntime(legacy, inspect, () => "1.2.3")).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("legacy PATH"),
+    });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stable hook mask an active exact statusline fallback", () => {
+    const inspect = vi.fn(() => ({ state: "ready", version: "1.2.3" }) as const);
+    expect(
+      diagnoseRegisteredHookRuntime([...stable, ...exactNpx], inspect, () => "1.2.3"),
+    ).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("exact npx fallback"),
+    });
+    expect(inspect).toHaveBeenCalledTimes(1);
+  });
+
+  it("guides a newer selected runtime toward a matching CLI rather than downgrade", () => {
+    expect(classifyHookRuntime({ state: "ready", version: "1.2.4" }, "1.2.3")).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("upgrade this CLI"),
+    });
+    expect(classifyHookRuntime({ state: "ready", version: "1.2.2" }, "1.2.3")).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("older"),
+    });
+    expect(classifyHookRuntime({ state: "invalid" }, "1.2.3")).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("remove or repair"),
+    });
   });
 });
 

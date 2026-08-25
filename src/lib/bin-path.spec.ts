@@ -23,6 +23,8 @@ import {
   binFile,
   commandMatchesBin,
   detachedHookShimCommand,
+  hookCommandResolution,
+  hookCommandResolutions,
   packageVersion,
   pinnedHookCommand,
   pinnedNpxArgs,
@@ -325,5 +327,44 @@ describe("commandMatchesBin", () => {
   it("does not match a foreign command or undefined", () => {
     expect(commandMatchesBin("/usr/local/bin/other", "prim-hook")).toBe(false);
     expect(commandMatchesBin(undefined, "prim-hook")).toBe(false);
+  });
+});
+
+describe("hookCommandResolution", () => {
+  it("distinguishes stable launchers, exact script-free npx fallbacks, and bare PATH hooks", () => {
+    expect(hookCommandResolution(stableHookCommand("prim-hook"), "prim-hook")).toEqual({
+      kind: "stable_launcher",
+    });
+    expect(hookCommandResolution(pinnedHookCommand("prim-hook"), "prim-hook")).toEqual({
+      kind: "exact_npx_fallback",
+      version: packageVersion(),
+    });
+    expect(hookCommandResolution("prim-hook --agent codex", "prim-hook")).toEqual({
+      kind: "legacy_path",
+    });
+    expect(
+      hookCommandResolution(
+        "if command -v prim-hook >/dev/null 2>&1; then prim-hook; else npx --yes -p @primitive.ai/prim@latest prim-hook; fi",
+        "prim-hook",
+      ),
+    ).toEqual({ kind: "legacy_path" });
+    expect(
+      hookCommandResolution(
+        `npx --yes --ignore-scripts -p @primitive.ai/prim@${packageVersion()} sh -c evil; prim-hook`,
+        "prim-hook",
+      ),
+    ).toEqual({ kind: "legacy_path" });
+  });
+
+  it("collects only recognized Primitive commands", () => {
+    expect(
+      hookCommandResolutions(
+        [stableHookCommand("prim-hook"), pinnedHookCommand("prim-pre-tool-use"), "other"],
+        ["prim-hook", "prim-pre-tool-use"],
+      ),
+    ).toEqual([
+      { kind: "stable_launcher" },
+      { kind: "exact_npx_fallback", version: packageVersion() },
+    ]);
   });
 });
