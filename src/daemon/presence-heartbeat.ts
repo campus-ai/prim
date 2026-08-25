@@ -1,6 +1,7 @@
 import {
   type PresenceHeartbeatRequest,
   type PresenceHeartbeatResponse,
+  isPresenceHeartbeatRequest,
   isPresenceHeartbeatResponse,
 } from "../contract/cli-http-v1.js";
 import type { Teammate } from "../lib/presence.js";
@@ -72,11 +73,19 @@ function isLegacyHeartbeatResponse(value: Record<string, unknown>): boolean {
 }
 
 /** Additive capability body accepted by lifecycle-aware and legacy servers. */
-export function buildPresenceHeartbeatRequest(sessionId: string): PresenceHeartbeatRequest {
-  return {
+export function buildPresenceHeartbeatRequest(
+  sessionId: string,
+  clientInstanceId: string,
+): PresenceHeartbeatRequest {
+  const request = {
     sessionId,
+    clientInstanceId,
     decisionLifecycleProtocolVersion: DECISION_LIFECYCLE_PROTOCOL_VERSION,
   };
+  if (!isPresenceHeartbeatRequest(request)) {
+    throw new Error("presence heartbeat identity or session is invalid");
+  }
+  return request;
 }
 
 /**
