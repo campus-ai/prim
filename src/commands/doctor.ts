@@ -33,7 +33,8 @@ import {
   getLaunchdService,
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
-import { pendingJournalStats } from "../journal.js";
+import { type RetainedJournalBucket, inspectJournalDelivery } from "../journal-organization.js";
+import { listBuckets, listFlushing, pendingJournalStats } from "../journal.js";
 import {
   decisionIngestionStatus,
   isRepoActiveForCapture,
@@ -364,6 +365,51 @@ function checkStranded(): Check {
     status: "warn",
     detail: `${qualifier}${String(stats.strandedCount)} move(s) in ${qualifier}${String(stats.strandedFileCount)} file(s) — run \`prim moves flush\``,
   };
+}
+
+export function classifyJournalOrganization(
+  bucketCount: number,
+  retainedBuckets: RetainedJournalBucket[],
+): Check {
+  if (bucketCount === 0) {
+    return {
+      name: "journal-org",
+      status: "ok",
+      detail: "no pending organization buckets",
+    };
+  }
+  if (retainedBuckets.length === 0) {
+    return {
+      name: "journal-org",
+      status: "ok",
+      detail: "all pending buckets match the active credential",
+    };
+  }
+  const reasonCounts = new Map<string, number>();
+  for (const item of retainedBuckets) {
+    reasonCounts.set(item.reason, (reasonCounts.get(item.reason) ?? 0) + 1);
+  }
+  const reasons = [...reasonCounts]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}:${String(count)}`)
+    .join(", ");
+  return {
+    name: "journal-org",
+    status: "fail",
+    detail: `${String(retainedBuckets.length)} bucket(s) retained (${reasons})`,
+  };
+}
+
+async function checkJournalOrganization(): Promise<Check> {
+  const buckets = [
+    ...listBuckets().map((entry) => entry.bucket),
+    ...listFlushing({ sampleBytes: 0 }).map((entry) => entry.bucket),
+  ];
+  if (buckets.length === 0) {
+    return classifyJournalOrganization(0, []);
+  }
+  const inspection = await inspectJournalDelivery(buckets);
+  return classifyJournalOrganization(new Set(buckets).size, inspection.retainedBuckets);
 }
 
 function checkWorkspaceIdentity(): Check {
@@ -881,6 +927,7 @@ async function collectChecks(): Promise<Check[]> {
     await checkDaemon(),
     checkJournal(),
     checkStranded(),
+    await checkJournalOrganization(),
     checkFeedbackHooks(),
     ...checkAgentHooks(),
     checkHookRuntime(),

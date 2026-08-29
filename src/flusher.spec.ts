@@ -8,6 +8,7 @@
  * network drain itself is exercised by the release smoke; these pin the pure
  * pieces.
  */
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -28,20 +29,37 @@ vi.mock("./lib/atomic-file.js", () => ({ syncDirectory: mocks.syncDirectory }));
 
 import { type CliClient, HttpError } from "./client.js";
 import {
+  type AnyDeadLetterRecord,
   type DeadLetterRecord,
   deadLetterDirectoryForRotation,
   deadLetterPathForMove,
+  deadLetterPathForRawLine,
 } from "./dead-letter.js";
 import {
   batchMoves,
-  drainFlushingPath,
+  drainFlushingPath as drainOrganizationBoundFlushingPath,
   recoverOrphans,
   selectRecoverable,
   shouldFlushPending,
 } from "./flusher.js";
 import { IngestAcknowledgementError } from "./ingest-response.js";
+import type { CurrentOrganizationBinding } from "./journal-organization.js";
 import { type FlushingFile, appendMoveToPath, readMovesFromPath } from "./journal.js";
 import type { Move } from "./protocol/move.js";
+
+const binding: CurrentOrganizationBinding = {
+  captureAuthorityKind: "workos",
+  organizationId: "org_local",
+  workosOrganizationId: "org_workos",
+};
+
+function drainFlushingPath(
+  flushingPath: string,
+  client: CliClient,
+  options?: Parameters<typeof drainOrganizationBoundFlushingPath>[3],
+) {
+  return drainOrganizationBoundFlushingPath(flushingPath, client, binding, options);
+}
 
 function move(id: string): Move {
   return {
@@ -171,7 +189,17 @@ describe("flush replay stability", () => {
     expect(existsSync(flushing)).toBe(false);
     expect(client.post).toHaveBeenCalledWith(
       "/api/cli/moves/ingest",
-      { batch: [move("dedup")] },
+      {
+        batch: [
+          expect.objectContaining({
+            moveId: "dedup",
+            envelopeVersion: 4,
+            capturedOrganizationId: "org_workos",
+            captureAuthorityKind: "workos",
+            decisionLifecycleProtocolVersion: 2,
+          }),
+        ],
+      },
       { signal: expect.any(AbortSignal) },
     );
   });
@@ -243,13 +271,123 @@ describe("flush replay stability", () => {
     expect(existsSync(flushing)).toBe(false);
   });
 
-  function readDeadLetters(flushingPath: string): DeadLetterRecord[] {
+  function readDeadLetters(flushingPath: string): AnyDeadLetterRecord[] {
     const directory = deadLetterDirectoryForRotation(flushingPath);
     return readdirSync(directory)
       .filter((name) => name.endsWith(".json"))
       .sort()
-      .map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as DeadLetterRecord);
+      .map(
+        (name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as AnyDeadLetterRecord,
+      );
   }
+
+  function moveDeadLetters(flushingPath: string): DeadLetterRecord[] {
+    return readDeadLetters(flushingPath).filter(
+      (record): record is DeadLetterRecord => !("recordKind" in record),
+    );
+  }
+
+  it("quarantines a malformed local envelope before any transport", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    writeFileSync(flushing, `${JSON.stringify({ moveId: "malformed" })}\n`);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(client.post).not.toHaveBeenCalled();
+    expect(moveDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        reason: "invalid_move",
+        move: { moveId: "malformed" },
+      }),
+    ]);
+  });
+
+  it("durably quarantines syntax-invalid exact bytes before unlinking or transport", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":"secret-marker"\r\n', "utf8");
+    writeFileSync(flushing, rawLine);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const result = await drainFlushingPath(flushing, client);
+    const terminalOutput = stderr.mock.calls.flat().join("");
+    stderr.mockRestore();
+
+    expect(result).toEqual({ flushed: 0, quarantined: 1 });
+    expect(terminalOutput).not.toContain("secret-marker");
+    expect(client.post).not.toHaveBeenCalled();
+    expect(existsSync(flushing)).toBe(false);
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        version: 1,
+        recordKind: "raw_line_v1",
+        quarantineId: createHash("sha256").update(rawLine).digest("hex"),
+        reason: "invalid_move",
+        rawLineEncoding: "base64",
+        rawLineBytes: rawLine.length,
+        rawLine: rawLine.toString("base64"),
+      }),
+    ]);
+    expect(statSync(deadLetterDirectoryForRotation(flushing)).mode & 0o777).toBe(0o700);
+    expect(statSync(deadLetterPathForRawLine(flushing, rawLine)).mode & 0o777).toBe(0o600);
+  });
+
+  it("quarantines invalid UTF-8 without replacement or transport", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from([0x7b, 0x22, 0x6d, 0x22, 0x3a, 0xc3, 0x28, 0x7d, 0x0a]);
+    writeFileSync(flushing, rawLine);
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(client.post).not.toHaveBeenCalled();
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        recordKind: "raw_line_v1",
+        rawLineEncoding: "base64",
+        rawLine: rawLine.toString("base64"),
+      }),
+    ]);
+  });
+
+  it("replays raw-line quarantine idempotently after a crash before source unlink", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":\n', "utf8");
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    writeFileSync(flushing, rawLine);
+    await drainFlushingPath(flushing, client);
+    const first = readDeadLetters(flushing);
+
+    // Recreate the source bytes to model a crash after the atomic dead-letter
+    // rename but before the source rotation unlink.
+    writeFileSync(flushing, rawLine);
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(readDeadLetters(flushing)).toEqual(first);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  it("retains syntax-invalid source bytes when raw-line quarantine cannot be written", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const rawLine = Buffer.from('{"moveId":\n', "utf8");
+    writeFileSync(flushing, rawLine);
+    // Block creation of the hardened dead-letter directory.
+    writeFileSync(deadLetterDirectoryForRotation(flushing), "not a directory");
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client)).rejects.toThrow();
+    expect(client.post).not.toHaveBeenCalled();
+    expect(existsSync(flushing)).toBe(true);
+    expect(readFileSync(flushing)).toEqual(rawLine);
+  });
 
   it("durably quarantines a direct move_id_conflict without persisting server prose", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
@@ -336,7 +474,7 @@ describe("flush replay stability", () => {
       quarantined: 1,
     });
     expect(delivered).toEqual(["good-a", "good-b"]);
-    expect(readDeadLetters(flushing).map((record) => record.move.moveId)).toEqual(["poison"]);
+    expect(moveDeadLetters(flushing).map((record) => record.move.moveId)).toEqual(["poison"]);
     expect(existsSync(flushing)).toBe(false);
   });
 

@@ -182,6 +182,56 @@ describe("client credential store", () => {
     });
   });
 
+  it("pins capture preflight and delivery to one credential and deployment", async () => {
+    process.env.PRIM_TOKEN = "token-a";
+    process.env.PRIM_API_URL = "https://api-a.example.test";
+    const calls: Array<{ token: string | null; url: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          token: new Headers(init?.headers).get("Authorization"),
+          url: String(input),
+        });
+        if (String(input).endsWith("/status")) {
+          // A concurrent credential/deployment change must not redirect the
+          // operation after the organization proof has started.
+          process.env.PRIM_TOKEN = "token-b";
+          process.env.PRIM_API_URL = "https://api-b.example.test";
+          return Promise.resolve(jsonResponse({ authenticated: true }));
+        }
+        return Promise.resolve(jsonResponse({ disposition: "persisted" }));
+      }),
+    );
+    const { getPinnedClient } = await import("./client.js");
+    const client = await getPinnedClient();
+
+    await client.get("/status");
+    await client.post("/deliver", { batch: [] });
+
+    expect(calls).toEqual([
+      { token: "Bearer token-a", url: "https://api-a.example.test/status" },
+      { token: "Bearer token-a", url: "https://api-a.example.test/deliver" },
+    ]);
+  });
+
+  it("never retries a pinned capture request after a rejected response", async () => {
+    process.env.PRIM_TOKEN = "token-a";
+    const fetchMock = vi.fn(() => {
+      process.env.PRIM_TOKEN = "token-b";
+      return Promise.resolve(jsonResponse({ error: "authentication_required" }, 401));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { getPinnedClient } = await import("./client.js");
+    const client = await getPinnedClient();
+
+    await expect(client.post("/deliver", { batch: [] })).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer token-a",
+    );
+  });
+
   it("pins management mutations and never retries a mint after a 401 response", async () => {
     process.env.PRIM_TOKEN = "fixed-token";
     const fetchMock = vi.fn(() =>

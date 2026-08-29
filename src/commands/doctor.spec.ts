@@ -25,6 +25,7 @@ import {
   classifyDoctor,
   classifyHermesHooks,
   classifyHookRuntime,
+  classifyJournalOrganization,
   classifyManagedHook,
   classifyMovesStatus,
   classifyPostCommitHook,
@@ -61,6 +62,38 @@ describe("classifyDoctor", () => {
   it("carries the checks through verbatim for machine consumers", () => {
     const checks = [ok("auth"), warn("stranded")];
     expect(classifyDoctor(checks).json.checks).toEqual(checks);
+  });
+});
+
+describe("journal organization diagnostics", () => {
+  it("is healthy when no journal buckets exist or every bucket matches", () => {
+    expect(classifyJournalOrganization(0, [])).toEqual({
+      name: "journal-org",
+      status: "ok",
+      detail: "no pending organization buckets",
+    });
+    expect(classifyJournalOrganization(2, [])).toEqual({
+      name: "journal-org",
+      status: "ok",
+      detail: "all pending buckets match the active credential",
+    });
+  });
+
+  it("fails closed with a bounded, grouped retention reason", () => {
+    const check = classifyJournalOrganization(3, [
+      { bucket: "org-a", reason: "organization_mismatch" },
+      { bucket: "org-b", reason: "organization_mismatch" },
+      { bucket: "_unbound", reason: "unbound" },
+    ]);
+    expect(check).toEqual({
+      name: "journal-org",
+      status: "fail",
+      detail: "3 bucket(s) retained (organization_mismatch:2, unbound:1)",
+    });
+    expect(classifyDoctor([check])).toMatchObject({
+      json: { ok: false, status: "fail" },
+      exitCode: 1,
+    });
   });
 });
 

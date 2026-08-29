@@ -36,7 +36,7 @@ export function registerMovesCommands(program: Command): void {
     .command("flush")
     .description("Drain all local move journals to the server")
     .action(async () => {
-      const { flushed, quarantined, skipped } = await flush();
+      const { flushed, quarantined, retained = [], skipped } = await flush();
       if (skipped) {
         console.log("[prim] another flush is already draining; moves left journaled");
         return;
@@ -46,6 +46,18 @@ export function registerMovesCommands(program: Command): void {
         console.error(
           `[prim] quarantined ${String(quarantined)} rejected move${quarantined === 1 ? "" : "s"}; inspect the bucket's dead-letter directory`,
         );
+      }
+      const retainedReasons = new Map<string, number>();
+      for (const item of retained) {
+        retainedReasons.set(item.reason, (retainedReasons.get(item.reason) ?? 0) + 1);
+      }
+      for (const [reason, count] of [...retainedReasons].sort(([left], [right]) =>
+        left.localeCompare(right),
+      )) {
+        console.error(`[prim] retained ${String(count)} organization bucket(s): ${reason}`);
+      }
+      if (retained.length > 0 && !process.exitCode) {
+        process.exitCode = 1;
       }
     });
 
