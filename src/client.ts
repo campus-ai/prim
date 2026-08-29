@@ -766,6 +766,23 @@ function fetchWithToken(
   });
 }
 
+async function responseValue(response: Response): Promise<unknown> {
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    }
+    const errorBody: unknown = await response.json().catch(() => null);
+    const errorRecord =
+      typeof errorBody === "object" && errorBody !== null && !Array.isArray(errorBody)
+        ? (errorBody as Record<string, unknown>)
+        : undefined;
+    const message =
+      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
+    throw new HttpError(response.status, message, errorBody);
+  }
+  return response.json();
+}
+
 async function request(
   method: string,
   path: string,
@@ -819,26 +836,48 @@ async function request(
     }
   }
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
-    }
-    const errorBody: unknown = await response.json().catch(() => null);
-    const errorRecord =
-      typeof errorBody === "object" && errorBody !== null && !Array.isArray(errorBody)
-        ? (errorBody as Record<string, unknown>)
-        : undefined;
-    const message =
-      typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
-    throw new HttpError(response.status, message, errorBody);
-  }
-  return response.json();
+  return responseValue(response);
 }
 
 export function getClient(): CliClient {
   return {
     get: (path, options) => request("GET", path, undefined, options),
     post: (path, body, options) => request("POST", path, body, options),
+  };
+}
+
+/**
+ * Resolve one bearer generation and deployment for a multi-request operation.
+ *
+ * A caller that binds durable local data to the authenticated organization must
+ * never retry a rejected request under a replacement credential: it needs to
+ * restart its preflight and prove the tenant again. This client therefore
+ * deliberately has no post-response token-refresh retry.
+ */
+export async function getPinnedClient(options: RequestOptions = {}): Promise<CliClient> {
+  const siteUrl = getSiteUrl();
+  let credential = selectedCredential();
+  if (credential && isTokenExpiringSoon(credential)) {
+    const token = await refreshToken({
+      signal: options.signal,
+      quiet: options.quietRefresh,
+    });
+    if (token) credential = { token, source: "token_file" };
+  }
+  if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
+    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+  }
+  const token = credential.token;
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    responseValue(await fetchWithToken(method, path, body, requestOptions, token, siteUrl));
+  return {
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
   };
 }
 
