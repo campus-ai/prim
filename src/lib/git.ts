@@ -4,6 +4,8 @@ import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const GIT_TIMEOUT_MS = 1_000;
+const GITHUB_OWNER_PATTERN = /^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u;
 
 /**
  * The repository's top-level working directory for `cwd` (default: process cwd),
@@ -66,7 +68,13 @@ export function githubRepositoryFullName(cwd: string): string | null {
     .replace(/^\/+|\/+$/g, "")
     .replace(/\.git$/i, "")
     .split("/");
-  if (parts.length !== 2 || parts.some((part) => !part || part !== part.trim())) return null;
+  if (
+    parts.length !== 2 ||
+    !GITHUB_OWNER_PATTERN.test(parts[0] ?? "") ||
+    !GITHUB_REPOSITORY_PATTERN.test(parts[1] ?? "")
+  ) {
+    return null;
+  }
   return `${parts[0]}/${parts[1]}`;
 }
 

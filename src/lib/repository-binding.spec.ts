@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError, getClient } from "../client.js";
 import { clearRepoSyncId, setRepoSyncId, setRepositoryBindingState } from "./activation.js";
 import { githubRepositoryFullName } from "./git.js";
-import { bindRepository, resolveRepositoryBinding } from "./repository-binding.js";
+import {
+  bindRepository,
+  bindRepositoryWithClient,
+  resolveRepositoryBinding,
+  resolveRepositoryBindingWithClient,
+} from "./repository-binding.js";
 
 vi.mock("../client.js", () => ({
   getClient: vi.fn(),
@@ -34,6 +39,35 @@ beforeEach(() => {
 });
 
 describe("bindRepository", () => {
+  it("uses an injected client and preserves origin-scoped persistence", async () => {
+    const client = { post: vi.fn().mockResolvedValue({ repoSyncId: "repoSync123" }) };
+
+    await expect(bindRepositoryWithClient("/repo", client)).resolves.toEqual({
+      status: "connected",
+      repoSyncId: "repoSync123",
+      repositoryFullName: "campus-ai/primitive",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/api/cli/repositories/bind",
+      { repositoryFullName: "campus-ai/primitive" },
+      undefined,
+    );
+    expect(setRepoSyncId).toHaveBeenCalledWith("/repo", "repoSync123", "campus-ai/primitive");
+    expect(getClient).not.toHaveBeenCalled();
+  });
+
+  it("resolves through an injected client without persisting local state", async () => {
+    const client = { post: vi.fn().mockResolvedValue({ repoSyncId: "repoSync123" }) };
+
+    await expect(resolveRepositoryBindingWithClient("/repo", client)).resolves.toMatchObject({
+      status: "connected",
+    });
+    expect(setRepoSyncId).not.toHaveBeenCalled();
+    expect(setRepositoryBindingState).not.toHaveBeenCalled();
+    expect(getClient).not.toHaveBeenCalled();
+  });
+
   it("can verify the current binding without mutating local Git config", async () => {
     await expect(resolveRepositoryBinding("/repo")).resolves.toEqual({
       status: "connected",
