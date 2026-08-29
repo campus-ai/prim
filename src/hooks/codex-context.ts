@@ -26,7 +26,9 @@ import { daemonRequest } from "../daemon/client.js";
 import {
   DECISION_DIGEST_CACHE_LIMIT,
   type DecisionDigestCacheSnapshot,
+  isActionablePrivateDraft,
 } from "../daemon/decision-digest-cache.js";
+import { daemonPrincipalsMatch, resolveDaemonPrincipal } from "../daemon/principal.js";
 import type { DecisionFeedRow } from "../decisions/recent.js";
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
@@ -44,11 +46,14 @@ export const CODEX_DIGEST_LIMIT = DECISION_DIGEST_CACHE_LIMIT;
 export const CODEX_DIGEST_VISIBLE_CAP = 3;
 export const CODEX_DIGEST_OVERLAP_MS = 60_000;
 export const CODEX_DIGEST_MAX_SEEN_IDS = 128;
+export const CODEX_DRAFT_DIGEST_MAX_SEEN_IDS = 4_096;
 export const CODEX_DIGEST_STATE_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const CODEX_DIGEST_STATE_MAX_FILES = 256;
 
 const STATE_VERSION = 1;
 const STATE_DIRECTORY = ["codex", "decision-digests"] as const;
+const DRAFT_STATE_VERSION = 2;
+const DRAFT_STATE_DIRECTORY = ["codex", "decision-draft-deliveries"] as const;
 /**
  * watermarkMs sentinel: no feed page has been observed yet. The cursor is
  * server time — the highest `classifiedAt` seen — never the client clock, so
@@ -68,9 +73,25 @@ export interface CodexDecisionDigestState {
   updatedAt: number;
 }
 
+export interface CodexDecisionDraftDeliveryState {
+  version: typeof DRAFT_STATE_VERSION;
+  sessionId: string;
+  siteUrl: string;
+  workspace: string;
+  principalId: string;
+  organizationId: string;
+  /** SHA-256 of the bearer generation; never the bearer itself. */
+  credentialFingerprint: string;
+  /** Private drafts whose publish action was visibly handed off this session. */
+  seenDraftIds: string[];
+  updatedAt: number;
+}
+
 export interface CodexContextResult {
   /** The context block to add, or undefined when a later report is unchanged. */
   context?: string;
+  /** Digest-only portion, used by callers that need delivery context. */
+  decisionDigest?: string;
   /** True when the feed was verified and the cursor may advance after handoff. */
   feedAvailable: boolean;
   /** Commit state only after the caller confirms stdout handoff succeeded. */
@@ -137,6 +158,10 @@ function stateRoot(): string {
   return join(primConfigDirectory(), ...STATE_DIRECTORY);
 }
 
+function draftStateRoot(): string {
+  return join(primConfigDirectory(), ...DRAFT_STATE_DIRECTORY);
+}
+
 function workspaceFor(cwd: string): string {
   try {
     return gitToplevel(cwd) ?? cwd;
@@ -149,6 +174,21 @@ function statePath(args: { cwd: string; sessionId: string; siteUrl: string }): s
   const identity = `${args.siteUrl}\0${workspaceFor(args.cwd)}\0${args.sessionId}`;
   const key = createHash("sha256").update(identity).digest("hex");
   return join(stateRoot(), `${key}.json`);
+}
+
+function draftStatePath(args: {
+  cwd: string;
+  sessionId: string;
+  siteUrl: string;
+  principalId: string;
+  organizationId: string;
+  credentialFingerprint: string;
+}): string {
+  const identity =
+    `${args.siteUrl}\0${workspaceFor(args.cwd)}\0${args.sessionId}` +
+    `\0${args.principalId}\0${args.organizationId}\0${args.credentialFingerprint}`;
+  const key = createHash("sha256").update(identity).digest("hex");
+  return join(draftStateRoot(), `${key}.json`);
 }
 
 function parseState(value: unknown): CodexDecisionDigestState | undefined {
@@ -180,6 +220,36 @@ function parseState(value: unknown): CodexDecisionDigestState | undefined {
   };
 }
 
+function parseDraftState(value: unknown): CodexDecisionDraftDeliveryState | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Partial<CodexDecisionDraftDeliveryState>;
+  if (
+    record.version !== DRAFT_STATE_VERSION ||
+    typeof record.sessionId !== "string" ||
+    typeof record.siteUrl !== "string" ||
+    typeof record.workspace !== "string" ||
+    typeof record.principalId !== "string" ||
+    typeof record.organizationId !== "string" ||
+    typeof record.credentialFingerprint !== "string" ||
+    !Array.isArray(record.seenDraftIds) ||
+    !record.seenDraftIds.every((id) => typeof id === "string") ||
+    typeof record.updatedAt !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    version: DRAFT_STATE_VERSION,
+    sessionId: record.sessionId,
+    siteUrl: record.siteUrl,
+    workspace: record.workspace,
+    principalId: record.principalId,
+    organizationId: record.organizationId,
+    credentialFingerprint: record.credentialFingerprint,
+    seenDraftIds: record.seenDraftIds.slice(-CODEX_DRAFT_DIGEST_MAX_SEEN_IDS),
+    updatedAt: record.updatedAt,
+  };
+}
+
 function readState(path: string): CodexDecisionDigestState | undefined {
   if (!existsSync(path)) return undefined;
   try {
@@ -189,8 +259,16 @@ function readState(path: string): CodexDecisionDigestState | undefined {
   }
 }
 
-function writeState(path: string, state: CodexDecisionDigestState): void {
-  const directory = stateRoot();
+function readDraftState(path: string): CodexDecisionDraftDeliveryState | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return parseDraftState(JSON.parse(readFileSync(path, "utf8")) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStateFile(path: string, directory: string, state: unknown): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const temporary = join(
@@ -214,8 +292,7 @@ function writeState(path: string, state: CodexDecisionDigestState): void {
   }
 }
 
-function cleanupStateFiles(now: number): void {
-  const directory = stateRoot();
+function cleanupStateFiles(directory: string, now: number): void {
   if (!existsSync(directory)) return;
   let names: string[];
   try {
@@ -309,7 +386,7 @@ export function renderDecisionDigest(
     const author = safeInline(row.authorName, "(unknown)").replace(/[;;；‒-―−]/gu, "-");
     // intent: curly/low/reversed double quotes U+201C-U+201F, double prime
     // U+2033, reversed double prime U+2036, CJK corner quotes U+301D-U+301E.
-    const intent = safeInline(row.intent, "(untitled Decision)").replace(/[“-‟″‶〝〞]/gu, "'");
+    const intent = safeInline(row.intent, "(untitled Decision)").replace(/[`“-‟″‶〝〞]/gu, "'");
     return `${author} — “${intent}”`;
   });
   // `+N+` marks a full fetch page: the true overflow may exceed what one page
@@ -320,6 +397,47 @@ export function renderDecisionDigest(
       ? ` +${String(rows.length - CODEX_DIGEST_VISIBLE_CAP)}${options.pageTruncated === true ? "+" : ""}`
       : "";
   return `[prim] Decisions captured since last message: ${visible.join("; ")}${overflow}`;
+}
+
+export interface RenderedDecisionDraftDigest {
+  message: string;
+  /** Only rows with a command in `message`; safe to persist after handoff. */
+  deliveredIds: string[];
+}
+
+function actionablePrivateDrafts(rows: readonly unknown[]): DecisionFeedRow[] {
+  const seen = new Set<string>();
+  const actionable: DecisionFeedRow[] = [];
+  for (const row of rows) {
+    if (!isActionablePrivateDraft(row) || seen.has(row.id)) continue;
+    seen.add(row.id);
+    actionable.push(row);
+  }
+  return actionable;
+}
+
+/** Render author-private drafts without prompting or consuming hidden rows. */
+export function renderDecisionDraftDigest(
+  rows: readonly unknown[],
+  options: { pageTruncated?: boolean } = {},
+): RenderedDecisionDraftDigest | undefined {
+  const eligible = actionablePrivateDrafts(rows);
+  if (eligible.length === 0) return undefined;
+  const visible = eligible.slice(0, CODEX_DIGEST_VISIBLE_CAP);
+  const lines = visible.flatMap((row) => {
+    const intent = safeInline(row.intent, "(untitled Decision)").replace(/[“-‟″‶〝〞]/gu, "'");
+    return [
+      `[prim] private Decision ${row.id} · stage: draft · “${intent}”`,
+      `[prim] Run \`prim decisions publish ${row.id}\` to share it with your team.`,
+    ];
+  });
+  if (eligible.length > visible.length) {
+    const suffix = options.pageTruncated === true ? "+" : "";
+    lines.push(
+      `[prim] +${String(eligible.length - visible.length)}${suffix} private Decision drafts remain for later messages.`,
+    );
+  }
+  return { message: lines.join("\n"), deliveredIds: visible.map((row) => row.id) };
 }
 
 function reauthSnapshot(sessionId: string): StatusSnapshot {
@@ -377,14 +495,66 @@ async function commitState(path: string, args: Parameters<typeof mergeState>[1])
       `${path}.lock`,
       () => {
         const latest = readState(path);
-        writeState(path, mergeState(latest, args));
-        cleanupStateFiles(args.now);
+        writeStateFile(path, stateRoot(), mergeState(latest, args));
+        cleanupStateFiles(stateRoot(), args.now);
       },
       { timeoutMs: 50, pollMs: 10 },
     );
   } catch {
     // A cursor write failure is safe: the next visible message may redeliver,
     // but it must never make a hook fail or suppress the Decision action.
+  }
+}
+
+function mergeDraftState(
+  latest: CodexDecisionDraftDeliveryState | undefined,
+  args: {
+    sessionId: string;
+    siteUrl: string;
+    workspace: string;
+    principalId: string;
+    organizationId: string;
+    credentialFingerprint: string;
+    deliveredIds: string[];
+    now: number;
+  },
+): CodexDecisionDraftDeliveryState {
+  const seen = new Set(latest?.seenDraftIds ?? []);
+  for (const id of args.deliveredIds) seen.add(id);
+  return {
+    version: DRAFT_STATE_VERSION,
+    sessionId: args.sessionId,
+    siteUrl: args.siteUrl,
+    workspace: args.workspace,
+    principalId: args.principalId,
+    organizationId: args.organizationId,
+    credentialFingerprint: args.credentialFingerprint,
+    seenDraftIds: [...seen].slice(-CODEX_DRAFT_DIGEST_MAX_SEEN_IDS),
+    updatedAt: args.now,
+  };
+}
+
+async function commitDraftState(
+  path: string,
+  args: Parameters<typeof mergeDraftState>[1],
+): Promise<CodexDecisionDraftDeliveryState | undefined> {
+  try {
+    let next: CodexDecisionDraftDeliveryState | undefined;
+    await withFileLock(
+      `${path}.lock`,
+      () => {
+        const latest = readDraftState(path);
+        next = mergeDraftState(latest, args);
+        writeStateFile(path, draftStateRoot(), next);
+        cleanupStateFiles(draftStateRoot(), args.now);
+      },
+      { timeoutMs: 50, pollMs: 10 },
+    );
+    return next;
+  } catch {
+    // Redelivery is safer than losing a private publish action. Without a
+    // persisted proof the daemon page stays pinned for a later retry.
+    return undefined;
   }
 }
 
@@ -396,6 +566,18 @@ export async function prepareCodexContext(
   const workspace = workspaceFor(options.cwd);
   const path = statePath({ cwd: options.cwd, sessionId: options.sessionId, siteUrl });
   const previous = readState(path);
+  const principal = resolveDaemonPrincipal();
+  const privatePath = principal
+    ? draftStatePath({
+        cwd: options.cwd,
+        sessionId: options.sessionId,
+        siteUrl,
+        principalId: principal.principalId,
+        organizationId: principal.organizationId,
+        credentialFingerprint: principal.credentialFingerprint,
+      })
+    : undefined;
+  const previousDraft = privatePath ? readDraftState(privatePath) : undefined;
   const startup = options.startup === true;
   const includeDigest = options.includeDigest !== false;
   const startedAt = previous?.startedAt ?? Date.now();
@@ -403,10 +585,11 @@ export async function prepareCodexContext(
 
   let snapshot: StatusSnapshot | null = null;
   let recent: DecisionDigestCacheSnapshot | null = null;
+  let recentDrafts: DecisionDigestCacheSnapshot | null = null;
   if (terminalAuth) {
     snapshot = reauthSnapshot(options.sessionId);
   } else {
-    [snapshot, recent] = await Promise.all([
+    [snapshot, recent, recentDrafts] = await Promise.all([
       daemonRequest<StatusSnapshot>(
         "status_snapshot",
         { callerEnv: siteUrl },
@@ -419,7 +602,22 @@ export async function prepareCodexContext(
             { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
           )
         : Promise.resolve(null),
+      includeDigest && principal !== undefined
+        ? daemonRequest<DecisionDigestCacheSnapshot>(
+            "decision_draft_digest_snapshot",
+            { callerEnv: siteUrl },
+            { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
+          )
+        : Promise.resolve(null),
     ]);
+    if (principal !== undefined && !daemonPrincipalsMatch(principal, resolveDaemonPrincipal())) {
+      // The daemon resolves the credential generation at each socket boundary.
+      // If it rotates while the three reads are in flight, withhold all
+      // organization-scoped context and leave both cursors untouched.
+      snapshot = null;
+      recent = null;
+      recentDrafts = null;
+    }
   }
   let ingestionStatus: ReturnType<typeof decisionIngestionStatus> | undefined;
   const resolveIngestionStatus = () => {
@@ -465,13 +663,40 @@ export async function prepareCodexContext(
   }
 
   const digest = renderDecisionDigest(freshRows, { pageTruncated });
+  let draftDigest: RenderedDecisionDraftDigest | undefined;
+  let draftPageToken: string | undefined;
+  let draftPageActionableIds: string[] = [];
+  if (
+    !terminalAuth &&
+    includeDigest &&
+    privatePath !== undefined &&
+    recentDrafts !== null &&
+    recentDrafts.unavailable === undefined &&
+    Array.isArray(recentDrafts.decisions)
+  ) {
+    const allActionableDrafts = actionablePrivateDrafts(recentDrafts.decisions);
+    const seenDrafts = new Set(previousDraft?.seenDraftIds ?? []);
+    const freshDrafts = allActionableDrafts.filter((row) => !seenDrafts.has(row.id));
+    draftDigest = renderDecisionDraftDigest(freshDrafts, {
+      pageTruncated: recentDrafts.pageDone === false,
+    });
+    // Only the daemon-minted token can move a page, and it is consumed only
+    // after the hook's stdout handoff. A read alone never advances pagination.
+    draftPageToken =
+      typeof recentDrafts.pageToken === "string" ? recentDrafts.pageToken : undefined;
+    draftPageActionableIds = allActionableDrafts.map((row) => row.id);
+  }
+  const combinedDigest = [digest, draftDigest?.message]
+    .filter((value): value is string => value !== undefined)
+    .join("\n\n");
   const context =
-    [reportChanged ? report : undefined, digest]
+    [reportChanged ? report : undefined, combinedDigest || undefined]
       .filter((value): value is string => value !== undefined)
       .join("\n\n") || undefined;
   let acknowledged = false;
   return {
     context,
+    decisionDigest: combinedDigest || undefined,
     feedAvailable,
     acknowledge: async (handedOff) => {
       if (!handedOff || acknowledged) return;
@@ -487,6 +712,37 @@ export async function prepareCodexContext(
         feedAvailable,
         now: Date.now(),
       });
+
+      if (privatePath === undefined || principal === undefined || draftPageToken === undefined) {
+        return;
+      }
+      let persistedDraft = previousDraft;
+      if (draftDigest?.deliveredIds.length) {
+        persistedDraft = await commitDraftState(privatePath, {
+          sessionId: options.sessionId,
+          siteUrl,
+          workspace,
+          principalId: principal.principalId,
+          organizationId: principal.organizationId,
+          credentialFingerprint: principal.credentialFingerprint,
+          deliveredIds: draftDigest.deliveredIds,
+          now: Date.now(),
+        });
+      }
+      // A state-write failure must leave the page pinned. On a later prompt the
+      // persisted IDs (including IDs handed off by a concurrent hook) prove
+      // completion without re-rendering them.
+      const seenDrafts = new Set(persistedDraft?.seenDraftIds ?? []);
+      const deliveredOnThisPage = draftPageActionableIds.filter((id) => seenDrafts.has(id));
+      await daemonRequest(
+        "decision_draft_digest_acknowledge",
+        {
+          callerEnv: siteUrl,
+          pageToken: draftPageToken,
+          deliveredIds: deliveredOnThisPage,
+        },
+        { timeoutMs: CODEX_CONTEXT_TIMEOUT_MS },
+      );
     },
   };
 }

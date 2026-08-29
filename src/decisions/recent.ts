@@ -42,6 +42,8 @@ export interface DecisionFeedRow {
   authorIsSelf: boolean;
   classifiedAt: number;
   status: "active" | "superseded" | "under_review";
+  /** Required for private-draft delivery; absent on an older server. */
+  stage?: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
 }
 
 export interface DecisionsRecentResult {

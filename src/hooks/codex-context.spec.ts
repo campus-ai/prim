@@ -16,12 +16,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   daemonRequest: vi.fn(),
   decisionDigestSnapshot: vi.fn(),
+  decisionDraftDigestSnapshot: vi.fn(),
   decisionIngestionStatus: vi.fn(),
+  daemonPrincipalsMatch: vi.fn(),
   getSiteUrl: vi.fn(),
   gitToplevel: vi.fn(),
   isSessionEnded: vi.fn(),
   packageVersion: vi.fn(),
   repositoryBindingState: vi.fn(),
+  resolveDaemonPrincipal: vi.fn(),
   statusSnapshot: vi.fn(),
 }));
 
@@ -30,6 +33,10 @@ vi.mock("../client.js", () => ({
   isSessionEnded: mocks.isSessionEnded,
 }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: mocks.daemonRequest }));
+vi.mock("../daemon/principal.js", () => ({
+  daemonPrincipalsMatch: mocks.daemonPrincipalsMatch,
+  resolveDaemonPrincipal: mocks.resolveDaemonPrincipal,
+}));
 vi.mock("../lib/activation.js", () => ({
   decisionIngestionStatus: mocks.decisionIngestionStatus,
   repositoryBindingState: mocks.repositoryBindingState,
@@ -48,12 +55,17 @@ import {
   hasVisibleCodexMessage,
   prepareCodexContext,
   renderDecisionDigest,
+  renderDecisionDraftDigest,
 } from "./codex-context.js";
 
 let temporaryHome = "";
 
 function stateDirectory(): string {
   return join(temporaryHome, ".config", "prim", "codex", "decision-digests");
+}
+
+function draftStateDirectory(): string {
+  return join(temporaryHome, ".config", "prim", "codex", "decision-draft-deliveries");
 }
 
 function healthySnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -94,11 +106,23 @@ beforeEach(() => {
   mocks.isSessionEnded.mockReturnValue(false);
   mocks.packageVersion.mockReturnValue("1.2.3");
   mocks.decisionIngestionStatus.mockReturnValue("enabled");
+  const principal = {
+    principalId: "a".repeat(64),
+    organizationId: "org-test",
+    credentialFingerprint: "b".repeat(64),
+  };
+  mocks.resolveDaemonPrincipal.mockReturnValue(principal);
+  mocks.daemonPrincipalsMatch.mockReturnValue(true);
   mocks.statusSnapshot.mockResolvedValue(healthySnapshot());
   mocks.decisionDigestSnapshot.mockResolvedValue({ decisions: [], cachedAt: Date.now() });
+  mocks.decisionDraftDigestSnapshot.mockResolvedValue({ decisions: [], cachedAt: Date.now() });
   mocks.daemonRequest.mockImplementation(async (method) => {
     if (method === "status_snapshot") return await mocks.statusSnapshot();
     if (method === "decision_digest_snapshot") return await mocks.decisionDigestSnapshot();
+    if (method === "decision_draft_digest_snapshot") {
+      return await mocks.decisionDraftDigestSnapshot();
+    }
+    if (method === "decision_draft_digest_acknowledge") return { ack: true, complete: false };
     return null;
   });
 });
@@ -173,6 +197,52 @@ describe("renderDecisionDigest", () => {
   });
 });
 
+describe("renderDecisionDraftDigest", () => {
+  it("renders a command-safe private draft with its full publish identifier", () => {
+    const rendered = renderDecisionDraftDigest([
+      row("draft-one", {
+        intent: "Use `stable` “API”\nwithout controls",
+        authorIsSelf: true,
+        intentKind: "change",
+        stage: "draft",
+      }),
+    ]);
+
+    expect(rendered).toEqual({
+      message:
+        "[prim] private Decision draft-one · stage: draft · “Use `stable` 'API'without controls”\n" +
+        "[prim] Run `prim decisions publish draft-one` to share it with your team.",
+      deliveredIds: ["draft-one"],
+    });
+  });
+
+  it("fails closed for non-private, non-draft, hidden-kind, and hostile command IDs", () => {
+    expect(
+      renderDecisionDraftDigest([
+        row("team", { authorIsSelf: false, stage: "draft" }),
+        row("published", { authorIsSelf: true, stage: "provisional" }),
+        row("hidden", { authorIsSelf: true, intentKind: "exploration", stage: "draft" }),
+        row("draft-safe` ; prim auth logout", {
+          authorIsSelf: true,
+          intentKind: "change",
+          stage: "draft",
+        }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("renders only visible commands and leaves the page overflow pending", () => {
+    const rows = ["draft-1", "draft-2", "draft-3", "draft-4"].map((id) =>
+      row(id, { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+    );
+
+    const rendered = renderDecisionDraftDigest(rows, { pageTruncated: true });
+    expect(rendered?.message).toContain("+1+ private Decision drafts remain");
+    expect(rendered?.message).not.toContain("prim decisions publish draft-4");
+    expect(rendered?.deliveredIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+  });
+});
+
 describe("Codex hook context", () => {
   it("surfaces repository-unbound once through the existing deduped status report", async () => {
     mocks.repositoryBindingState.mockReturnValue("unbound");
@@ -244,6 +314,154 @@ describe("Codex hook context", () => {
     expect(state.watermarkMs).toBeGreaterThan(0);
     expect(statSync(stateDirectory()).mode & 0o777).toBe(0o700);
     expect(statSync(statePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("pins a private page until each visibly handed-off command is persisted", async () => {
+    const drafts = Array.from({ length: 100 }, (_, index) =>
+      row(`draft-${String(index + 1)}`, {
+        authorIsSelf: true,
+        intentKind: "change",
+        stage: "draft",
+      }),
+    );
+    const pageToken = "c".repeat(32);
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: drafts,
+      pageDone: false,
+      pageToken,
+    });
+
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-page",
+      startup: true,
+    });
+    expect(first.context).toContain("prim decisions publish draft-1");
+    expect(first.context).toContain("+97+ private Decision drafts remain");
+    await first.acknowledge(false);
+    expect(existsSync(draftStateDirectory())).toBe(false);
+    expect(
+      mocks.daemonRequest.mock.calls.some(
+        ([method]) => method === "decision_draft_digest_acknowledge",
+      ),
+    ).toBe(false);
+
+    await first.acknowledge(true);
+    const firstStateFile = readdirSync(draftStateDirectory()).find((name) =>
+      name.endsWith(".json"),
+    );
+    expect(firstStateFile).toBeDefined();
+    const firstState = JSON.parse(
+      readFileSync(join(draftStateDirectory(), firstStateFile as string), "utf8"),
+    ) as { seenDraftIds: string[] };
+    expect(firstState.seenDraftIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+
+    const second = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-page",
+    });
+    expect(second.context).toContain("prim decisions publish draft-4");
+    expect(second.context).not.toContain("prim decisions publish draft-1");
+    await second.acknowledge(true);
+
+    const acknowledgements = mocks.daemonRequest.mock.calls.filter(
+      ([method]) => method === "decision_draft_digest_acknowledge",
+    );
+    expect(acknowledgements).toHaveLength(2);
+    expect(acknowledgements[0]?.[1]).toEqual({
+      callerEnv: "https://app.getprimitive.ai",
+      pageToken,
+      deliveredIds: ["draft-1", "draft-2", "draft-3"],
+    });
+    expect(acknowledgements[1]?.[1]).toEqual({
+      callerEnv: "https://app.getprimitive.ai",
+      pageToken,
+      deliveredIds: ["draft-1", "draft-2", "draft-3", "draft-4", "draft-5", "draft-6"],
+    });
+  });
+
+  it("isolates private delivery state across principal and credential rotation", async () => {
+    const privateDraft = row("draft-rotate", {
+      authorIsSelf: true,
+      intentKind: "change",
+      stage: "draft",
+    });
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [privateDraft],
+      pageDone: true,
+      pageToken: "d".repeat(32),
+    });
+
+    const first = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-rotation",
+      startup: true,
+    });
+    await first.acknowledge(true);
+
+    mocks.resolveDaemonPrincipal.mockReturnValue({
+      principalId: "e".repeat(64),
+      organizationId: "org-other",
+      credentialFingerprint: "f".repeat(64),
+    });
+    const rotated = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-rotation",
+    });
+    expect(rotated.context).toContain("prim decisions publish draft-rotate");
+    await rotated.acknowledge(true);
+    expect(
+      readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json")),
+    ).toHaveLength(2);
+  });
+
+  it("withholds private commands without a stable exact local principal", async () => {
+    mocks.resolveDaemonPrincipal.mockReturnValue(undefined);
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [
+        row("draft-opaque", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+      ],
+      pageDone: true,
+      pageToken: "e".repeat(32),
+    });
+
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-opaque",
+      startup: true,
+    });
+    expect(result.context).not.toContain("prim decisions publish");
+    expect(mocks.decisionDraftDigestSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("withholds organization-scoped output when the principal changes during reads", async () => {
+    const principalA = {
+      principalId: "a".repeat(64),
+      organizationId: "org-test",
+      credentialFingerprint: "b".repeat(64),
+    };
+    const principalB = {
+      principalId: "c".repeat(64),
+      organizationId: "org-test",
+      credentialFingerprint: "d".repeat(64),
+    };
+    mocks.resolveDaemonPrincipal.mockReset();
+    mocks.resolveDaemonPrincipal.mockReturnValueOnce(principalA).mockReturnValue(principalB);
+    mocks.daemonPrincipalsMatch.mockReturnValue(false);
+    mocks.decisionDraftDigestSnapshot.mockResolvedValue({
+      decisions: [row("draft-drift", { authorIsSelf: true, intentKind: "change", stage: "draft" })],
+      pageDone: true,
+      pageToken: "f".repeat(32),
+    });
+
+    const result = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "session-private-drift",
+      startup: true,
+    });
+    expect(result.context).not.toContain("prim decisions publish");
+    await result.acknowledge(true);
+    expect(existsSync(draftStateDirectory())).toBe(false);
   });
 
   it("uses an overlap watermark while suppressing already-seen Decision IDs", async () => {
