@@ -3,7 +3,8 @@
 export const isCliAuthStatusResponse = validate20;
 const schema31 = {"$id":"urn:primitive:cli-http-v1:CliAuthStatusResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/CliAuthStatusResponse"};
 const schema33 = {"type":"object","properties":{"authenticated":{"type":"boolean","const":true},"organizationBindingVersion":{"type":"number","const":1},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"organizationId":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"workosOrganizationId":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]}},"required":["authenticated","organizationBindingVersion","captureAuthorityKind","organizationId","workosOrganizationId"],"additionalProperties":false};
-import func1 from "ajv/dist/runtime/ucs2length.js";
+import func1Import from "ajv/dist/runtime/ucs2length.js";
+const func1 = typeof func1Import === "function" ? func1Import : func1Import.default;
 
 function validate20(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:CliAuthStatusResponse" */;
