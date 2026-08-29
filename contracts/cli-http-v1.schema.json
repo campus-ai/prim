@@ -6,6 +6,16 @@
   "x-primitive-contract-version": 2,
   "x-primitive-scope": "critical-path",
   "x-primitive-operations": {
+    "authStatus": {
+      "method": "GET",
+      "path": "/api/cli/auth/status",
+      "success": {
+        "$ref": "#/$defs/CliAuthStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
     "movesIngest": {
       "method": "POST",
       "path": "/api/cli/moves/ingest",
@@ -266,6 +276,53 @@
     }
   },
   "$defs": {
+    "CliAuthStatusResponse": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "type": "boolean",
+          "const": true
+        },
+        "organizationBindingVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "captureAuthorityKind": {
+          "type": "string",
+          "enum": ["workos", "service_token"]
+        },
+        "organizationId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workosOrganizationId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "authenticated",
+        "organizationBindingVersion",
+        "captureAuthorityKind",
+        "organizationId",
+        "workosOrganizationId"
+      ],
+      "additionalProperties": false
+    },
     "CliErrorResponse": {
       "type": "object",
       "properties": {
@@ -1039,6 +1096,14 @@
         "windowTotalCapped": {
           "type": "boolean"
         },
+        "continueCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "isDone": {
+          "type": "boolean"
+        },
         "unavailable": {
           "type": "string"
         }
@@ -1335,6 +1400,11 @@
                     "type": "string",
                     "pattern": "^[0-9a-f]{8}$"
                   },
+                  "decisionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
                   "intent": {
                     "type": "string"
                   },
@@ -1386,6 +1456,7 @@
       ],
       "x-primitive-runtime-refinements": [
         "feedback_response_version_negotiation",
+        "feedback_publish_prompt_decision_id",
         "unique_feedback_event_ids"
       ]
     },
@@ -1775,6 +1846,28 @@
             },
             "required": ["decisionId"],
             "additionalProperties": {}
+          }
+        },
+        "decisionDisclosures": {
+          "minItems": 1,
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decisionId": {
+                "type": "string"
+              },
+              "shortId": {
+                "type": "string"
+              },
+              "participation": {
+                "type": "string",
+                "enum": ["candidate", "reconcile_bypass"]
+              }
+            },
+            "required": ["decisionId", "shortId", "participation"],
+            "additionalProperties": false
           }
         }
       },

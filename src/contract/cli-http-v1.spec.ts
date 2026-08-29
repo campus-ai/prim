@@ -170,7 +170,7 @@ describe("generated CLI HTTP request-core contract", () => {
     ).toBe(false);
   });
 
-  it("enforces feedback response version negotiation and unique event IDs", () => {
+  it("enforces feedback response version negotiation, publish IDs, and unique event IDs", () => {
     const event = {
       eventId: "event-1",
       leaseVersion: 1,
@@ -198,9 +198,27 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(
       isFeedbackLeaseResponse({
         ...invalidV2,
-        events: [{ ...event, kind: "publish_prompt" }],
+        events: [{ ...event, kind: "publish_prompt", decisionId: "decision-1" }],
       }),
     ).toBe(true);
+    expect(
+      isFeedbackLeaseResponse({
+        ...invalidV2,
+        events: [{ ...event, kind: "publish_prompt" }],
+      }),
+    ).toBe(false);
+    expect(
+      isFeedbackLeaseResponse({
+        ...invalidV2,
+        events: [{ ...event, kind: "confirm_prompt", decisionId: "decision-1" }],
+      }),
+    ).toBe(false);
+    expect(
+      isFeedbackLeaseResponse({
+        ...invalidV2,
+        events: [{ ...event, kind: "publish_prompt", decisionId: "decision\u202espoof" }],
+      }),
+    ).toBe(false);
     expect(
       isFeedbackLeaseResponse({
         ...invalidV2,
@@ -257,6 +275,13 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(
       isRepositoryBindRequest({ repositoryFullName: "campus-ai/primitive", unexpected: true }),
     ).toBe(false);
+  });
+
+  it("generates the canonical feedback publish-prompt refinement", async () => {
+    const { artifact, fixtures, lock } = artifactFixture();
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).resolves.toBeDefined();
   });
 
   it("fails generation closed when an artifact introduces an unknown refinement", async () => {

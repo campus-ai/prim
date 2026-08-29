@@ -55,8 +55,13 @@ describe("decision feedback mirrored contract", () => {
       envelopeVersion: 2,
       producer: "hermes",
     });
-    expect(parseFeedbackLease(fixture.lease.empty)).toEqual({ events: [], hasMore: false });
+    expect(parseFeedbackLease(fixture.lease.empty)).toEqual({
+      protocolVersion: 1,
+      events: [],
+      hasMore: false,
+    });
     expect(parseFeedbackLease(fixture.lease.unavailable)).toEqual({
+      protocolVersion: 1,
       events: [],
       hasMore: false,
     });

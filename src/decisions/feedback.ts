@@ -1,7 +1,12 @@
 import { type CliClient, getClient } from "../client.js";
 import { isTerminalSafeText, terminalSafeLine, terminalSafeText } from "../lib/terminal-safe.js";
 
-export const FEEDBACK_PROTOCOL_VERSION = 1;
+// Protocol v2 adds a required event kind so author-private drafts can be
+// rendered as a publish action rather than confirmation feedback. Keep
+// parsing v1 responses during a rolling upgrade, but advertise v2 for every
+// new lease request.
+export const FEEDBACK_PROTOCOL_VERSION = 2;
+const FEEDBACK_MIN_PROTOCOL_VERSION = 1;
 export const FEEDBACK_DEADLINE_MS = 3_000;
 export const MAX_FEEDBACK_EVENTS = 40;
 export const MAX_FEEDBACK_MESSAGE_CODE_POINTS = 8_000;
@@ -14,24 +19,34 @@ const SHORT_ID = /^[0-9a-f]{8}$/u;
 const MAX_EVENT_ID_CHARS = 128;
 const MAX_RAW_INTENT_CODE_UNITS = 512;
 const MAX_FEEDBACK_WEB_URL_CHARS = 2_048;
+const SAFE_PUBLISH_DECISION_ID = /^[A-Za-z0-9_-]+$/u;
 
 export type FeedbackDeliveryToken = {
   eventId: string;
   leaseVersion: number;
 };
 
+export type FeedbackProtocolVersion = 1 | 2;
+
+export type FeedbackKind = "confirm_prompt" | "publish_prompt";
+
 export type FeedbackEvent = FeedbackDeliveryToken & {
   shortId: string;
+  /** Full unambiguous identifier supplied only for a v2 publish prompt. */
+  decisionId?: string;
   intent: string;
   webUrl?: string;
+  kind: FeedbackKind;
 };
 
 export type FeedbackLease = {
+  protocolVersion: FeedbackProtocolVersion;
   events: FeedbackEvent[];
   hasMore: boolean;
 };
 
 export type RenderedFeedback = {
+  protocolVersion: FeedbackProtocolVersion;
   systemMessage: string;
   deliveries: FeedbackDeliveryToken[];
 };
@@ -44,6 +59,14 @@ type FeedbackClient = Pick<CliClient, "get" | "post">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSupportedProtocolVersion(value: unknown): value is FeedbackProtocolVersion {
+  return (
+    Number.isSafeInteger(value) &&
+    Number(value) >= FEEDBACK_MIN_PROTOCOL_VERSION &&
+    Number(value) <= FEEDBACK_PROTOCOL_VERSION
+  );
 }
 
 /** Normalize untrusted display text without changing ordinary Unicode prose. */
@@ -83,7 +106,28 @@ function parseFeedbackWebUrl(value: unknown): string | undefined {
   return value;
 }
 
-function parseEvent(value: unknown): FeedbackEvent | undefined {
+/**
+ * A publish prompt is rendered as inline shell syntax. Restrict its opaque
+ * argument to a literal command-token alphabet so quotes, backticks, spaces,
+ * and shell operators cannot turn a server value into a spoofed action.
+ */
+function parseFeedbackDecisionId(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_EVENT_ID_CHARS ||
+    terminalSafeText(value) !== value ||
+    !SAFE_PUBLISH_DECISION_ID.test(value)
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function parseEvent(
+  value: unknown,
+  protocolVersion: FeedbackProtocolVersion,
+): FeedbackEvent | undefined {
   if (!isRecord(value)) return undefined;
   if (
     typeof value.eventId !== "string" ||
@@ -106,22 +150,49 @@ function parseEvent(value: unknown): FeedbackEvent | undefined {
   if (!intent) return undefined;
   const webUrl = value.webUrl === undefined ? undefined : parseFeedbackWebUrl(value.webUrl);
   if (value.webUrl !== undefined && webUrl === undefined) return undefined;
+  const kind = value.kind === undefined && protocolVersion === 1 ? "confirm_prompt" : value.kind;
+  if (kind !== "confirm_prompt" && kind !== "publish_prompt") return undefined;
+  // A v1 caller cannot truthfully consume publish prompts. The server already
+  // withholds them; enforce that boundary locally so a malformed response is
+  // never acknowledged under the legacy dialect.
+  if (protocolVersion === 1 && kind === "publish_prompt") return undefined;
+
+  const decisionId =
+    value.decisionId === undefined ? undefined : parseFeedbackDecisionId(value.decisionId);
+  if (value.decisionId !== undefined && decisionId === undefined) return undefined;
+  // Full action targets are scoped to v2 publish events. Reject an unexpected
+  // value rather than silently accepting a protocol shape that later versions
+  // may mean differently.
+  if (decisionId !== undefined && (protocolVersion !== 2 || kind !== "publish_prompt")) {
+    return undefined;
+  }
+  // Never build an inline command from an ambiguous short id or a malformed
+  // full id. Returning no lease leaves the entire delivery unacknowledged for
+  // a safe redelivery after the server data is repaired.
+  if (protocolVersion === 2 && kind === "publish_prompt" && decisionId === undefined) {
+    return undefined;
+  }
   return {
     eventId: value.eventId,
     leaseVersion: Number(value.leaseVersion),
     shortId: value.shortId,
     intent,
     ...(webUrl === undefined ? {} : { webUrl }),
+    ...(decisionId === undefined ? {} : { decisionId }),
+    kind,
   };
 }
 
 export function parseFeedbackLease(value: unknown): FeedbackLease | undefined {
-  if (!isRecord(value) || value.protocolVersion !== FEEDBACK_PROTOCOL_VERSION) return undefined;
+  if (!isRecord(value) || !isSupportedProtocolVersion(value.protocolVersion)) return undefined;
+  const protocolVersion = value.protocolVersion;
   if (value.status === "empty") {
-    return value.hasMore === false ? { events: [], hasMore: false } : undefined;
+    return value.hasMore === false ? { protocolVersion, events: [], hasMore: false } : undefined;
   }
   if (value.status === "unavailable") {
-    return value.reason === "organization_unbound" ? { events: [], hasMore: false } : undefined;
+    return value.reason === "organization_unbound"
+      ? { protocolVersion, events: [], hasMore: false }
+      : undefined;
   }
   if (value.status !== "leased" || typeof value.hasMore !== "boolean") return undefined;
   if (
@@ -131,13 +202,13 @@ export function parseFeedbackLease(value: unknown): FeedbackLease | undefined {
   ) {
     return undefined;
   }
-  const events = value.events.map(parseEvent);
+  const events = value.events.map((event) => parseEvent(event, protocolVersion));
   if (events.some((event) => event === undefined)) return undefined;
   const parsedEvents = events as FeedbackEvent[];
   if (new Set(parsedEvents.map((event) => event.eventId)).size !== parsedEvents.length) {
     return undefined;
   }
-  return { events: parsedEvents, hasMore: value.hasMore };
+  return { protocolVersion, events: parsedEvents, hasMore: value.hasMore };
 }
 
 export function renderFeedback(lease: FeedbackLease): RenderedFeedback | undefined {
@@ -145,7 +216,17 @@ export function renderFeedback(lease: FeedbackLease): RenderedFeedback | undefin
   const deliveries: FeedbackDeliveryToken[] = [];
   let pointCount = 0;
   for (const event of lease.events) {
-    const line = `[prim] response → created Decision (dec_${event.shortId}): ${event.intent}${event.webUrl ? ` (${event.webUrl})` : ""}`;
+    const decisionId =
+      event.kind === "publish_prompt" ? parseFeedbackDecisionId(event.decisionId) : undefined;
+    // This protects callers that construct FeedbackLease directly as well as
+    // the normal parse path: an unsafe action is neither printed nor acked.
+    if (event.kind === "publish_prompt" && decisionId === undefined) continue;
+    const identifier = `dec_${event.shortId}`;
+    const detail = `${event.intent}${event.webUrl ? ` (${event.webUrl})` : ""}`;
+    const line =
+      event.kind === "publish_prompt"
+        ? `[prim] publish this Decision draft (${identifier})? ${detail} Run \`prim decisions publish ${decisionId}\` to share it with your team.`
+        : `[prim] response → created Decision (${identifier}): ${detail}`;
     const extra = Array.from(line).length + (lines.length === 0 ? 0 : 1);
     if (pointCount + extra > MAX_FEEDBACK_MESSAGE_CODE_POINTS) break;
     lines.push(line);
@@ -153,7 +234,7 @@ export function renderFeedback(lease: FeedbackLease): RenderedFeedback | undefin
     pointCount += extra;
   }
   if (lines.length === 0) return undefined;
-  return { systemMessage: lines.join("\n"), deliveries };
+  return { protocolVersion: lease.protocolVersion, systemMessage: lines.join("\n"), deliveries };
 }
 
 export async function leaseDecisionFeedback(
@@ -185,18 +266,25 @@ export async function leaseDecisionFeedback(
 
 export async function acknowledgeDecisionFeedback(
   input: {
+    protocolVersion: FeedbackProtocolVersion;
     workspaceId: string;
     deliveries: FeedbackDeliveryToken[];
     signal: AbortSignal;
   },
   dependencies: { client?: FeedbackClient; onError?: (error: unknown) => void } = {},
 ): Promise<boolean> {
-  if (input.deliveries.length === 0 || input.deliveries.length > MAX_FEEDBACK_EVENTS) return false;
+  if (
+    !isSupportedProtocolVersion(input.protocolVersion) ||
+    input.deliveries.length === 0 ||
+    input.deliveries.length > MAX_FEEDBACK_EVENTS
+  ) {
+    return false;
+  }
   try {
     const response = await (dependencies.client ?? getClient()).post(
       ACK_PATH,
       {
-        protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+        protocolVersion: input.protocolVersion,
         workspaceId: input.workspaceId,
         deliveries: input.deliveries,
       },
@@ -206,7 +294,7 @@ export async function acknowledgeDecisionFeedback(
     const expectedEventIds = new Set(input.deliveries.map((delivery) => delivery.eventId));
     const valid =
       isRecord(response) &&
-      response.protocolVersion === FEEDBACK_PROTOCOL_VERSION &&
+      response.protocolVersion === input.protocolVersion &&
       response.status === "acked" &&
       Array.isArray(acknowledgedEventIds) &&
       acknowledgedEventIds.length <= input.deliveries.length &&
@@ -231,7 +319,7 @@ export async function acknowledgeDecisionFeedback(
 }
 
 export function parseFeedbackCapability(value: unknown): FeedbackCapability | undefined {
-  if (!isRecord(value) || value.protocolVersion !== FEEDBACK_PROTOCOL_VERSION) return undefined;
+  if (!isRecord(value) || !isSupportedProtocolVersion(value.protocolVersion)) return undefined;
   if (value.status === "available") return { status: "available" };
   if (value.status === "unavailable" && value.reason === "organization_unbound") {
     return { status: "unavailable", reason: "organization_unbound" };

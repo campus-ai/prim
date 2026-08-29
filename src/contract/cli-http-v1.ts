@@ -1,6 +1,7 @@
 /** Stable facade over the generated critical-path contract. */
 
 import type {
+  CliAuthStatusResponse,
   DecisionCreateRequest,
   DecisionsRecentResponse,
   FeedbackAckRequest,
@@ -10,6 +11,7 @@ import type {
   PreflightRequestV3,
 } from "../generated/cli-http-v1.types.js";
 import {
+  isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
   isDecisionConfirmRequest,
@@ -43,6 +45,7 @@ import {
 export type * from "../generated/cli-http-v1.types.js";
 
 export {
+  isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
   isDecisionConfirmRequest,
@@ -77,6 +80,7 @@ const MAX_REPOSITORY_PATH_CHARS = 4_096;
 const MAX_PROPOSAL_BYTES = 6_144;
 const MAX_FEEDBACK_SESSION_ID_CHARS = 256;
 const MAX_FEEDBACK_EVENT_ID_CHARS = 128;
+const MAX_FEEDBACK_DECISION_ID_CHARS = 128;
 const CANONICAL_WORKSPACE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: wire paths reject C0 and DEL.
@@ -113,6 +117,15 @@ function hasUnsafeFeedbackIdentifierCharacter(value: string): boolean {
       isBidiControl(codePoint)
     );
   });
+}
+
+function isSafeFeedbackDecisionId(value: string | undefined): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_FEEDBACK_DECISION_ID_CHARS &&
+    !hasUnsafeFeedbackIdentifierCharacter(value)
+  );
 }
 
 /**
@@ -180,9 +193,16 @@ export function isFeedbackLeaseResponse(value: unknown): value is FeedbackLeaseR
     return false;
   }
   if (value.protocolVersion === 1) {
-    return value.events.every(({ kind }) => kind !== "publish_prompt");
+    return value.events.every(
+      ({ kind, decisionId }) => kind !== "publish_prompt" && decisionId === undefined,
+    );
   }
-  return value.events.every(({ kind }) => kind !== undefined);
+  return value.events.every(({ kind, decisionId }) => {
+    if (kind === "publish_prompt") {
+      return isSafeFeedbackDecisionId(decisionId);
+    }
+    return kind === "confirm_prompt" && decisionId === undefined;
+  });
 }
 
 export function isFeedbackAckResponse(value: unknown): value is FeedbackAckResponse {
@@ -220,6 +240,7 @@ export function isDecisionsRecentResponse(value: unknown): value is DecisionsRec
 
 /** Complete definition registry used by shared cross-repository fixtures. */
 export const cliHttpV1Validators = {
+  CliAuthStatusResponse: isCliAuthStatusResponse,
   CliErrorResponse: isCliErrorResponse,
   DecisionCascadeResponse: isDecisionCascadeResponse,
   DecisionConfirmRequest: isDecisionConfirmRequest,
