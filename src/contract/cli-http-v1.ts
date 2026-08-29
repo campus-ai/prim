@@ -8,6 +8,7 @@ import type {
   FeedbackAckResponse,
   FeedbackLeaseRequest,
   FeedbackLeaseResponse,
+  GitHubInstallIntentStatusResponse,
   PreflightRequestV3,
 } from "../generated/cli-http-v1.types.js";
 import {
@@ -33,6 +34,11 @@ import {
   isFeedbackLeaseRequestStructure,
   isFeedbackLeaseResponseStructure,
   isFeedbackStatusResponse,
+  isGitHubInstallIntentStartErrorResponse,
+  isGitHubInstallIntentStartResponse,
+  isGitHubInstallIntentStatusErrorResponse,
+  isGitHubInstallIntentStatusRequest,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
   isPreflightResponseV3,
@@ -67,6 +73,11 @@ export {
   isFeedbackLeaseRequestStructure,
   isFeedbackLeaseResponseStructure,
   isFeedbackStatusResponse,
+  isGitHubInstallIntentStartErrorResponse,
+  isGitHubInstallIntentStartResponse,
+  isGitHubInstallIntentStatusErrorResponse,
+  isGitHubInstallIntentStatusRequest,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3Structure,
   isPreflightResponseV3,
@@ -238,6 +249,35 @@ export function isDecisionsRecentResponse(value: unknown): value is DecisionsRec
   return hasEveryAuthorField || hasNoAuthorField;
 }
 
+/**
+ * Validate the server-owned install intent lifecycle rules that JSON Schema
+ * cannot express across union-member fields.
+ */
+export function isGitHubInstallIntentStatusResponse(
+  value: unknown,
+): value is GitHubInstallIntentStatusResponse {
+  if (!isGitHubInstallIntentStatusResponseStructure(value)) {
+    return false;
+  }
+  switch (value.status) {
+    case "claimed":
+      return value.leaseExpiresAt <= value.expiresAt;
+    case "consumed":
+      return (
+        value.repositoryCount === value.adminRepositoryCount + value.nonAdminRepositoryCount &&
+        value.completedAt <= value.expiresAt
+      );
+    case "expired":
+      return value.closedAt >= value.expiresAt;
+    case "cancelled":
+      return value.closedAt <= value.expiresAt;
+    case "failed_terminal":
+      return value.failureCode === "claim_lease_expired" || value.closedAt <= value.expiresAt;
+    case "pending":
+      return true;
+  }
+}
+
 /** Complete definition registry used by shared cross-repository fixtures. */
 export const cliHttpV1Validators = {
   CliAuthStatusResponse: isCliAuthStatusResponse,
@@ -262,6 +302,11 @@ export const cliHttpV1Validators = {
   FeedbackLeaseRequest: isFeedbackLeaseRequest,
   FeedbackLeaseResponse: isFeedbackLeaseResponse,
   FeedbackStatusResponse: isFeedbackStatusResponse,
+  GitHubInstallIntentStartErrorResponse: isGitHubInstallIntentStartErrorResponse,
+  GitHubInstallIntentStartResponse: isGitHubInstallIntentStartResponse,
+  GitHubInstallIntentStatusErrorResponse: isGitHubInstallIntentStatusErrorResponse,
+  GitHubInstallIntentStatusRequest: isGitHubInstallIntentStatusRequest,
+  GitHubInstallIntentStatusResponse: isGitHubInstallIntentStatusResponse,
   MoveIngestRequest: isMoveIngestRequest,
   PreflightRequestV3: isPreflightRequestV3,
   PreflightResponseV3: isPreflightResponseV3,

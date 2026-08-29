@@ -123,6 +123,18 @@ prim auth api-keys list [--limit <count>] [--after <api-key-id>] # List user-key
 prim auth api-keys revoke <api-key-id> # Revoke a user key
 ```
 
+### GitHub
+
+```bash
+prim github connect              # Install or reuse the Primitive GitHub App for this checkout
+prim github connect --no-browser # Print the installation URL without opening it
+```
+
+The command first reuses existing repository access. When access is missing, it creates a
+server-owned GitHub App installation intent, opens its installation URL unless browser opening is
+suppressed, polls the same intent, then verifies and persists this checkout's binding. A completed
+installation without admin access to this repository remains truthfully unbound.
+
 ### Session integration
 
 Wires the agent's session hooks so the decisions you make are captured into the
