@@ -1,17 +1,15 @@
 /**
  * Decision Graph check for prim.
  *
- * Calls GET /api/cli/decisions/affecting (one validated `repoSyncId=` plus
- * repeated `files=` params, chunked at the server's 25-path cap) to find active
- * decisions that reference any of the supplied files, then surfaces matches to
- * STDERR (human-readable warning) and STDOUT (JSON). Warn-only — never blocks
- * the caller.
+ * Calls GET /api/cli/decisions/affecting (repeated `files=` params, chunked
+ * at the server's 25-path cap) to find active decisions that reference any
+ * of the supplied files, then surfaces matches to STDERR (human-readable
+ * warning) and STDOUT (JSON). Warn-only — never blocks the caller.
  *
- * When the check cannot be completed — missing/invalid repository binding,
- * org-unbound token, a truncated result, or a transport/auth/validation
- * failure — it reports an UNKNOWN state (`unavailable` / `truncated`) rather
- * than a silent all-clear, so a "verified clear" is never confused with "we
- * couldn't check".
+ * When the check cannot be completed — org-unbound token, a truncated
+ * result, or a transport/auth/validation failure — it reports an UNKNOWN
+ * state (`unavailable` / `truncated`) rather than a silent all-clear, so a
+ * "verified clear" is never confused with "we couldn't check".
  *
  * Two consumers:
  *   - `prim decisions check --files=...` (src/commands/decisions.ts)
@@ -19,7 +17,6 @@
  */
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
-import { isValidRepoSyncId, repoSyncId } from "../lib/activation.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export interface ActiveDecisionSummary {
@@ -46,10 +43,9 @@ const MAX_FILES_PER_REQUEST = 25;
 
 export interface CheckDeps {
   getClient: () => CliClient;
-  repoSyncId: (cwd: string) => string | undefined;
 }
 
-const defaultDeps: CheckDeps = { getClient, repoSyncId };
+const defaultDeps: CheckDeps = { getClient };
 
 type AffectingResponse = {
   decisions: ActiveDecisionSummary[];
@@ -65,16 +61,11 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-async function fetchAffecting(
-  client: CliClient,
-  batch: string[],
-  repositoryBinding: string,
-): Promise<AffectingResponse> {
+async function fetchAffecting(client: CliClient, batch: string[]): Promise<AffectingResponse> {
   const params = new URLSearchParams();
   for (const file of batch) {
     params.append("files", file);
   }
-  params.append("repoSyncId", repositoryBinding);
   try {
     return await daemonOrDirectGet<AffectingResponse>(
       "decisions_affecting",
@@ -98,19 +89,9 @@ export async function checkAffectedDecisions(
   if (filePaths.length === 0) {
     return { decisions: [], truncated: false };
   }
-  const repositoryBinding = deps.repoSyncId(process.cwd());
-  if (!isValidRepoSyncId(repositoryBinding)) {
-    return {
-      decisions: [],
-      truncated: false,
-      unavailable: "repository binding is missing or invalid; run `prim enable`",
-    };
-  }
   const client = deps.getClient();
   const responses = await Promise.all(
-    chunk(filePaths, MAX_FILES_PER_REQUEST).map((batch) =>
-      fetchAffecting(client, batch, repositoryBinding),
-    ),
+    chunk(filePaths, MAX_FILES_PER_REQUEST).map((batch) => fetchAffecting(client, batch)),
   );
 
   const byId = new Map<string, ActiveDecisionSummary>();
