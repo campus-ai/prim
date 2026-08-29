@@ -15,6 +15,8 @@ import {
   isFeedbackLeaseRequest,
   isFeedbackLeaseResponse,
   isFeedbackLeaseResponseStructure,
+  isGitHubInstallIntentStatusResponse,
+  isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
   isPreflightRequestV3,
   isPreflightRequestV3Structure,
@@ -83,6 +85,19 @@ function preflight(overrides: Record<string, unknown> = {}): Record<string, unkn
     clientMode: "block",
     clientVersion: "0.1.0-alpha.68",
     proposal: "{}",
+    ...overrides,
+  };
+}
+
+function githubInstallIntentStatus(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    protocolVersion: 1,
+    mode: "install_intent_v1",
+    found: true,
+    expiresAt: 1_000,
+    status: "pending",
     ...overrides,
   };
 }
@@ -277,8 +292,78 @@ describe("generated CLI HTTP request-core contract", () => {
     ).toBe(false);
   });
 
-  it("generates the canonical feedback publish-prompt refinement", async () => {
+  it("enforces every GitHub install-intent lifecycle refinement", () => {
+    const invalidClaim = githubInstallIntentStatus({
+      status: "claimed",
+      leaseExpiresAt: 1_001,
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidClaim)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidClaim)).toBe(false);
+
+    const invalidPartition = githubInstallIntentStatus({
+      status: "consumed",
+      completedAt: 1_000,
+      repositoryCount: 3,
+      adminRepositoryCount: 1,
+      nonAdminRepositoryCount: 1,
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidPartition)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidPartition)).toBe(false);
+
+    const invalidCompletion = githubInstallIntentStatus({
+      status: "consumed",
+      completedAt: 1_001,
+      repositoryCount: 1,
+      adminRepositoryCount: 1,
+      nonAdminRepositoryCount: 0,
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidCompletion)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidCompletion)).toBe(false);
+
+    const invalidExpiredClose = githubInstallIntentStatus({
+      status: "expired",
+      closedAt: 999,
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidExpiredClose)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidExpiredClose)).toBe(false);
+
+    const invalidCancelledClose = githubInstallIntentStatus({
+      status: "cancelled",
+      closedAt: 1_001,
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidCancelledClose)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidCancelledClose)).toBe(false);
+
+    const invalidFailureClose = githubInstallIntentStatus({
+      status: "failed_terminal",
+      closedAt: 1_001,
+      failureCode: "authority_changed",
+    });
+    expect(isGitHubInstallIntentStatusResponseStructure(invalidFailureClose)).toBe(true);
+    expect(isGitHubInstallIntentStatusResponse(invalidFailureClose)).toBe(false);
+    expect(
+      isGitHubInstallIntentStatusResponse(
+        githubInstallIntentStatus({
+          status: "failed_terminal",
+          closedAt: 1_001,
+          failureCode: "claim_lease_expired",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("generates the canonical root and direct-union refinements", async () => {
     const { artifact, fixtures, lock } = artifactFixture();
+    await expect(
+      buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
+    ).resolves.toBeDefined();
+
+    const definitions = artifact.$defs as Record<string, Record<string, unknown>>;
+    const statuses = definitions.GitHubInstallIntentStatusResponse.anyOf as Record<
+      string,
+      unknown
+    >[];
+    statuses[0]["x-primitive-runtime-refinements"] = ["claim_lease_within_intent_ttl"];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
     ).resolves.toBeDefined();
@@ -314,7 +399,7 @@ describe("generated CLI HTTP request-core contract", () => {
     ];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
   });
 
   it("fails generation closed when a refinement is attached to the schema root", async () => {
@@ -328,7 +413,7 @@ describe("generated CLI HTTP request-core contract", () => {
     artifact["x-primitive-runtime-refinements"] = ["canonical_repository_paths"];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
   });
 
   it("fails generation closed on unsupported schema keywords", async () => {

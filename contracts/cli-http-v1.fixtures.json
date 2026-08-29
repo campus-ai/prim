@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 2,
+  "contractVersion": 3,
   "cases": [
     {
       "name": "authenticated CLI organization binding",
@@ -342,6 +342,268 @@
       "valid": true,
       "value": {
         "repoSyncId": "repoSync123"
+      }
+    },
+    {
+      "name": "GitHub install-intent start response",
+      "definition": "GitHubInstallIntentStartResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "status": "pending",
+        "intentId": "intent123",
+        "browserUrl": "https://github.com/apps/primitive/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expiresAt": 1800000900000,
+        "pollAfterMs": 1000
+      }
+    },
+    {
+      "name": "GitHub install-intent start rejects a raw state field",
+      "definition": "GitHubInstallIntentStartResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "status": "pending",
+        "intentId": "intent123",
+        "browserUrl": "https://github.com/apps/primitive/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expiresAt": 1800000900000,
+        "pollAfterMs": 1000,
+        "state": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "GitHub install-intent status request",
+      "definition": "GitHubInstallIntentStatusRequest",
+      "valid": true,
+      "value": {
+        "intentId": "intent123"
+      }
+    },
+    {
+      "name": "GitHub install-intent status rejects path and control input",
+      "definition": "GitHubInstallIntentStatusRequest",
+      "valid": false,
+      "value": {
+        "intentId": "../foreign\nintent"
+      }
+    },
+    {
+      "name": "GitHub install-intent pending poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "pending",
+        "expiresAt": 1800000900000
+      }
+    },
+    {
+      "name": "GitHub install-intent claimed poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "claimed",
+        "expiresAt": 1800000900000,
+        "leaseExpiresAt": 1800000120000
+      }
+    },
+    {
+      "name": "GitHub install-intent consumed poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "consumed",
+        "expiresAt": 1800000900000,
+        "completedAt": 1800000100000,
+        "repositoryCount": 2,
+        "adminRepositoryCount": 1,
+        "nonAdminRepositoryCount": 1
+      }
+    },
+    {
+      "name": "GitHub install-intent consumed poll rejects inconsistent counts",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "consumed",
+        "expiresAt": 1800000900000,
+        "completedAt": 1800000100000,
+        "repositoryCount": 2,
+        "adminRepositoryCount": 2,
+        "nonAdminRepositoryCount": 1
+      }
+    },
+    {
+      "name": "GitHub install-intent consumed poll requires an admin repository",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "consumed",
+        "expiresAt": 1800000900000,
+        "completedAt": 1800000100000,
+        "repositoryCount": 0,
+        "adminRepositoryCount": 0,
+        "nonAdminRepositoryCount": 0
+      }
+    },
+    {
+      "name": "GitHub install-intent expired poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "expired",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000900000
+      }
+    },
+    {
+      "name": "GitHub install-intent cancelled poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "cancelled",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000100000
+      }
+    },
+    {
+      "name": "GitHub install-intent cancelled poll rejects closure after expiry",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "cancelled",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000900001
+      }
+    },
+    {
+      "name": "GitHub install-intent failed poll response",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "failed_terminal",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000100000,
+        "failureCode": "authority_changed"
+      }
+    },
+    {
+      "name": "GitHub install-intent non-lease failure rejects closure after expiry",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "failed_terminal",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000900001,
+        "failureCode": "authority_changed"
+      }
+    },
+    {
+      "name": "GitHub install-intent expired claim-lease failure permits delayed closure",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": true,
+        "status": "failed_terminal",
+        "expiresAt": 1800000900000,
+        "closedAt": 1800000900001,
+        "failureCode": "claim_lease_expired"
+      }
+    },
+    {
+      "name": "GitHub install-intent poll rejects a false success witness",
+      "definition": "GitHubInstallIntentStatusResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "found": false,
+        "status": "pending",
+        "expiresAt": 1800000900000
+      }
+    },
+    {
+      "name": "GitHub install-intent start interactive-authority error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "interactive_workos_authority_required"
+      }
+    },
+    {
+      "name": "GitHub install-intent start feature-disabled error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "feature_disabled",
+        "feature": "github-connect"
+      }
+    },
+    {
+      "name": "GitHub install-intent start unavailable error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "github_connect_unavailable",
+        "feature": "github-connect"
+      }
+    },
+    {
+      "name": "GitHub install-intent start conflict error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "github_install_intent_conflict"
+      }
+    },
+    {
+      "name": "GitHub install-intent poll not-found error",
+      "definition": "GitHubInstallIntentStatusErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "github_install_intent_not_found"
+      }
+    },
+    {
+      "name": "GitHub install-intent poll error rejects additive fields",
+      "definition": "GitHubInstallIntentStatusErrorResponse",
+      "valid": false,
+      "value": {
+        "error": "github_install_intent_not_found",
+        "intentId": "foreign-intent"
       }
     },
     {
