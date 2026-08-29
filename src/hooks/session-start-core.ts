@@ -223,6 +223,7 @@ export async function processSessionStart(
           acknowledge: rendered
             ? async () => {
                 await acknowledgeDecisionFeedback({
+                  protocolVersion: rendered.protocolVersion,
                   workspaceId: identity.workspaceId,
                   deliveries: rendered.deliveries,
                   signal,

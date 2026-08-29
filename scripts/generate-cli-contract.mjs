@@ -25,6 +25,7 @@ export const SUPPORTED_RUNTIME_REFINEMENTS = new Set([
   "canonical_repository_paths",
   "complete_coverage_requires_path",
   "degrade_invalid_rollout_fields",
+  "feedback_publish_prompt_decision_id",
   "feedback_response_version_negotiation",
   "proposal_utf8_max_6144",
   "recent_response_variant",

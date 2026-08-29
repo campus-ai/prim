@@ -3,6 +3,41 @@
   "contractVersion": 2,
   "cases": [
     {
+      "name": "authenticated CLI organization binding",
+      "definition": "CliAuthStatusResponse",
+      "valid": true,
+      "value": {
+        "authenticated": true,
+        "organizationBindingVersion": 1,
+        "captureAuthorityKind": "workos",
+        "organizationId": "org_123",
+        "workosOrganizationId": "org_workos"
+      }
+    },
+    {
+      "name": "authenticated CLI without a current organization binding",
+      "definition": "CliAuthStatusResponse",
+      "valid": true,
+      "value": {
+        "authenticated": true,
+        "organizationBindingVersion": 1,
+        "captureAuthorityKind": "service_token",
+        "organizationId": null,
+        "workosOrganizationId": null
+      }
+    },
+    {
+      "name": "organization binding version is required",
+      "definition": "CliAuthStatusResponse",
+      "valid": false,
+      "value": {
+        "authenticated": true,
+        "captureAuthorityKind": "workos",
+        "organizationId": "org_123",
+        "workosOrganizationId": "org_workos"
+      }
+    },
+    {
       "name": "v4 move preserves CRLF apply-patch move directive",
       "definition": "MoveIngestRequest",
       "valid": true,
@@ -160,6 +195,140 @@
       }
     },
     {
+      "name": "preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "The proposed edit conflicts with a governing Decision.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": [
+          {
+            "decisionId": "decision-hidden-1",
+            "shortId": "0123abcd",
+            "participation": "candidate"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": false,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "allow",
+        "reasonCode": "semantically_compatible",
+        "message": "Compatible.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": []
+      }
+    },
+    {
+      "name": "over-cap preflight hidden Decision disclosure",
+      "definition": "PreflightResponseV3",
+      "valid": false,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "allow",
+        "reasonCode": "semantically_compatible",
+        "message": "Compatible.",
+        "conflicts": [],
+        "bypassed": [],
+        "decisionDisclosures": [
+          {
+            "decisionId": "decision-hidden-0",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-1",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-2",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-3",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-4",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-5",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-6",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-7",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-8",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-9",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-10",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-11",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-12",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-13",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-14",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-15",
+            "shortId": "00000000",
+            "participation": "candidate"
+          },
+          {
+            "decisionId": "decision-hidden-16",
+            "shortId": "00000000",
+            "participation": "candidate"
+          }
+        ]
+      }
+    },
+    {
       "name": "repository binding request",
       "definition": "RepositoryBindRequest",
       "valid": true,
@@ -243,6 +412,27 @@
       "name": "feedback v2 publish prompt",
       "definition": "FeedbackLeaseResponse",
       "valid": true,
+      "value": {
+        "protocolVersion": 2,
+        "status": "leased",
+        "events": [
+          {
+            "eventId": "event-1",
+            "leaseVersion": 1,
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
+            "decisionId": "decision-1",
+            "kind": "publish_prompt"
+          }
+        ],
+        "hasMore": false
+      }
+    },
+    {
+      "name": "feedback v2 publish prompt requires a full decision id",
+      "definition": "FeedbackLeaseResponse",
+      "valid": false,
       "value": {
         "protocolVersion": 2,
         "status": "leased",
