@@ -43,7 +43,12 @@ import {
 } from "../lib/statusline-render.js";
 import { getOrCreateClientInstanceId } from "./client-instance-id.js";
 import { daemonRequest } from "./client.js";
-import { DECISION_DIGEST_CACHE_PATH, DecisionDigestCache } from "./decision-digest-cache.js";
+import {
+  DECISION_DIGEST_CACHE_LIMIT,
+  DECISION_DIGEST_CACHE_PATH,
+  DecisionDigestCache,
+  decisionDraftDigestCachePath,
+} from "./decision-digest-cache.js";
 import { assertCallerEnvMatches, isCrossEnv } from "./env-binding.js";
 import {
   createDaemonHealthState,
@@ -117,6 +122,14 @@ const decisionDigestCache = new DecisionDigestCache(
       signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
     }),
 );
+const decisionDraftDigestCache = new DecisionDigestCache(
+  async (cursor) =>
+    await client.get(decisionDraftDigestCachePath(cursor), {
+      signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS),
+    }),
+  Date.now,
+  { cyclePages: true, failurePolicy: "clear" },
+);
 let activeSessionId = process.env.PRIM_DAEMON_SESSION_ID ?? `daemon-${process.pid}`;
 // Loaded from private install-scoped config before the socket or network loops
 // start. Never expose this opaque correlation key in status/log output.
@@ -185,6 +198,7 @@ function errorMessage(err: unknown): string {
 
 function purgePrincipalScopedState(): void {
   decisionDigestCache.reset();
+  decisionDraftDigestCache.reset();
   statuslineIngestionCache.clear();
   lastHeartbeatAt = undefined;
   lastOnlineCount = undefined;
@@ -248,6 +262,9 @@ function enterReauthHold(): void {
     return;
   }
   reauthHold = true;
+  // Publish commands are authority-bearing. Unlike the team summary, a stale
+  // private page must not survive terminal authentication failure.
+  decisionDraftDigestCache.reset();
   daemonHealth.needsReauth = true;
   if (heartbeatTimer) {
     clearTimeout(heartbeatTimer);
@@ -566,7 +583,10 @@ function scheduleDecisionDigestRefresh(): void {
 
 function refreshDecisionDigest(): Promise<void> {
   synchronizeDaemonCredential();
-  return shuttingDown || reauthHold ? Promise.resolve() : decisionDigestCache.refresh();
+  if (shuttingDown || reauthHold) return Promise.resolve();
+  return Promise.all([decisionDigestCache.refresh(), decisionDraftDigestCache.refresh()]).then(
+    () => undefined,
+  );
 }
 
 async function runDecisionDigestLoop(): Promise<void> {
@@ -682,6 +702,25 @@ function handleStatusSnapshot(
   };
 }
 
+function draftPageAcknowledgement(params: Record<string, unknown>): {
+  pageToken: string;
+  deliveredIds: string[];
+} {
+  const pageToken = params.pageToken;
+  const deliveredIds = params.deliveredIds;
+  if (typeof pageToken !== "string" || !/^[a-f0-9]{32}$/u.test(pageToken)) {
+    throw new Error("private draft acknowledgement requires a valid page token");
+  }
+  if (
+    !Array.isArray(deliveredIds) ||
+    deliveredIds.length > DECISION_DIGEST_CACHE_LIMIT ||
+    deliveredIds.some((id) => typeof id !== "string" || id.length === 0 || id.length > 128)
+  ) {
+    throw new Error("private draft acknowledgement requires bounded delivery IDs");
+  }
+  return { pageToken, deliveredIds };
+}
+
 async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonResponseEnvelope> {
   const id = req.id;
   try {
@@ -740,6 +779,30 @@ async function dispatchRequest(req: DaemonRequestEnvelope): Promise<DaemonRespon
         const result = decisionDigestCache.read();
         void refreshDecisionDigest();
         return { id, ok: true, result };
+      }
+      case "decision_draft_digest_snapshot": {
+        // Kept separate from the team digest so a newly installed hook stays
+        // compatible with an old daemon: it simply leaves private drafts
+        // pending until the daemon upgrades.
+        assertCallerPrincipalMatches(req.caller);
+        assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
+        const result = decisionDraftDigestCache.read();
+        void refreshDecisionDigest();
+        return { id, ok: true, result };
+      }
+      case "decision_draft_digest_acknowledge": {
+        // This is the only transition that may unpin a private page. The
+        // caller proves the exact credential generation and environment before
+        // its page token and delivered IDs are considered.
+        assertCallerPrincipalMatches(req.caller);
+        assertCallerEnvMatches(req.params?.callerEnv, getSiteUrl());
+        const acknowledgement = draftPageAcknowledgement(req.params ?? {});
+        const complete = decisionDraftDigestCache.acknowledgePrivatePage(
+          acknowledgement.pageToken,
+          acknowledgement.deliveredIds,
+        );
+        if (complete) void refreshDecisionDigest();
+        return { id, ok: true, result: { ack: true, complete } };
       }
       case "statusline_invalidate":
         statuslineIngestionCache.clear();
