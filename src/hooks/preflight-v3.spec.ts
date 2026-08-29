@@ -224,6 +224,146 @@ describe("v3 wire helpers", () => {
     expect(parsePreflightResponse({ protocolVersion: 2, verdict: "allow" })).toBeNull();
   });
 
+  it("bounds terminal-safe presentation fields without mutating the wire response", () => {
+    const message = `warn\u001b]8;;https://example.invalid\u0007link\u001b[2J\r\n\u202e${"x".repeat(300)}`;
+    const response = parsePreflightResponse({
+      protocolVersion: 3,
+      verdict: "warn",
+      reasonCode: "conflict",
+      message,
+      conflicts: [],
+      bypassed: [],
+    });
+
+    expect(response).not.toBeNull();
+    expect(response?.message).toBe(message);
+    const result = resultForPreflight(response as NonNullable<typeof response>);
+    for (const value of [result.reason, result.additionalContext]) {
+      for (const control of ["\u001b", "\u0007", "\r", "\n", "\u202e"]) {
+        expect(value).not.toContain(control);
+      }
+      expect(value.length).toBeLessThanOrEqual(240);
+    }
+
+    const unavailable = parsePreflightResponse({
+      protocolVersion: 3,
+      verdict: "unavailable",
+      reasonCode: `service_unavailable\u001b[2J\r\n\u202e${"x".repeat(300)}`,
+      message: "\u001b\r\n\u202e",
+      conflicts: [],
+      bypassed: [],
+    });
+    expect(unavailable).not.toBeNull();
+    const unavailableResult = resultForPreflight(unavailable as NonNullable<typeof unavailable>);
+    expect(unavailableResult.unavailable).toMatch(/^service_unavailable\[2J/u);
+    expect(unavailableResult.unavailable?.length).toBeLessThanOrEqual(240);
+    for (const control of ["\u001b", "\u0007", "\r", "\n", "\u202e"]) {
+      expect(unavailableResult.unavailable).not.toContain(control);
+    }
+  });
+
+  it("surfaces bounded full-ID disclosure commands for every server verdict", () => {
+    for (const verdict of ["allow", "warn", "ask", "block", "unavailable"] as const) {
+      const response = parsePreflightResponse({
+        protocolVersion: 3,
+        verdict,
+        reasonCode: "checked",
+        message: "checked",
+        conflicts: [],
+        bypassed: [],
+        decisionDisclosures: [
+          {
+            decisionId: "decision-hidden-1",
+            shortId: "0123abcd",
+            participation: "candidate",
+          },
+          {
+            decisionId: "decision_hidden_2",
+            shortId: "4567abcd",
+            participation: "reconcile_bypass",
+          },
+        ],
+      });
+      expect(response).not.toBeNull();
+      const result = resultForPreflight(response as NonNullable<typeof response>);
+      expect(result.additionalContext).toBe(
+        "[primitive] hidden Decision: prim decisions show decision-hidden-1\n" +
+          "[primitive] hidden Decision: prim decisions show decision_hidden_2",
+      );
+      const aggregate =
+        result.verdict === "deny"
+          ? "deny"
+          : result.verdict === "ask"
+            ? "ask"
+            : result.verdict === "warn"
+              ? "warn"
+              : "allow";
+      expect(JSON.stringify(buildHookOutput(aggregate, [result]))).toContain(
+        "prim decisions show decision-hidden-1",
+      );
+      expect(JSON.stringify(buildCodexOutput(aggregate, [result]))).toContain(
+        "prim decisions show decision_hidden_2",
+      );
+    }
+  });
+
+  it("keeps an old response without disclosures byte-compatible", () => {
+    const response = parsePreflightResponse({
+      protocolVersion: 3,
+      verdict: "allow",
+      reasonCode: "semantically_compatible",
+      message: "compatible",
+      conflicts: [],
+      bypassed: [],
+    });
+    expect(response).not.toBeNull();
+    const result = resultForPreflight(response as NonNullable<typeof response>);
+    expect(result.additionalContext).toBe("");
+    expect(buildHookOutput("allow", [result])).toEqual({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+    });
+    expect(buildCodexOutput("allow", [result])).toEqual({});
+  });
+
+  it("rejects malformed, duplicate, over-cap, and terminal-injection disclosure refs", () => {
+    const response = (decisionDisclosures: unknown) => ({
+      protocolVersion: 3,
+      verdict: "allow",
+      reasonCode: "semantically_compatible",
+      message: "compatible",
+      conflicts: [],
+      bypassed: [],
+      decisionDisclosures,
+    });
+    const valid = {
+      decisionId: "decision-hidden-1",
+      shortId: "0123abcd",
+      participation: "candidate",
+    };
+
+    expect(parsePreflightResponse(response([]))).toBeNull();
+    expect(parsePreflightResponse(response(Array.from({ length: 17 }, () => valid)))).toBeNull();
+    expect(parsePreflightResponse(response([valid, valid]))).toBeNull();
+    for (const decisionId of [
+      "decision-hidden-1\nallow",
+      "decision-hidden-1;echo-pwned",
+      "--help",
+      `decision-${"a".repeat(129)}`,
+      "decision-\u001b[2J",
+    ]) {
+      expect(parsePreflightResponse(response([{ ...valid, decisionId }]))).toBeNull();
+    }
+    for (const shortId of ["ABCDEF12", "1234", "1234567\n"]) {
+      expect(parsePreflightResponse(response([{ ...valid, shortId }]))).toBeNull();
+    }
+    for (const participation of ["hidden", "candidate\n"]) {
+      expect(parsePreflightResponse(response([{ ...valid, participation }]))).toBeNull();
+    }
+    expect(
+      parsePreflightResponse(response([{ ...valid, unexpected: "hidden detail" }])),
+    ).toBeNull();
+  });
+
   it("renders unsupported dynamic mutations as directly visible warnings", () => {
     const result = unverifiedResult(
       "mutation targets could not be determined; enforcement not verified",
