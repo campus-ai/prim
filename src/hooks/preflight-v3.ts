@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 import { getClient } from "../client.js";
+import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
+import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
@@ -11,6 +13,9 @@ export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export const MAX_CLIENT_VERSION_CHARS = 32;
 const CLIENT_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+const MAX_DECISION_DISCLOSURES = 16;
+const DISCLOSED_DECISION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const DISCLOSED_DECISION_SHORT_ID_RE = /^[0-9a-f]{8}$/u;
 
 /**
  * Bound the client version to the server's validated token — at most 32
@@ -31,8 +36,7 @@ export type Coverage = "complete" | "unverified";
 export type PreflightClientMode = "block" | "warn";
 // biome-ignore format: keep the small wire contract compact
 export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; proposal: string };
-// biome-ignore format: keep the small wire contract compact
-export type PreflightResponse = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; verdict: "allow" | "warn" | "ask" | "block" | "unavailable"; reasonCode: string; message: string; conflicts: unknown[]; bypassed: unknown[] };
+export type PreflightResponse = PreflightResponseV3;
 // biome-ignore format: compact internal shapes keep this boundary auditable
 export type TargetResolution = { paths: string[]; coverage: Coverage; mutation: "none" | "present" };
 // biome-ignore format: compact internal shapes keep this boundary auditable
@@ -97,7 +101,47 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
   ) {
     return null;
   }
-  return response as PreflightResponse;
+  const disclosures = response.decisionDisclosures;
+  if (disclosures !== undefined) {
+    if (
+      !Array.isArray(disclosures) ||
+      disclosures.length === 0 ||
+      disclosures.length > MAX_DECISION_DISCLOSURES
+    ) {
+      return null;
+    }
+    const seen = new Set<string>();
+    for (const value of disclosures) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      const disclosure = value as Record<string, unknown>;
+      if (
+        Object.keys(disclosure).length !== 3 ||
+        !Object.hasOwn(disclosure, "decisionId") ||
+        !Object.hasOwn(disclosure, "shortId") ||
+        !Object.hasOwn(disclosure, "participation") ||
+        typeof disclosure.decisionId !== "string" ||
+        !DISCLOSED_DECISION_ID_RE.test(disclosure.decisionId) ||
+        typeof disclosure.shortId !== "string" ||
+        !DISCLOSED_DECISION_SHORT_ID_RE.test(disclosure.shortId) ||
+        (disclosure.participation !== "candidate" &&
+          disclosure.participation !== "reconcile_bypass") ||
+        seen.has(disclosure.decisionId)
+      ) {
+        return null;
+      }
+      seen.add(disclosure.decisionId);
+    }
+  }
+  return response as unknown as PreflightResponse;
+}
+
+/** Render only a bounded, terminal-safe lookup command for each hidden row. */
+export function decisionDisclosureContext(response: PreflightResponse): string {
+  return (
+    response.decisionDisclosures
+      ?.map(({ decisionId }) => `[primitive] hidden Decision: prim decisions show ${decisionId}`)
+      .join("\n") ?? ""
+  );
 }
 export async function requestPreflight(
   request: PreflightRequest,
@@ -111,6 +155,11 @@ export async function requestPreflight(
 }
 export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
+  // The wire response remains untouched for protocol compatibility. These
+  // values cross into terminal and hook presentation, so normalize them once
+  // at the mapping boundary before any host-specific renderer can consume them.
+  const message = boundedHealthError(response.message) ?? "";
+  const unavailable = message || boundedHealthError(response.reasonCode);
   const safe = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
   const directives = response.conflicts.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
@@ -123,15 +172,16 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
           : undefined;
     return id ? [`To reconcile, run: prim reconcile ${id}`] : [];
   });
-  const reason = [response.message, ...new Set(directives)].filter(Boolean).join("\n");
+  const reason = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const disclosureContext = decisionDisclosureContext(response);
   return {
     verdict,
     conflicts: response.conflicts,
     reason,
-    additionalContext: ["warn", "ask", "block"].includes(response.verdict) ? reason : "",
+    additionalContext:
+      disclosureContext || (["warn", "ask", "block"].includes(response.verdict) ? reason : ""),
     truncated: false,
-    unavailable:
-      response.verdict === "unavailable" ? response.message || response.reasonCode : undefined,
+    unavailable: response.verdict === "unavailable" ? unavailable : undefined,
   };
 }
 export function unverifiedResult(message: string): ConflictCheckResult {
