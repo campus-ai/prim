@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.70](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.69...v0.1.0-alpha.70) (2026-08-30)
+
+
+### Bug Fixes
+
+* **github:** validate install intent TTL at response time ([8ca0667](https://github.com/campus-ai/prim/commit/8ca066703648b38bb5d17e08ca7dd9e041b3c584))
+
 ## [0.1.0-alpha.69](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.68...v0.1.0-alpha.69) (2026-08-29)
 
 
