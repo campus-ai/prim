@@ -13,7 +13,7 @@
  * The wire shape mirrors `DecisionDetail` in
  * convex/decisions/internal.ts verbatim — a lean projection, NOT raw
  * Convex documents. Read `decision.id` (not `_id`), `files` as a flat
- * string[], `contexts[].name`, and `dependsOn` / `dependents` as lean
+ * string[], optional `contexts[].name`, and `dependsOn` / `dependents` as lean
  * DecisionNode[]; never the raw fileRefs / contextRefs / edge-doc
  * columns the projection deliberately drops.
  */
@@ -79,7 +79,8 @@ export interface DecisionShowResult {
     authorName: string;
   };
   files: string[];
-  contexts: { id: string; name: string }[];
+  // The server omits this join when a Decision has no attached context rows.
+  contexts?: { id: string; name: string }[];
   flags: DecisionFlagSummary[];
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
@@ -212,7 +213,7 @@ export function formatShowHuman(result: DecisionShowResult): string {
     lines.push(`  alternatives: ${d.alternatives.map(terminalSafeLine).join(" | ")}`);
   }
   pushFiles(lines, result.files);
-  pushContexts(lines, result.contexts);
+  pushContexts(lines, result.contexts ?? []);
   pushEdges(lines, "dependents", "→", result.dependents);
   pushEdges(lines, "depends on", "←", result.dependsOn);
   if (result.flags.length > 0) {

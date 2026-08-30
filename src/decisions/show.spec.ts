@@ -163,6 +163,16 @@ describe("formatShowHuman", () => {
     expect(out).not.toContain("k_auth");
   });
 
+  it("renders a live decision with no contexts when the server omits the join", () => {
+    const withoutContexts: DecisionShowResult = {
+      ...DETAIL,
+      contexts: undefined,
+    };
+
+    expect(() => formatShowHuman(withoutContexts)).not.toThrow();
+    expect(formatShowHuman(withoutContexts)).not.toContain("contexts (");
+  });
+
   it("renders dependents as lean nodes with intent and author", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("dec_18294ea6");
