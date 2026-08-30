@@ -7,12 +7,13 @@
  *   prim decisions cascade <idOrShortId>
  *   prim decisions publish <idOrShortId>
  *   prim decisions restore <idOrShortId>
+ *   prim decisions ratify <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
- *                          --confidence|--reversibility|--files]
+ *                          --confidence|--reversibility|--files|--draft|--adopt]
  *
  * The `decisions` command group is created once here; every subcommand
  * attaches to this same group. AX contract throughout: STDOUT is always
@@ -39,7 +40,12 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
-import { publishDecision, restoreDecision, supersedeDecision } from "../decisions/lifecycle.js";
+import {
+  publishDecision,
+  ratifyDecision,
+  restoreDecision,
+  supersedeDecision,
+} from "../decisions/lifecycle.js";
 import {
   LinkNotFoundError,
   fetchLink,
@@ -145,6 +151,8 @@ interface CreateOptions {
   confidence?: string;
   reversibility?: string;
   files?: string[];
+  draft?: boolean;
+  adopt?: boolean;
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -237,6 +245,13 @@ export function registerDecisionsCommands(program: Command): void {
     .description("Restore an authored abandoned Decision to a private draft")
     .action(async (idOrShortId: string) => {
       process.exitCode = await restoreDecision(idOrShortId);
+    });
+
+  decisions
+    .command("ratify <idOrShortId>")
+    .description("Ratify an authored Decision as adopted")
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await ratifyDecision(idOrShortId);
     });
 
   decisions
@@ -357,12 +372,20 @@ export function registerDecisionsCommands(program: Command): void {
     )
     .option("--confidence <level>", "high | medium | low (default high)")
     .option("--reversibility <level>", "high | low (default high)")
+    .option("--draft", "Create a private draft instead of publishing immediately")
+    .option("--adopt", "Create an adopted Decision as the authenticated author")
     .option(
       "--files <paths>",
       "Comma-separated exact repo-relative paths this decision governs (repeatable)",
       collectPaths,
     )
     .action(async (opts: CreateOptions, command: Command) => {
+      if (opts.draft && opts.adopt) {
+        console.error("[prim] create rejected: --draft and --adopt cannot be used together.");
+        console.log(JSON.stringify({ ok: false, error: "conflicting_stage_override" }, null, 2));
+        process.exitCode = EXIT_USAGE;
+        return;
+      }
       const requestedFiles = opts.files ?? [];
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
       if (requestedFiles.length > 0) {
@@ -412,6 +435,7 @@ export function registerDecisionsCommands(program: Command): void {
         alternatives: opts.alternatives,
         confidence: opts.confidence as CreateRequest["confidence"],
         reversibility: opts.reversibility as CreateRequest["reversibility"],
+        stageOverride: opts.draft ? "draft" : opts.adopt ? "adopted" : undefined,
         ...explicitScope,
       };
       try {

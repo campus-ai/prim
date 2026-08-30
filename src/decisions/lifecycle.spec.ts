@@ -4,6 +4,7 @@ import {
   DECISION_LIFECYCLE_EXIT,
   type DecisionLifecycleCommandDependencies,
   publishDecision,
+  ratifyDecision,
   restoreDecision,
   supersedeDecision,
 } from "./lifecycle.js";
@@ -109,6 +110,34 @@ describe("Decision lifecycle success contract", () => {
     expect(stderr).toEqual(["[prim] dec_0123abcd restored as a private draft."]);
   });
 
+  it("ratifies with the generated request and projects only generated success fields", async () => {
+    const { dependencies, post, signal, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+      internalReceipt: "must-not-print",
+    });
+
+    const exitCode = await ratifyDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/ratify",
+      { id: "decision-1" },
+      { signal },
+    );
+    expect(machineOutput(stdout)).toEqual({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+    });
+    expect(stdout.join("\n")).not.toContain("must-not-print");
+    expect(stderr).toEqual(["[prim] dec_0123abcd ratified as adopted."]);
+  });
+
   it("treats an already-restored draft as a successful no-op", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({ outcome: "no_op", stage: "draft" });
@@ -193,6 +222,27 @@ describe("Decision lifecycle success contract", () => {
     expect(machineOutput(stdout)).toEqual({
       ok: false,
       operation: "restore",
+      code: "invalid_response",
+    });
+    expect(stderr[0]).toContain("invalid lifecycle response");
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("must-not-print");
+  });
+
+  it("rejects a generated ratify response whose stage contradicts its endpoint", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      stage: "provisional",
+      sensitive: "must-not-print",
+    });
+
+    const exitCode = await ratifyDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "ratify",
       code: "invalid_response",
     });
     expect(stderr[0]).toContain("invalid lifecycle response");

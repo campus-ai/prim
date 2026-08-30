@@ -112,6 +112,32 @@ describe("decisions create activation consent", () => {
     );
   });
 
+  it.each([
+    ["--draft", "draft"],
+    ["--adopt", "adopted"],
+  ] as const)("passes %s as stage override %s", async (flag, stageOverride) => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(flag);
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(expect.objectContaining({ stageOverride }));
+  });
+
+  it("rejects conflicting lifecycle birth flags before transport", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--draft", "--adopt");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[prim] create rejected: --draft and --adopt cannot be used together.",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "conflicting_stage_override" }, null, 2),
+    );
+  });
+
   it("collects repeated --decided and --alternatives entries verbatim, commas intact", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(true);
 

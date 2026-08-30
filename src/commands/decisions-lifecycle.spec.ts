@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 describe("decisions lifecycle command registration", () => {
-  it("registers only the currently contracted lifecycle verbs", () => {
+  it("registers the contracted lifecycle verbs", () => {
     const program = buildProgram();
     const decisions = program.commands.find((command) => command.name() === "decisions");
     const names = decisions?.commands.map((command) => command.name()) ?? [];
@@ -56,7 +56,7 @@ describe("decisions lifecycle command registration", () => {
     expect(names).toContain("publish");
     expect(names).toContain("restore");
     expect(names).toContain("supersede");
-    expect(names).not.toContain("ratify");
+    expect(names).toContain("ratify");
     expect(names).not.toContain("delete");
     expect(names).not.toContain("edit");
   });
@@ -118,6 +118,36 @@ describe("decisions lifecycle command registration", () => {
       decisionId: "decision-1",
       shortId: "0123abcd",
       stage: "draft",
+    });
+  });
+
+  it("ratifies noninteractively without invoking a confirmation prompt", async () => {
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "ratify", "decision-1"], {
+      from: "user",
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/ratify",
+      { id: "decision-1" },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(0);
+    expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd ratified as adopted.");
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
     });
   });
 
