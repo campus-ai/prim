@@ -26,7 +26,7 @@ import {
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
-export type DecisionLifecycleOperation = "publish" | "restore" | "supersede";
+export type DecisionLifecycleOperation = "publish" | "restore" | "ratify" | "supersede";
 
 export const DECISION_LIFECYCLE_TIMEOUT_MS = 10_000;
 
@@ -79,18 +79,21 @@ const defaultDependencies: DecisionLifecycleCommandDependencies = {
 const EXPECTED_STAGE = {
   publish: "provisional",
   restore: "draft",
+  ratify: "adopted",
   supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, DecisionStageSuccessResponse["stage"]>;
 
 const PATH = {
   publish: "/api/cli/decisions/publish",
   restore: "/api/cli/decisions/restore",
+  ratify: "/api/cli/decisions/ratify",
   supersede: "/api/cli/decisions/supersede",
 } as const satisfies Record<DecisionLifecycleOperation, string>;
 
 const PAST_PARTICIPLE = {
   publish: "published",
   restore: "restored",
+  ratify: "ratified",
   supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, string>;
 
@@ -154,6 +157,9 @@ function formatSuccessHuman(
   }
   if (operation === "restore") {
     return `[prim] ${identifier} restored as a private draft.`;
+  }
+  if (operation === "ratify") {
+    return `[prim] ${identifier} ratified as ${response.stage}.`;
   }
 
   const replacement = safeRequestedIdentifier(
@@ -337,6 +343,14 @@ export function restoreDecision(
 ): Promise<number> {
   const request: DecisionIdRequest = { id };
   return executeLifecycle("restore", request, dependencies);
+}
+
+export function ratifyDecision(
+  id: string,
+  dependencies: DecisionLifecycleCommandDependencies = defaultDependencies,
+): Promise<number> {
+  const request: DecisionIdRequest = { id };
+  return executeLifecycle("ratify", request, dependencies);
 }
 
 export function supersedeDecision(

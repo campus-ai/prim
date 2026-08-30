@@ -62,6 +62,7 @@ describe("fetchCreate", () => {
         files: ["src/editor.ts"],
         protocolVersion: 3,
         repoSyncId: "sync-1",
+        stageOverride: "draft",
       },
       { getClient: () => clientWith(post) },
     );
@@ -75,6 +76,7 @@ describe("fetchCreate", () => {
         files: ["src/editor.ts"],
         protocolVersion: 3,
         repoSyncId: "sync-1",
+        stageOverride: "draft",
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

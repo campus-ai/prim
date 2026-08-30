@@ -33,6 +33,8 @@ export interface CreateRequest {
   files?: string[];
   protocolVersion?: 3;
   repoSyncId?: string;
+  /** Explicit lifecycle birth stage; absent preserves provisional creation. */
+  stageOverride?: "candidate" | "draft" | "adopted";
 }
 
 /** The created decision's identity, as returned by the server (201). */
@@ -70,6 +72,7 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
     files: request.files,
     protocolVersion: request.protocolVersion,
     repoSyncId: request.repoSyncId,
+    stageOverride: request.stageOverride,
   };
   const body: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(candidate)) {
