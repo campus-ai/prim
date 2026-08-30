@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.1.0-alpha.69](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.68...v0.1.0-alpha.69) (2026-08-29)
+
+
+### Features
+
+* add decision lifecycle commands ([#243](https://github.com/campus-ai/prim/issues/243)) ([8e96d9f](https://github.com/campus-ai/prim/commit/8e96d9fcef44d3040f55a6bce54ff2ccc992fa40))
+* add fail-closed top-level uninstall ([#268](https://github.com/campus-ai/prim/issues/268)) ([777103f](https://github.com/campus-ai/prim/commit/777103f4f381ccbf14ecb74d0d99dee579163760))
+* adopt CLI critical-path contract v2 ([#240](https://github.com/campus-ai/prim/issues/240)) ([35ee9c6](https://github.com/campus-ai/prim/commit/35ee9c681fc330616d6c58be757d51e69f4b272b))
+* **auth:** add WorkOS Connect device flow ([#251](https://github.com/campus-ai/prim/issues/251)) ([9557af2](https://github.com/campus-ai/prim/commit/9557af2ce6e5ef56df5bf7b31b3175972d3ffbc1))
+* **auth:** manage WorkOS user API keys ([#253](https://github.com/campus-ai/prim/issues/253)) ([5182373](https://github.com/campus-ai/prim/commit/51823739c43b12b6f69a9730f5d8a78e8e3e8600))
+* **capture:** recover organization-bound journal envelopes ([#272](https://github.com/campus-ai/prim/issues/272)) ([1497ba4](https://github.com/campus-ai/prim/commit/1497ba409c028b80f7a4917f11582d08703c48e6))
+* **codex:** recover private draft delivery ([#271](https://github.com/campus-ai/prim/issues/271)) ([cb79e7b](https://github.com/campus-ai/prim/commit/cb79e7bb5fa3e95d92dba4e8e9843f7996788c53))
+* **daemon:** compose stable instance heartbeat prerequisites ([#242](https://github.com/campus-ai/prim/issues/242)) ([0adb85d](https://github.com/campus-ai/prim/commit/0adb85de22e169359b62b68065751dcbe7946408))
+* **decisions:** add restore command ([#266](https://github.com/campus-ai/prim/issues/266)) ([eb04a1b](https://github.com/campus-ai/prim/commit/eb04a1bc4139f485e0a2a81f9846d4e3ef3687c7))
+* **decisions:** recover feedback v2 publish prompts ([#270](https://github.com/campus-ai/prim/issues/270)) ([e2c743f](https://github.com/campus-ai/prim/commit/e2c743f5406812083b1d02627f842a19109e6155))
+* **doctor:** verify persistent hook runtimes ([#269](https://github.com/campus-ai/prim/issues/269)) ([ded9ed3](https://github.com/campus-ai/prim/commit/ded9ed3678121620271113dfda56d25ffe14c75f))
+* generate CLI request-core bindings ([#239](https://github.com/campus-ai/prim/issues/239)) ([94cc91b](https://github.com/campus-ai/prim/commit/94cc91b7d94628044f1af9f7611e6248c487d92d))
+* **github:** recover explicit repository connect ([#274](https://github.com/campus-ai/prim/issues/274)) ([8f75371](https://github.com/campus-ai/prim/commit/8f7537189c627a5a8f52cca7f7c7e783b0227513))
+* **github:** recover install-intent connect flow ([#277](https://github.com/campus-ai/prim/issues/277)) ([98aa0ab](https://github.com/campus-ai/prim/commit/98aa0ab1473ff9c0cddd765bcb36cf169ea2010c))
+* **hooks:** recover version-stable runtime staging ([#267](https://github.com/campus-ai/prim/issues/267)) ([451e3f8](https://github.com/campus-ai/prim/commit/451e3f8851432276c3147408a4f0e8a4388b1f93))
+* **preflight:** disclose hidden Decision participation ([#273](https://github.com/campus-ai/prim/issues/273)) ([4d7fb90](https://github.com/campus-ai/prim/commit/4d7fb90861ccc089cf8177c3dba1e3b9615b11cb))
+* re-land verified CLI foundation stack ([#265](https://github.com/campus-ai/prim/issues/265)) ([e1b02a5](https://github.com/campus-ai/prim/commit/e1b02a5b65c72aa49a51e342cfe16cd73a454c5f))
+
+
+### Bug Fixes
+
+* **auth:** sanitize broker refresh diagnostics ([0dd1dc8](https://github.com/campus-ai/prim/commit/0dd1dc84545533a42cd5b227bcb8d2e56b6c91e0))
+* **capture:** harden secret redaction ([18638ca](https://github.com/campus-ai/prim/commit/18638cab1cebe2c356c64d49ba9ee3ff3f10ec39))
+* **capture:** harden secret redaction ([822b5b9](https://github.com/campus-ai/prim/commit/822b5b967b3e15d8474d9f8c880e3d9d35073e6f))
+* **capture:** quarantine poison move deliveries ([4be9075](https://github.com/campus-ai/prim/commit/4be90758a2669e8f633a8ad7932df32483fb1029))
+* **capture:** quarantine poison move deliveries ([38dadb8](https://github.com/campus-ai/prim/commit/38dadb83b3f162ca4704443e387faaa767fba34f))
+* **capture:** quarantine tenant authority mismatches ([d0abd9a](https://github.com/campus-ai/prim/commit/d0abd9a370b524c9c1526fa1ee2aac66e9541489))
+* **capture:** redact secret-bearing object keys ([79f7c80](https://github.com/campus-ai/prim/commit/79f7c806efadc1723df02bece08f1b50adf50ae4))
+* **capture:** retain unversioned ingest failures ([e98f41e](https://github.com/campus-ai/prim/commit/e98f41ec1f560930e387c31de46a6607f48e9c0b))
+* **codex:** preserve final output on Stop digest ([9a3f4cc](https://github.com/campus-ai/prim/commit/9a3f4ccfaeb70c10b0281333e95eb84b8d147ad6))
+* **codex:** preserve final output on Stop digest ([3867eb6](https://github.com/campus-ai/prim/commit/3867eb63520271f7253f80f1dffa5eee54cdac58))
+* **daemon:** bind socket reads to caller principal ([#233](https://github.com/campus-ai/prim/issues/233)) ([916387b](https://github.com/campus-ai/prim/commit/916387bcbc315107a2def71eef596fb89ef603ba))
+* **decisions:** bind affecting checks to repository ([#275](https://github.com/campus-ai/prim/issues/275)) ([573f5a8](https://github.com/campus-ai/prim/commit/573f5a88da0ff6126a84db209191d0fa9c41c517))
+* durably sync atomic write directories ([3ef2791](https://github.com/campus-ai/prim/commit/3ef2791cbba18acd18c4f14d311b90644e0f8ffb))
+* harden atomic host config writes ([2428881](https://github.com/campus-ai/prim/commit/24288818fbb5863d6e463d99e56890d503cf7be5))
+* harden atomic host config writes ([915663a](https://github.com/campus-ai/prim/commit/915663ab8781a19ac04de1161a31d25d37db51df))
+* harden config and credential resolution ([12c9c12](https://github.com/campus-ai/prim/commit/12c9c12c23c3f372b5df49015c53dcc4a7cb9ea1))
+* harden config and credential resolution ([dc5e7e5](https://github.com/campus-ai/prim/commit/dc5e7e59fcc9c59aa0ed4da7c9292bb09baf8c30))
+* **hooks:** sanitize debug error output ([#262](https://github.com/campus-ai/prim/issues/262)) ([766e168](https://github.com/campus-ai/prim/commit/766e1687fe2c19b0563f8b1230a11de1e0fec15b))
+* pin unattended hook runtimes ([3699b35](https://github.com/campus-ai/prim/commit/3699b351d4e6c0e67f7b68606158b1f29d1c14a4))
+* pin unattended hook runtimes ([02b573a](https://github.com/campus-ai/prim/commit/02b573a55b114a220b9efdb03d83946adefa3155))
+* preserve Hermes YAML configuration ([bb530ea](https://github.com/campus-ai/prim/commit/bb530eae33c580cd1d60b7ba99b34142e1f43694))
+* preserve Hermes YAML configuration ([ea33ca2](https://github.com/campus-ai/prim/commit/ea33ca20b298a1afb801253111ebe38fb1f71ba0))
+* quarantine tenant-mismatched captures ([db68588](https://github.com/campus-ai/prim/commit/db685885aa70db03a2544b7c4fd6a64bc4fe0b82))
+* reject unsafe config directory overrides ([db8523d](https://github.com/campus-ai/prim/commit/db8523d6fde8e4aaf24178a03a673b66a837dee4))
+* remove local Git hook runtime fallback ([39eea68](https://github.com/campus-ai/prim/commit/39eea68992dd22262c4604c3f4881315949cd7a4))
+* **rendering:** sanitize terminal output ([1f4e16c](https://github.com/campus-ai/prim/commit/1f4e16cc3ae49cf30efc3681888bc4b054f91068))
+* retain repository bindings across outages ([#235](https://github.com/campus-ai/prim/issues/235)) ([2f52658](https://github.com/campus-ai/prim/commit/2f526581fa99d86434bc16de64bd661f78399cbb))
+* sync recursive atomic parent chain ([a2a48e5](https://github.com/campus-ai/prim/commit/a2a48e571a0767f5594b0e80e728347a69e8891c))
+
+
+### Reverts
+
+* **decisions:** remove repository-bound affecting query ([#276](https://github.com/campus-ai/prim/issues/276)) ([6dd5551](https://github.com/campus-ai/prim/commit/6dd55514d4ab638e9553deb96238ee26f7f3d397))
+* undo unverified CLI merge train ([#264](https://github.com/campus-ai/prim/issues/264)) ([d7aa3f2](https://github.com/campus-ai/prim/commit/d7aa3f28d3ffa5a1b5a4269744d892af025c008e))
+
 ## [0.1.0-alpha.68](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.67...v0.1.0-alpha.68) (2026-08-11)
 
 
