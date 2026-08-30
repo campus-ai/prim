@@ -80,7 +80,6 @@ const API_KEY_ID = /^api_key_[A-Za-z0-9_-]+$/u;
 const API_KEY_NAME = /^[\x21-\x7e](?:[\x20-\x7e]{0,126}[\x21-\x7e])?$/u;
 const API_KEY_PERMISSION = /^[\x21-\x7e]+$/u;
 const API_KEY_SECRET = /^sk_[\x21-\x7e]+(?: [\x21-\x7e]+)*$/u;
-const API_KEY_OBFUSCATED_VALUE = /^[\x20-\x7e]+$/u;
 const MINT_PATH = "/api/cli/auth/api-keys";
 const REQUEST_ID = /^[a-f0-9]{64}$/u;
 
@@ -122,6 +121,34 @@ function isApiKeyName(value: unknown): value is string {
   return isBoundedString(value, 1, 128, API_KEY_NAME);
 }
 
+/**
+ * WorkOS redacts user API keys with a display value. It can contain ordinary
+ * Unicode punctuation (for example U+2026, \u2026), but it must remain safe to
+ * render inline. This mirrors the server contract without embedding control
+ * characters in a regular expression.
+ */
+function isSafeObfuscatedValue(value: unknown): value is string {
+  if (!isBoundedString(value, 1, 256)) return false;
+  for (const character of value) {
+    const point = character.codePointAt(0) ?? 0;
+    if (
+      point <= 0x1f ||
+      (point >= 0x7f && point <= 0x9f) ||
+      point === 0x2028 ||
+      point === 0x2029 ||
+      point === 0x061c ||
+      (point >= 0x200b && point <= 0x200f) ||
+      (point >= 0x202a && point <= 0x202e) ||
+      point === 0x2060 ||
+      (point >= 0x2066 && point <= 0x2069) ||
+      point === 0xfeff
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isMetadata(value: unknown): UserApiKeyMetadata | undefined {
   const parsed = record(value);
   if (
@@ -144,7 +171,7 @@ function isMetadata(value: unknown): UserApiKeyMetadata | undefined {
   if (
     !isApiKeyId(id) ||
     !isApiKeyName(name) ||
-    !isBoundedString(obfuscatedValue, 1, 256, API_KEY_OBFUSCATED_VALUE) ||
+    !isSafeObfuscatedValue(obfuscatedValue) ||
     !Array.isArray(permissions) ||
     permissions.length > 100 ||
     !permissions.every((permission) => isBoundedString(permission, 1, 128, API_KEY_PERMISSION)) ||

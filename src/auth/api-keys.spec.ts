@@ -17,7 +17,7 @@ function metadata() {
   return {
     id: API_KEY_ID,
     name: "Primitive CLI",
-    obfuscatedValue: "sk_...cdef",
+    obfuscatedValue: "sk_\u2026cdef",
     permissions: ["decisions:read"],
     lastUsedAt: null,
     expiresAt: null,
@@ -176,6 +176,22 @@ describe("WorkOS user API-key list", () => {
     expect(await listUserApiKeys({ limit: 100 }, dependencies)).toBe(USER_API_KEY_EXIT.server);
     expect(machine(stdout)).toMatchObject({ code: "invalid_response" });
     expect(stdout.join("\n")).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["terminal control", "sk_\u001bcdef"],
+    ["line separator", "sk_\u2028cdef"],
+    ["bidi override", "sk_\u202ecdef"],
+    ["zero-width character", "sk_\u200bcdef"],
+  ])("rejects %s in obfuscated metadata", async (_description, obfuscatedValue) => {
+    const { dependencies, get, stdout } = harness();
+    get.mockResolvedValueOnce({
+      apiKeys: [{ ...metadata(), obfuscatedValue }],
+      nextCursor: null,
+    });
+
+    expect(await listUserApiKeys({ limit: 100 }, dependencies)).toBe(USER_API_KEY_EXIT.server);
+    expect(machine(stdout)).toMatchObject({ code: "invalid_response" });
   });
 
   it.each([{ limit: 0 }, { limit: 101 }, { limit: 10, after: "api_key_good\nnext" }])(
