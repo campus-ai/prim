@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.72](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.71...v0.1.0-alpha.72) (2026-08-30)
+
+
+### Features
+
+* **decisions:** expose full authored lifecycle ([b09f78a](https://github.com/campus-ai/prim/commit/b09f78a751ac07341360a849df3cc55fdbbff500))
+* **decisions:** expose full authored lifecycle ([6df40b8](https://github.com/campus-ai/prim/commit/6df40b8788de5973a319d4660234812612825320))
+
 ## [0.1.0-alpha.71](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.70...v0.1.0-alpha.71) (2026-08-30)
 
 
