@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.71](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.70...v0.1.0-alpha.71) (2026-08-30)
+
+
+### Bug Fixes
+
+* **auth:** accept safe Unicode API key displays ([b0f4a45](https://github.com/campus-ai/prim/commit/b0f4a456ce513c5b122de11355c6ea1b486e8a4c))
+
 ## [0.1.0-alpha.70](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.69...v0.1.0-alpha.70) (2026-08-30)
 
 
