@@ -129,7 +129,7 @@ export async function performGithubConnect(
 
     const start = await dependencies.createInstallIntent(client, {
       signal: AbortSignal.timeout(START_TIMEOUT_MS),
-      now: dependencies.now(),
+      now: dependencies.now,
     });
     const status = await completeInstallIntent(
       client,

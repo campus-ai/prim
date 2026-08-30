@@ -47,11 +47,14 @@ export function parseGitHubInstallIntentStatus(
 
 export async function createGitHubInstallIntent(
   client: CliClient,
-  options: RequestOptions & { now?: number } = {},
+  options: RequestOptions & { now?: () => number } = {},
 ): Promise<GitHubInstallIntentStart> {
-  const { now, ...requestOptions } = options;
+  const { now = Date.now, ...requestOptions } = options;
   const raw = await client.post(START_PATH, undefined, requestOptions);
-  const parsed = parseGitHubInstallIntentStart(raw, now ?? Date.now());
+  // The server owns this expiry and issues it after receiving the request.
+  // Measure its lifetime after the response arrives; a pre-request clock
+  // snapshot makes a valid 15-minute intent appear too long by request latency.
+  const parsed = parseGitHubInstallIntentStart(raw, now());
   if (!parsed) throw new Error("server returned an invalid GitHub install-intent response");
   return parsed;
 }

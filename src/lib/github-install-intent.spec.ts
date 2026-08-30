@@ -176,11 +176,32 @@ describe("GitHub install-intent protocol", () => {
     const api = client([START]);
     const signal = AbortSignal.timeout(1000);
 
-    await expect(createGitHubInstallIntent(api, { signal, now: NOW })).resolves.toEqual(START);
+    await expect(createGitHubInstallIntent(api, { signal, now: () => NOW })).resolves.toEqual(
+      START,
+    );
 
     expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/cli/github/install-intents", undefined, {
       signal,
     });
+  });
+
+  it("measures the server-owned TTL after the start response arrives", async () => {
+    let clock = NOW;
+    const issuedAtServerReceipt = {
+      ...START,
+      expiresAt: NOW + 15 * 60_000 + 25,
+    };
+    const api: CliClient = {
+      get: vi.fn(),
+      post: vi.fn(async () => {
+        clock += 25;
+        return issuedAtServerReceipt;
+      }),
+    };
+
+    await expect(createGitHubInstallIntent(api, { now: () => clock })).resolves.toEqual(
+      issuedAtServerReceipt,
+    );
   });
 
   it("polls pending and claimed states to one consumed terminal state", async () => {

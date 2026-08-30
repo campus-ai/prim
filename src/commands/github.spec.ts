@@ -145,7 +145,7 @@ describe("prim github connect", () => {
     });
     expect(deps.createInstallIntent).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ get: expect.any(Function), post: expect.any(Function) }),
-      { signal: expect.any(AbortSignal), now: NOW },
+      { signal: expect.any(AbortSignal), now: deps.now },
     );
     expect(deps.openBrowser).toHaveBeenCalledExactlyOnceWith(START.browserUrl);
     expect(deps.pollInstallIntent).toHaveBeenCalledExactlyOnceWith(
