@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.74](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.73...v0.1.0-alpha.74) (2026-08-31)
+
+
+### Bug Fixes
+
+* **github:** accept identity migration terminal status ([#285](https://github.com/campus-ai/prim/issues/285)) ([17dbaa3](https://github.com/campus-ai/prim/commit/17dbaa34e8d56163caf306584bbad704c8470534))
+
 ## [0.1.0-alpha.73](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.72...v0.1.0-alpha.73) (2026-08-30)
 
 
