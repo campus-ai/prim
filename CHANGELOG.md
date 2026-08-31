@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.73](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.72...v0.1.0-alpha.73) (2026-08-30)
+
+
+### Bug Fixes
+
+* **decisions:** tolerate omitted empty contexts ([a657a58](https://github.com/campus-ai/prim/commit/a657a58b7a23fc0bdfa366a7c962baf808e20988))
+* **decisions:** tolerate omitted empty contexts ([072b334](https://github.com/campus-ai/prim/commit/072b334c20df821e51d17a33ccaf441a44664d5b))
+
 ## [0.1.0-alpha.72](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.71...v0.1.0-alpha.72) (2026-08-30)
 
 
