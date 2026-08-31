@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => ""),
@@ -10,15 +10,23 @@ vi.mock("../lib/post-commit-hook.js", () => ({
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
+// Keep the real isNonInteractive (env/flag ladder), stub only the TTY prompt.
+vi.mock("../lib/confirmation.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/confirmation.js")>();
+  return { ...actual, askConfirmation: vi.fn() };
+});
+vi.mock("./github.js", () => ({ runGithubConnect: vi.fn() }));
 
 import { execFileSync } from "node:child_process";
 import { daemonRequest } from "../daemon/client.js";
+import { askConfirmation } from "../lib/confirmation.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
 } from "../lib/post-commit-hook.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { registerActivationCommands } from "./activation.js";
+import { runGithubConnect } from "./github.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 
@@ -36,6 +44,9 @@ const inRepo = (root: string | null): void => {
 function buildProgram(): Command {
   const program = new Command();
   program.exitOverride();
+  // Mirror the root program's interactive-gating globals so tests can drive the
+  // connect prompt with `--yes` / `--non-interactive` (passed before the verb).
+  program.option("-y, --yes").option("--non-interactive");
   registerActivationCommands(program);
   return program;
 }
@@ -57,6 +68,13 @@ beforeEach(() => {
     repoSyncId: "repoSync123",
     repositoryFullName: "campus-ai/primitive",
   });
+  vi.mocked(askConfirmation).mockResolvedValue(false);
+  vi.stubEnv("CI", "");
+  vi.stubEnv("PRIM_NON_INTERACTIVE", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("prim enable / disable", () => {
@@ -291,5 +309,129 @@ describe("prim enable / disable", () => {
     exitSpy.mockRestore();
     errSpy.mockRestore();
     logSpy.mockRestore();
+  });
+
+  it("prompts to connect an unbound repo and folds a successful connection into the result", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    vi.mocked(askConfirmation).mockResolvedValue(true);
+    vi.mocked(runGithubConnect).mockResolvedValue({
+      kind: "connected",
+      binding: {
+        status: "connected",
+        repoSyncId: "repoSyncNew",
+        repositoryFullName: "campus-ai/primitive",
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    expect(askConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("Connect this repository"),
+      process.stderr,
+    );
+    expect(runGithubConnect).toHaveBeenCalledWith(undefined, { root: "/repo", browser: true });
+    const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(output).toMatchObject({ bindingStatus: "connected", repoSyncId: "repoSyncNew" });
+    const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
+    expect(stderr).toContain("repository binding connected for GitHub origin campus-ai/primitive");
+    expect(stderr).not.toContain("organization owner or administrator");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("auto-launches the connect flow under --yes without prompting", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    vi.mocked(runGithubConnect).mockResolvedValue({
+      kind: "connected",
+      binding: {
+        status: "connected",
+        repoSyncId: "repoSyncNew",
+        repositoryFullName: "campus-ai/primitive",
+      },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["--yes", "enable"], { from: "user" });
+
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(runGithubConnect).toHaveBeenCalledWith(undefined, { root: "/repo", browser: true });
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("keeps the passive unbound message when the connect prompt is declined", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    vi.mocked(askConfirmation).mockResolvedValue(false);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    expect(runGithubConnect).not.toHaveBeenCalled();
+    const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(output).toMatchObject({ bindingStatus: "unbound" });
+    const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
+    expect(stderr).toContain("organization owner or administrator");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("never prompts to connect when non-interactive", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["--non-interactive", "enable"], { from: "user" });
+
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(runGithubConnect).not.toHaveBeenCalled();
+    const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
+    expect(stderr).toContain("organization owner or administrator");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("keeps the passive message when an accepted connect does not complete", async () => {
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    vi.mocked(askConfirmation).mockResolvedValue(true);
+    vi.mocked(runGithubConnect).mockResolvedValue({
+      kind: "error",
+      error: new Error("network down"),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(output).toMatchObject({ bindingStatus: "unbound" });
+    const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
+    expect(stderr).toContain("connect could not complete: network down");
+    expect(stderr).toContain("organization owner or administrator");
+    logSpy.mockRestore();
+    errSpy.mockRestore();
   });
 });

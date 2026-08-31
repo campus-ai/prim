@@ -6,9 +6,10 @@
  * a user installs prim once and opts each repo in (or out) with one command —
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
  */
-import type { Command } from "commander";
+import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
+import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
@@ -16,8 +17,39 @@ import {
 } from "../lib/post-commit-hook.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
+import { runGithubConnect } from "./github.js";
 
-async function applyActivation(active: boolean): Promise<void> {
+const CONNECT_PROMPT = "[prim] Connect this repository to Primitive via the GitHub App now?";
+
+/**
+ * When a repo is enabled but unbound, offer to connect it now, reusing the
+ * `github connect` flow. Honors the standard ladder: `--yes` auto-launches the
+ * browser bind, a TTY gets a [y/N] prompt, and non-interactive / non-TTY skips
+ * so the caller falls back to the passive "ask an org owner…" message. Never
+ * throws — a connect failure resolves to `undefined` (stay unbound, non-fatal).
+ */
+async function maybeConnectRepository(
+  root: string,
+  globals: OptionValues,
+): Promise<RepositoryBindingResult | undefined> {
+  if (isNonInteractive(globals)) return undefined;
+  const approved = Boolean(globals.yes) || (await askConfirmation(CONNECT_PROMPT, process.stderr));
+  if (!approved) return undefined;
+  const outcome = await runGithubConnect(undefined, { root, browser: true });
+  if (outcome.kind === "connected") {
+    process.stderr.write(
+      `[prim] repository binding connected for GitHub origin ${outcome.binding.repositoryFullName}\n`,
+    );
+    return outcome.binding;
+  }
+  if (outcome.kind === "error") {
+    const detail = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+    process.stderr.write(`[prim] connect could not complete: ${detail}\n`);
+  }
+  return undefined;
+}
+
+async function applyActivation(active: boolean, globals: OptionValues = {}): Promise<void> {
   const root = gitToplevel();
   if (!root) {
     process.stderr.write(
@@ -43,6 +75,10 @@ async function applyActivation(active: boolean): Promise<void> {
       phase = "local activation";
     }
     setRepoActive(root, active);
+    if (active && binding?.status === "unbound") {
+      const connected = await maybeConnectRepository(root, globals);
+      if (connected) binding = connected;
+    }
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
     if (binding?.status === "unbound") {
       process.stderr.write(`[prim] Prim is enabled locally in ${root}\n`);
@@ -83,10 +119,12 @@ export function registerActivationCommands(program: Command): void {
   program
     .command("enable")
     .description("Activate prim's hooks in this repo (git config prim.active=true)")
-    .action(() => applyActivation(true));
+    .action((_opts: unknown, command: Command) => applyActivation(true, command.optsWithGlobals()));
 
   program
     .command("disable")
     .description("Mute prim's hooks in this repo (git config prim.active=false)")
-    .action(() => applyActivation(false));
+    .action((_opts: unknown, command: Command) =>
+      applyActivation(false, command.optsWithGlobals()),
+    );
 }

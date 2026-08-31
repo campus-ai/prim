@@ -350,6 +350,32 @@ describe("registerSetupCommand", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("forwards --yes to the enable step so the repository-binding prompt honors it", async () => {
+    const calls: string[][] = [];
+    const exit = vi.fn();
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive");
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        return args[0] === "auth" && args[1] === "status"
+          ? { code: 0, stdout: '{"status":"valid"}' }
+          : { code: 0, stdout: "" };
+      },
+      note: vi.fn(),
+      exit,
+    });
+
+    await program.parseAsync(
+      ["--yes", "setup", "--agent", "codex", "--scope", "project", "--no-daemon"],
+      { from: "user" },
+    );
+
+    expect(calls).toContainEqual(["enable", "--yes"]);
+    expect(calls).not.toContainEqual(["enable"]);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it("completes when the repository is unbound after local activation", async () => {
     const calls: string[][] = [];
     const note = vi.fn();
