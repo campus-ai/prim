@@ -13,13 +13,40 @@ const MODE = "install_intent_v1";
 const START_PATH = "/api/cli/github/install-intents";
 const POLL_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_INTENT_LIFETIME_MS = 15 * 60_000;
+const REPOSITORY_IDENTITY_MIGRATION_REQUIRED = "repository_identity_migration_required";
 
-export type GitHubInstallFailureCode = Extract<
-  GitHubInstallIntentStatusResponse,
-  { status: "failed_terminal" }
->["failureCode"];
+type RepositoryIdentityMigrationRequiredStatus = Omit<
+  Extract<GitHubInstallIntentStatusResponse, { status: "failed_terminal" }>,
+  "failureCode"
+> & {
+  failureCode: typeof REPOSITORY_IDENTITY_MIGRATION_REQUIRED;
+};
+
+export type GitHubInstallFailureCode =
+  | Extract<GitHubInstallIntentStatusResponse, { status: "failed_terminal" }>["failureCode"]
+  | typeof REPOSITORY_IDENTITY_MIGRATION_REQUIRED;
 export type GitHubInstallIntentStart = GitHubInstallIntentStartResponse;
-export type GitHubInstallIntentStatus = GitHubInstallIntentStatusResponse;
+export type GitHubInstallIntentStatus =
+  | GitHubInstallIntentStatusResponse
+  | RepositoryIdentityMigrationRequiredStatus;
+
+function isRepositoryIdentityMigrationRequiredStatus(
+  value: unknown,
+): value is RepositoryIdentityMigrationRequiredStatus {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.failureCode !== REPOSITORY_IDENTITY_MIGRATION_REQUIRED) {
+    return false;
+  }
+  // The vendored v3 contract predates only this additive non-lease terminal
+  // code. Validate its complete exact shape and all semantic bounds unchanged.
+  return isGitHubInstallIntentStatusResponse({
+    ...record,
+    failureCode: "proof_commit_failed",
+  });
+}
 
 export function parseGitHubInstallIntentStart(
   value: unknown,
@@ -39,7 +66,13 @@ export function parseGitHubInstallIntentStatus(
   value: unknown,
   expectedExpiresAt: number,
 ): GitHubInstallIntentStatus | null {
-  if (!isGitHubInstallIntentStatusResponse(value) || value.expiresAt !== expectedExpiresAt) {
+  if (isGitHubInstallIntentStatusResponse(value)) {
+    return value.expiresAt === expectedExpiresAt ? value : null;
+  }
+  if (
+    !isRepositoryIdentityMigrationRequiredStatus(value) ||
+    value.expiresAt !== expectedExpiresAt
+  ) {
     return null;
   }
   return value;
