@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.75](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.74...v0.1.0-alpha.75) (2026-08-31)
+
+
+### Features
+
+* **onboarding:** prompt to connect an unbound repository during enable/setup ([#289](https://github.com/campus-ai/prim/issues/289)) ([adc046a](https://github.com/campus-ai/prim/commit/adc046a227c95c7b7f949119493fd3444446e495))
+
+
+### Bug Fixes
+
+* **hooks:** overwrite global post-commit hook instead of block-merging ([#288](https://github.com/campus-ai/prim/issues/288)) ([338b305](https://github.com/campus-ai/prim/commit/338b3051eb933d6e0ca851e71acca6979e6aa673))
+
 ## [0.1.0-alpha.74](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.73...v0.1.0-alpha.74) (2026-08-31)
 
 
