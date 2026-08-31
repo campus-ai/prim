@@ -146,6 +146,26 @@ describe("GitHub install-intent protocol", () => {
     ).toBeNull();
   });
 
+  it("accepts the exact repository identity migration terminal failure", () => {
+    expect(
+      parseGitHubInstallIntentStatus(
+        {
+          protocolVersion: 1,
+          mode: "install_intent_v1",
+          found: true,
+          status: "failed_terminal",
+          expiresAt: EXPIRES_AT,
+          closedAt: NOW + 1,
+          failureCode: "repository_identity_migration_required",
+        },
+        EXPIRES_AT,
+      ),
+    ).toMatchObject({
+      status: "failed_terminal",
+      failureCode: "repository_identity_migration_required",
+    });
+  });
+
   it("retains bounded repository counts and pins the expected expiry", () => {
     expect(
       parseGitHubInstallIntentStatus(
