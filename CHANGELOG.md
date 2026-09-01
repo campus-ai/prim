@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.77](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.76...v0.1.0-alpha.77) (2026-09-01)
+
+
+### Bug Fixes
+
+* **contract:** expose complete CLI validator registry ([963fd0d](https://github.com/campus-ai/prim/commit/963fd0d2dbed0a0bfef5169036a41bb6602ddea6))
+* **github:** explain connect retry states ([decd7f4](https://github.com/campus-ai/prim/commit/decd7f4cddb9688af2b2899c81989345753f4b75))
+* **github:** explain connect retry states ([8863d1c](https://github.com/campus-ai/prim/commit/8863d1ca4c3c6d11d018729a5b5ba7b00f1f5db0))
+
 ## [0.1.0-alpha.76](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.75...v0.1.0-alpha.76) (2026-09-01)
 
 
