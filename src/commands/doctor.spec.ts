@@ -374,23 +374,28 @@ describe("moves status diagnostics", () => {
     expect(capture.detail).toContain("retained");
   });
 
-  it("surfaces classifier backlog without treating in-flight work as lost", () => {
-    const [, classification] = classifyMovesStatus(
-      status({ pendingSessionCount: 2, oldestPendingAgeMs: 65_000 }),
+  it("ignores classifier-session backlog and sampling", () => {
+    const checks = classifyMovesStatus(
+      status({ pendingSessionCount: 2, oldestPendingAgeMs: 65_000, sampled: true }),
     );
-    expect(classification.status).toBe("warn");
-    expect(classification.detail).toContain("2 session");
-    expect(classification.detail).toContain("oldest 65s");
+    expect(checks).toEqual([
+      { name: "capture", status: "ok", detail: "enabled; ingest endpoint durable" },
+    ]);
+    expect(checks.some((check) => check.name === "classification")).toBe(false);
+    expect(classifyDoctor(checks)).toMatchObject({
+      json: { ok: true, status: "ok", checks },
+      exitCode: 0,
+    });
   });
 
   it("surfaces the additive commit-correlation backlog without breaking old responses", () => {
-    expect(classifyMovesStatus(status())).toHaveLength(2);
+    expect(classifyMovesStatus(status())).toHaveLength(1);
     const checks = classifyMovesStatus(status({ pendingCommitCorrelationCount: 3 }));
-    expect(checks[2]).toMatchObject({
+    expect(checks[1]).toMatchObject({
       name: "commit-correlation",
       status: "warn",
     });
-    expect(checks[2].detail).toContain("3 commit");
+    expect(checks[1].detail).toContain("3 commit");
   });
 });
 
