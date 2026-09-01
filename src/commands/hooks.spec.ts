@@ -711,6 +711,16 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
       expect.stringContaining("prim post-rewrite hook"),
       { mode: 0o755 },
     );
+    const postCommit = mockedWriteFileSync.mock.calls.find(
+      ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "post-commit"),
+    )?.[1] as string;
+    const postRewrite = mockedWriteFileSync.mock.calls.find(
+      ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "post-rewrite"),
+    )?.[1] as string;
+    expect(postCommit.match(/# >>> prim post-commit hook >>>/gu)).toHaveLength(1);
+    expect(postCommit.match(/# <<< prim post-commit hook <<</gu)).toHaveLength(1);
+    expect(postRewrite.match(/# >>> prim post-rewrite hook >>>/gu)).toHaveLength(1);
+    expect(postRewrite.match(/# <<< prim post-rewrite hook <<</gu)).toHaveLength(1);
     expect(setCalls()).toHaveLength(0);
   });
 

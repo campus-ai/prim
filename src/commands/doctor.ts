@@ -67,6 +67,7 @@ import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
 } from "./hermes-install.js";
+import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -920,7 +921,21 @@ async function checkFeedbackCapability(): Promise<Check> {
   }
 }
 
+/**
+ * Repair stale Prim-owned global hooks before checking their effective coverage.
+ * A failed repair is intentionally ignored here so the inspection below can
+ * report the underlying hook problem to the user.
+ */
+export function refreshOwnedGlobalHooksForHealth(): void {
+  try {
+    refreshOwnedGlobalHooks();
+  } catch {
+    // The managed-hook checks below retain the diagnostic when repair fails.
+  }
+}
+
 async function collectChecks(): Promise<Check[]> {
+  refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
   return [
     checkAuth(),
