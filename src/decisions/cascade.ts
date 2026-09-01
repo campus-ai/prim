@@ -84,6 +84,26 @@ export class CascadeNotFoundError extends Error {
   }
 }
 
+// The server's cascade projection omits `upstream.contexts` entirely when a
+// decision references no contexts, so the raw payload does not satisfy
+// CascadeResult at runtime even though the endpoint is typed to return it.
+// Model the wire shape loosely and normalize before handing a well-formed
+// CascadeResult upward, so both the renderer and the JSON projection can rely
+// on the arrays always being present.
+type RawCascadeResult = Omit<CascadeResult, "upstream"> & {
+  upstream: { files?: string[]; contexts?: { id: string; name: string }[] };
+};
+
+function normalizeCascade(raw: RawCascadeResult): CascadeResult {
+  return {
+    ...raw,
+    upstream: {
+      files: raw.upstream.files ?? [],
+      contexts: raw.upstream.contexts ?? [],
+    },
+  };
+}
+
 export async function fetchCascade(
   idOrShortId: string,
   deps: CascadeDeps = defaultDeps,
@@ -91,12 +111,13 @@ export async function fetchCascade(
   const params = new URLSearchParams({ id: idOrShortId });
   const client = deps.getClient();
   try {
-    return await daemonOrDirectGet<CascadeResult>(
+    const raw = await daemonOrDirectGet<RawCascadeResult>(
       "decisions_cascade",
       `/api/cli/decisions/cascade?${params.toString()}`,
       client,
       CASCADE_TIMEOUT_MS,
     );
+    return normalizeCascade(raw);
   } catch (err) {
     if (err instanceof Error && NOT_FOUND_RE.test(err.message)) {
       throw new CascadeNotFoundError(idOrShortId);
