@@ -205,8 +205,7 @@ metadata (equivalent to `git rev-parse --git-path prim/workspace-id`), never an
 absolute repository path. Linked worktrees receive distinct IDs, moving a
 worktree preserves its ID, and a clone creates a new one. A corrupt or
 unwritable identity is never silently replaced: capture falls back to the
-legacy envelope and `prim doctor` reports the limitation. Disable/uninstall
-does not delete the identity.
+legacy envelope. Disable/uninstall does not delete the identity.
 
 Feedback uses the invoking CLI's credentials for direct HTTPS calls rather
 than the daemon, avoiding cross-organization token ambiguity. One absolute
@@ -228,7 +227,7 @@ Alternatives considered:
 | Detached delivery | Does not block Stop | Cannot return the current hook's `systemMessage` |
 
 Run `prim claude status` to verify both existing feedback handlers are installed
-and `prim doctor` to inspect the worktree identity and server capability. No new
+and `prim doctor` to inspect server capability. No new
 hook registration or binary is required when upgrading an existing correct
 installation.
 

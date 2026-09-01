@@ -6,7 +6,7 @@
  * `daemon status`, `moves status`, and a filesystem listing by hand (the
  * ~20-minute archaeology the user study turned into). Checks auth, supervised
  * daemon health, durable queue age, stranded rotations, capture entitlement,
- * worktree identity, and decision-feedback readiness, then renders them
+ * decision-feedback readiness, then renders them
  * verdict-first on STDERR with machine-readable JSON on STDOUT, exiting
  * non-zero when a check is red so an agent or installer can gate on it.
  *
@@ -53,7 +53,6 @@ import {
   resolveRepositoryBinding,
 } from "../lib/repository-binding.js";
 import { compareSemver } from "../lib/semver.js";
-import { inspectWorkspaceId } from "../lib/workspace-id.js";
 import {
   inspectHookRuntimeResolutions as claudeHookRuntimeResolutions,
   performStatus as claudeStatus,
@@ -410,38 +409,6 @@ async function checkJournalOrganization(): Promise<Check> {
   }
   const inspection = await inspectJournalDelivery(buckets);
   return classifyJournalOrganization(new Set(buckets).size, inspection.retainedBuckets);
-}
-
-function checkWorkspaceIdentity(): Check {
-  const identity = inspectWorkspaceId();
-  switch (identity.status) {
-    case "ready":
-      return { name: "feedback-id", status: "ok", detail: "stable worktree identity ready" };
-    case "missing":
-      return {
-        name: "feedback-id",
-        status: "warn",
-        detail: "not initialized — the next active hook will create it",
-      };
-    case "not_git":
-      return {
-        name: "feedback-id",
-        status: "warn",
-        detail: "not in a Git worktree — capture falls back to legacy V1",
-      };
-    case "corrupt":
-      return {
-        name: "feedback-id",
-        status: "warn",
-        detail: "identity is corrupt — not rotated; capture falls back to legacy V1",
-      };
-    case "unavailable":
-      return {
-        name: "feedback-id",
-        status: "warn",
-        detail: `identity unavailable during ${identity.operation} — capture falls back to legacy V1`,
-      };
-  }
 }
 
 export function classifyRepositoryBinding(
@@ -916,7 +883,6 @@ async function collectChecks(): Promise<Check[]> {
     checkFeedbackHooks(),
     ...checkAgentHooks(),
     checkHookRuntime(),
-    checkWorkspaceIdentity(),
     await checkRepositoryBinding(),
     checkManagedHook("post-commit", inspectEffectivePostCommitHook),
     checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
@@ -950,7 +916,7 @@ export function registerDoctorCommands(program: Command): void {
   program
     .command("doctor")
     .description(
-      "Check capture and feedback health end to end (auth, supervisor, delivery, worktree, server)",
+      "Check capture and feedback health end to end (auth, supervisor, delivery, server)",
     )
     .action(async () => {
       await runDoctor();
