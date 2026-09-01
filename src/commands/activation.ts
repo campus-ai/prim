@@ -18,6 +18,7 @@ import {
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 import { runGithubConnect } from "./github.js";
+import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const CONNECT_PROMPT = "[prim] Connect this repository to Primitive via the GitHub App now?";
 
@@ -63,6 +64,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     let postCommitHook: string | undefined;
     let postRewriteHook: string | undefined;
     if (active) {
+      refreshOwnedGlobalHooks();
       postCommitHook = ensureEffectivePostCommitHook(root).path;
       try {
         postRewriteHook = ensureEffectivePostRewriteHook(root).path;

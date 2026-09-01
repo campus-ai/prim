@@ -125,6 +125,7 @@ import {
   installToDotGit,
   installToHusky,
   projectHooksDir,
+  refreshOwnedGlobalHooks,
   registerHooksCommands,
   uninstallGlobalHooks,
 } from "./hooks.js";
@@ -726,6 +727,38 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
       { mode: 0o755 },
     );
     expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("refreshes both managed hooks when the owned global files contain corrupt markers", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    mockedReadFileSync.mockReturnValue("malformed Prim hook markers\n");
+
+    expect(refreshOwnedGlobalHooks()).toBe(true);
+
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      join(PRIM_GIT_HOOKS_DIR, "post-commit"),
+      expect.stringContaining("prim global post-commit hook"),
+      { mode: 0o755 },
+    );
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      join(PRIM_GIT_HOOKS_DIR, "post-rewrite"),
+      expect.stringContaining("prim global post-rewrite hook"),
+      { mode: 0o755 },
+    );
+    expect(setCalls()).toHaveLength(0);
+    expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
+    expect(mockedEnsurePostRewriteHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unset", ""],
+    ["foreign", "/Users/example/.config/git/hooks"],
+  ])("does not refresh an %s global hooks path", (_label, global) => {
+    stubHooksPath({ global });
+
+    expect(refreshOwnedGlobalHooks()).toBe(false);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
   });
 
   it("appends into an existing non-prim global hooksPath instead of hijacking it", () => {
