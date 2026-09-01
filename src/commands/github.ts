@@ -91,7 +91,7 @@ function reportConnectFailure(error: unknown): void {
 function reportBinding(binding: RepositoryBindingResult, installAttempted = false): void {
   if (binding.status === "connected") {
     process.stderr.write(
-      `[prim] repository binding connected for GitHub origin ${binding.repositoryFullName}\n`,
+      `[prim] GitHub repo connection complete for ${binding.repositoryFullName}\n`,
     );
     printJson(binding);
     process.exitCode = EXIT_OK;
@@ -100,8 +100,8 @@ function reportBinding(binding: RepositoryBindingResult, installAttempted = fals
 
   process.stderr.write(
     installAttempted
-      ? `[prim] GitHub installation completed, but ${binding.repositoryFullName} was not granted admin access; repository binding remains unbound\n`
-      : `[prim] repository binding unbound for GitHub origin ${binding.repositoryFullName}; starting GitHub App installation\n`,
+      ? `[prim] GitHub repo connection could not be completed for ${binding.repositoryFullName}; the GitHub App was not granted admin access to that repository\n`
+      : `[prim] GitHub repo connection is required for ${binding.repositoryFullName}; it enables repository-specific file attribution, Conflict Gate verification, and commit correlation. Starting GitHub App installation…\n`,
   );
   printJson(binding);
   process.exitCode = EXIT_UNBOUND;
@@ -219,11 +219,13 @@ export function registerGithubCommands(
   program: Command,
   dependencies: GithubConnectDependencies = defaultDependencies,
 ): void {
-  const github = program.command("github").description("Manage GitHub repository bindings");
+  const github = program.command("github").description("Manage GitHub repo connections");
 
   github
     .command("connect")
-    .description("Install or reuse the Primitive GitHub App and bind the current GitHub origin")
+    .description(
+      "Install or reuse the Primitive GitHub App and connect the current GitHub repository",
+    )
     .option("--no-browser", "Print the GitHub installation URL without opening a browser")
     .action(async (options: { browser: boolean }, command: Command) => {
       const globals = command.optsWithGlobals() as { nonInteractive?: boolean };

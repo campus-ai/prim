@@ -376,7 +376,7 @@ describe("registerSetupCommand", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
-  it("completes when the repository is unbound after local activation", async () => {
+  it("reports setup incomplete when GitHub repo connection is required", async () => {
     const calls: string[][] = [];
     const note = vi.fn();
     const exit = vi.fn();
@@ -394,7 +394,7 @@ describe("registerSetupCommand", () => {
           return { code: 0, stdout: '{"installed":false}' };
         }
         if (args[0] === "enable") {
-          return { code: 0, stdout: '{"active":true,"bindingStatus":"unbound"}' };
+          return { code: 1, stdout: '{"active":false,"bindingStatus":"unbound"}' };
         }
         if (args[0] === "doctor") {
           return { code: 0, stdout: '{"ok":true,"status":"warn"}' };
@@ -412,9 +412,9 @@ describe("registerSetupCommand", () => {
     expect(calls.filter((args) => args[0] === "enable")).toHaveLength(1);
     expect(calls.filter((args) => args[0] === "doctor")).toHaveLength(1);
     expect(note).toHaveBeenCalledWith(
-      expect.stringMatching(/setup complete.*enable:ok.*health:ok/u),
+      expect.stringMatching(/setup incomplete \(failed: enable\).*enable:failed.*health:ok/u),
     );
-    expect(exit).toHaveBeenCalledWith(0);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("runs doctor after every project cleanup during user-scope migration", async () => {

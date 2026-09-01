@@ -77,6 +77,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  process.exitCode = undefined;
 });
 
 describe("prim enable / disable", () => {
@@ -130,7 +131,7 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("enable succeeds locally with concise GitHub connection guidance while the repository is unbound", async () => {
+  it("requires GitHub repo connection before activating an unconnected repository", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -141,26 +142,27 @@ describe("prim enable / disable", () => {
 
     await buildProgram().parseAsync(["enable"], { from: "user" });
 
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
-      "git",
-      ["config", "--local", "prim.active", "true"],
-      expect.anything(),
-    );
+    expect(
+      mockedExecFileSync.mock.calls.some(
+        (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
+      ),
+    ).toBe(false);
     const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
     expect(output).toMatchObject({
-      active: true,
+      active: false,
       repo: "/repo",
       bindingStatus: "unbound",
       repositoryFullName: "campus-ai/primitive",
       postCommitHook: "/repo/.git/hooks/post-commit",
     });
     expect(output).not.toHaveProperty("repoSyncId");
-    const warning = errSpy.mock.calls.map(([message]) => String(message)).join("");
-    expect(warning).toContain("Prim is enabled locally in /repo");
-    expect(warning).toContain("GitHub repository binding is not connected");
-    expect(warning).toContain("prim github connect");
-    expect(warning).not.toContain("organization owner or administrator");
-    expect(warning).not.toContain("Conflict Gate verification");
+    const message = errSpy.mock.calls.map(([message]) => String(message)).join("");
+    expect(message).toContain("GitHub repo connection is required before using Primitive");
+    expect(message).toContain("repository-specific file attribution");
+    expect(message).toContain("Conflict Gate verification");
+    expect(message).toContain("commit correlation");
+    expect(message).toContain("prim github connect");
+    expect(process.exitCode).toBe(1);
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -274,7 +276,7 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("never activates when repository binding fails and surfaces that phase", async () => {
+  it("never activates when GitHub repo connection verification fails", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockRejectedValue(new Error("Authentication expired"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -292,7 +294,7 @@ describe("prim enable / disable", () => {
     ).toBe(false);
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining(
-        "failed to enable prim during repository binding: Authentication expired",
+        "failed to enable prim during GitHub repo connection: Authentication expired",
       ),
     );
     expect(logSpy).not.toHaveBeenCalled();
@@ -349,14 +351,14 @@ describe("prim enable / disable", () => {
     await buildProgram().parseAsync(["enable"], { from: "user" });
 
     expect(askConfirmation).toHaveBeenCalledWith(
-      expect.stringContaining("Connect this repository"),
+      expect.stringContaining("GitHub repo connection is required"),
       process.stderr,
     );
     expect(runGithubConnect).toHaveBeenCalledWith(undefined, { root: "/repo", browser: true });
     const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
     expect(output).toMatchObject({ bindingStatus: "connected", repoSyncId: "repoSyncNew" });
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
-    expect(stderr).toContain("repository binding connected for GitHub origin campus-ai/primitive");
+    expect(stderr).toContain("GitHub repo connection complete for campus-ai/primitive");
     expect(stderr).not.toContain("organization owner or administrator");
     logSpy.mockRestore();
     errSpy.mockRestore();
@@ -387,7 +389,7 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("keeps concise GitHub connection guidance when the connect prompt is declined", async () => {
+  it("does not activate when the required GitHub connection prompt is declined", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -401,15 +403,16 @@ describe("prim enable / disable", () => {
 
     expect(runGithubConnect).not.toHaveBeenCalled();
     const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
-    expect(output).toMatchObject({ bindingStatus: "unbound" });
+    expect(output).toMatchObject({ active: false, bindingStatus: "unbound" });
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
     expect(stderr).toContain("prim github connect");
-    expect(stderr).not.toContain("organization owner or administrator");
+    expect(stderr).toContain("repository-specific file attribution");
+    expect(process.exitCode).toBe(1);
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
 
-  it("never prompts to connect when non-interactive", async () => {
+  it("does not activate an unconnected repository when non-interactive", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -424,12 +427,13 @@ describe("prim enable / disable", () => {
     expect(runGithubConnect).not.toHaveBeenCalled();
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
     expect(stderr).toContain("prim github connect");
-    expect(stderr).not.toContain("organization owner or administrator");
+    expect(stderr).toContain("GitHub repo connection is required");
+    expect(process.exitCode).toBe(1);
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
 
-  it("keeps the passive message when an accepted connect does not complete", async () => {
+  it("does not activate when an accepted GitHub connection does not complete", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -446,11 +450,12 @@ describe("prim enable / disable", () => {
     await buildProgram().parseAsync(["enable"], { from: "user" });
 
     const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
-    expect(output).toMatchObject({ bindingStatus: "unbound" });
+    expect(output).toMatchObject({ active: false, bindingStatus: "unbound" });
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
     expect(stderr).toContain("connect could not complete: network down");
     expect(stderr).toContain("prim github connect");
-    expect(stderr).not.toContain("organization owner or administrator");
+    expect(stderr).toContain("GitHub repo connection is required");
+    expect(process.exitCode).toBe(1);
     logSpy.mockRestore();
     errSpy.mockRestore();
   });

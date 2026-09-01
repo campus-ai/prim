@@ -58,14 +58,16 @@ describe("renderStatusline", () => {
 
     const line = await renderStatusline();
 
-    expect(line).toContain("repository: unbound (enforcement not evaluating)");
+    expect(line).toContain("GitHub repo connection: required (run `prim github connect`)");
     expect(line).not.toContain("repoSync");
   });
 
   it("surfaces an invalid local binding with one fixed doctor action", async () => {
     mockRepositoryBindingState.mockReturnValue("invalid");
     mockDaemonRequest.mockResolvedValue(snapshot(2));
-    expect(await renderStatusline()).toContain("repository binding: invalid (run `prim doctor`)");
+    expect(await renderStatusline()).toContain(
+      "GitHub repo connection: invalid (run `prim doctor`)",
+    );
   });
 
   it("renders teammate names when the snapshot carries them", async () => {

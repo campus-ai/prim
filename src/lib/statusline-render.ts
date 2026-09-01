@@ -6,8 +6,8 @@ export type RepositoryBindingDiagnosticState = "connected" | "unbound" | "invali
 export function repositoryBindingDiagnosticLabel(
   state: RepositoryBindingDiagnosticState | undefined,
 ): string | undefined {
-  if (state === "unbound") return "repository: unbound (enforcement not evaluating)";
-  if (state === "invalid") return "repository binding: invalid (run `prim doctor`)";
+  if (state === "unbound") return "GitHub repo connection: required (run `prim github connect`)";
+  if (state === "invalid") return "GitHub repo connection: invalid (run `prim doctor`)";
   return undefined;
 }
 
