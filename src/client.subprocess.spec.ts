@@ -790,7 +790,9 @@ describe("daemon raw statusline socket", () => {
         ack: true,
       });
       const unboundStatus = (await rawStatuslineRequest(socketPath, [raw])).toString();
-      expect(unboundStatus).toContain("repository: unbound (enforcement not evaluating)");
+      expect(unboundStatus).toContain(
+        "GitHub repo connection: required (run `prim github connect`)",
+      );
       expect(unboundStatus).not.toContain("repoSyncActive");
       execFileSync("git", ["config", "--local", "prim.repoBindingState", "connected"], {
         cwd: activeRepo,
