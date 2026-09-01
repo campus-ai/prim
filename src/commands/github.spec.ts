@@ -124,7 +124,7 @@ describe("prim github connect", () => {
     expect(deps.createInstallIntent).not.toHaveBeenCalled();
     expect(deps.openBrowser).not.toHaveBeenCalled();
     expect(stderr).toHaveBeenCalledExactlyOnceWith(
-      "[prim] repository binding connected for GitHub origin campus-ai/primitive\n",
+      "[prim] GitHub repo connection complete for campus-ai/primitive\n",
     );
     expect(stdout).toHaveBeenCalledExactlyOnceWith(JSON.stringify(CONNECTED, null, 2));
     expect(process.exitCode).toBe(0);

@@ -72,7 +72,7 @@ describe("formatStatusline I/O boundary", () => {
       formatStatusline("1.2.3", snapshot, () => "enabled", {
         resolveRepositoryBindingState: () => "unbound",
       }),
-    ).toContain("repository: unbound (enforcement not evaluating)");
+    ).toContain("GitHub repo connection: required (run `prim github connect`)");
 
     const forged = "unbound\u001b]52;c;secret\u0007";
     const line = formatStatusline("1.2.3", snapshot, () => "enabled", {

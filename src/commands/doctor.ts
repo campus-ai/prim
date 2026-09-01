@@ -416,44 +416,46 @@ export function classifyRepositoryBinding(
   current: RepositoryBindingResult,
   active: boolean,
 ): Check {
+  const connectionCapabilities =
+    "It enables repository-specific file attribution, Conflict Gate verification, and commit correlation.";
   if (current.status === "unbound") {
     if (!active) {
       return {
-        name: "repo-binding",
+        name: "github-repo-connection",
         status: "fail",
-        detail: "passive capture is inactive — run `prim enable`",
+        detail: `GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} Run \`prim github connect\`, then \`prim enable\`.`,
       };
     }
     const localDetail =
       value === undefined
-        ? "repository is unbound"
+        ? "GitHub repo connection is not complete"
         : isValidRepoSyncId(value)
-          ? "server reports this repository unbound; the last binding is retained locally for recovery"
-          : "server reports this repository unbound; the local cached binding is invalid";
+          ? "server reports GitHub repo connection is not complete; the last connection state is retained locally for recovery"
+          : "server reports GitHub repo connection is not complete; the local cached connection state is invalid";
     return {
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "warn",
-      detail: `${localDetail} — local capture is active; run \`prim github connect\` to connect this GitHub repository`,
+      detail: `${localDetail} — GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} Run \`prim github connect\` to complete it.`,
     };
   }
   if (!isValidRepoSyncId(value)) {
     return {
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
-      detail: "missing or invalid local prim.repoSyncId — run `prim enable`",
+      detail: `GitHub repo connection state is missing or invalid. ${connectionCapabilities} Run \`prim github connect\`, then \`prim enable\`.`,
     };
   }
   if (value !== current.repoSyncId) {
     return {
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
-      detail: "local repository binding is stale for the current origin — run `prim enable`",
+      detail: `GitHub repo connection is stale for the current origin. ${connectionCapabilities} Run \`prim github connect\`, then \`prim enable\`.`,
     };
   }
   return {
-    name: "repo-binding",
+    name: "github-repo-connection",
     status: "ok",
-    detail: "local repository binding matches the current server binding",
+    detail: `GitHub repo connection is verified. ${connectionCapabilities}`,
   };
 }
 
@@ -469,10 +471,10 @@ export async function checkRepositoryBinding(): Promise<Check> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const detail =
-      boundedHealthError(`could not verify the current repository binding — ${message}`) ??
-      "could not verify the current repository binding";
+      boundedHealthError(`could not verify the current GitHub repo connection — ${message}`) ??
+      "could not verify the current GitHub repo connection";
     return {
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
       detail,
     };

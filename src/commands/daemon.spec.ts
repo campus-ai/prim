@@ -306,7 +306,7 @@ describe("formatDaemonSnapshotMessage", () => {
 
   it("surfaces repository-unbound health with a fixed enforcement warning", () => {
     const message = formatDaemonSnapshotMessage(healthy, false, "enabled", "unbound");
-    expect(message).toContain("repository: unbound (enforcement not evaluating)");
+    expect(message).toContain("GitHub repo connection: required (run `prim github connect`)");
     expect(message).not.toContain("repoSync");
   });
 

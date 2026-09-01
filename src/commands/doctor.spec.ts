@@ -490,7 +490,7 @@ describe("effective post-rewrite diagnostics", () => {
   });
 });
 
-describe("repository binding diagnostics", () => {
+describe("GitHub repo connection diagnostics", () => {
   const connected = {
     status: "connected",
     repoSyncId: "repoSync123",
@@ -501,69 +501,70 @@ describe("repository binding diagnostics", () => {
     repositoryFullName: "campus-ai/primitive",
   } as const;
 
-  it("accepts a local binding that matches the authoritative server binding", () => {
+  it("accepts a local connection that matches the authoritative server state", () => {
     expect(classifyRepositoryBinding("repoSync123", connected, true)).toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "ok",
     });
   });
 
-  it("fails a locally valid binding that no longer matches the current origin", () => {
+  it("fails a locally valid connection that no longer matches the current origin", () => {
     expect(
       classifyRepositoryBinding("repoSync456", { ...connected, repoSyncId: "repoSync789" }, true),
     ).toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
       detail: expect.stringContaining("stale"),
     });
   });
 
   it.each([undefined, "", "-leading", "a".repeat(65), "bad\nid"])(
-    "fails a missing or malformed local binding (%s)",
+    "fails a missing or malformed local GitHub repo connection (%s)",
     (value) => {
       expect(classifyRepositoryBinding(value, connected, true)).toMatchObject({
-        name: "repo-binding",
+        name: "github-repo-connection",
         status: "fail",
       });
     },
   );
 
-  it("degrades without an enable loop when local capture is active but the server is unbound", () => {
+  it("requires the GitHub repo connection when local capture is active but the server is unconnected", () => {
     const check = classifyRepositoryBinding(undefined, unbound, true);
 
     expect(check).toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "warn",
-      detail: expect.stringContaining("repository is unbound"),
+      detail: expect.stringContaining("GitHub repo connection is required"),
     });
     expect(check.detail).toContain("prim github connect");
-    expect(check.detail).not.toContain("organization owner/admin");
-    expect(check.detail).not.toContain("prim enable");
+    expect(check.detail).toContain("repository-specific file attribution");
+    expect(check.detail).toContain("Conflict Gate verification");
+    expect(check.detail).toContain("commit correlation");
     expect(classifyDoctor([check])).toMatchObject({
       json: { ok: true, status: "warn" },
       exitCode: 0,
     });
   });
 
-  it("still requires enable when the server is unbound and local capture is inactive", () => {
+  it("requires GitHub repo connection and enable when the server is unconnected and local capture is inactive", () => {
     expect(classifyRepositoryBinding(undefined, unbound, false)).toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
-      detail: expect.stringContaining("prim enable"),
+      detail: expect.stringContaining("prim github connect"),
     });
   });
 
-  it("retains a valid cached binding as recovery state while the server is unbound", () => {
+  it("retains a valid cached connection as recovery state while the server is unconnected", () => {
     const check = classifyRepositoryBinding("repoSync123", unbound, true);
-    expect(check).toMatchObject({ name: "repo-binding", status: "warn" });
+    expect(check).toMatchObject({ name: "github-repo-connection", status: "warn" });
     expect(check.detail).toContain("retained locally for recovery");
     expect(check.detail).not.toContain("repoSync123");
   });
 
-  it("does not print malformed cached binding content on the unbound path", () => {
+  it("does not print malformed cached connection content on the unconnected path", () => {
     const check = classifyRepositoryBinding("bad\u001b]52;c;secret\u0007id", unbound, true);
-    expect(check).toMatchObject({ name: "repo-binding", status: "warn" });
-    expect(check.detail).toContain("local cached binding is invalid");
+    expect(check).toMatchObject({ name: "github-repo-connection", status: "warn" });
+    expect(check.detail).toContain("local cached connection state is invalid");
     expect(check.detail).not.toContain("secret");
     expect(check.detail).not.toContain("\u001b");
   });

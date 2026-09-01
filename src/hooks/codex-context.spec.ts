@@ -253,7 +253,7 @@ describe("Codex hook context", () => {
       startup: true,
       includeDigest: false,
     });
-    expect(first.context).toContain("repository: unbound (enforcement not evaluating)");
+    expect(first.context).toContain("GitHub repo connection: required (run `prim github connect`)");
     expect(first.context).not.toContain("repoSync");
     await first.acknowledge(true);
 
