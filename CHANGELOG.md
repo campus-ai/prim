@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.80](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.79...v0.1.0-alpha.80) (2026-09-01)
+
+
+### Features
+
+* **claude:** guide GitHub binding onboarding ([5f73e1e](https://github.com/campus-ai/prim/commit/5f73e1e1919f7398de099da9af1cc14afd74c885))
+
+
+### Bug Fixes
+
+* **doctor:** remove feedback id health noise ([6dcf9a1](https://github.com/campus-ai/prim/commit/6dcf9a16eb183482101e3ee568eb6a388faa452e))
+* **doctor:** remove feedback-id health noise ([cc48a62](https://github.com/campus-ai/prim/commit/cc48a6275ff156db27f2aa63529bd22645fd2985))
+
 ## [0.1.0-alpha.79](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.78...v0.1.0-alpha.79) (2026-09-01)
 
 
