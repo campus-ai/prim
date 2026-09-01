@@ -346,7 +346,7 @@ function globalHookScript(spec: HookSpec): string {
         : undefined;
   const invocation = managedBlock ?? gatedShim(spec.binName);
   const managedRepoGuard = managedBlock
-    ? ` && ! grep -Fq '${blockMarkers(spec).start}' "$repo_hook" 2>/dev/null`
+    ? ` && ! grep -Fq '${blockMarkers(spec).start.slice(0, -3)}'">>>" "$repo_hook" 2>/dev/null`
     : "";
   const beforeComments = managedBlock ? `${invocation}\n` : "";
   const afterComments = managedBlock ? "" : `${invocation}\n`;

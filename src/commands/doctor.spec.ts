@@ -9,6 +9,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { stableHookCommand } from "../lib/bin-path.js";
+vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
+
 import {
   applyInstall as applyClaudeInstall,
   hookRuntimeResolutions as claudeRuntimeResolutions,
@@ -31,11 +33,29 @@ import {
   classifyPostCommitHook,
   classifyRepositoryBinding,
   diagnoseRegisteredHookRuntime,
+  refreshOwnedGlobalHooksForHealth,
 } from "./doctor.js";
+import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
 const warn = (name: string): Check => ({ name, status: "warn", detail: "" });
 const fail = (name: string): Check => ({ name, status: "fail", detail: "" });
+
+describe("global hook health repair", () => {
+  it("refreshes Prim-owned hooks before health inspection", () => {
+    refreshOwnedGlobalHooksForHealth();
+
+    expect(refreshOwnedGlobalHooks).toHaveBeenCalledOnce();
+  });
+
+  it("preserves health diagnostics when repair fails", () => {
+    vi.mocked(refreshOwnedGlobalHooks).mockImplementation(() => {
+      throw new Error("unable to rewrite hooks");
+    });
+
+    expect(() => refreshOwnedGlobalHooksForHealth()).not.toThrow();
+  });
+});
 
 describe("classifyDoctor", () => {
   it("is healthy with exit 0 when every check is ok", () => {
