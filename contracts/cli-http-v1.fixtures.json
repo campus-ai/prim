@@ -1,7 +1,134 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 3,
+  "contractVersion": 4,
   "cases": [
+    {
+      "name": "user API-key mint request",
+      "definition": "UserApiKeyMintRequest",
+      "valid": true,
+      "value": {
+        "requestId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Primitive CLI"
+      }
+    },
+    {
+      "name": "user API-key one-time mint response",
+      "definition": "UserApiKeyMintResponse",
+      "valid": true,
+      "value": {
+        "apiKey": {
+          "id": "api_key_example123",
+          "name": "Primitive CLI",
+          "obfuscatedValue": "sk_...cdef",
+          "permissions": ["decisions:read"],
+          "lastUsedAt": null,
+          "expiresAt": null,
+          "createdAt": 1787078400000,
+          "updatedAt": 1787078400000
+        },
+        "secret": "sk_example123 secret456"
+      }
+    },
+    {
+      "name": "user API-key secret rejects terminal injection",
+      "definition": "UserApiKeyMintResponse",
+      "valid": false,
+      "value": {
+        "apiKey": {
+          "id": "api_key_example123",
+          "name": "Primitive CLI",
+          "obfuscatedValue": "sk_...cdef",
+          "permissions": ["decisions:read"],
+          "lastUsedAt": null,
+          "expiresAt": null,
+          "createdAt": 1787078400000,
+          "updatedAt": 1787078400000
+        },
+        "secret": "sk_example123\nspoofed"
+      }
+    },
+    {
+      "name": "user API-key list request",
+      "definition": "UserApiKeyListRequest",
+      "valid": true,
+      "value": {
+        "requestId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "limit": 100
+      }
+    },
+    {
+      "name": "user API-key metadata",
+      "definition": "UserApiKeyMetadata",
+      "valid": true,
+      "value": {
+        "id": "api_key_example123",
+        "name": "Primitive CLI",
+        "obfuscatedValue": "sk_...cdef",
+        "permissions": ["decisions:read"],
+        "lastUsedAt": null,
+        "expiresAt": null,
+        "createdAt": 1787078400000,
+        "updatedAt": 1787078400000
+      }
+    },
+    {
+      "name": "user API-key list omits plaintext values",
+      "definition": "UserApiKeyListResponse",
+      "valid": true,
+      "value": {
+        "apiKeys": [
+          {
+            "id": "api_key_example123",
+            "name": "Primitive CLI",
+            "obfuscatedValue": "sk_...cdef",
+            "permissions": ["decisions:read"],
+            "lastUsedAt": null,
+            "expiresAt": null,
+            "createdAt": 1787078400000,
+            "updatedAt": 1787078400000
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "user API-key list rejects plaintext value echoes",
+      "definition": "UserApiKeyListResponse",
+      "valid": false,
+      "value": {
+        "apiKeys": [
+          {
+            "id": "api_key_example123",
+            "name": "Primitive CLI",
+            "obfuscatedValue": "sk_...cdef",
+            "permissions": ["decisions:read"],
+            "lastUsedAt": null,
+            "expiresAt": null,
+            "createdAt": 1787078400000,
+            "updatedAt": 1787078400000,
+            "value": "sk_example123 secret456"
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "name": "user API-key revoke request",
+      "definition": "UserApiKeyRevokeRequest",
+      "valid": true,
+      "value": {
+        "requestId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    {
+      "name": "user API-key revoke response",
+      "definition": "UserApiKeyRevokeResponse",
+      "valid": true,
+      "value": {
+        "apiKeyId": "api_key_example123",
+        "revoked": true
+      }
+    },
     {
       "name": "authenticated CLI organization binding",
       "definition": "CliAuthStatusResponse",
@@ -556,6 +683,14 @@
       }
     },
     {
+      "name": "GitHub install-intent start unauthorized error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "Unauthorized"
+      }
+    },
+    {
       "name": "GitHub install-intent start interactive-authority error",
       "definition": "GitHubInstallIntentStartErrorResponse",
       "valid": true,
@@ -582,6 +717,14 @@
       }
     },
     {
+      "name": "GitHub install-intent start authority-unavailable error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "WorkOS identity authority is temporarily unavailable"
+      }
+    },
+    {
       "name": "GitHub install-intent start conflict error",
       "definition": "GitHubInstallIntentStartErrorResponse",
       "valid": true,
@@ -590,11 +733,36 @@
       }
     },
     {
+      "name": "GitHub install-intent start rate-limited error",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "github_install_intent_rate_limited",
+        "retryAt": 1800000900000
+      }
+    },
+    {
+      "name": "GitHub install-intent poll unauthorized error",
+      "definition": "GitHubInstallIntentStatusErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "Unauthorized"
+      }
+    },
+    {
       "name": "GitHub install-intent poll not-found error",
       "definition": "GitHubInstallIntentStatusErrorResponse",
       "valid": true,
       "value": {
         "error": "github_install_intent_not_found"
+      }
+    },
+    {
+      "name": "GitHub install-intent poll authority-unavailable error",
+      "definition": "GitHubInstallIntentStatusErrorResponse",
+      "valid": true,
+      "value": {
+        "error": "WorkOS identity authority is temporarily unavailable"
       }
     },
     {

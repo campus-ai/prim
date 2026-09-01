@@ -8,6 +8,7 @@ import { type CliClient, HttpError, getPinnedClient } from "../client.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { gitToplevel } from "../lib/git.js";
 import {
+  GitHubInstallIntentRateLimitedError,
   type GitHubInstallIntentStart,
   type GitHubInstallIntentStatus,
   createGitHubInstallIntent,
@@ -52,7 +53,30 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function rateLimitMessage(retryAt: number): string {
+  return [
+    "GitHub connection is temporarily busy.",
+    "Finish any GitHub authorization already open, then run `prim github connect` again after",
+    `${new Date(retryAt).toISOString()}.`,
+  ].join(" ");
+}
+
 function reportConnectFailure(error: unknown): void {
+  if (error instanceof GitHubInstallIntentRateLimitedError) {
+    const message = rateLimitMessage(error.retryAt);
+    process.stderr.write(`[prim] github connect failed: ${message}\n`);
+    printJson({
+      status: "error",
+      error: message,
+      code: error.code,
+      retryAt: error.retryAt,
+      retryCommand: "prim github connect",
+      resume: "Finish any GitHub authorization already open, then retry.",
+    });
+    process.exitCode = EXIT_FAILURE;
+    return;
+  }
+
   const message = errorMessage(error);
   const human = boundedHealthError(message) ?? "unknown error";
   process.stderr.write(`[prim] github connect failed: ${human}\n`);
@@ -85,6 +109,11 @@ function reportBinding(binding: RepositoryBindingResult, installAttempted = fals
 
 function terminalInstallError(status: GitHubInstallIntentStatus): Error {
   if (status.status === "failed_terminal") {
+    if (status.failureCode === "repository_identity_migration_required") {
+      return new Error(
+        "Selected repos include an older Primitive connection needing a one-time repair; none changed. In GitHub App settings, exclude that existing repo to connect others, or retry after repair. If it persists, contact an admin or support.",
+      );
+    }
     return new Error(`GitHub installation failed: ${status.failureCode}`);
   }
   return new Error(`GitHub installation ${status.status}`);

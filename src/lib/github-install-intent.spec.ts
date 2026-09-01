@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CliClient } from "../client.js";
+import { HttpError } from "../client.js";
 import {
+  GitHubInstallIntentRateLimitedError,
   type GitHubInstallIntentStart,
   createGitHubInstallIntent,
+  parseGitHubInstallIntentRateLimit,
   parseGitHubInstallIntentStart,
   parseGitHubInstallIntentStatus,
   pollGitHubInstallIntent,
@@ -64,6 +67,21 @@ describe("GitHub install-intent protocol", () => {
     expect(
       parseGitHubInstallIntentStart({ ...START, expiresAt: NOW + 16 * 60_000 }, NOW),
     ).toBeNull();
+  });
+
+  it("accepts only an exact, bounded future typed rate-limit response", () => {
+    const response = {
+      error: "github_install_intent_rate_limited",
+      retryAt: NOW + 15 * 60_000 + 30_000,
+    } as const;
+
+    expect(parseGitHubInstallIntentRateLimit(response, NOW)).toEqual(response);
+    expect(parseGitHubInstallIntentRateLimit({ ...response, detail: "untrusted" }, NOW)).toBeNull();
+    expect(parseGitHubInstallIntentRateLimit({ ...response, retryAt: NOW }, NOW)).toBeNull();
+    expect(
+      parseGitHubInstallIntentRateLimit({ ...response, retryAt: response.retryAt + 1 }, NOW),
+    ).toBeNull();
+    expect(parseGitHubInstallIntentRateLimit({ ...response, retryAt: 1.5 }, NOW)).toBeNull();
   });
 
   it("uses the generated structural and semantic status validation", () => {
@@ -203,6 +221,53 @@ describe("GitHub install-intent protocol", () => {
     expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/cli/github/install-intents", undefined, {
       signal,
     });
+  });
+
+  it("turns only the exact conflict admission response into retry guidance", async () => {
+    const retryAt = NOW + 60_000;
+    const rateLimited = new HttpError(409, "HTTP 409", {
+      error: "github_install_intent_rate_limited",
+      retryAt,
+    });
+    const api: CliClient = {
+      get: vi.fn(),
+      post: vi.fn(async () => {
+        throw rateLimited;
+      }),
+    };
+
+    const result = createGitHubInstallIntent(api, { now: () => NOW });
+    await expect(result).rejects.toBeInstanceOf(GitHubInstallIntentRateLimitedError);
+    await expect(result).rejects.toMatchObject({ retryAt });
+
+    const malformed = new HttpError(409, "HTTP 409", {
+      error: "github_install_intent_rate_limited",
+      retryAt,
+      unexpected: true,
+    });
+    const malformedApi: CliClient = {
+      get: vi.fn(),
+      post: vi.fn(async () => {
+        throw malformed;
+      }),
+    };
+    await expect(createGitHubInstallIntent(malformedApi, { now: () => NOW })).rejects.toBe(
+      malformed,
+    );
+
+    const wrongStatus = new HttpError(503, "HTTP 503", {
+      error: "github_install_intent_rate_limited",
+      retryAt,
+    });
+    const wrongStatusApi: CliClient = {
+      get: vi.fn(),
+      post: vi.fn(async () => {
+        throw wrongStatus;
+      }),
+    };
+    await expect(createGitHubInstallIntent(wrongStatusApi, { now: () => NOW })).rejects.toBe(
+      wrongStatus,
+    );
   });
 
   it("measures the server-owned TTL after the start response arrives", async () => {

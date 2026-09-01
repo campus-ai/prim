@@ -1,9 +1,11 @@
 /** Strict client for the server-owned GitHub App installation intent. */
 
-import type { CliClient, RequestOptions } from "../client.js";
+import { type CliClient, HttpError, type RequestOptions } from "../client.js";
 import {
+  type GitHubInstallIntentStartErrorResponse,
   type GitHubInstallIntentStartResponse,
   type GitHubInstallIntentStatusResponse,
+  isGitHubInstallIntentStartErrorResponse,
   isGitHubInstallIntentStartResponse,
   isGitHubInstallIntentStatusResponse,
 } from "../contract/cli-http-v1.js";
@@ -13,39 +15,30 @@ const MODE = "install_intent_v1";
 const START_PATH = "/api/cli/github/install-intents";
 const POLL_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_INTENT_LIFETIME_MS = 15 * 60_000;
-const REPOSITORY_IDENTITY_MIGRATION_REQUIRED = "repository_identity_migration_required";
+const MAX_SERVER_CLOCK_AHEAD_MS = 30_000;
+const GITHUB_INSTALL_INTENT_RATE_LIMITED = "github_install_intent_rate_limited";
+const HTTP_CONFLICT = 409;
 
-type RepositoryIdentityMigrationRequiredStatus = Omit<
-  Extract<GitHubInstallIntentStatusResponse, { status: "failed_terminal" }>,
-  "failureCode"
-> & {
-  failureCode: typeof REPOSITORY_IDENTITY_MIGRATION_REQUIRED;
-};
-
-export type GitHubInstallFailureCode =
-  | Extract<GitHubInstallIntentStatusResponse, { status: "failed_terminal" }>["failureCode"]
-  | typeof REPOSITORY_IDENTITY_MIGRATION_REQUIRED;
+export type GitHubInstallFailureCode = Extract<
+  GitHubInstallIntentStatusResponse,
+  { status: "failed_terminal" }
+>["failureCode"];
 export type GitHubInstallIntentStart = GitHubInstallIntentStartResponse;
-export type GitHubInstallIntentStatus =
-  | GitHubInstallIntentStatusResponse
-  | RepositoryIdentityMigrationRequiredStatus;
+export type GitHubInstallIntentRateLimit = Extract<
+  GitHubInstallIntentStartErrorResponse,
+  { error: typeof GITHUB_INSTALL_INTENT_RATE_LIMITED }
+>;
+export type GitHubInstallIntentStatus = GitHubInstallIntentStatusResponse;
 
-function isRepositoryIdentityMigrationRequiredStatus(
-  value: unknown,
-): value is RepositoryIdentityMigrationRequiredStatus {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+export class GitHubInstallIntentRateLimitedError extends Error {
+  readonly code = GITHUB_INSTALL_INTENT_RATE_LIMITED;
+  readonly retryAt: number;
+
+  constructor(retryAt: number) {
+    super("GitHub connection is temporarily rate limited");
+    this.name = "GitHubInstallIntentRateLimitedError";
+    this.retryAt = retryAt;
   }
-  const record = value as Record<string, unknown>;
-  if (record.failureCode !== REPOSITORY_IDENTITY_MIGRATION_REQUIRED) {
-    return false;
-  }
-  // The vendored v3 contract predates only this additive non-lease terminal
-  // code. Validate its complete exact shape and all semantic bounds unchanged.
-  return isGitHubInstallIntentStatusResponse({
-    ...record,
-    failureCode: "proof_commit_failed",
-  });
 }
 
 export function parseGitHubInstallIntentStart(
@@ -62,17 +55,26 @@ export function parseGitHubInstallIntentStart(
   return value;
 }
 
+export function parseGitHubInstallIntentRateLimit(
+  value: unknown,
+  now = Date.now(),
+): GitHubInstallIntentRateLimit | null {
+  if (
+    !isGitHubInstallIntentStartErrorResponse(value) ||
+    value.error !== GITHUB_INSTALL_INTENT_RATE_LIMITED ||
+    value.retryAt <= now ||
+    value.retryAt - now > MAX_INTENT_LIFETIME_MS + MAX_SERVER_CLOCK_AHEAD_MS
+  ) {
+    return null;
+  }
+  return value;
+}
+
 export function parseGitHubInstallIntentStatus(
   value: unknown,
   expectedExpiresAt: number,
 ): GitHubInstallIntentStatus | null {
-  if (isGitHubInstallIntentStatusResponse(value)) {
-    return value.expiresAt === expectedExpiresAt ? value : null;
-  }
-  if (
-    !isRepositoryIdentityMigrationRequiredStatus(value) ||
-    value.expiresAt !== expectedExpiresAt
-  ) {
+  if (!isGitHubInstallIntentStatusResponse(value) || value.expiresAt !== expectedExpiresAt) {
     return null;
   }
   return value;
@@ -83,7 +85,17 @@ export async function createGitHubInstallIntent(
   options: RequestOptions & { now?: () => number } = {},
 ): Promise<GitHubInstallIntentStart> {
   const { now = Date.now, ...requestOptions } = options;
-  const raw = await client.post(START_PATH, undefined, requestOptions);
+  let raw: unknown;
+  try {
+    raw = await client.post(START_PATH, undefined, requestOptions);
+  } catch (error) {
+    const rateLimit =
+      error instanceof HttpError && error.status === HTTP_CONFLICT
+        ? parseGitHubInstallIntentRateLimit(error.body, now())
+        : null;
+    if (rateLimit) throw new GitHubInstallIntentRateLimitedError(rateLimit.retryAt);
+    throw error;
+  }
   // The server owns this expiry and issues it after receiving the request.
   // Measure its lifetime after the response arrives; a pre-request clock
   // snapshot makes a valid 15-minute intent appear too long by request latency.
