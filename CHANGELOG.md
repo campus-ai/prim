@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.76](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.75...v0.1.0-alpha.76) (2026-09-01)
+
+
+### Bug Fixes
+
+* tolerate clock skew in GitHub install intents ([fa448cd](https://github.com/campus-ai/prim/commit/fa448cd72bf782a90b77f1340bf2e0cec83c62b4))
+* tolerate clock skew in GitHub install intents ([#291](https://github.com/campus-ai/prim/issues/291)) ([e84f64d](https://github.com/campus-ai/prim/commit/e84f64d729cf67af837022776b227cf66f01133a))
+
 ## [0.1.0-alpha.75](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.74...v0.1.0-alpha.75) (2026-08-31)
 
 
