@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.82](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.81...v0.1.0-alpha.82) (2026-09-01)
+
+
+### Bug Fixes
+
+* **cascade:** tolerate server projection that omits upstream.contexts ([107e8d8](https://github.com/campus-ai/prim/commit/107e8d8f4a15f314a28172175e20207baa243aeb))
+* **cascade:** tolerate server projection that omits upstream.contexts ([ce3753e](https://github.com/campus-ai/prim/commit/ce3753e8533448d32693954329c9eccbfda6acb2))
+
 ## [0.1.0-alpha.81](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.80...v0.1.0-alpha.81) (2026-09-01)
 
 
