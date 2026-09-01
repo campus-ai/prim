@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.83](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.82...v0.1.0-alpha.83) (2026-09-01)
+
+
+### Bug Fixes
+
+* **hooks:** bundle YAML ESM in staged runtime ([e74ed2a](https://github.com/campus-ai/prim/commit/e74ed2a2ec48f84a90f1e79131c222654fba0353))
+* **hooks:** prevent SessionStart YAML ESM crash ([ed15948](https://github.com/campus-ai/prim/commit/ed15948bdce90880278f1effecc14229d662e285))
+
 ## [0.1.0-alpha.82](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.81...v0.1.0-alpha.82) (2026-09-01)
 
 
