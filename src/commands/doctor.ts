@@ -6,8 +6,7 @@
  * `daemon status`, `moves status`, and a filesystem listing by hand (the
  * ~20-minute archaeology the user study turned into). Checks auth, supervised
  * daemon health, durable queue age, stranded rotations, capture entitlement,
- * classifier progress, worktree identity, and decision-feedback readiness,
- * then renders them
+ * worktree identity, and decision-feedback readiness, then renders them
  * verdict-first on STDERR with machine-readable JSON on STDOUT, exiting
  * non-zero when a check is red so an agent or installer can gate on it.
  *
@@ -830,35 +829,6 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
           status: "fail",
           detail: "disabled for the current organization; local Moves are retained",
         };
-  let classification: Check;
-  if (status.pendingSessionCount > 0) {
-    const oldest =
-      typeof status.oldestPendingAgeMs === "number"
-        ? ` · oldest ${String(Math.round(status.oldestPendingAgeMs / MS_PER_SECOND))}s`
-        : typeof status.oldestPendingAt === "number"
-          ? ` · oldest ${String(Math.max(0, Math.round((Date.now() - status.oldestPendingAt) / MS_PER_SECOND)))}s`
-          : "";
-    classification = {
-      name: "classification",
-      status: "warn",
-      detail: `${String(status.pendingSessionCount)} session(s) pending${oldest}${status.sampled ? " in a bounded sample" : ""}`,
-    };
-  } else if (status.sampled) {
-    classification = {
-      name: "classification",
-      status: "warn",
-      detail: "caught up in the bounded sample; older sessions were not inspected",
-    };
-  } else {
-    classification = {
-      name: "classification",
-      status: "ok",
-      detail:
-        status.latestClassificationAt === null
-          ? "no sessions awaiting classification"
-          : `caught up · last ${new Date(status.latestClassificationAt).toISOString()}`,
-    };
-  }
   const correlation: Check | undefined =
     status.pendingCommitCorrelationCount === undefined
       ? undefined
@@ -873,13 +843,13 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
             status: "ok",
             detail: "caught up",
           };
-  return correlation ? [capture, classification, correlation] : [capture, classification];
+  return correlation ? [capture, correlation] : [capture];
 }
 
 async function checkBackend(): Promise<Check[]> {
   try {
     // Bypass the daemon so this independently verifies server reachability,
-    // auth, capture entitlement, and the durable/classification read model.
+    // auth, capture entitlement, and commit-correlation status.
     const response = await getClient().get("/api/cli/moves/status", {
       signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
     });
