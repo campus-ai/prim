@@ -132,17 +132,29 @@ async function completeInstallIntent(
   });
 }
 
-export async function performGithubConnect(
+export type GithubConnectOutcome =
+  | { kind: "not-a-repo" }
+  | { kind: "error"; error: unknown }
+  | { kind: "connected"; binding: Extract<RepositoryBindingResult, { status: "connected" }> }
+  | {
+      kind: "unbound";
+      binding: Extract<RepositoryBindingResult, { status: "unbound" }>;
+      installAttempted: boolean;
+    };
+
+/**
+ * Run the connect flow (reuse the origin's binding, else issue a GitHub App
+ * install intent and re-bind) and RETURN its outcome without printing JSON or
+ * setting an exit code. `performGithubConnect` renders it for the CLI; `prim
+ * enable` reuses it to fold a fresh binding into its own output. Pass
+ * `options.root` to skip re-resolving the repo root from cwd.
+ */
+export async function runGithubConnect(
   dependencies: GithubConnectDependencies = defaultDependencies,
-  options: { browser?: boolean } = {},
-): Promise<void> {
-  const root = dependencies.gitToplevel(dependencies.cwd());
-  if (!root) {
-    reportConnectFailure(
-      new Error("not a git repository — run `prim github connect` inside a GitHub repository"),
-    );
-    return;
-  }
+  options: { browser?: boolean; root?: string } = {},
+): Promise<GithubConnectOutcome> {
+  const root = options.root ?? dependencies.gitToplevel(dependencies.cwd());
+  if (!root) return { kind: "not-a-repo" };
 
   try {
     const client = await dependencies.getPinnedClient({
@@ -152,8 +164,7 @@ export async function performGithubConnect(
       signal: AbortSignal.timeout(BIND_TIMEOUT_MS),
     });
     if (existing.status === "connected") {
-      reportBinding(existing);
-      return;
+      return { kind: "connected", binding: existing };
     }
 
     const start = await dependencies.createInstallIntent(client, {
@@ -173,9 +184,34 @@ export async function performGithubConnect(
     const binding = await dependencies.bindRepositoryWithClient(root, client, {
       signal: AbortSignal.timeout(BIND_TIMEOUT_MS),
     });
-    reportBinding(binding, true);
+    return binding.status === "connected"
+      ? { kind: "connected", binding }
+      : { kind: "unbound", binding, installAttempted: true };
   } catch (error) {
-    reportConnectFailure(error);
+    return { kind: "error", error };
+  }
+}
+
+export async function performGithubConnect(
+  dependencies: GithubConnectDependencies = defaultDependencies,
+  options: { browser?: boolean } = {},
+): Promise<void> {
+  const outcome = await runGithubConnect(dependencies, options);
+  switch (outcome.kind) {
+    case "not-a-repo":
+      reportConnectFailure(
+        new Error("not a git repository — run `prim github connect` inside a GitHub repository"),
+      );
+      return;
+    case "error":
+      reportConnectFailure(outcome.error);
+      return;
+    case "connected":
+      reportBinding(outcome.binding);
+      return;
+    case "unbound":
+      reportBinding(outcome.binding, outcome.installAttempted);
+      return;
   }
 }
 

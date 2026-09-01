@@ -457,18 +457,15 @@ function writeOwnHooks(): void {
   if (!existsSync(PRIM_GIT_HOOKS_DIR)) {
     mkdirSync(PRIM_GIT_HOOKS_DIR, { recursive: true });
   }
+  // This directory is wholly Prim-owned, so every managed hook — post-commit
+  // included — is rewritten to its canonical standalone script on each install.
+  // A plain overwrite is self-healing: unlike a marker block-merge it cannot
+  // fail on a pre-existing hook whose Prim markers were left malformed or
+  // duplicated by an interrupted or legacy install.
   for (const spec of HOOKS) {
-    const path = resolve(PRIM_GIT_HOOKS_DIR, spec.hookName);
-    if (spec.hookName === POST_COMMIT.hookName) {
-      ensurePostCommitHookAtPath(path, globalHookScript(spec));
-    } else if (spec.hookName === POST_REWRITE.hookName) {
-      // This directory is wholly Prim-owned. Replace the previous release's
-      // post-rewrite pass-through stub instead of merging into it, which would
-      // retain its unguarded chain and could double-fire a project Prim hook.
-      writeFileSync(path, globalHookScript(spec), { mode: 0o755 });
-    } else {
-      writeFileSync(path, globalHookScript(spec), { mode: 0o755 });
-    }
+    writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, spec.hookName), globalHookScript(spec), {
+      mode: 0o755,
+    });
   }
   for (const name of PASSTHROUGH_HOOKS) {
     writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, name), passThroughScript(name), { mode: 0o755 });

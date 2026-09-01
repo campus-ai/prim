@@ -316,6 +316,11 @@ export function registerSetupCommand(
       const agent: SetupAgent = agentInput;
       const scope: SetupScope = opts.scope;
       const self = process.argv[1];
+      // Root program's interactive-gating globals (-y / --non-interactive),
+      // forwarded to the enable step below: setup spawns steps as child processes
+      // that don't inherit the parent's parsed flags, so the repository-binding
+      // prompt would otherwise never see them.
+      const globals = program.optsWithGlobals();
 
       const run =
         dependencies.run ??
@@ -427,7 +432,12 @@ export function registerSetupCommand(
       const enableStep = setupSteps.find((candidate) => candidate.key === "enable");
       if (enableStep) {
         note(`${enableStep.label} · installing…`);
-        const { code } = run(enableStep.args);
+        const enableArgs = [
+          ...enableStep.args,
+          ...(globals.yes ? ["--yes"] : []),
+          ...(globals.nonInteractive ? ["--non-interactive"] : []),
+        ];
+        const { code } = run(enableArgs);
         results[enableStep.key] = code === 0 ? "ok" : enableStep.required ? "failed" : "skipped";
       }
 

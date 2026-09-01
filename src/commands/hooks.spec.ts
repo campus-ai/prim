@@ -573,10 +573,7 @@ describe("installGlobalHooks (user scope)", () => {
     installGlobalHooks(); // default mock: global + system both unset
     const paths = mockedWriteFileSync.mock.calls.map((c) => String(c[0]));
     expect(paths).toContain(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
-    expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalledWith(
-      join(PRIM_GIT_HOOKS_DIR, "post-commit"),
-      expect.any(String),
-    );
+    expect(paths).toContain(join(PRIM_GIT_HOOKS_DIR, "post-commit"));
     expect(paths).toContain(join(PRIM_GIT_HOOKS_DIR, "post-rewrite"));
     expect(mockedMkdirSync).toHaveBeenCalledWith(PRIM_GIT_HOOKS_DIR, { recursive: true });
     expect(mockedExecFileSync).toHaveBeenCalledWith(
@@ -592,10 +589,7 @@ describe("installGlobalHooks (user scope)", () => {
       mockedWriteFileSync.mock.calls.map((c) => [String(c[0]), c[1] as string]),
     );
     const pre = byPath.get(join(PRIM_GIT_HOOKS_DIR, "pre-commit")) ?? "";
-    const post =
-      (mockedEnsurePostCommitHookAtPath.mock.calls.find(
-        ([path]) => path === join(PRIM_GIT_HOOKS_DIR, "post-commit"),
-      )?.[1] as string | undefined) ?? "";
+    const post = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-commit")) ?? "";
     const rewrite = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-rewrite")) ?? "";
     // Opt-in gate: prim runs only where prim.active is true.
     expect(pre).toContain("git config --get prim.active");
@@ -706,13 +700,32 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
     installGlobalHooks();
     expect(mockedWriteFileSync).toHaveBeenCalled();
-    expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalled();
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      join(PRIM_GIT_HOOKS_DIR, "post-commit"),
+      expect.stringContaining("prim global post-commit hook"),
+      { mode: 0o755 },
+    );
     expect(mockedWriteFileSync).toHaveBeenCalledWith(
       join(PRIM_GIT_HOOKS_DIR, "post-rewrite"),
       expect.stringContaining("prim post-rewrite hook"),
       { mode: 0o755 },
     );
     expect(setCalls()).toHaveLength(0);
+  });
+
+  it("overwrites the wholly-owned post-commit unconditionally instead of block-merging", () => {
+    // The global dir is entirely Prim-owned, so post-commit is rewritten with a
+    // plain writeFileSync like its siblings — never through the marker block-merge
+    // whose `malformed Prim post-commit markers` guard previously failed setup on
+    // a pre-existing/corrupt global hook.
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    installGlobalHooks();
+    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+      join(PRIM_GIT_HOOKS_DIR, "post-commit"),
+      expect.stringContaining("prim global post-commit hook"),
+      { mode: 0o755 },
+    );
+    expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
   });
 
   it("appends into an existing non-prim global hooksPath instead of hijacking it", () => {
@@ -775,10 +788,6 @@ describe("uninstallGlobalHooks (user scope)", () => {
     const contentByPath = new Map(
       mockedWriteFileSync.mock.calls.map((call) => [String(call[0]), String(call[1])]),
     );
-    const postCommitCall = mockedEnsurePostCommitHookAtPath.mock.calls.find(
-      ([path]) => path === join(PRIM_GIT_HOOKS_DIR, "post-commit"),
-    );
-    contentByPath.set(String(postCommitCall?.[0]), String(postCommitCall?.[1]));
     const names = [...contentByPath.keys()].map((path) =>
       path.slice(`${PRIM_GIT_HOOKS_DIR}/`.length),
     );

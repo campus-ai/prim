@@ -15,9 +15,12 @@ const MODE = "install_intent_v1";
 const START_PATH = "/api/cli/github/install-intents";
 const POLL_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_INTENT_LIFETIME_MS = 15 * 60_000;
+// The server owns expiresAt, so tolerate a small difference between its clock
+// and the client clock while continuing to reject implausibly long intents.
 const MAX_SERVER_CLOCK_AHEAD_MS = 30_000;
 const GITHUB_INSTALL_INTENT_RATE_LIMITED = "github_install_intent_rate_limited";
 const HTTP_CONFLICT = 409;
+const REPOSITORY_IDENTITY_MIGRATION_REQUIRED = "repository_identity_migration_required";
 
 export type GitHubInstallFailureCode = Extract<
   GitHubInstallIntentStatusResponse,
@@ -48,7 +51,7 @@ export function parseGitHubInstallIntentStart(
   if (
     !isGitHubInstallIntentStartResponse(value) ||
     value.expiresAt <= now ||
-    value.expiresAt - now > MAX_INTENT_LIFETIME_MS
+    value.expiresAt - now > MAX_INTENT_LIFETIME_MS + MAX_SERVER_CLOCK_AHEAD_MS
   ) {
     return null;
   }
