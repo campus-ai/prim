@@ -130,7 +130,7 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("enable succeeds locally with a clear degraded warning while the repository is unbound", async () => {
+  it("enable succeeds locally with concise GitHub connection guidance while the repository is unbound", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -157,14 +157,10 @@ describe("prim enable / disable", () => {
     expect(output).not.toHaveProperty("repoSyncId");
     const warning = errSpy.mock.calls.map(([message]) => String(message)).join("");
     expect(warning).toContain("Prim is enabled locally in /repo");
-    expect(warning).toContain("repository is not connected");
-    expect(warning).toContain("Moves still ingest into the team graph");
-    expect(warning).toContain("repository-specific file attribution");
-    expect(warning).toContain("Conflict Gate verification");
-    expect(warning).toContain("commit correlation");
-    expect(warning).toContain("organization owner or administrator");
-    expect(warning).toContain("retries automatically at the next agent SessionStart");
-    expect(warning).not.toContain("server sync is pending");
+    expect(warning).toContain("GitHub repository binding is not connected");
+    expect(warning).toContain("prim github connect");
+    expect(warning).not.toContain("organization owner or administrator");
+    expect(warning).not.toContain("Conflict Gate verification");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -391,7 +387,7 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
-  it("keeps the passive unbound message when the connect prompt is declined", async () => {
+  it("keeps concise GitHub connection guidance when the connect prompt is declined", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",
@@ -407,7 +403,8 @@ describe("prim enable / disable", () => {
     const output = JSON.parse(String(logSpy.mock.calls[0]?.[0])) as Record<string, unknown>;
     expect(output).toMatchObject({ bindingStatus: "unbound" });
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
-    expect(stderr).toContain("organization owner or administrator");
+    expect(stderr).toContain("prim github connect");
+    expect(stderr).not.toContain("organization owner or administrator");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -426,7 +423,8 @@ describe("prim enable / disable", () => {
     expect(askConfirmation).not.toHaveBeenCalled();
     expect(runGithubConnect).not.toHaveBeenCalled();
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
-    expect(stderr).toContain("organization owner or administrator");
+    expect(stderr).toContain("prim github connect");
+    expect(stderr).not.toContain("organization owner or administrator");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -451,7 +449,8 @@ describe("prim enable / disable", () => {
     expect(output).toMatchObject({ bindingStatus: "unbound" });
     const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
     expect(stderr).toContain("connect could not complete: network down");
-    expect(stderr).toContain("organization owner or administrator");
+    expect(stderr).toContain("prim github connect");
+    expect(stderr).not.toContain("organization owner or administrator");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });

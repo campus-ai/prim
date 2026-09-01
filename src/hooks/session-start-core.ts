@@ -10,12 +10,16 @@ import {
   renderFeedback,
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
 } from "../lib/post-commit-hook.js";
-import { bindRepository } from "../lib/repository-binding.js";
+import {
+  type RepositoryBindingResult,
+  bindRepository,
+  resolveRepositoryBinding,
+} from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
 import { prepareCodexContext } from "./codex-context.js";
@@ -42,7 +46,9 @@ export const PRIM_SKILL_REMINDER = primReminder("invoke the `prim` skill", "invo
 const CODEX_PRIM_ACTION = "follow the installed Prim workflow and use the `prim` CLI";
 export const CODEX_PRIM_REMINDER = primReminder(CODEX_PRIM_ACTION, CODEX_PRIM_ACTION);
 
-async function activeProjectRoot(cwd: string): Promise<string | null> {
+type ActiveProject = { root: string; binding?: RepositoryBindingResult };
+
+async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
   try {
     const root = gitToplevel(cwd);
     if (!root || !isRepoActiveForCapture(cwd)) return null;
@@ -74,16 +80,42 @@ async function activeProjectRoot(cwd: string): Promise<string | null> {
       // Re-resolve on every session: a syntactically valid cached id can become
       // stale when the origin or the organization's connected repository
       // changes. The server remains authoritative and the write is idempotent.
-      await bindRepository(root, {
+      const binding = await bindRepository(root, {
         signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
         quietRefresh: true,
       });
+      return { root, binding };
     } catch {
       // Binding is opportunistic. A later enable/SessionStart retries it.
     }
-    return root;
+    return { root };
   } catch {
     return null;
+  }
+}
+
+function claudeBindingReminder(binding: RepositoryBindingResult): string {
+  if (binding.status === "connected") {
+    return `The current GitHub repository is connected to Primitive. In your first response, begin with exactly: "GitHub repository connected to Primitive: ${binding.repositoryFullName}." Then continue the user's request.`;
+  }
+  return `The current GitHub repository is not connected to Primitive. Before doing task work, ask exactly: "This GitHub repository isn't connected to Primitive yet. Would you like me to start the one-time GitHub connection now?" Wait for the user's answer. If they approve, run \`npx --yes @primitive.ai/prim github connect\`, drive the browser-based GitHub App workflow, report its actual outcome concisely, and resume work. If they decline or the connection does not complete, continue without asking again in this session. Do not use owner/admin escalation or capability-loss warnings.`;
+}
+
+/** Resolve without persisting state for GitHub checkouts outside active capture. */
+async function claudeRepositoryBinding(
+  cwd: string,
+  activeProject: ActiveProject | null,
+): Promise<RepositoryBindingResult | undefined> {
+  const root = activeProject?.root ?? gitToplevel(cwd);
+  if (!root || !githubRepositoryFullName(root)) return undefined;
+  if (activeProject) return activeProject.binding;
+  try {
+    return await resolveRepositoryBinding(root, {
+      signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
+      quietRefresh: true,
+    });
+  } catch {
+    return undefined;
   }
 }
 
@@ -138,9 +170,12 @@ export async function processSessionStart(
   let projectRoot: string | null = null;
   let active = false;
   let skillState = { installed: 0, refreshed: 0 };
+  let claudeBinding: RepositoryBindingResult | undefined;
   if (agent === "claude_code") {
-    projectRoot = await activeProjectRoot(cwd);
+    const activeProject = await activeProjectRoot(cwd);
+    projectRoot = activeProject?.root ?? null;
     active = projectRoot !== null;
+    claudeBinding = await claudeRepositoryBinding(cwd, activeProject);
     try {
       skillState = await refreshClaudePlugins(
         cwd,
@@ -182,7 +217,7 @@ export async function processSessionStart(
       // only the report — the reminder below must still reach the session.
     }
 
-    projectRoot = await activeProjectRoot(cwd);
+    projectRoot = (await activeProjectRoot(cwd))?.root ?? null;
     active = projectRoot !== null;
     let proactive = false;
     try {
@@ -202,7 +237,12 @@ export async function processSessionStart(
   }
 
   if (agent === "claude_code") {
-    const additionalContext = active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined;
+    const additionalContext = [
+      claudeBinding ? claudeBindingReminder(claudeBinding) : undefined,
+      active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined,
+    ]
+      .filter((value): value is string => value !== undefined)
+      .join("\n\n");
     const reloadSkills = skillState.refreshed > 0;
     if (active) {
       const identity = getOrCreateWorkspaceId(cwd);
