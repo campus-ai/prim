@@ -1,4 +1,12 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { defineConfig } from "tsup";
+
+const require = createRequire(import.meta.url);
+// The node export is CommonJS and esbuild turns its `require("process")` into
+// an ESM-incompatible dynamic require. The browser export is dependency-free
+// ESM and preserves the parser API used by the staged hooks.
+const yamlBrowserEntry = join(dirname(require.resolve("yaml/package.json")), "browser", "index.js");
 
 export default defineConfig({
   entry: {
@@ -18,5 +26,8 @@ export default defineConfig({
   format: ["esm"],
   splitting: false,
   noExternal: [/.*/],
+  esbuildOptions(options) {
+    options.alias = { ...options.alias, yaml: yamlBrowserEntry };
+  },
   clean: true,
 });
