@@ -46,6 +46,13 @@ import {
   isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
   isRepositoryBindResponse,
+  isUserApiKeyListRequest,
+  isUserApiKeyListResponse,
+  isUserApiKeyMetadata,
+  isUserApiKeyMintRequest,
+  isUserApiKeyMintResponse,
+  isUserApiKeyRevokeRequest,
+  isUserApiKeyRevokeResponse,
 } from "../generated/cli-http-v1.validators.js";
 
 export type * from "../generated/cli-http-v1.types.js";
@@ -85,6 +92,13 @@ export {
   isPresenceHeartbeatResponse,
   isRepositoryBindRequest,
   isRepositoryBindResponse,
+  isUserApiKeyListRequest,
+  isUserApiKeyListResponse,
+  isUserApiKeyMetadata,
+  isUserApiKeyMintRequest,
+  isUserApiKeyMintResponse,
+  isUserApiKeyRevokeRequest,
+  isUserApiKeyRevokeResponse,
 };
 
 const MAX_REPOSITORY_PATH_CHARS = 4_096;
@@ -314,6 +328,13 @@ export const cliHttpV1Validators = {
   PresenceHeartbeatResponse: isPresenceHeartbeatResponse,
   RepositoryBindRequest: isRepositoryBindRequest,
   RepositoryBindResponse: isRepositoryBindResponse,
+  UserApiKeyListRequest: isUserApiKeyListRequest,
+  UserApiKeyListResponse: isUserApiKeyListResponse,
+  UserApiKeyMetadata: isUserApiKeyMetadata,
+  UserApiKeyMintRequest: isUserApiKeyMintRequest,
+  UserApiKeyMintResponse: isUserApiKeyMintResponse,
+  UserApiKeyRevokeRequest: isUserApiKeyRevokeRequest,
+  UserApiKeyRevokeResponse: isUserApiKeyRevokeResponse,
 } as const satisfies Record<string, (value: unknown) => boolean>;
 
 export type CliHttpV1DefinitionName = keyof typeof cliHttpV1Validators;
