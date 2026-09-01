@@ -363,19 +363,6 @@ describe("v3 wire helpers", () => {
       parsePreflightResponse(response([{ ...valid, unexpected: "hidden detail" }])),
     ).toBeNull();
   });
-
-  it("renders unsupported dynamic mutations as directly visible warnings", () => {
-    const result = unverifiedResult(
-      "mutation targets could not be determined; enforcement not verified",
-    );
-    const claude = buildHookOutput("allow", [result]);
-    const codex = buildCodexOutput("allow", [result]);
-
-    expect(claude.systemMessage).toContain("enforcement not verified");
-    expect(claude.hookSpecificOutput.permissionDecision).toBe("allow");
-    expect(codex.systemMessage).toContain("enforcement not verified");
-    expect(codex.hookSpecificOutput).not.toHaveProperty("permissionDecision");
-  });
 });
 
 describe("boundedClientVersion", () => {

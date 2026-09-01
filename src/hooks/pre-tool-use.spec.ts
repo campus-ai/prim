@@ -210,27 +210,17 @@ describe("PreToolUse entrypoint (codex)", () => {
     expect(acknowledge).toHaveBeenCalledWith(true);
   });
 
-  it("appends status context to the visible unverified notice", async () => {
-    const acknowledge = vi.fn().mockResolvedValue(undefined);
+  it("stays silent when mutation targets cannot be determined", async () => {
     mocks.resolvePreflightTargets.mockReturnValue({
       mutation: "edit",
       paths: [],
       coverage: "none",
     });
-    mocks.prepareCodexContext.mockResolvedValue({
-      context: DIGEST,
-      feedAvailable: true,
-      acknowledge,
-    });
 
     const output = await runHook();
 
-    const systemMessage = output.systemMessage as string;
-    expect(systemMessage).toContain("mutation targets could not be determined");
-    expect(systemMessage.endsWith(DIGEST)).toBe(true);
-    const hookSpecific = output.hookSpecificOutput as { additionalContext?: string };
-    expect(hookSpecific.additionalContext).not.toContain(DIGEST);
-    expect(acknowledge).toHaveBeenCalledWith(true);
+    expect(output).toEqual({});
+    expect(mocks.prepareCodexContext).not.toHaveBeenCalled();
   });
 
   it("falls back to the plain verdict when context preparation throws", async () => {

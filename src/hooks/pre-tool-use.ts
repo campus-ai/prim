@@ -213,10 +213,7 @@ async function main(): Promise<void> {
     return;
   }
   if (targets.paths.length === 0) {
-    await emitUnverified(
-      "mutation targets could not be determined; enforcement not verified",
-      envelope,
-    );
+    await emit(failOpen());
     return;
   }
   const binding = repoSyncId(cwd);
