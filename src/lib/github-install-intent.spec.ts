@@ -66,6 +66,18 @@ describe("GitHub install-intent protocol", () => {
     ).toBeNull();
   });
 
+  it("allows bounded server-ahead clock skew when validating the start TTL", () => {
+    const withinTolerance = {
+      ...START,
+      expiresAt: NOW + 15 * 60_000 + 30_000,
+    };
+    expect(parseGitHubInstallIntentStart(withinTolerance, NOW)).toEqual(withinTolerance);
+
+    expect(
+      parseGitHubInstallIntentStart({ ...START, expiresAt: NOW + 15 * 60_000 + 30_001 }, NOW),
+    ).toBeNull();
+  });
+
   it("uses the generated structural and semantic status validation", () => {
     expect(parseGitHubInstallIntentStatus(CONSUMED, EXPIRES_AT)).toMatchObject({
       status: "consumed",
