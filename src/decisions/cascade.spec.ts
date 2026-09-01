@@ -55,7 +55,7 @@ describe("fetchCascade", () => {
 
     const result = await fetchCascade("dec_230a72aa", { getClient: () => clientWith(get) });
 
-    expect(result).toBe(RESULT);
+    expect(result).toEqual(RESULT);
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_cascade",
       expect.objectContaining({ path: "/api/cli/decisions/cascade?id=dec_230a72aa" }),
@@ -74,6 +74,23 @@ describe("fetchCascade", () => {
     expect(get).toHaveBeenCalledWith("/api/cli/decisions/cascade?id=dec_230a72aa", {
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it("normalizes a projection that omits upstream.contexts to an empty array", async () => {
+    // The server drops `upstream.contexts` entirely when a decision references
+    // no contexts. The raw payload therefore violates CascadeResult at runtime;
+    // fetchCascade must backfill it so downstream consumers never see undefined.
+    const sparse = {
+      ...RESULT,
+      upstream: { files: RESULT.upstream.files },
+    };
+    mockDaemonRequest.mockResolvedValueOnce(sparse);
+    const get = vi.fn().mockResolvedValue(undefined);
+
+    const result = await fetchCascade("dec_230a72aa", { getClient: () => clientWith(get) });
+
+    expect(result.upstream.contexts).toEqual([]);
+    expect(result.upstream.files).toEqual(RESULT.upstream.files);
   });
 
   it("maps a not-found error to CascadeNotFoundError on the direct path", async () => {
