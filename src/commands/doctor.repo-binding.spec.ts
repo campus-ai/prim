@@ -39,25 +39,25 @@ beforeEach(() => {
 });
 
 describe("checkRepositoryBinding wiring", () => {
-  it("degrades an active checkout with an unbound server connection to warn", async () => {
+  it("degrades an active checkout with an unconnected server response to warn", async () => {
     vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
 
     await expect(checkRepositoryBinding()).resolves.toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "warn",
-      detail: expect.stringContaining("repository is unbound"),
+      detail: expect.stringContaining("GitHub repo connection is required"),
     });
   });
 
-  it("fails an inactive checkout with an unbound server connection and asks for enable", async () => {
+  it("fails an inactive checkout with an unconnected server response and asks for connection", async () => {
     vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
 
     await expect(checkRepositoryBinding()).resolves.toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "fail",
-      detail: expect.stringContaining("prim enable"),
+      detail: expect.stringContaining("prim github connect"),
     });
   });
 
@@ -67,7 +67,7 @@ describe("checkRepositoryBinding wiring", () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
 
     await expect(checkRepositoryBinding()).resolves.toMatchObject({
-      name: "repo-binding",
+      name: "github-repo-connection",
       status: "ok",
     });
   });
@@ -77,7 +77,7 @@ describe("checkRepositoryBinding wiring", () => {
 
     const check = await checkRepositoryBinding();
 
-    expect(check).toMatchObject({ name: "repo-binding", status: "fail" });
-    expect(check.detail).toContain("could not verify the current repository binding");
+    expect(check).toMatchObject({ name: "github-repo-connection", status: "fail" });
+    expect(check.detail).toContain("could not verify the current GitHub repo connection");
   });
 });

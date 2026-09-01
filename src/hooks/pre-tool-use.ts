@@ -220,7 +220,10 @@ async function main(): Promise<void> {
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
-    await emitUnverified("repository binding or tool invocation identity is unavailable", envelope);
+    await emitUnverified(
+      "GitHub repo connection is required for repository-specific file attribution, Conflict Gate verification, and commit correlation; or tool invocation identity is unavailable",
+      envelope,
+    );
     return;
   }
   const request: PreflightRequest = {

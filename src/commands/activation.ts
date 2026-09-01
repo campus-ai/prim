@@ -20,7 +20,10 @@ import { printJson } from "../output.js";
 import { runGithubConnect } from "./github.js";
 import { refreshOwnedGlobalHooks } from "./hooks.js";
 
-const CONNECT_PROMPT = "[prim] Connect this repository to Primitive via the GitHub App now?";
+const CONNECT_PROMPT =
+  "[prim] GitHub repo connection is required to enable repository-specific file attribution, Conflict Gate verification, and commit correlation. Start the GitHub App connection now?";
+const GITHUB_CONNECTION_REQUIRED =
+  "GitHub repo connection is required before using Primitive in this repository. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation. Run `prim github connect` to complete it.";
 
 /**
  * When a repo is enabled but unbound, offer to connect it now, reusing the
@@ -39,7 +42,7 @@ async function maybeConnectRepository(
   const outcome = await runGithubConnect(undefined, { root, browser: true });
   if (outcome.kind === "connected") {
     process.stderr.write(
-      `[prim] repository binding connected for GitHub origin ${outcome.binding.repositoryFullName}\n`,
+      `[prim] GitHub repo connection complete for ${outcome.binding.repositoryFullName}\n`,
     );
     return outcome.binding;
   }
@@ -72,24 +75,30 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
         const detail = error instanceof Error ? error.message : String(error);
         process.stderr.write(`[prim] post-rewrite hook coverage is degraded: ${detail}\n`);
       }
-      phase = "repository binding";
+      phase = "GitHub repo connection";
       binding = await bindRepository(root);
-      phase = "local activation";
     }
-    setRepoActive(root, active);
     if (active && binding?.status === "unbound") {
       const connected = await maybeConnectRepository(root, globals);
-      if (connected) binding = connected;
+      if (!connected) {
+        process.stderr.write(`[prim] ${GITHUB_CONNECTION_REQUIRED}\n`);
+        printJson({
+          active: false,
+          repo: root,
+          bindingStatus: binding.status,
+          repositoryFullName: binding.repositoryFullName,
+          ...(postCommitHook ? { postCommitHook } : {}),
+          ...(postRewriteHook ? { postRewriteHook } : {}),
+        });
+        process.exitCode = 1;
+        return;
+      }
+      binding = connected;
     }
+    phase = "local activation";
+    setRepoActive(root, active);
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
-    if (binding?.status === "unbound") {
-      process.stderr.write(`[prim] Prim is enabled locally in ${root}\n`);
-      process.stderr.write(
-        "[prim] GitHub repository binding is not connected — run `prim github connect` when you're ready\n",
-      );
-    } else {
-      process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
-    }
+    process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
     printJson({
       active,
       repo: root,
