@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.81](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.80...v0.1.0-alpha.81) (2026-09-01)
+
+
+### Features
+
+* **github:** require repo connection for Primitive ([889d3d4](https://github.com/campus-ai/prim/commit/889d3d4e281406f3710723b09ddd9711e2f10c5b))
+
 ## [0.1.0-alpha.80](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.79...v0.1.0-alpha.80) (2026-09-01)
 
 
