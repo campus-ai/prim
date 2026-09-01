@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-alpha.78](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.77...v0.1.0-alpha.78) (2026-09-01)
+
+
+### Bug Fixes
+
+* **doctor:** remove classifier session health noise ([5a4415e](https://github.com/campus-ai/prim/commit/5a4415e3c6f5599058b7c66374db4189505c79a3))
+* **doctor:** remove classifier session health noise ([b1c8442](https://github.com/campus-ai/prim/commit/b1c84429820eee1888690f77eac8662c12305bda))
+* self-heal malformed global hooks on enable ([adf4fa6](https://github.com/campus-ai/prim/commit/adf4fa6c065c2ecb3bc08d2f61269a5b03dbee0a))
+* self-heal malformed global hooks on enable ([dd3fb20](https://github.com/campus-ai/prim/commit/dd3fb20a2612d7fa03e1c240eb8de78e0acbd99d))
+
 ## [0.1.0-alpha.77](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.76...v0.1.0-alpha.77) (2026-09-01)
 
 
