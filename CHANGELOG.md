@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.79](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.78...v0.1.0-alpha.79) (2026-09-01)
+
+
+### Bug Fixes
+
+* avoid duplicate markers in global hooks ([aeeaaa4](https://github.com/campus-ai/prim/commit/aeeaaa468b9efe7a26d7ad487acbf5ec00821dfc))
+* remove duplicate markers from global hooks ([f3c0ced](https://github.com/campus-ai/prim/commit/f3c0cedcefb9da9027f6d578eccabf5eaf3a3560))
+
 ## [0.1.0-alpha.78](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.77...v0.1.0-alpha.78) (2026-09-01)
 
 
