@@ -10,6 +10,7 @@ vi.mock("../lib/post-commit-hook.js", () => ({
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
+vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
 // Keep the real isNonInteractive (env/flag ladder), stub only the TTY prompt.
 vi.mock("../lib/confirmation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/confirmation.js")>();
@@ -27,6 +28,7 @@ import {
 import { bindRepository } from "../lib/repository-binding.js";
 import { registerActivationCommands } from "./activation.js";
 import { runGithubConnect } from "./github.js";
+import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 
@@ -91,6 +93,7 @@ describe("prim enable / disable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildProgram().parseAsync(["enable"], { from: "user" });
+    expect(refreshOwnedGlobalHooks).toHaveBeenCalledTimes(1);
     expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
     expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
     expect(bindRepository).toHaveBeenCalledWith("/repo");
@@ -105,6 +108,24 @@ describe("prim enable / disable", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"bindingStatus": "connected"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postRewriteHook"'));
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("refreshes both owned global hooks before checking effective coverage", async () => {
+    inRepo("/repo");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+
+    expect(vi.mocked(refreshOwnedGlobalHooks).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ensureEffectivePostRewriteHook).mock.invocationCallOrder[0],
+    );
+    expect(bindRepository).toHaveBeenCalledWith("/repo");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });

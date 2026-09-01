@@ -472,6 +472,13 @@ function writeOwnHooks(): void {
   }
 }
 
+/** Refresh Prim's wholly-owned global hooks without changing Git config. */
+export function refreshOwnedGlobalHooks(): boolean {
+  if (!isOurHooksDir(gitConfigGet("--global"))) return false;
+  writeOwnHooks();
+  return true;
+}
+
 // Append prim's GATED block into a hook file in a foreign global core.hooksPath
 // dir we don't own. Idempotent. No chain tail: git already runs only this dir,
 // so the file's other contents are the repo owner's, left in place. Gated, so
