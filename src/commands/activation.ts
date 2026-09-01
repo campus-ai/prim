@@ -85,10 +85,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     if (binding?.status === "unbound") {
       process.stderr.write(`[prim] Prim is enabled locally in ${root}\n`);
       process.stderr.write(
-        "[prim] repository is not connected to Primitive; Moves still ingest into the team graph without repository-specific file attribution, Conflict Gate verification, or commit correlation\n",
-      );
-      process.stderr.write(
-        `[prim] ask an organization owner or administrator to grant Primitive's GitHub App access to this repository through Primitive's GitHub App onboarding; binding retries automatically at the next agent SessionStart\n`,
+        "[prim] GitHub repository binding is not connected — run `prim github connect` when you're ready\n",
       );
     } else {
       process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);

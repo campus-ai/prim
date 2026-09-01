@@ -433,7 +433,7 @@ export function classifyRepositoryBinding(
     return {
       name: "repo-binding",
       status: "warn",
-      detail: `${localDetail} — local capture is active, but file scoping, Conflict Gate verification, and commit correlation are unavailable; ask an organization owner/admin to grant the Primitive GitHub App access (retried automatically next SessionStart)`,
+      detail: `${localDetail} — local capture is active; run \`prim github connect\` to connect this GitHub repository`,
     };
   }
   if (!isValidRepoSyncId(value)) {

@@ -14,12 +14,12 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
 } from "../lib/post-commit-hook.js";
-import { bindRepository } from "../lib/repository-binding.js";
+import { bindRepository, resolveRepositoryBinding } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
   CODEX_PRIM_REMINDER,
@@ -58,12 +58,15 @@ vi.mock("../lib/activation.js", () => ({
   repoActiveFlag: vi.fn(),
   setRepoActive: vi.fn(),
 }));
-vi.mock("../lib/git.js", () => ({ gitToplevel: vi.fn() }));
+vi.mock("../lib/git.js", () => ({ githubRepositoryFullName: vi.fn(), gitToplevel: vi.fn() }));
 vi.mock("../lib/post-commit-hook.js", () => ({
   ensureEffectivePostCommitHook: vi.fn(),
   ensureEffectivePostRewriteHook: vi.fn(),
 }));
-vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
+vi.mock("../lib/repository-binding.js", () => ({
+  bindRepository: vi.fn(),
+  resolveRepositoryBinding: vi.fn(),
+}));
 vi.mock("../lib/workspace-id.js", () => ({ getOrCreateWorkspaceId: vi.fn() }));
 
 const ENVELOPE = JSON.stringify({
@@ -79,6 +82,19 @@ const EXPECTED_CODEX_REMINDER =
 const CODEX_VERSION = packageVersion() ?? "0.0.0";
 const CODEX_DOWN_REPORT = `primitive ${CODEX_VERSION} (daemon: down · Decision ingestion disabled)`;
 const CODEX_LIVE_REPORT = `primitive ${CODEX_VERSION} (daemon: live, Decision ingestion disabled · team: 3 online)`;
+const CONNECTED_BINDING = {
+  status: "connected",
+  repoSyncId: "repoSync123",
+  repositoryFullName: "campus-ai/primitive",
+} as const;
+const UNBOUND_BINDING = {
+  status: "unbound",
+  repositoryFullName: "campus-ai/primitive",
+} as const;
+const EXPECTED_CONNECTED_BINDING_REMINDER =
+  'The current GitHub repository is connected to Primitive. In your first response, begin with exactly: "GitHub repository connected to Primitive: campus-ai/primitive." Then continue the user\'s request.';
+const EXPECTED_UNBOUND_BINDING_REMINDER =
+  "The current GitHub repository is not connected to Primitive. Before doing task work, ask exactly: \"This GitHub repository isn't connected to Primitive yet. Would you like me to start the one-time GitHub connection now?\" Wait for the user's answer. If they approve, run `npx --yes @primitive.ai/prim github connect`, drive the browser-based GitHub App workflow, report its actual outcome concisely, and resume work. If they decline or the connection does not complete, continue without asking again in this session. Do not use owner/admin escalation or capability-loss warnings.";
 
 // The codex branch runs prepareCodexContext for real (its transport
 // collaborators are mocked above), and its status/digest state lives under $HOME —
@@ -118,6 +134,8 @@ beforeEach(() => {
   });
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
+  vi.mocked(githubRepositoryFullName).mockReturnValue("campus-ai/primitive");
+  vi.mocked(resolveRepositoryBinding).mockRejectedValue(new Error("offline"));
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
 });
 
@@ -191,6 +209,39 @@ describe("processSessionStart", () => {
     expect(daemonOrder).toBeLessThan(refreshOrder);
   });
 
+  it("tells Claude to confirm an active checkout's connected binding before the task", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(bindRepository).mockResolvedValue(CONNECTED_BINDING);
+
+    const result = await processSessionStart(ENVELOPE, "claude_code");
+
+    expect(result.output).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: EXPECTED_CONNECTED_BINDING_REMINDER,
+      },
+    });
+    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+  });
+
+  it("asks once for connection in an inactive GitHub checkout without persisting state", async () => {
+    vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND_BINDING);
+
+    const result = await processSessionStart(ENVELOPE, "claude_code");
+
+    expect(result.output).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: EXPECTED_UNBOUND_BINDING_REMINDER,
+      },
+    });
+    expect(bindRepository).not.toHaveBeenCalled();
+    expect(resolveRepositoryBinding).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ quietRefresh: true }),
+    );
+  });
+
   it("refreshes only user scope and requests a reload in an inactive repo", async () => {
     vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 1 });
 
@@ -214,6 +265,23 @@ describe("processSessionStart", () => {
     expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", { includeProject: false });
     expect(getOrCreateWorkspaceId).not.toHaveBeenCalled();
     expect(leaseDecisionFeedback).not.toHaveBeenCalled();
+    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for a non-GitHub origin or an unverified binding", async () => {
+    vi.mocked(githubRepositoryFullName).mockReturnValue(null);
+
+    const nonGithub = await processSessionStart(ENVELOPE, "claude_code");
+
+    expect(nonGithub.output).toEqual({});
+    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+
+    vi.mocked(githubRepositoryFullName).mockReturnValue("campus-ai/primitive");
+    vi.mocked(resolveRepositoryBinding).mockRejectedValue(new Error("network unavailable"));
+
+    const unavailable = await processSessionStart(ENVELOPE, "claude_code");
+
+    expect(unavailable.output).toEqual({});
   });
 
   it("emits neither reminder nor reload when no recognized skill is installed", async () => {

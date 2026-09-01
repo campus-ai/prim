@@ -536,8 +536,8 @@ describe("repository binding diagnostics", () => {
       status: "warn",
       detail: expect.stringContaining("repository is unbound"),
     });
-    expect(check.detail).toContain("organization owner/admin");
-    expect(check.detail).toContain("retried automatically next SessionStart");
+    expect(check.detail).toContain("prim github connect");
+    expect(check.detail).not.toContain("organization owner/admin");
     expect(check.detail).not.toContain("prim enable");
     expect(classifyDoctor([check])).toMatchObject({
       json: { ok: true, status: "warn" },
