@@ -387,7 +387,14 @@ export type GitHubInstallIntentStartErrorResponse =
       feature: "github-connect";
     }
   | {
+      error: "WorkOS identity authority is temporarily unavailable";
+    }
+  | {
       error: "github_install_intent_conflict";
+    }
+  | {
+      error: "github_install_intent_rate_limited";
+      retryAt: number;
     };
 
 export interface GitHubInstallIntentStartResponse {
@@ -406,6 +413,9 @@ export type GitHubInstallIntentStatusErrorResponse =
     }
   | {
       error: "interactive_workos_authority_required";
+    }
+  | {
+      error: "WorkOS identity authority is temporarily unavailable";
     }
   | {
       error: "github_install_intent_not_found";
@@ -473,6 +483,7 @@ export type GitHubInstallIntentStatusResponse =
         | "repository_enumeration_failed"
         | "repository_bound_exceeded"
         | "installation_changed"
+        | "repository_identity_migration_required"
         | "proof_commit_failed";
     };
 
@@ -1301,4 +1312,76 @@ export interface RepositoryBindRequest {
 export interface RepositoryBindResponse {
   repoSyncId: string;
   [k: string]: unknown | undefined;
+}
+
+export interface UserApiKeyListRequest {
+  requestId: string;
+  limit: number;
+  after?: string;
+}
+
+export interface UserApiKeyListResponse {
+  /**
+   * @maxItems 100
+   */
+  apiKeys: {
+    id: string;
+    name: string;
+    obfuscatedValue: string;
+    /**
+     * @maxItems 100
+     */
+    permissions: string[];
+    lastUsedAt: number | null;
+    expiresAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+  }[];
+  nextCursor: string | null;
+}
+
+export interface UserApiKeyMetadata {
+  id: string;
+  name: string;
+  obfuscatedValue: string;
+  /**
+   * @maxItems 100
+   */
+  permissions: string[];
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface UserApiKeyMintRequest {
+  requestId: string;
+  name: string;
+  expiresAt?: number;
+}
+
+export interface UserApiKeyMintResponse {
+  apiKey: {
+    id: string;
+    name: string;
+    obfuscatedValue: string;
+    /**
+     * @maxItems 100
+     */
+    permissions: string[];
+    lastUsedAt: number | null;
+    expiresAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+  };
+  secret: string;
+}
+
+export interface UserApiKeyRevokeRequest {
+  requestId: string;
+}
+
+export interface UserApiKeyRevokeResponse {
+  apiKeyId: string;
+  revoked: true;
 }

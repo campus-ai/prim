@@ -7,6 +7,7 @@ import type {
   GitHubInstallIntentStart,
   GitHubInstallIntentStatus,
 } from "../lib/github-install-intent.js";
+import { createGitHubInstallIntent } from "../lib/github-install-intent.js";
 import {
   type GithubConnectDependencies,
   performGithubConnect,
@@ -238,6 +239,80 @@ describe("prim github connect", () => {
     expect(stdout).toHaveBeenCalledExactlyOnceWith(
       JSON.stringify(
         { status: "error", error: "GitHub installation failed: authority_changed" },
+        null,
+        2,
+      ),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("explains the one-time legacy identity repair without retrying the bind", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.bindRepositoryWithClient).mockResolvedValueOnce(UNBOUND);
+    vi.mocked(deps.pollInstallIntent).mockResolvedValueOnce({
+      protocolVersion: 1,
+      mode: "install_intent_v1",
+      found: true,
+      status: "failed_terminal",
+      expiresAt: START.expiresAt,
+      closedAt: NOW + 2_000,
+      failureCode: "repository_identity_migration_required",
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps, { browser: false });
+
+    const message =
+      "Selected repos include an older Primitive connection needing a one-time repair; none changed. In GitHub App settings, exclude that existing repo to connect others, or retry after repair. If it persists, contact an admin or support.";
+    expect(deps.bindRepositoryWithClient).toHaveBeenCalledOnce();
+    expect(stderr.mock.calls.join("")).toContain(message);
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify({ status: "error", error: message }, null, 2),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("renders the canonical 409 admission-limit envelope end to end with retry guidance", async () => {
+    const deps = dependencies();
+    const retryAt = NOW + 60_000;
+    const api: CliClient = {
+      get: vi.fn(),
+      post: vi.fn(async () => {
+        throw new HttpError(409, "HTTP 409", {
+          error: "github_install_intent_rate_limited",
+          retryAt,
+        });
+      }),
+    };
+    vi.mocked(deps.bindRepositoryWithClient).mockResolvedValueOnce(UNBOUND);
+    vi.mocked(deps.getPinnedClient).mockResolvedValueOnce(api);
+    deps.createInstallIntent = createGitHubInstallIntent;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps, { browser: false });
+
+    const message =
+      "GitHub connection is temporarily busy. Finish any GitHub authorization already open, then run `prim github connect` again after 2027-01-15T08:01:00.000Z.";
+    expect(deps.openBrowser).not.toHaveBeenCalled();
+    expect(deps.pollInstallIntent).not.toHaveBeenCalled();
+    expect(api.post).toHaveBeenCalledExactlyOnceWith(
+      "/api/cli/github/install-intents",
+      undefined,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(`[prim] github connect failed: ${message}\n`);
+    expect(stdout).toHaveBeenCalledExactlyOnceWith(
+      JSON.stringify(
+        {
+          status: "error",
+          error: message,
+          code: "github_install_intent_rate_limited",
+          retryAt,
+          retryCommand: "prim github connect",
+          resume: "Finish any GitHub authorization already open, then retry.",
+        },
         null,
         2,
       ),
