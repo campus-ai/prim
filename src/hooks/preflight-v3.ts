@@ -38,18 +38,26 @@ export type PreflightClientMode = "block" | "warn";
 export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; proposal: string };
 export type PreflightResponse = PreflightResponseV3;
 // biome-ignore format: compact internal shapes keep this boundary auditable
-export type TargetResolution = { paths: string[]; coverage: Coverage; mutation: "none" | "present" };
+export type TargetResolution = {
+  paths: string[];
+  coverage: Coverage;
+  mutation: "none" | "present";
+  definite?: true;
+};
 // biome-ignore format: compact internal shapes keep this boundary auditable
 type TargetArgs = { toolName: string; toolInput: unknown; agent: Agent; cwd: string };
 export function resolvePreflightTargets(args: TargetArgs): TargetResolution {
   let rawPaths: string[];
   let coverage: Coverage = "complete";
   let mutation: "none" | "present" = "present";
-  if (args.agent === "claude_code" && args.toolName === "Bash") {
+  let definite = false;
+  if ((args.agent === "claude_code" || args.agent === "codex") && args.toolName === "Bash") {
     const command =
-      args.toolInput && typeof args.toolInput === "object"
-        ? (args.toolInput as Record<string, unknown>).command
-        : undefined;
+      typeof args.toolInput === "string"
+        ? args.toolInput
+        : args.toolInput && typeof args.toolInput === "object"
+          ? (args.toolInput as Record<string, unknown>).command
+          : undefined;
     if (typeof command !== "string") {
       return { paths: [], coverage: "unverified", mutation: "present" };
     }
@@ -57,11 +65,13 @@ export function resolvePreflightTargets(args: TargetArgs): TargetResolution {
     rawPaths = shell.paths;
     coverage = shell.coverage;
     mutation = shell.mutation;
+    definite = shell.definiteEdit === true;
   } else {
     const extracted = extractFileTargets(args.toolName, args.toolInput, args.agent);
     if (!extracted) return { paths: [], coverage: "complete", mutation: "none" };
     rawPaths = extracted.paths;
     if (!extracted.complete) coverage = "unverified";
+    definite = true;
   }
   const root = canonicalGitRoot(args.cwd);
   const paths = new Set<string>();
@@ -72,7 +82,11 @@ export function resolvePreflightTargets(args: TargetArgs): TargetResolution {
   }
   const bounded = [...paths];
   if (bounded.length > MAX_PREFLIGHT_PATHS) coverage = "unverified";
-  return { paths: bounded.slice(0, MAX_PREFLIGHT_PATHS), coverage, mutation };
+  const resolved = bounded.slice(0, MAX_PREFLIGHT_PATHS);
+  if (definite && resolved.length === 0 && mutation === "present") {
+    return { paths: resolved, coverage: "unverified", mutation, definite: true };
+  }
+  return { paths: resolved, coverage, mutation };
 }
 function truncateUtf8(value: string, maxBytes: number): string {
   const encoded = Buffer.from(value);

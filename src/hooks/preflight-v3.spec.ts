@@ -80,6 +80,85 @@ describe("resolvePreflightTargets", () => {
     ).toEqual({ paths: ["src/a.ts"], coverage: "unverified", mutation: "present" });
   });
 
+  it("uses Codex Bash shell analysis with the same literal redirect coverage", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "Bash",
+        toolInput: { command: "printf x > src/a.ts" },
+        agent: "codex",
+        cwd: root,
+      }),
+    ).toEqual({ paths: ["src/a.ts"], coverage: "complete", mutation: "present" });
+  });
+
+  it("accepts a raw-string Bash command for Codex", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "Bash",
+        toolInput: "printf x > src/raw.ts",
+        agent: "codex",
+        cwd: root,
+      }),
+    ).toEqual({ paths: ["src/raw.ts"], coverage: "complete", mutation: "present" });
+  });
+
+  it("resolves a Codex Bash apply_patch heredoc completely", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "Bash",
+        toolInput: {
+          command: [
+            "apply_patch <<'PATCH'",
+            "*** Begin Patch",
+            "*** Update File: src/a.ts",
+            "*** End Patch",
+            "PATCH",
+          ].join("\n"),
+        },
+        agent: "codex",
+        cwd: root,
+      }),
+    ).toEqual({ paths: ["src/a.ts"], coverage: "complete", mutation: "present" });
+  });
+
+  it("keeps an unparseable Codex Bash envelope non-definite", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "Bash",
+        toolInput: { command: 42 },
+        agent: "codex",
+        cwd: root,
+      }),
+    ).toEqual({ paths: [], coverage: "unverified", mutation: "present" });
+  });
+
+  it("marks a recognized but unparseable Codex apply_patch envelope definite", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "apply_patch",
+        toolInput: { input: 42 },
+        agent: "codex",
+        cwd: root,
+      }),
+    ).toEqual({
+      paths: [],
+      coverage: "unverified",
+      mutation: "present",
+      definite: true,
+    });
+  });
+
+  it("keeps unknown Claude Bash work non-definite", () => {
+    expect(
+      resolvePreflightTargets({
+        toolName: "Bash",
+        toolInput: { command: "npm run build" },
+        agent: "claude_code",
+        cwd: root,
+      }),
+    ).toEqual({ paths: [], coverage: "unverified", mutation: "present" });
+  });
+
   it("marks non-files and outside paths unverified rather than inventing a scope", () => {
     expect(
       resolvePreflightTargets({
@@ -88,7 +167,12 @@ describe("resolvePreflightTargets", () => {
         agent: "claude_code",
         cwd: root,
       }),
-    ).toEqual({ paths: [], coverage: "unverified", mutation: "present" });
+    ).toEqual({
+      paths: [],
+      coverage: "unverified",
+      mutation: "present",
+      definite: true,
+    });
   });
 });
 

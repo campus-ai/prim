@@ -14,10 +14,11 @@
  *      code 2, but is otherwise informational).
  *   2. Exit code is 0 on every happy / fail-open path. Non-zero exits cause
  *      Claude Code to treat the hook as broken, which is louder than we want.
- *   3. INFRASTRUCTURE failures NEVER block the user. Before a mutation can be
- *      identified, malformed or irrelevant input fails open silently. Once a
- *      mutation is identified, service failure or an unverified target fails
- *      open with a visible "not verified" warning, never a clean allow.
+ *   3. INFRASTRUCTURE failures NEVER block the user. Before a definite
+ *      mutation can be identified, malformed or irrelevant input fails open
+ *      silently. Once a mutation is identified, service failure or an
+ *      unverified target fails open with a visible "not verified" warning,
+ *      never a clean allow.
  *
  * Config knobs (env vars):
  *   PRIM_BYPASS=1                 — skip the check entirely
@@ -212,7 +213,7 @@ async function main(): Promise<void> {
     await emit(failOpen());
     return;
   }
-  if (targets.paths.length === 0) {
+  if (targets.paths.length === 0 && !targets.definite) {
     await emit(failOpen());
     return;
   }

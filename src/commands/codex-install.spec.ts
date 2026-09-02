@@ -48,9 +48,9 @@ describe("codex applyInstall", () => {
     expect(JSON.stringify(out.hooks)).not.toMatch(/@latest|command -v|node_modules\/\.bin/);
   });
 
-  it("matches apply_patch and writes shim commands that keep --agent codex", () => {
+  it("matches apply_patch|Bash and writes shim commands that keep --agent codex", () => {
     const out = applyInstall(EMPTY);
-    const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch");
+    const preGate = out.hooks?.PreToolUse?.find((e) => e.matcher === "apply_patch|Bash");
     const postIngest = out.hooks?.PostToolUse?.find((e) => e.matcher === "apply_patch|Bash");
     expect(preGate?.hooks?.[0].command).toBe(
       stableHookCommand("prim-pre-tool-use", "--agent codex"),
@@ -62,14 +62,14 @@ describe("codex applyInstall", () => {
     expect(preGate?.hooks?.[0].command).not.toBe("prim-pre-tool-use --agent codex");
   });
 
-  it("carries two entries on PreToolUse (capture * + gate apply_patch)", () => {
+  it("carries two entries on PreToolUse (capture * + gate apply_patch|Bash)", () => {
     const out = applyInstall(EMPTY);
     expect(out.hooks?.PreToolUse).toHaveLength(2);
     expect(out.hooks?.PreToolUse?.[0].matcher).toBe("*");
     expect(commandMatchesBin(out.hooks?.PreToolUse?.[0].hooks?.[0].command, "prim-hook")).toBe(
       true,
     );
-    expect(out.hooks?.PreToolUse?.[1].matcher).toBe("apply_patch");
+    expect(out.hooks?.PreToolUse?.[1].matcher).toBe("apply_patch|Bash");
   });
 
   it("registers prim-session-start on SessionStart alongside capture", () => {
@@ -143,11 +143,32 @@ describe("codex applyInstall", () => {
       },
     };
     const out = applyInstall(legacy);
-    const gateEntries = (out.hooks?.PreToolUse ?? []).filter((e) => e.matcher === "apply_patch");
+    const gateEntries = (out.hooks?.PreToolUse ?? []).filter(
+      (e) => e.matcher === "apply_patch|Bash",
+    );
     expect(gateEntries).toHaveLength(1);
     expect(gateEntries[0].hooks?.[0].command).toBe(
       stableHookCommand("prim-pre-tool-use", "--agent codex"),
     );
+  });
+
+  it("widens a previously installed narrow gate matcher on plain re-install", () => {
+    const legacy = applyInstall(EMPTY);
+    const gate = legacy.hooks?.PreToolUse?.find((entry) =>
+      entry.hooks?.some((hook) => commandMatchesBin(hook.command, "prim-pre-tool-use")),
+    );
+    if (!gate) throw new Error("Expected Codex gate registration");
+    gate.matcher = "apply_patch";
+
+    expect(hasCompleteHookRegistration(legacy)).toBe(false);
+
+    const upgraded = applyInstall(legacy);
+    const gateEntries = (upgraded.hooks?.PreToolUse ?? []).filter((entry) =>
+      entry.hooks?.some((hook) => commandMatchesBin(hook.command, "prim-pre-tool-use")),
+    );
+    expect(gateEntries).toHaveLength(1);
+    expect(gateEntries[0].matcher).toBe("apply_patch|Bash");
+    expect(hasCompleteHookRegistration(upgraded)).toBe(true);
   });
 });
 

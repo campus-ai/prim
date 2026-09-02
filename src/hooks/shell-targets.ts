@@ -1,9 +1,10 @@
 import { type Command, type Redirect, type Statement, type Word, parse } from "unbash";
+import { parseApplyPatchTargets } from "./pre-tool-use-scoring.js";
 const OUTPUT_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
 const READ_ONLY_COMMANDS = new Set(": cat echo false printf pwd test true [".split(" "));
 const SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
 const STATIC_PARTS = new Set(["Literal", "SingleQuoted", "AnsiCQuoted"]);
-type State = { paths: Set<string>; complete: boolean; mutation: boolean };
+type State = { paths: Set<string>; complete: boolean; mutation: boolean; definiteEdit: boolean };
 type OptionSpec = {
   shortFlags?: string;
   shortValues?: string;
@@ -513,6 +514,31 @@ function visitRedirect(redirect: Redirect, state: State): void {
     recordTarget(redirect.target, state);
   else unknown(state);
 }
+function visitApplyPatch(command: Command, state: State): void {
+  state.mutation = true;
+  state.definiteEdit = true;
+  let hasBody = false;
+  if (command.suffix.length > 0) state.complete = false;
+  for (const redirect of command.redirects) {
+    if (redirect.operator !== "<<") {
+      visitRedirect(redirect, state);
+      continue;
+    }
+    if (typeof redirect.content !== "string") {
+      state.complete = false;
+      continue;
+    }
+    hasBody = true;
+    if (redirect.heredocQuoted !== true && redirect.body !== undefined) {
+      state.complete = false;
+      continue;
+    }
+    const targets = parseApplyPatchTargets(redirect.content);
+    for (const path of targets.paths) state.paths.add(path);
+    if (!targets.complete) state.complete = false;
+  }
+  if (!hasBody) state.complete = false;
+}
 function operands(words: Word[], short = "", long: ReadonlySet<string> = new Set()) {
   const result: string[] = [];
   let optionsEnded = false;
@@ -531,10 +557,25 @@ function operands(words: Word[], short = "", long: ReadonlySet<string> = new Set
   return result;
 }
 function visitCommand(command: Command, state: State): void {
-  for (const redirect of command.redirects) visitRedirect(redirect, state);
   const name = staticWord(command.name);
-  if (!name || name.includes("/") || command.suffix.some((word) => !staticWord(word))) {
+  // unbash preserves tabs in `<<-` bodies, so leave those on the conservative
+  // generic path rather than treating their apparent patch headers as exact.
+  const literalApplyPatch =
+    name === "apply_patch" && !command.redirects.some((redirect) => redirect.operator === "<<-");
+  if (literalApplyPatch) {
+    visitApplyPatch(command, state);
+  } else {
+    for (const redirect of command.redirects) visitRedirect(redirect, state);
+  }
+  if (
+    !name ||
+    name.includes("/") ||
+    (!literalApplyPatch && command.suffix.some((word) => !staticWord(word)))
+  ) {
     unknown(state);
+  } else if (literalApplyPatch) {
+    // visitApplyPatch handles its heredoc payload and deliberately marks
+    // argv-delivered forms incomplete.
   } else if (
     !READ_ONLY_COMMANDS.has(name) &&
     !knownNoWorktreeMutation(name, staticArgs(command.suffix) as string[])
@@ -590,13 +631,19 @@ export function analyzeShellTargets(source: string) {
     return { paths: [], coverage: "complete" as const, mutation: "none" as const };
   try {
     const script = parse(source);
-    const state: State = { paths: new Set(), complete: !script.errors?.length, mutation: false };
+    const state: State = {
+      paths: new Set(),
+      complete: !script.errors?.length,
+      mutation: false,
+      definiteEdit: false,
+    };
     for (const statement of script.commands) visitStatement(statement, state);
     if (script.errors?.length) state.mutation = true;
     return {
       paths: [...state.paths],
       coverage: state.complete ? ("complete" as const) : ("unverified" as const),
       mutation: state.mutation ? ("present" as const) : ("none" as const),
+      ...(state.definiteEdit ? { definiteEdit: true as const } : {}),
     };
   } catch {
     return { paths: [], coverage: "unverified" as const, mutation: "present" as const };

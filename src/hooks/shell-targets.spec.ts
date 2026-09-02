@@ -187,6 +187,109 @@ describe("analyzeShellTargets", () => {
     });
   });
 
+  it("extracts a quoted apply_patch heredoc as a definite edit", () => {
+    expect(
+      analyzeShellTargets(
+        [
+          "apply_patch <<'PATCH'",
+          "*** Begin Patch",
+          "*** Update File: src/quoted.ts",
+          "*** End Patch",
+          "PATCH",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      paths: ["src/quoted.ts"],
+      coverage: "complete",
+      mutation: "present",
+      definiteEdit: true,
+    });
+  });
+
+  it("extracts a pure-literal unquoted apply_patch heredoc", () => {
+    expect(
+      analyzeShellTargets(
+        [
+          "apply_patch <<PATCH",
+          "*** Begin Patch",
+          "*** Update File: src/unquoted.ts",
+          "*** End Patch",
+          "PATCH",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      paths: ["src/unquoted.ts"],
+      coverage: "complete",
+      mutation: "present",
+      definiteEdit: true,
+    });
+  });
+
+  it.each([
+    [
+      "an expansion-bearing body",
+      [
+        "apply_patch <<PATCH",
+        "*** Begin Patch",
+        "*** Update File: $TARGET",
+        "*** End Patch",
+        "PATCH",
+      ].join("\n"),
+    ],
+    ["a markerless body", ["apply_patch <<'PATCH'", "not a patch", "PATCH"].join("\n")],
+    ["argv-delivered input", "apply_patch '*** Update File: src/argv.ts'"],
+  ])("marks %s unverified while retaining the definite-edit signal", (_name, source) => {
+    expect(analyzeShellTargets(source)).toEqual({
+      paths: [],
+      coverage: "unverified",
+      mutation: "present",
+      definiteEdit: true,
+    });
+  });
+
+  it("retains apply_patch paths alongside later shell edits", () => {
+    expect(
+      analyzeShellTargets(
+        [
+          "apply_patch <<'PATCH'",
+          "*** Begin Patch",
+          "*** Update File: src/patch.ts",
+          "*** End Patch",
+          "PATCH",
+          "printf x > src/output.ts",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      paths: ["src/patch.ts", "src/output.ts"],
+      coverage: "complete",
+      mutation: "present",
+      definiteEdit: true,
+    });
+  });
+
+  it.each([
+    [
+      "a path-prefixed command",
+      ["./apply_patch <<'PATCH'", "*** Update File: src/prefixed.ts", "PATCH"].join("\n"),
+    ],
+    [
+      "a tab-stripped heredoc",
+      [
+        "apply_patch <<-PATCH",
+        "\t*** Begin Patch",
+        "\t*** Update File: src/tabbed.ts",
+        "\t*** End Patch",
+        "\tPATCH",
+      ].join("\n"),
+    ],
+  ])("keeps %s on the generic non-definite path", (_name, source) => {
+    expect(analyzeShellTargets(source)).toEqual({
+      paths: [],
+      coverage: "unverified",
+      mutation: "present",
+    });
+  });
+
   it("treats malformed syntax as unverified instead of throwing", () => {
     expect(analyzeShellTargets("if then (")).toEqual({
       paths: [],

@@ -187,6 +187,30 @@ describe("resolveHookFileRefs", () => {
     });
   });
 
+  it("resolves Codex apply_patch refs from its patch envelope", () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-codex-patch-")));
+    const enriched = enrichHookPayloadWithFileRefs({
+      parsed: {
+        hook_event_name: "PostToolUse",
+        tool_name: "apply_patch",
+        tool_input: {
+          patch: "*** Begin Patch\n*** Update File: src/from-patch.ts\n*** End Patch",
+        },
+      },
+      agent: "codex",
+      cwd: root,
+      repository: { repoRoot: root, repoKey: "repo_v1_test" },
+    });
+
+    expect(enriched.resolution).toMatchObject({
+      fileRefs: ["src/from-patch.ts"],
+      targetsIncomplete: false,
+    });
+    expect(enriched.parsed).toHaveProperty("primitive", {
+      fileRefs: ["src/from-patch.ts"],
+    });
+  });
+
   it("marks partial and malformed Hermes patches incomplete", () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-hermes-partial-")));
     const repository = { repoRoot: root, repoKey: "repo_v1_test" };
@@ -298,6 +322,29 @@ describe("resolveHookFileRefs", () => {
     });
     expect(mutation.parsed).toHaveProperty("primitive", {
       fileRefs: ["src/a.ts"],
+      shellMutation: "resolved",
+    });
+  });
+
+  it("resolves a raw-string Codex Bash command", () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-codex-raw-bash-")));
+    const enriched = enrichHookPayloadWithFileRefs({
+      parsed: {
+        hook_event_name: "PostToolUse",
+        tool_name: "Bash",
+        tool_input: "printf x > src/raw.ts",
+      },
+      agent: "codex",
+      cwd: root,
+      repository: { repoRoot: root, repoKey: "repo_v1_test" },
+    });
+
+    expect(enriched.resolution).toMatchObject({
+      fileRefs: ["src/raw.ts"],
+      shellMutation: "resolved",
+    });
+    expect(enriched.parsed).toHaveProperty("primitive", {
+      fileRefs: ["src/raw.ts"],
       shellMutation: "resolved",
     });
   });

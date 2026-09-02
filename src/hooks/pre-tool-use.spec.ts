@@ -210,17 +210,53 @@ describe("PreToolUse entrypoint (codex)", () => {
     expect(acknowledge).toHaveBeenCalledWith(true);
   });
 
-  it("stays silent when mutation targets cannot be determined", async () => {
+  it("stays silent when a mutation resolution is non-definite", async () => {
     mocks.resolvePreflightTargets.mockReturnValue({
-      mutation: "edit",
+      mutation: "present",
       paths: [],
-      coverage: "none",
+      coverage: "unverified",
     });
 
     const output = await runHook();
 
     expect(output).toEqual({});
     expect(mocks.prepareCodexContext).not.toHaveBeenCalled();
+    expect(mocks.requestPreflight).not.toHaveBeenCalled();
+  });
+
+  it("sends a definite zero-target mutation and renders a server deny", async () => {
+    mocks.resolvePreflightTargets.mockReturnValue({
+      mutation: "present",
+      paths: [],
+      coverage: "unverified",
+      definite: true,
+    });
+    mocks.resultForPreflight.mockReturnValue(
+      conflictResult("deny", "Policy blocks unscoped edits"),
+    );
+
+    const output = await runHook();
+
+    expect(output.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({ paths: [], coverage: "unverified" }),
+    );
+    expect(mocks.requestPreflight).toHaveBeenCalledOnce();
+  });
+
+  it("sends a definite zero-target mutation and permits a server allow", async () => {
+    mocks.resolvePreflightTargets.mockReturnValue({
+      mutation: "present",
+      paths: [],
+      coverage: "unverified",
+      definite: true,
+    });
+    mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
+
+    const output = await runHook();
+
+    expect(output).toEqual({});
+    expect(mocks.requestPreflight).toHaveBeenCalledOnce();
   });
 
   it("falls back to the plain verdict when context preparation throws", async () => {
