@@ -300,13 +300,53 @@ describe("extractFilePaths", () => {
     ]);
   });
 
-  it("returns empty for a non-apply_patch Codex tool (fail-open)", () => {
+  it.each([
+    ["a raw patch string", "*** Update File: src/raw.ts", "src/raw.ts"],
+    ["the input field", { input: "*** Update File: src/input.ts" }, "src/input.ts"],
+    ["the patch field", { patch: "*** Update File: src/patch.ts" }, "src/patch.ts"],
+  ])("parses Codex apply_patch text from %s", (_source, toolInput, expectedPath) => {
+    expect(extractFileTargets("apply_patch", toolInput, "codex")).toMatchObject({
+      complete: true,
+    });
+    expect(extractFilePaths("apply_patch", toolInput, "codex")).toEqual([expectedPath]);
+  });
+
+  it("prefers the first string Codex patch field", () => {
+    expect(
+      extractFilePaths(
+        "apply_patch",
+        {
+          command: "*** Update File: src/command.ts",
+          input: "*** Update File: src/input.ts",
+          patch: "*** Update File: src/patch.ts",
+        },
+        "codex",
+      ),
+    ).toEqual(["src/command.ts"]);
+    expect(
+      extractFilePaths(
+        "apply_patch",
+        {
+          command: 42,
+          input: "*** Update File: src/input.ts",
+          patch: "*** Update File: src/patch.ts",
+        },
+        "codex",
+      ),
+    ).toEqual(["src/input.ts"]);
+  });
+
+  it("leaves Codex Bash to shell-target analysis", () => {
     expect(extractFilePaths("Bash", { command: "ls" }, "codex")).toEqual([]);
   });
 
-  it("returns empty for a malformed Codex apply_patch input", () => {
+  it("marks an unrecognized Codex apply_patch envelope incomplete instead of ignoring it", () => {
     expect(extractFilePaths("apply_patch", null, "codex")).toEqual([]);
     expect(extractFilePaths("apply_patch", { command: 42 }, "codex")).toEqual([]);
+    expect(extractFileTargets("apply_patch", { input: 42 }, "codex")).toEqual({
+      paths: [],
+      complete: false,
+    });
   });
 
   it("keeps known Codex paths but marks unknown or orphan directives incomplete", () => {

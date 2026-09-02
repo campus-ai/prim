@@ -19,14 +19,16 @@
  *     daemon-cached Decision digest. Stop stays capture-only so Primitive never
  *     replaces a completed assistant handoff with a synthetic continuation.
  *   - prim-pre-tool-use (the conflict gate) and prim-post-tool-use (server move
- *     ingest + verdict footer) on `apply_patch`, Codex's edit tool.
+ *     ingest + verdict footer) on `apply_patch|Bash`, covering Codex's edit
+ *     tool and unified shell execution.
  *   - prim-session-start on SessionStart, so the daemon's presence reflects it.
  *
  * Codex divergences from the Claude surface:
  *   - the target is a dedicated `.codex/hooks.json` (not a settings.json); the
  *     status report is delivered through supported hook context fields.
- *   - the edit tool is `apply_patch`, so the gate/ingest hooks match it (not
- *     Edit|Write|MultiEdit).
+ *   - the gate and ingest hooks match `apply_patch|Bash` (not
+ *     Edit|Write|MultiEdit), covering both direct patch calls and unified shell
+ *     execution.
  *   - no SessionEnd (Codex fires no such event) and no scriptable status
  *     footer (Codex's `tui.status_line` renders built-in items only);
  *     SessionStart/UserPromptSubmit context carries the live report instead.
@@ -59,7 +61,7 @@ const GATE_BIN = "prim-pre-tool-use";
 const POST_TOOL_USE_BIN = "prim-post-tool-use";
 const SESSION_START_BIN = "prim-session-start";
 const CODEX_ARGS = "--agent codex";
-const CODEX_EDIT_MATCHER = "apply_patch";
+const CODEX_EDIT_MATCHER = "apply_patch|Bash";
 const CODEX_POST_TOOL_MATCHER = "apply_patch|Bash";
 const JSON_INDENT = 2;
 
@@ -78,7 +80,7 @@ const PRIM_BINS: readonly string[] = [CAPTURE_BIN, GATE_BIN, POST_TOOL_USE_BIN, 
 
 // Mirror of claude-install's REGISTRATIONS, retargeted to Codex: capture on
 // every event at the wildcard matcher; the gate and the PostToolUse ingest hook
-// ride `apply_patch`; session-start notifies the daemon. PreToolUse and
+// ride `apply_patch|Bash`; session-start notifies the daemon. PreToolUse and
 // PostToolUse each carry two prim entries (capture + their dedicated hook),
 // which is intended.
 const CODEX_REGISTRATIONS: Registration[] = [

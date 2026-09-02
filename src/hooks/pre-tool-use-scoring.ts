@@ -325,18 +325,24 @@ export function parseApplyPatchTargets(command: string): FileTargets {
 export const parseApplyPatchPaths = (command: string): string[] =>
   parseApplyPatchTargets(command).paths;
 function extractCodexFileTargets(toolName: string, toolInput: unknown): FileTargets | null {
-  // Only `apply_patch` exposes files the conflict-check can key on; Bash and
-  // other tools pass through unchecked (fail-open).
+  // `apply_patch` exposes its patch text in Codex's usual `{ command }`
+  // envelope, but generic function-tool paths may send a raw string or a
+  // differently named string field. Bash is resolved by shell analysis.
   if (toolName !== "apply_patch") {
     return null;
   }
-  if (!toolInput || typeof toolInput !== "object") {
-    return { paths: [], complete: false };
+  const text = codexPatchText(toolInput);
+  return text !== null ? parseApplyPatchTargets(text) : { paths: [], complete: false };
+}
+function codexPatchText(toolInput: unknown): string | null {
+  if (typeof toolInput === "string") return toolInput;
+  if (!toolInput || typeof toolInput !== "object") return null;
+  const input = toolInput as Record<string, unknown>;
+  for (const key of ["command", "input", "patch"]) {
+    const value = input[key];
+    if (typeof value === "string") return value;
   }
-  const command = (toolInput as Record<string, unknown>).command;
-  return typeof command === "string"
-    ? parseApplyPatchTargets(command)
-    : { paths: [], complete: false };
+  return null;
 }
 // Hermes routes file edits through write_file and patch; terminal and other
 // tools pass through unchecked (fail-open). write_file and a `replace` patch
