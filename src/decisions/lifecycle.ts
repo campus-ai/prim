@@ -26,7 +26,14 @@ import {
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
-export type DecisionLifecycleOperation = "publish" | "restore" | "ratify" | "supersede";
+export type DecisionLifecycleOperation =
+  | "publish"
+  | "restore"
+  | "ratify"
+  | "promote"
+  | "demote"
+  | "withdraw"
+  | "supersede";
 
 export const DECISION_LIFECYCLE_TIMEOUT_MS = 10_000;
 
@@ -48,6 +55,8 @@ export type DecisionLifecycleFailureCode =
   | "invalid_replacement"
   | "decision_not_found"
   | "replacement_not_found"
+  | "feature_disabled"
+  | "feature_check_unavailable"
   | "unsupported_server"
   | "rejected"
   | "invalid_request"
@@ -80,6 +89,9 @@ const EXPECTED_STAGE = {
   publish: "provisional",
   restore: "draft",
   ratify: "adopted",
+  promote: "adopted",
+  demote: "provisional",
+  withdraw: "abandoned",
   supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, DecisionStageSuccessResponse["stage"]>;
 
@@ -87,6 +99,11 @@ const PATH = {
   publish: "/api/cli/decisions/publish",
   restore: "/api/cli/decisions/restore",
   ratify: "/api/cli/decisions/ratify",
+  // `promote` is the human-facing alias for the established ratify wire
+  // operation; no second server transition or contract endpoint exists.
+  promote: "/api/cli/decisions/ratify",
+  demote: "/api/cli/decisions/demote",
+  withdraw: "/api/cli/decisions/withdraw",
   supersede: "/api/cli/decisions/supersede",
 } as const satisfies Record<DecisionLifecycleOperation, string>;
 
@@ -94,6 +111,9 @@ const PAST_PARTICIPLE = {
   publish: "published",
   restore: "restored",
   ratify: "ratified",
+  promote: "promoted",
+  demote: "demoted",
+  withdraw: "withdrawn",
   supersede: "superseded",
 } as const satisfies Record<DecisionLifecycleOperation, string>;
 
@@ -105,6 +125,8 @@ const DECISION_NOT_FOUND_MESSAGE = "Decision not found";
 const REPLACEMENT_NOT_FOUND_MESSAGE = "Replacement decision not found";
 const SELF_REPLACEMENT_MESSAGE = "A decision cannot supersede itself";
 const OLD_SERVER_NOT_FOUND_MESSAGE = "Not found";
+const FEATURE_DISABLED_MESSAGE = "feature_disabled";
+const FEATURE_CHECK_UNAVAILABLE_MESSAGE = "feature_check_unavailable";
 const STAGE_NAME = "(?:draft|provisional|adopted|superseded|abandoned)";
 const IMMUTABLE_MESSAGE = new RegExp(
   `^An ${STAGE_NAME} decision is immutable — supersede it to change it$`,
@@ -161,6 +183,15 @@ function formatSuccessHuman(
   if (operation === "ratify") {
     return `[prim] ${identifier} ratified as ${response.stage}.`;
   }
+  if (operation === "promote") {
+    return `[prim] ${identifier} promoted as ${response.stage}.`;
+  }
+  if (operation === "demote") {
+    return `[prim] ${identifier} demoted to provisional — advisory again until re-ratified.`;
+  }
+  if (operation === "withdraw") {
+    return `[prim] ${identifier} withdrawn as abandoned — removed from active guidance, not deleted; recover with \`prim decisions restore\`.`;
+  }
 
   const replacement = safeRequestedIdentifier(
     (request as DecisionSupersedeRequest).by,
@@ -191,6 +222,12 @@ function classifyHttpError(error: HttpError): DecisionLifecycleFailure {
   }
   if (error.status === 403 && message === NOT_AUTHOR_MESSAGE) {
     return failure("not_author", DECISION_LIFECYCLE_EXIT.rejected, error.status);
+  }
+  if (error.status === 403 && message === FEATURE_DISABLED_MESSAGE) {
+    return failure("feature_disabled", DECISION_LIFECYCLE_EXIT.rejected, error.status);
+  }
+  if (error.status === 503 && message === FEATURE_CHECK_UNAVAILABLE_MESSAGE) {
+    return failure("feature_check_unavailable", DECISION_LIFECYCLE_EXIT.server, error.status);
   }
   if (error.status === 409 && message === AMBIGUOUS_MESSAGE) {
     return failure("ambiguous_identifier", DECISION_LIFECYCLE_EXIT.rejected, error.status);
@@ -257,6 +294,10 @@ function formatFailureHuman(
       return `[prim] ${verb} rejected: Decision not found.`;
     case "replacement_not_found":
       return "[prim] supersede rejected: replacement Decision not found.";
+    case "feature_disabled":
+      return `[prim] ${verb} rejected: manual lifecycle actions are not enabled for this account.`;
+    case "feature_check_unavailable":
+      return `[prim] ${verb} unavailable: the server could not verify feature availability; retry shortly.`;
     case "unsupported_server":
       return `[prim] ${verb} unavailable: this Primitive server does not support this Decision lifecycle operation; upgrade the server before retrying.`;
     case "rejected":
@@ -351,6 +392,30 @@ export function ratifyDecision(
 ): Promise<number> {
   const request: DecisionIdRequest = { id };
   return executeLifecycle("ratify", request, dependencies);
+}
+
+export function promoteDecision(
+  id: string,
+  dependencies: DecisionLifecycleCommandDependencies = defaultDependencies,
+): Promise<number> {
+  const request: DecisionIdRequest = { id };
+  return executeLifecycle("promote", request, dependencies);
+}
+
+export function demoteDecision(
+  id: string,
+  dependencies: DecisionLifecycleCommandDependencies = defaultDependencies,
+): Promise<number> {
+  const request: DecisionIdRequest = { id };
+  return executeLifecycle("demote", request, dependencies);
+}
+
+export function withdrawDecision(
+  id: string,
+  dependencies: DecisionLifecycleCommandDependencies = defaultDependencies,
+): Promise<number> {
+  const request: DecisionIdRequest = { id };
+  return executeLifecycle("withdraw", request, dependencies);
 }
 
 export function supersedeDecision(

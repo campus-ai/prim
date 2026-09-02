@@ -21,6 +21,8 @@ import {
   isPreflightRequestV3,
   isPreflightRequestV3Structure,
   isRepositoryBindRequest,
+  isWorkosConnectDeviceConfigurationSuccess,
+  isWorkosConnectDeviceConfigurationSuccessStructure,
 } from "./cli-http-v1.js";
 
 const WORKSPACE_ID = "123e4567-e89b-42d3-a456-426614174000";
@@ -102,6 +104,18 @@ function githubInstallIntentStatus(
   };
 }
 
+function workosConnectConfiguration(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    protocol_version: 1,
+    issuer: "https://auth.example.test",
+    client_id: "client_cli",
+    default_scopes: ["openid", "profile", "email", "offline_access"],
+    ...overrides,
+  };
+}
+
 describe("generated CLI HTTP request-core contract", () => {
   it("accepts the artifact's passthrough move and error envelopes", () => {
     expect(isCliErrorResponse({ error: "bad request", status: 400 })).toBe(true);
@@ -149,6 +163,32 @@ describe("generated CLI HTTP request-core contract", () => {
     const outside = preflight({ paths: ["../outside.ts"] });
     expect(isPreflightRequestV3Structure(outside)).toBe(true);
     expect(isPreflightRequestV3(outside)).toBe(false);
+  });
+
+  it("enforces the canonical Connect issuer and exact device scope sequence", () => {
+    expect(isWorkosConnectDeviceConfigurationSuccess(workosConnectConfiguration())).toBe(true);
+
+    const credentialedIssuer = workosConnectConfiguration({
+      issuer: "https://user@auth.example.test",
+    });
+    expect(isWorkosConnectDeviceConfigurationSuccessStructure(credentialedIssuer)).toBe(true);
+    expect(isWorkosConnectDeviceConfigurationSuccess(credentialedIssuer)).toBe(false);
+    expect(
+      isWorkosConnectDeviceConfigurationSuccess(
+        workosConnectConfiguration({ issuer: "https://auth.example.test/" }),
+      ),
+    ).toBe(false);
+    expect(
+      isWorkosConnectDeviceConfigurationSuccess(
+        workosConnectConfiguration({ issuer: " https://auth.example.test" }),
+      ),
+    ).toBe(false);
+
+    const reorderedScopes = workosConnectConfiguration({
+      default_scopes: ["openid", "email", "profile", "offline_access"],
+    });
+    expect(isWorkosConnectDeviceConfigurationSuccessStructure(reorderedScopes)).toBe(true);
+    expect(isWorkosConnectDeviceConfigurationSuccess(reorderedScopes)).toBe(false);
   });
 
   it("enforces feedback workspace, identifier, and uniqueness refinements", () => {

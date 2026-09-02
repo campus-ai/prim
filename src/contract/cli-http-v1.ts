@@ -10,6 +10,7 @@ import type {
   FeedbackLeaseResponse,
   GitHubInstallIntentStatusResponse,
   PreflightRequestV3,
+  WorkosConnectDeviceConfigurationSuccess,
 } from "../generated/cli-http-v1.types.js";
 import {
   isCliAuthStatusResponse,
@@ -53,6 +54,10 @@ import {
   isUserApiKeyMintResponse,
   isUserApiKeyRevokeRequest,
   isUserApiKeyRevokeResponse,
+  isWorkosConnectDeviceConfigurationDisabled,
+  isWorkosConnectDeviceConfigurationError,
+  isWorkosConnectDeviceConfigurationSuccessStructure,
+  isWorkosConnectDeviceConfigurationUnavailable,
 } from "../generated/cli-http-v1.validators.js";
 
 export type * from "../generated/cli-http-v1.types.js";
@@ -99,6 +104,10 @@ export {
   isUserApiKeyMintResponse,
   isUserApiKeyRevokeRequest,
   isUserApiKeyRevokeResponse,
+  isWorkosConnectDeviceConfigurationDisabled,
+  isWorkosConnectDeviceConfigurationError,
+  isWorkosConnectDeviceConfigurationSuccessStructure,
+  isWorkosConnectDeviceConfigurationUnavailable,
 };
 
 const MAX_REPOSITORY_PATH_CHARS = 4_096;
@@ -106,6 +115,7 @@ const MAX_PROPOSAL_BYTES = 6_144;
 const MAX_FEEDBACK_SESSION_ID_CHARS = 256;
 const MAX_FEEDBACK_EVENT_ID_CHARS = 128;
 const MAX_FEEDBACK_DECISION_ID_CHARS = 128;
+const WORKOS_CONNECT_DEVICE_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 const CANONICAL_WORKSPACE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: wire paths reject C0 and DEL.
@@ -150,6 +160,40 @@ function isSafeFeedbackDecisionId(value: string | undefined): value is string {
     value.length > 0 &&
     value.length <= MAX_FEEDBACK_DECISION_ID_CHARS &&
     !hasUnsafeFeedbackIdentifierCharacter(value)
+  );
+}
+
+function isCanonicalHttpsOrigin(value: string): boolean {
+  if (value.trim() !== value) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.origin === value &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate the server-owned Connect discovery semantics that JSON Schema
+ * cannot express: canonical HTTPS issuer and the exact public scope order.
+ */
+export function isWorkosConnectDeviceConfigurationSuccess(
+  value: unknown,
+): value is WorkosConnectDeviceConfigurationSuccess {
+  return (
+    isWorkosConnectDeviceConfigurationSuccessStructure(value) &&
+    isCanonicalHttpsOrigin(value.issuer) &&
+    value.default_scopes.every((scope, index) => scope === WORKOS_CONNECT_DEVICE_SCOPES[index])
   );
 }
 
@@ -335,6 +379,10 @@ export const cliHttpV1Validators = {
   UserApiKeyMintResponse: isUserApiKeyMintResponse,
   UserApiKeyRevokeRequest: isUserApiKeyRevokeRequest,
   UserApiKeyRevokeResponse: isUserApiKeyRevokeResponse,
+  WorkosConnectDeviceConfigurationDisabled: isWorkosConnectDeviceConfigurationDisabled,
+  WorkosConnectDeviceConfigurationError: isWorkosConnectDeviceConfigurationError,
+  WorkosConnectDeviceConfigurationSuccess: isWorkosConnectDeviceConfigurationSuccess,
+  WorkosConnectDeviceConfigurationUnavailable: isWorkosConnectDeviceConfigurationUnavailable,
 } as const satisfies Record<string, (value: unknown) => boolean>;
 
 export type CliHttpV1DefinitionName = keyof typeof cliHttpV1Validators;

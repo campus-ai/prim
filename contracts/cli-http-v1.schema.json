@@ -6,6 +6,16 @@
   "x-primitive-contract-version": 4,
   "x-primitive-scope": "critical-path",
   "x-primitive-operations": {
+    "workosConnectDeviceConfiguration": {
+      "method": "GET",
+      "path": "/api/cli/auth/connect/config",
+      "success": {
+        "$ref": "#/$defs/WorkosConnectDeviceConfigurationSuccess"
+      },
+      "error": {
+        "$ref": "#/$defs/WorkosConnectDeviceConfigurationError"
+      }
+    },
     "authStatus": {
       "method": "GET",
       "path": "/api/cli/auth/status",
@@ -287,6 +297,32 @@
     "decisionsRatify": {
       "method": "POST",
       "path": "/api/cli/decisions/ratify",
+      "request": {
+        "$ref": "#/$defs/DecisionIdRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DecisionStageSuccessResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "decisionsDemote": {
+      "method": "POST",
+      "path": "/api/cli/decisions/demote",
+      "request": {
+        "$ref": "#/$defs/DecisionIdRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DecisionStageSuccessResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "decisionsWithdraw": {
+      "method": "POST",
+      "path": "/api/cli/decisions/withdraw",
       "request": {
         "$ref": "#/$defs/DecisionIdRequest"
       },
@@ -2445,6 +2481,87 @@
       },
       "required": ["repoSyncId"],
       "additionalProperties": {}
+    },
+    "WorkosConnectDeviceConfigurationDisabled": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string",
+          "const": "Not found"
+        }
+      },
+      "required": ["error"],
+      "additionalProperties": false
+    },
+    "WorkosConnectDeviceConfigurationError": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string",
+              "const": "Not found"
+            }
+          },
+          "required": ["error"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string",
+              "const": "connect_device_auth_unavailable"
+            }
+          },
+          "required": ["error"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "WorkosConnectDeviceConfigurationSuccess": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "type": "number",
+          "const": 1
+        },
+        "issuer": {
+          "type": "string",
+          "format": "uri"
+        },
+        "client_id": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^client_[A-Za-z0-9_-]+$"
+        },
+        "default_scopes": {
+          "minItems": 4,
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["openid", "profile", "email", "offline_access"]
+          }
+        }
+      },
+      "required": ["protocol_version", "issuer", "client_id", "default_scopes"],
+      "additionalProperties": false,
+      "x-primitive-runtime-refinements": [
+        "canonical_https_origin",
+        "exact_workos_connect_device_scopes"
+      ]
+    },
+    "WorkosConnectDeviceConfigurationUnavailable": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string",
+          "const": "connect_device_auth_unavailable"
+        }
+      },
+      "required": ["error"],
+      "additionalProperties": false
     },
     "UserApiKeyListRequest": {
       "type": "object",
