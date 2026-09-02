@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.85](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.84...v0.1.0-alpha.85) (2026-09-02)
+
+
+### Features
+
+* **decisions:** add manual lifecycle CLI commands ([89d87cc](https://github.com/campus-ai/prim/commit/89d87cccff9af84bfa56a974fd89baeb7a47e28e))
+* **decisions:** add manual lifecycle CLI commands ([bec68b2](https://github.com/campus-ai/prim/commit/bec68b22f26eed106e44ea5dbcfb1addf548c0b8))
+
 ## [0.1.0-alpha.84](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.83...v0.1.0-alpha.84) (2026-09-02)
 
 
