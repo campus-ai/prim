@@ -8,6 +8,9 @@
  *   prim decisions publish <idOrShortId>
  *   prim decisions restore <idOrShortId>
  *   prim decisions ratify <idOrShortId>
+ *   prim decisions promote <idOrShortId>
+ *   prim decisions demote <idOrShortId>
+ *   prim decisions withdraw <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
@@ -41,10 +44,13 @@ import {
   formatCreateJson,
 } from "../decisions/create.js";
 import {
+  demoteDecision,
+  promoteDecision,
   publishDecision,
   ratifyDecision,
   restoreDecision,
   supersedeDecision,
+  withdrawDecision,
 } from "../decisions/lifecycle.js";
 import {
   LinkNotFoundError,
@@ -252,6 +258,31 @@ export function registerDecisionsCommands(program: Command): void {
     .description("Ratify an authored Decision as adopted")
     .action(async (idOrShortId: string) => {
       process.exitCode = await ratifyDecision(idOrShortId);
+    });
+
+  decisions
+    .command("promote <idOrShortId>")
+    .description("Promote an authored Decision to adopted, ratified guidance")
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await promoteDecision(idOrShortId);
+    });
+
+  decisions
+    .command("demote <idOrShortId>")
+    .description(
+      "Demote an authored adopted Decision back to provisional — advisory guidance only, no longer ratified",
+    )
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await demoteDecision(idOrShortId);
+    });
+
+  decisions
+    .command("withdraw <idOrShortId>")
+    .description(
+      "Withdraw an authored Decision as abandoned — removed from active guidance but never deleted; `prim decisions restore` recovers it as a private draft",
+    )
+    .action(async (idOrShortId: string) => {
+      process.exitCode = await withdrawDecision(idOrShortId);
     });
 
   decisions

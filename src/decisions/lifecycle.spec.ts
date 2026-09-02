@@ -3,10 +3,13 @@ import { type CliClient, HttpError } from "../client.js";
 import {
   DECISION_LIFECYCLE_EXIT,
   type DecisionLifecycleCommandDependencies,
+  demoteDecision,
+  promoteDecision,
   publishDecision,
   ratifyDecision,
   restoreDecision,
   supersedeDecision,
+  withdrawDecision,
 } from "./lifecycle.js";
 
 function harness() {
@@ -35,6 +38,57 @@ function machineOutput(stdout: string[]): Record<string, unknown> {
   expect(stdout).toHaveLength(1);
   return JSON.parse(stdout[0]) as Record<string, unknown>;
 }
+
+const MANUAL_LIFECYCLE_CASES = [
+  {
+    operation: "demote",
+    invoke: demoteDecision,
+    path: "/api/cli/decisions/demote",
+    stage: "provisional",
+    wrongStage: "adopted",
+    human: "[prim] dec_0123abcd demoted to provisional — advisory again until re-ratified.",
+  },
+  {
+    operation: "withdraw",
+    invoke: withdrawDecision,
+    path: "/api/cli/decisions/withdraw",
+    stage: "abandoned",
+    wrongStage: "provisional",
+    human:
+      "[prim] dec_0123abcd withdrawn as abandoned — removed from active guidance, not deleted; recover with `prim decisions restore`.",
+  },
+] as const;
+
+const FEATURE_ERROR_CASES = [
+  {
+    operation: "demote",
+    invoke: demoteDecision,
+    status: 403,
+    message: "feature_disabled",
+    code: "feature_disabled",
+    exitCode: DECISION_LIFECYCLE_EXIT.rejected,
+    human: "[prim] demote rejected: manual lifecycle actions are not enabled for this account.",
+  },
+  {
+    operation: "withdraw",
+    invoke: withdrawDecision,
+    status: 503,
+    message: "feature_check_unavailable",
+    code: "feature_check_unavailable",
+    exitCode: DECISION_LIFECYCLE_EXIT.server,
+    human:
+      "[prim] withdraw unavailable: the server could not verify feature availability; retry shortly.",
+  },
+  {
+    operation: "publish",
+    invoke: publishDecision,
+    status: 403,
+    message: "feature_disabled",
+    code: "feature_disabled",
+    exitCode: DECISION_LIFECYCLE_EXIT.rejected,
+    human: "[prim] publish rejected: manual lifecycle actions are not enabled for this account.",
+  },
+] as const;
 
 describe("Decision lifecycle success contract", () => {
   it("publishes with the generated request and projects only generated success fields", async () => {
@@ -137,6 +191,137 @@ describe("Decision lifecycle success contract", () => {
     expect(stdout.join("\n")).not.toContain("must-not-print");
     expect(stderr).toEqual(["[prim] dec_0123abcd ratified as adopted."]);
   });
+
+  it("promotes through the established ratify wire operation", async () => {
+    const { dependencies, post, signal, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+      internalReceipt: "must-not-print",
+    });
+
+    const exitCode = await promoteDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/ratify",
+      { id: "decision-1" },
+      { signal },
+    );
+    expect(machineOutput(stdout)).toEqual({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+    });
+    expect(stdout.join("\n")).not.toContain("must-not-print");
+    expect(stderr).toEqual(["[prim] dec_0123abcd promoted as adopted."]);
+  });
+
+  it("treats an already-promoted Decision as a successful no-op", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({ outcome: "no_op", stage: "adopted" });
+
+    const exitCode = await promoteDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "adopted" });
+    expect(stderr).toEqual(["[prim] decision-1 is already adopted; nothing to change."]);
+  });
+
+  it("rejects a generated promote response whose stage contradicts its endpoint", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      stage: "provisional",
+      sensitive: "must-not-print",
+    });
+
+    const exitCode = await promoteDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "promote",
+      code: "invalid_response",
+    });
+    expect(stderr[0]).toContain("invalid lifecycle response");
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("must-not-print");
+  });
+
+  it.each(MANUAL_LIFECYCLE_CASES)(
+    "$operation with the generated request and exact manual-lifecycle verdict",
+    async ({ human, invoke, operation, path, stage }) => {
+      const { dependencies, post, signal, stderr, stdout } = harness();
+      post.mockResolvedValueOnce({
+        outcome: "ok",
+        decisionId: "decision-1",
+        shortId: "0123abcd",
+        stage,
+        internalReceipt: "must-not-print",
+      });
+
+      const exitCode = await invoke("decision-1", dependencies);
+
+      expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+      expect(post).toHaveBeenCalledWith(path, { id: "decision-1" }, { signal });
+      expect(machineOutput(stdout)).toEqual({
+        outcome: "ok",
+        decisionId: "decision-1",
+        shortId: "0123abcd",
+        stage,
+      });
+      expect(stdout.join("\n")).not.toContain("must-not-print");
+      expect(stderr).toEqual([human]);
+    },
+  );
+
+  it.each(MANUAL_LIFECYCLE_CASES)(
+    "treats an already-$stage $operation result as a successful no-op",
+    async ({ invoke, stage }) => {
+      const { dependencies, post, stderr, stdout } = harness();
+      post.mockResolvedValueOnce({
+        outcome: "no_op",
+        stage,
+        decisionId: "unexpected-additive-id",
+        secret: "must-not-print",
+      });
+
+      const exitCode = await invoke("decision-1", dependencies);
+
+      expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+      expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage });
+      expect(stdout.join("\n")).not.toContain("must-not-print");
+      expect(stderr).toEqual([`[prim] decision-1 is already ${stage}; nothing to change.`]);
+    },
+  );
+
+  it.each(MANUAL_LIFECYCLE_CASES)(
+    "rejects a generated-union response whose stage contradicts $operation",
+    async ({ invoke, operation, wrongStage }) => {
+      const { dependencies, post, stderr, stdout } = harness();
+      post.mockResolvedValueOnce({
+        outcome: "ok",
+        decisionId: "decision-1",
+        stage: wrongStage,
+        sensitive: "must-not-print",
+      });
+
+      const exitCode = await invoke("decision-1", dependencies);
+
+      expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+      expect(machineOutput(stdout)).toEqual({
+        ok: false,
+        operation,
+        code: "invalid_response",
+      });
+      expect(stderr[0]).toContain("invalid lifecycle response");
+      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("must-not-print");
+    },
+  );
 
   it("treats an already-restored draft as a successful no-op", async () => {
     const { dependencies, post, stderr, stdout } = harness();
@@ -277,6 +462,31 @@ describe("Decision lifecycle success contract", () => {
       expect(stderr[0]).not.toContain(unsafe);
     }
   });
+
+  it("keeps withdrawn machine JSON unchanged while sanitizing its human identifier", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    const decisionId = "decision-\u001b]8;;https://bad.example\u0007link";
+    const shortId = "short\u202e-id";
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId,
+      shortId,
+      stage: "abandoned",
+    });
+
+    const exitCode = await withdrawDecision("request\u001b[31m\u2066-id", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
+    expect(machineOutput(stdout)).toMatchObject({
+      outcome: "ok",
+      decisionId,
+      shortId,
+      stage: "abandoned",
+    });
+    for (const unsafe of ["\u001b", "\u0007", "\u202e", "\u2066"]) {
+      expect(stderr[0]).not.toContain(unsafe);
+    }
+  });
 });
 
 describe("Decision lifecycle error contract and exits", () => {
@@ -317,6 +527,13 @@ describe("Decision lifecycle error contract and exits", () => {
       exitCode: DECISION_LIFECYCLE_EXIT.rejected,
     },
     {
+      name: "illegal stage transition from abandoned",
+      status: 409,
+      message: "Cannot move an abandoned decision to provisional",
+      code: "illegal_transition",
+      exitCode: DECISION_LIFECYCLE_EXIT.rejected,
+    },
+    {
       name: "missing decision",
       status: 404,
       message: "Decision not found",
@@ -353,6 +570,90 @@ describe("Decision lifecycle error contract and exits", () => {
       status: testCase.status,
     });
     expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
+  });
+
+  it.each(FEATURE_ERROR_CASES)(
+    "classifies $operation $message without reflecting the feature entitlement",
+    async ({ code, exitCode, human, invoke, message, operation, status }) => {
+      const { dependencies, post, stderr, stdout } = harness();
+      post.mockRejectedValueOnce(
+        httpError(status, message, { feature: "manual-lifecycle-actions" }),
+      );
+
+      const result = await invoke("decision-1", dependencies);
+
+      expect(result).toBe(exitCode);
+      expect(machineOutput(stdout)).toEqual({
+        ok: false,
+        operation,
+        code,
+        status,
+      });
+      expect(stderr).toEqual([human]);
+      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("manual-lifecycle-actions");
+    },
+  );
+
+  it("codes a demote author rejection without reflecting server fields", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockRejectedValueOnce(
+      httpError(403, "Only the decision's author can perform this action", {
+        token: "sensitive-error-value",
+      }),
+    );
+
+    const exitCode = await demoteDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "demote",
+      code: "not_author",
+      status: 403,
+    });
+    expect(stderr).toEqual(["[prim] demote rejected: only the Decision's author can demote it."]);
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
+  });
+
+  it("renders an abandoned demote transition rejection with its past participle", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockRejectedValueOnce(
+      httpError(409, "Cannot move an abandoned decision to provisional", {
+        token: "sensitive-error-value",
+      }),
+    );
+
+    const exitCode = await demoteDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "demote",
+      code: "illegal_transition",
+      status: 409,
+    });
+    expect(stderr).toEqual([
+      "[prim] demote rejected: the Decision's current lifecycle stage cannot be demoted.",
+    ]);
+    expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
+  });
+
+  it("codes an old server route for withdraw", async () => {
+    const { dependencies, post, stderr, stdout } = harness();
+    post.mockRejectedValueOnce(httpError(404, "Not found"));
+
+    const exitCode = await withdrawDecision("decision-1", dependencies);
+
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout)).toEqual({
+      ok: false,
+      operation: "withdraw",
+      code: "unsupported_server",
+      status: 404,
+    });
+    expect(stderr).toEqual([
+      "[prim] withdraw unavailable: this Primitive server does not support this Decision lifecycle operation; upgrade the server before retrying.",
+    ]);
   });
 
   it("codes a restore transition rejection without reflecting server fields", async () => {

@@ -1385,3 +1385,35 @@ export interface UserApiKeyRevokeResponse {
   apiKeyId: string;
   revoked: true;
 }
+
+export interface WorkosConnectDeviceConfigurationDisabled {
+  error: "Not found";
+}
+
+export type WorkosConnectDeviceConfigurationError =
+  | {
+      error: "Not found";
+    }
+  | {
+      error: "connect_device_auth_unavailable";
+    };
+
+export interface WorkosConnectDeviceConfigurationSuccess {
+  protocol_version: 1;
+  issuer: string;
+  client_id: string;
+  /**
+   * @minItems 4
+   * @maxItems 4
+   */
+  default_scopes: [
+    "openid" | "profile" | "email" | "offline_access",
+    "openid" | "profile" | "email" | "offline_access",
+    "openid" | "profile" | "email" | "offline_access",
+    "openid" | "profile" | "email" | "offline_access"
+  ];
+}
+
+export interface WorkosConnectDeviceConfigurationUnavailable {
+  error: "connect_device_auth_unavailable";
+}

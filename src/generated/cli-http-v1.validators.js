@@ -13061,3 +13061,465 @@ validate61.errors = vErrors;
 return errors === 0;
 }
 validate61.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isWorkosConnectDeviceConfigurationDisabled = validate62;
+const schema114 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled"};
+const schema115 = {"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false};
+
+function validate62(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate62.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if((data.error === undefined) && (missing0 = "error")){
+validate62.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs2 = errors;
+for(const key0 in data){
+if(!(key0 === "error")){
+validate62.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs2 === errors){
+if(data.error !== undefined){
+let data0 = data.error;
+if(typeof data0 !== "string"){
+validate62.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if("Not found" !== data0){
+validate62.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/const",keyword:"const",params:{allowedValue: "Not found"},message:"must be equal to constant"}];
+return false;
+}
+}
+}
+}
+}
+else {
+validate62.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate62.errors = vErrors;
+return errors === 0;
+}
+validate62.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isWorkosConnectDeviceConfigurationError = validate63;
+const schema116 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError"};
+const schema117 = {"anyOf":[{"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false}]};
+
+function validate63(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate63.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs1 = errors;
+let valid1 = false;
+const _errs2 = errors;
+if(errors === _errs2){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if((data.error === undefined) && (missing0 = "error")){
+const err0 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/0/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"};
+if(vErrors === null){
+vErrors = [err0];
+}
+else {
+vErrors.push(err0);
+}
+errors++;
+}
+else {
+const _errs4 = errors;
+for(const key0 in data){
+if(!(key0 === "error")){
+const err1 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
+break;
+}
+}
+if(_errs4 === errors){
+if(data.error !== undefined){
+let data0 = data.error;
+if(typeof data0 !== "string"){
+const err2 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/0/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err2];
+}
+else {
+vErrors.push(err2);
+}
+errors++;
+}
+if("Not found" !== data0){
+const err3 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/0/properties/error/const",keyword:"const",params:{allowedValue: "Not found"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err3];
+}
+else {
+vErrors.push(err3);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err4 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err4];
+}
+else {
+vErrors.push(err4);
+}
+errors++;
+}
+}
+var _valid0 = _errs2 === errors;
+valid1 = valid1 || _valid0;
+if(_valid0){
+var props0 = true;
+}
+const _errs7 = errors;
+if(errors === _errs7){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing1;
+if((data.error === undefined) && (missing1 = "error")){
+const err5 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/1/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
+else {
+const _errs9 = errors;
+for(const key1 in data){
+if(!(key1 === "error")){
+const err6 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
+}
+errors++;
+break;
+}
+}
+if(_errs9 === errors){
+if(data.error !== undefined){
+let data1 = data.error;
+if(typeof data1 !== "string"){
+const err7 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/1/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err7];
+}
+else {
+vErrors.push(err7);
+}
+errors++;
+}
+if("connect_device_auth_unavailable" !== data1){
+const err8 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/1/properties/error/const",keyword:"const",params:{allowedValue: "connect_device_auth_unavailable"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err9 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err9];
+}
+else {
+vErrors.push(err9);
+}
+errors++;
+}
+}
+var _valid0 = _errs7 === errors;
+valid1 = valid1 || _valid0;
+if(_valid0){
+if(props0 !== true){
+props0 = true;
+}
+}
+if(!valid1){
+const err10 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err10];
+}
+else {
+vErrors.push(err10);
+}
+errors++;
+validate63.errors = vErrors;
+return false;
+}
+else {
+errors = _errs1;
+if(vErrors !== null){
+if(_errs1){
+vErrors.length = _errs1;
+}
+else {
+vErrors = null;
+}
+}
+}
+validate63.errors = vErrors;
+evaluated0.props = props0;
+return errors === 0;
+}
+validate63.evaluated = {"dynamicProps":true,"dynamicItems":false};
+
+export const isWorkosConnectDeviceConfigurationSuccessStructure = validate64;
+const schema118 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess"};
+const schema119 = {"type":"object","properties":{"protocol_version":{"type":"number","const":1},"issuer":{"type":"string","format":"uri"},"client_id":{"type":"string","maxLength":256,"pattern":"^client_[A-Za-z0-9_-]+$"},"default_scopes":{"minItems":4,"maxItems":4,"type":"array","items":{"type":"string","enum":["openid","profile","email","offline_access"]}}},"required":["protocol_version","issuer","client_id","default_scopes"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_https_origin","exact_workos_connect_device_scopes"]};
+const pattern37 = new RegExp("^client_[A-Za-z0-9_-]+$", "u");
+
+function validate64(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate64.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if(((((data.protocol_version === undefined) && (missing0 = "protocol_version")) || ((data.issuer === undefined) && (missing0 = "issuer"))) || ((data.client_id === undefined) && (missing0 = "client_id"))) || ((data.default_scopes === undefined) && (missing0 = "default_scopes"))){
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs3 = errors;
+for(const key0 in data){
+if(!((((key0 === "protocol_version") || (key0 === "issuer")) || (key0 === "client_id")) || (key0 === "default_scopes"))){
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs3 === errors){
+if(data.protocol_version !== undefined){
+let data0 = data.protocol_version;
+const _errs4 = errors;
+if(!((typeof data0 == "number") && (isFinite(data0)))){
+validate64.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/type",keyword:"type",params:{type: "number"},message:"must be number"}];
+return false;
+}
+if(1 !== data0){
+validate64.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/const",keyword:"const",params:{allowedValue: 1},message:"must be equal to constant"}];
+return false;
+}
+var valid1 = _errs4 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.issuer !== undefined){
+const _errs6 = errors;
+if(errors === _errs6){
+if(errors === _errs6){
+if(!(typeof data.issuer === "string")){
+validate64.errors = [{instancePath:instancePath+"/issuer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/issuer/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+}
+var valid1 = _errs6 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.client_id !== undefined){
+let data2 = data.client_id;
+const _errs8 = errors;
+if(errors === _errs8){
+if(typeof data2 === "string"){
+if(func1(data2) > 256){
+validate64.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+return false;
+}
+else {
+if(!pattern37.test(data2)){
+validate64.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/pattern",keyword:"pattern",params:{pattern: "^client_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^client_[A-Za-z0-9_-]+$"+"\""}];
+return false;
+}
+}
+}
+else {
+validate64.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid1 = _errs8 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.default_scopes !== undefined){
+let data3 = data.default_scopes;
+const _errs10 = errors;
+if(errors === _errs10){
+if(Array.isArray(data3)){
+if(data3.length > 4){
+validate64.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/maxItems",keyword:"maxItems",params:{limit: 4},message:"must NOT have more than 4 items"}];
+return false;
+}
+else {
+if(data3.length < 4){
+validate64.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/minItems",keyword:"minItems",params:{limit: 4},message:"must NOT have fewer than 4 items"}];
+return false;
+}
+else {
+var valid2 = true;
+const len0 = data3.length;
+for(let i0=0; i0<len0; i0++){
+let data4 = data3[i0];
+const _errs12 = errors;
+if(typeof data4 !== "string"){
+validate64.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if(!((((data4 === "openid") || (data4 === "profile")) || (data4 === "email")) || (data4 === "offline_access"))){
+validate64.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/enum",keyword:"enum",params:{allowedValues: schema119.properties.default_scopes.items.enum},message:"must be equal to one of the allowed values"}];
+return false;
+}
+var valid2 = _errs12 === errors;
+if(!valid2){
+break;
+}
+}
+}
+}
+}
+else {
+validate64.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+return false;
+}
+}
+var valid1 = _errs10 === errors;
+}
+else {
+var valid1 = true;
+}
+}
+}
+}
+}
+}
+}
+else {
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate64.errors = vErrors;
+return errors === 0;
+}
+validate64.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isWorkosConnectDeviceConfigurationUnavailable = validate65;
+const schema120 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationUnavailable","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable"};
+const schema121 = {"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false};
+
+function validate65(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationUnavailable" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate65.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if((data.error === undefined) && (missing0 = "error")){
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs2 = errors;
+for(const key0 in data){
+if(!(key0 === "error")){
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs2 === errors){
+if(data.error !== undefined){
+let data0 = data.error;
+if(typeof data0 !== "string"){
+validate65.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if("connect_device_auth_unavailable" !== data0){
+validate65.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/const",keyword:"const",params:{allowedValue: "connect_device_auth_unavailable"},message:"must be equal to constant"}];
+return false;
+}
+}
+}
+}
+}
+else {
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate65.errors = vErrors;
+return errors === 0;
+}
+validate65.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
