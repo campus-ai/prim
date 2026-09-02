@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.84](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.83...v0.1.0-alpha.84) (2026-09-02)
+
+
+### Bug Fixes
+
+* **codex:** close nested apply_patch hook gap ([b1381a9](https://github.com/campus-ai/prim/commit/b1381a9007d345debc345f76f37c06817ad6d3ba))
+* **codex:** cover nested apply_patch hooks ([e78be5d](https://github.com/campus-ai/prim/commit/e78be5df06bf29768bce5bcf6e68a52d92222fc5))
+
 ## [0.1.0-alpha.83](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.82...v0.1.0-alpha.83) (2026-09-01)
 
 
