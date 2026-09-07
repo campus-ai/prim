@@ -14,7 +14,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
-import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
+import { gitToplevel } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
@@ -134,8 +134,6 @@ beforeEach(() => {
   });
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
-  vi.mocked(githubRepositoryFullName).mockReturnValue("campus-ai/primitive");
-  vi.mocked(resolveRepositoryBinding).mockRejectedValue(new Error("offline"));
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
 });
 
@@ -224,8 +222,17 @@ describe("processSessionStart", () => {
     expect(resolveRepositoryBinding).not.toHaveBeenCalled();
   });
 
-  it("requires connection in an inactive GitHub checkout without persisting state", async () => {
-    vi.mocked(resolveRepositoryBinding).mockResolvedValue(UNBOUND_BINDING);
+  it("stays silent in an inactive checkout and never resolves its binding", async () => {
+    const result = await processSessionStart(ENVELOPE, "claude_code");
+
+    expect(result.output).toEqual({});
+    expect(bindRepository).not.toHaveBeenCalled();
+    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+  });
+
+  it("requires connection in an active checkout that is not connected yet", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(bindRepository).mockResolvedValue(UNBOUND_BINDING);
 
     const result = await processSessionStart(ENVELOPE, "claude_code");
 
@@ -235,11 +242,7 @@ describe("processSessionStart", () => {
         additionalContext: EXPECTED_UNBOUND_BINDING_REMINDER,
       },
     });
-    expect(bindRepository).not.toHaveBeenCalled();
-    expect(resolveRepositoryBinding).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ quietRefresh: true }),
-    );
+    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
   });
 
   it("refreshes only user scope and requests a reload in an inactive repo", async () => {
@@ -268,20 +271,13 @@ describe("processSessionStart", () => {
     expect(resolveRepositoryBinding).not.toHaveBeenCalled();
   });
 
-  it("stays silent for a non-GitHub origin or an unverified binding", async () => {
-    vi.mocked(githubRepositoryFullName).mockReturnValue(null);
+  it("stays silent when an active checkout's binding cannot be verified", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(bindRepository).mockRejectedValue(new Error("network unavailable"));
 
-    const nonGithub = await processSessionStart(ENVELOPE, "claude_code");
+    const result = await processSessionStart(ENVELOPE, "claude_code");
 
-    expect(nonGithub.output).toEqual({});
-    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
-
-    vi.mocked(githubRepositoryFullName).mockReturnValue("campus-ai/primitive");
-    vi.mocked(resolveRepositoryBinding).mockRejectedValue(new Error("network unavailable"));
-
-    const unavailable = await processSessionStart(ENVELOPE, "claude_code");
-
-    expect(unavailable.output).toEqual({});
+    expect(result.output).toEqual({});
   });
 
   it("emits neither reminder nor reload when no recognized skill is installed", async () => {
