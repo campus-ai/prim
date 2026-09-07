@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.86](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.85...v0.1.0-alpha.86) (2026-09-07)
+
+
+### Bug Fixes
+
+* **hooks:** gate the SessionStart binding reminder on activation ([ac54c2f](https://github.com/campus-ai/prim/commit/ac54c2f9a552c84782cd888d75b44f38d5f9c601))
+* **hooks:** gate the SessionStart binding reminder on activation ([6a67cf3](https://github.com/campus-ai/prim/commit/6a67cf39352bf70b7c75c3660c3b75fa3bb4a357))
+
 ## [0.1.0-alpha.85](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.84...v0.1.0-alpha.85) (2026-09-02)
 
 
