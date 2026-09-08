@@ -28,6 +28,8 @@ export const SUPPORTED_RUNTIME_REFINEMENTS = new Set([
   "claim_lease_within_intent_ttl",
   "completion_within_intent_ttl",
   "complete_coverage_requires_path",
+  "degrade_invalid_branch",
+  "degrade_invalid_location_scope",
   "degrade_invalid_rollout_fields",
   "exact_workos_connect_device_scopes",
   "expiry_not_before_intent_ttl",

@@ -12,6 +12,7 @@
  *   prim decisions demote <idOrShortId>
  *   prim decisions withdraw <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
+ *   prim decisions rescope <idOrShortId> [--scope-repo|--scope-dir|--scope-glob|--scope-branch]
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
@@ -39,6 +40,7 @@ import {
 } from "../decisions/confirm.js";
 import {
   type CreateRequest,
+  createScopeWarnings,
   fetchCreate,
   formatCreateHuman,
   formatCreateJson,
@@ -75,6 +77,7 @@ import {
   formatRepairsJson,
   resolveRepair,
 } from "../decisions/repairs.js";
+import { rescopeDecision } from "../decisions/rescope.js";
 import {
   DecisionNotFoundError,
   fetchShow,
@@ -85,6 +88,7 @@ import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisio
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
@@ -159,6 +163,33 @@ interface CreateOptions {
   files?: string[];
   draft?: boolean;
   adopt?: boolean;
+  scopeRepo?: boolean;
+  scopeDir?: string[];
+  scopeGlob?: string[];
+  scopeBranch?: string[];
+}
+
+interface RescopeOptions {
+  scopeRepo?: boolean;
+  scopeDir?: string[];
+  scopeGlob?: string[];
+  scopeBranch?: string[];
+}
+
+type DecisionLocationScope = NonNullable<NonNullable<CreateRequest["scope"]>["location"]>;
+
+function locationScopeFromOptions(
+  options: Pick<RescopeOptions, "scopeRepo" | "scopeDir" | "scopeGlob" | "scopeBranch">,
+): DecisionLocationScope | undefined {
+  const location: DecisionLocationScope = {
+    ...(options.scopeRepo ? { repository: true } : {}),
+    ...(options.scopeDir && options.scopeDir.length > 0 ? { directories: options.scopeDir } : {}),
+    ...(options.scopeGlob && options.scopeGlob.length > 0 ? { globs: options.scopeGlob } : {}),
+    ...(options.scopeBranch && options.scopeBranch.length > 0
+      ? { branches: options.scopeBranch }
+      : {}),
+  };
+  return Object.keys(location).length === 0 ? undefined : location;
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -410,6 +441,20 @@ export function registerDecisionsCommands(program: Command): void {
       "Comma-separated exact repo-relative paths this decision governs (repeatable)",
       collectPaths,
     )
+    .option("--scope-repo", "Scope this Decision to the whole repository")
+    .option(
+      "--scope-dir <prefix>",
+      "Repo-relative directory prefix to govern (repeatable)",
+      collectItem,
+      [],
+    )
+    .option("--scope-glob <glob>", "Repo-relative glob to govern (repeatable)", collectItem, [])
+    .option(
+      "--scope-branch <pattern>",
+      "Git branch pattern to govern (repeatable)",
+      collectItem,
+      [],
+    )
     .action(async (opts: CreateOptions, command: Command) => {
       if (opts.draft && opts.adopt) {
         console.error("[prim] create rejected: --draft and --adopt cannot be used together.");
@@ -418,10 +463,12 @@ export function registerDecisionsCommands(program: Command): void {
         return;
       }
       const requestedFiles = opts.files ?? [];
-      let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
-      if (requestedFiles.length > 0) {
+      const location = locationScopeFromOptions(opts);
+      let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId" | "scope"> =
+        {};
+      if (requestedFiles.length > 0 || location !== undefined) {
         const binding = repoSyncId(process.cwd());
-        const root = canonicalGitRoot(process.cwd());
+        const root = requestedFiles.length > 0 ? canonicalGitRoot(process.cwd()) : undefined;
         const canonical = requestedFiles.map((path) =>
           canonicalRepositoryPath(path, root ?? process.cwd(), root),
         );
@@ -436,7 +483,8 @@ export function registerDecisionsCommands(program: Command): void {
         explicitScope = {
           protocolVersion: 3,
           repoSyncId: binding,
-          files: canonical as string[],
+          ...(canonical.length > 0 ? { files: canonical as string[] } : {}),
+          ...(location === undefined ? {} : { scope: { location } }),
         };
       }
       if (!isRepoActiveForCapture(process.cwd())) {
@@ -471,6 +519,9 @@ export function registerDecisionsCommands(program: Command): void {
       };
       try {
         const outcome = await fetchCreate(request);
+        for (const warning of createScopeWarnings(request, outcome)) {
+          console.error(terminalSafeLine(`[prim] create warning: ${warning}`));
+        }
         console.error(formatCreateHuman(outcome));
         console.log(formatCreateJson(outcome));
       } catch (err) {
@@ -484,6 +535,28 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw err;
       }
+    });
+
+  decisions
+    .command("rescope <idOrShortId>")
+    .description("Replace a Decision's location scope; omit selector flags to clear it")
+    .option("--scope-repo", "Scope this Decision to the whole repository")
+    .option(
+      "--scope-dir <prefix>",
+      "Repo-relative directory prefix to govern (repeatable)",
+      collectItem,
+      [],
+    )
+    .option("--scope-glob <glob>", "Repo-relative glob to govern (repeatable)", collectItem, [])
+    .option(
+      "--scope-branch <pattern>",
+      "Git branch pattern to govern (repeatable)",
+      collectItem,
+      [],
+    )
+    .action(async (id: string, opts: RescopeOptions) => {
+      const location = locationScopeFromOptions(opts);
+      process.exitCode = await rescopeDecision({ id, location: location ?? null });
     });
 
   decisions

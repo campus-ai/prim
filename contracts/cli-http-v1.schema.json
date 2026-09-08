@@ -371,6 +371,19 @@
       "error": {
         "$ref": "#/$defs/CliErrorResponse"
       }
+    },
+    "decisionsRescope": {
+      "method": "POST",
+      "path": "/api/cli/decisions/rescope",
+      "request": {
+        "$ref": "#/$defs/DecisionRescopeRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DecisionRescopeResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
     }
   },
   "$defs": {
@@ -713,6 +726,41 @@
         "repoSyncId": {
           "type": "string"
         },
+        "scope": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "location": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "boolean"
+                },
+                "directories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": {}
+            }
+          },
+          "additionalProperties": {}
+        },
         "stageOverride": {
           "type": "string",
           "enum": ["candidate", "draft", "adopted"]
@@ -720,7 +768,10 @@
       },
       "required": ["intent"],
       "additionalProperties": {},
-      "x-primitive-runtime-refinements": ["degrade_invalid_rollout_fields"]
+      "x-primitive-runtime-refinements": [
+        "degrade_invalid_rollout_fields",
+        "degrade_invalid_location_scope"
+      ]
     },
     "DecisionCreateResponse": {
       "type": "object",
@@ -734,6 +785,47 @@
         },
         "createdAt": {
           "type": "number"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "boolean"
+                },
+                "directories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["repository", "directories", "globs", "branches"],
+              "additionalProperties": {}
+            }
+          },
+          "required": ["location"],
+          "additionalProperties": {}
+        },
+        "scopeWarnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": ["decisionId", "shortId", "createdAt"],
@@ -950,6 +1042,41 @@
             "additionalProperties": {}
           }
         },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "boolean"
+                },
+                "directories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": ["repository", "directories", "globs", "branches"],
+              "additionalProperties": {}
+            }
+          },
+          "required": ["location"],
+          "additionalProperties": {}
+        },
         "truncated": {
           "type": "boolean"
         }
@@ -960,6 +1087,7 @@
         "flags",
         "dependsOn",
         "dependents",
+        "scope",
         "truncated"
       ],
       "additionalProperties": {}
@@ -1044,6 +1172,196 @@
       },
       "required": ["outcome", "childId", "parentId"],
       "additionalProperties": {}
+    },
+    "DecisionRescopeRequest": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "boolean"
+                },
+                "directories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": {}
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["id"],
+      "additionalProperties": {}
+    },
+    "DecisionRescopeResponse": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "no_op"
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "provisional",
+                "adopted",
+                "superseded",
+                "abandoned"
+              ]
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "boolean"
+                    },
+                    "directories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "globs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "branches": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "directories",
+                    "globs",
+                    "branches"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "required": ["location"],
+              "additionalProperties": {}
+            },
+            "scopeWarnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["outcome", "stage", "scope"],
+          "additionalProperties": {}
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "ok"
+            },
+            "decisionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "shortId": {
+              "type": "string"
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "provisional",
+                "adopted",
+                "superseded",
+                "abandoned"
+              ]
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "boolean"
+                    },
+                    "directories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "globs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "branches": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "directories",
+                    "globs",
+                    "branches"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "required": ["location"],
+              "additionalProperties": {}
+            },
+            "scopeWarnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["outcome", "decisionId", "stage", "scope"],
+          "additionalProperties": {}
+        }
+      ]
     },
     "DecisionsAffectingResponse": {
       "type": "object",
@@ -2343,6 +2661,11 @@
           "type": "string",
           "enum": ["complete", "unverified"]
         },
+        "branch": {
+          "type": "string",
+          "maxLength": 255,
+          "pattern": "^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"
+        },
         "clientMode": {
           "type": "string",
           "enum": ["block", "warn"]
@@ -2372,7 +2695,8 @@
         "unique_repository_paths",
         "complete_coverage_requires_path",
         "proposal_utf8_max_6144",
-        "degrade_invalid_rollout_fields"
+        "degrade_invalid_rollout_fields",
+        "degrade_invalid_branch"
       ]
     },
     "PreflightResponseV3": {

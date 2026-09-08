@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   canonicalGitRoot,
   canonicalRepositoryPath,
+  currentBranch,
   githubRepositoryFullName,
   normalizeOriginRemote,
   resolveRepositoryContext,
@@ -110,6 +111,9 @@ function git(cwd: string, ...args: string[]): void {
 function repository(): string {
   const root = mkdtempSync(join(tmpdir(), "prim-repo-context-"));
   git(root, "init", "-q");
+  const hooks = join(root, ".test-hooks");
+  mkdirSync(hooks);
+  git(root, "config", "core.hooksPath", hooks);
   git(root, "config", "user.email", "test@example.com");
   git(root, "config", "user.name", "Test");
   git(root, "config", "commit.gpgsign", "false");
@@ -118,6 +122,27 @@ function repository(): string {
   git(root, "commit", "-qm", "init");
   return root;
 }
+
+describe("currentBranch", () => {
+  it("returns the symbolic branch and omits detached HEAD", () => {
+    const repo = repository();
+    git(repo, "branch", "-M", "feature/decision-scope");
+
+    expect(currentBranch(repo)).toBe("feature/decision-scope");
+
+    git(repo, "checkout", "--detach", "-q");
+    expect(currentBranch(repo)).toBeUndefined();
+  });
+
+  it("omits a non-git directory", () => {
+    const outside = mkdtempSync(join(tmpdir(), "prim-not-a-repo-"));
+    try {
+      expect(currentBranch(outside)).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("normalizeOriginRemote", () => {
   it("removes URL and SCP credentials without changing the repository path", () => {

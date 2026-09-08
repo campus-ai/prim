@@ -31,6 +31,7 @@
 
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
+import { currentBranch } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
 import {
   appendCodexContext,
@@ -218,6 +219,7 @@ async function main(): Promise<void> {
     return;
   }
   const binding = repoSyncId(cwd);
+  const branch = currentBranch(cwd);
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
@@ -237,6 +239,7 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
+    ...(branch === undefined ? {} : { branch }),
     proposal: proposalFor(envelope.tool_input),
   };
   let result: ConflictCheckResult;

@@ -176,6 +176,38 @@ describe("decisions create activation consent", () => {
     expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");
   });
 
+  it("sends coarse scope selectors without canonicalizing directory or glob syntax", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--scope-repo",
+      "--scope-dir",
+      "packages/api",
+      "--scope-dir",
+      "apps/web",
+      "--scope-glob",
+      "src/**/*.test.ts",
+      "--scope-branch",
+      "main",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocolVersion: 3,
+        repoSyncId: "sync-1",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api", "apps/web"],
+            globs: ["src/**/*.test.ts"],
+            branches: ["main"],
+          },
+        },
+      }),
+    );
+    expect(mocks.canonicalRepositoryPath).not.toHaveBeenCalled();
+  });
+
   it("rejects --files locally when the repository is unbound", async () => {
     mocks.repoSyncId.mockReturnValue(undefined);
     mocks.isRepoActiveForCapture.mockReturnValue(true);
@@ -185,6 +217,18 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(2);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("run `prim enable`"));
+  });
+
+  it("rejects location scope locally when the repository is unbound", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-dir", "packages/api");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("run `prim enable`"));
+    expect(mocks.canonicalRepositoryPath).not.toHaveBeenCalled();
   });
 
   it("requires an explicit attribution", async () => {
