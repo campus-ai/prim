@@ -3,6 +3,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
@@ -20,6 +21,7 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: vi.fn(),
   repoSyncId: vi.fn(),
 }));
+vi.mock("../lib/collect-scope.js", () => ({ cachedCollectScopeAdmits: vi.fn() }));
 vi.mock("../lib/git.js", () => ({
   githubRepositoryFullName: vi.fn(),
   resolveRepositoryContext: vi.fn(),
@@ -38,6 +40,7 @@ const mockedResolveOrg = vi.mocked(resolveOrg);
 const mockedAppendMove = vi.mocked(appendMove);
 const mockedIsRepoActiveForCapture = vi.mocked(isRepoActiveForCapture);
 const mockedRepoSyncId = vi.mocked(repoSyncId);
+const mockedCachedCollectScopeAdmits = vi.mocked(cachedCollectScopeAdmits);
 const mockedGithubRepositoryFullName = vi.mocked(githubRepositoryFullName);
 const mockedResolveRepositoryContext = vi.mocked(resolveRepositoryContext);
 const mockedGetOrCreateWorkspaceId = vi.mocked(getOrCreateWorkspaceId);
@@ -115,6 +118,7 @@ describe("runPostCommit", () => {
       repoKey: "repo_v1_key",
     });
     mockedGithubRepositoryFullName.mockReturnValue("campus-ai/primitive");
+    mockedCachedCollectScopeAdmits.mockReturnValue(true);
     mockedRepoSyncId.mockReturnValue("repoSync123");
     mockedGetOrCreateWorkspaceId.mockReturnValue({
       status: "ready",
@@ -193,6 +197,23 @@ describe("runPostCommit", () => {
 
     expect(mockedToCommitMove).not.toHaveBeenCalled();
     expect(mockedResolveOrg).not.toHaveBeenCalled();
+    expect(mockedAppendMove).not.toHaveBeenCalled();
+    expect(mockedSpawn).not.toHaveBeenCalled();
+  });
+
+  it("does not journal a commit outside the collection policy", () => {
+    mockedIsRepoActiveForCapture.mockReturnValue(true);
+    mockedCachedCollectScopeAdmits.mockReturnValue(false);
+
+    runPostCommit();
+
+    expect(mockedCachedCollectScopeAdmits).toHaveBeenCalledWith("/repo", {
+      repository: "campus-ai/primitive",
+      branch: "main",
+      paths: ["src/index.ts"],
+      pathsComplete: true,
+    });
+    expect(mockedToCommitMove).not.toHaveBeenCalled();
     expect(mockedAppendMove).not.toHaveBeenCalled();
     expect(mockedSpawn).not.toHaveBeenCalled();
   });

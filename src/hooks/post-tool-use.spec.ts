@@ -9,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cachedCollectScopeAdmits: vi.fn(),
+  currentBranch: vi.fn(),
   deliverPostToolMove: vi.fn(),
   enrichHookPayloadWithFileRefs: vi.fn(),
   isRepoActiveForCapture: vi.fn(),
@@ -27,7 +29,13 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: mocks.isRepoActiveForCapture,
   repoSyncId: mocks.repoSyncId,
 }));
-vi.mock("../lib/git.js", () => ({ resolveRepositoryContext: mocks.resolveRepositoryContext }));
+vi.mock("../lib/collect-scope.js", () => ({
+  cachedCollectScopeAdmits: mocks.cachedCollectScopeAdmits,
+}));
+vi.mock("../lib/git.js", () => ({
+  currentBranch: mocks.currentBranch,
+  resolveRepositoryContext: mocks.resolveRepositoryContext,
+}));
 vi.mock("../lib/workspace-id.js", () => ({
   getOrCreateWorkspaceId: vi.fn(() => ({ status: "not_git" })),
 }));
@@ -99,6 +107,8 @@ beforeEach(() => {
   mocks.parseAgent.mockReturnValue("codex");
   mocks.isRepoActiveForCapture.mockReturnValue(true);
   mocks.repoSyncId.mockReturnValue("sync-1");
+  mocks.currentBranch.mockReturnValue("main");
+  mocks.cachedCollectScopeAdmits.mockReturnValue(true);
   mocks.resolveRepositoryContext.mockReturnValue({ repoFullName: "org/repo" });
   mocks.resolveOrg.mockReturnValue({ orgId: "org-1" });
   mocks.postToolInvocationId.mockReturnValue("call-1");
@@ -111,7 +121,13 @@ beforeEach(() => {
   });
   mocks.enrichHookPayloadWithFileRefs.mockImplementation(({ parsed }: { parsed: unknown }) => ({
     parsed,
-    resolution: { shellMutation: undefined, fileRefs: [{ path: "src/a.ts" }] },
+    resolution: {
+      shellMutation: undefined,
+      fileRefs: ["src/a.ts"],
+      rejected: [],
+      targetsIncomplete: false,
+      targetsTruncated: false,
+    },
   }));
   mocks.deliverPostToolMove.mockResolvedValue({ accepted: true, verdictFooter: null });
   vi.spyOn(process.stdout, "write").mockImplementation(((
@@ -186,6 +202,16 @@ describe("PostToolUse entrypoint (codex)", () => {
     // {} is byte-identical to the catch-all fallback; only a completed
     // delivery proves the ingest path actually ran.
     expect(mocks.deliverPostToolMove).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not build or deliver a move outside the collection policy", async () => {
+    mocks.cachedCollectScopeAdmits.mockReturnValue(false);
+
+    const output = await runHook();
+
+    expect(output).toEqual({});
+    expect(mocks.toMove).not.toHaveBeenCalled();
+    expect(mocks.deliverPostToolMove).not.toHaveBeenCalled();
   });
 
   it("keeps the stderr verdict authoritative when context preparation throws", async () => {

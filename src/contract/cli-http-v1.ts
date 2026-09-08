@@ -16,6 +16,7 @@ import {
   isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
+  isDecisionCollectScopeResponse,
   isDecisionConfirmRequest,
   isDecisionConfirmSuccessResponse,
   isDecisionCreateRequestStructure,
@@ -25,6 +26,8 @@ import {
   isDecisionIdRequest,
   isDecisionRelateRequest,
   isDecisionRelateSuccessResponse,
+  isDecisionRescopeRequest,
+  isDecisionRescopeResponse,
   isDecisionStageSuccessResponse,
   isDecisionSupersedeRequest,
   isDecisionsAffectingResponse,
@@ -66,6 +69,7 @@ export {
   isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
+  isDecisionCollectScopeResponse,
   isDecisionConfirmRequest,
   isDecisionConfirmSuccessResponse,
   isDecisionCreateRequestStructure,
@@ -75,6 +79,8 @@ export {
   isDecisionIdRequest,
   isDecisionRelateRequest,
   isDecisionRelateSuccessResponse,
+  isDecisionRescopeRequest,
+  isDecisionRescopeResponse,
   isDecisionStageSuccessResponse,
   isDecisionSupersedeRequest,
   isDecisionsAffectingResponse,
@@ -199,18 +205,22 @@ export function isWorkosConnectDeviceConfigurationSuccess(
 
 /**
  * Validate the canonical outbound V3 request, including every producer-side
- * refinement. The server-only rollout-field degradation transform is not
- * mirrored: this producer emits canonical annotations.
+ * refinement. `branch` is server-degraded when malformed, so omit it from
+ * structural validation here without mutating the caller's request.
  */
 export function isPreflightRequestV3(value: unknown): value is PreflightRequestV3 {
-  if (!isPreflightRequestV3Structure(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const { branch: _branch, ...requestWithoutBranch } = value as Record<string, unknown>;
+  if (!isPreflightRequestV3Structure(requestWithoutBranch)) {
     return false;
   }
   return (
-    value.paths.every(isCanonicalRepositoryPath) &&
-    new Set(value.paths).size === value.paths.length &&
-    (value.coverage !== "complete" || value.paths.length > 0) &&
-    new TextEncoder().encode(value.proposal).length <= MAX_PROPOSAL_BYTES
+    requestWithoutBranch.paths.every(isCanonicalRepositoryPath) &&
+    new Set(requestWithoutBranch.paths).size === requestWithoutBranch.paths.length &&
+    (requestWithoutBranch.coverage !== "complete" || requestWithoutBranch.paths.length > 0) &&
+    new TextEncoder().encode(requestWithoutBranch.proposal).length <= MAX_PROPOSAL_BYTES
   );
 }
 
@@ -242,12 +252,19 @@ export function isFeedbackAckRequest(value: unknown): value is FeedbackAckReques
 }
 
 /**
- * The server degrades invalid optional rollout fields instead of rejecting the
- * request. CLI producers already emit the canonical subset, so structural
- * validation is the correct non-mutating producer check.
+ * The server degrades invalid optional rollout and location-scope fields
+ * instead of rejecting the request. CLI producers already emit the canonical
+ * subset, so structural validation is the correct non-mutating producer check.
  */
 export function isDecisionCreateRequest(value: unknown): value is DecisionCreateRequest {
-  return isDecisionCreateRequestStructure(value);
+  if (isDecisionCreateRequestStructure(value)) {
+    return true;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const { scope: _scope, ...requestWithoutScope } = value as Record<string, unknown>;
+  return isDecisionCreateRequestStructure(requestWithoutScope);
 }
 
 export function isFeedbackLeaseResponse(value: unknown): value is FeedbackLeaseResponse {
@@ -341,6 +358,7 @@ export const cliHttpV1Validators = {
   CliAuthStatusResponse: isCliAuthStatusResponse,
   CliErrorResponse: isCliErrorResponse,
   DecisionCascadeResponse: isDecisionCascadeResponse,
+  DecisionCollectScopeResponse: isDecisionCollectScopeResponse,
   DecisionConfirmRequest: isDecisionConfirmRequest,
   DecisionConfirmSuccessResponse: isDecisionConfirmSuccessResponse,
   DecisionCreateRequest: isDecisionCreateRequest,
@@ -350,6 +368,8 @@ export const cliHttpV1Validators = {
   DecisionIdRequest: isDecisionIdRequest,
   DecisionRelateRequest: isDecisionRelateRequest,
   DecisionRelateSuccessResponse: isDecisionRelateSuccessResponse,
+  DecisionRescopeRequest: isDecisionRescopeRequest,
+  DecisionRescopeResponse: isDecisionRescopeResponse,
   DecisionStageSuccessResponse: isDecisionStageSuccessResponse,
   DecisionSupersedeRequest: isDecisionSupersedeRequest,
   DecisionsAffectingResponse: isDecisionsAffectingResponse,

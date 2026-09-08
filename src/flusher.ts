@@ -83,6 +83,17 @@ function addDrainCounts(left: DrainCounts, right: DrainCounts): DrainCounts {
   };
 }
 
+/** Legacy journal entries can be valid enough to deliver without env provenance. */
+function collectionScopeRoots(batch: readonly Move[]): string[] {
+  return batch.flatMap((move) => {
+    const env = (move as { env?: unknown }).env;
+    if (typeof env !== "object" || env === null || Array.isArray(env)) return [];
+    const record = env as Record<string, unknown>;
+    const root = typeof record.gitRoot === "string" ? record.gitRoot : record.cwd;
+    return typeof root === "string" && root.length > 0 ? [root] : [];
+  });
+}
+
 function isVersionedInvalidMoveDisposition(body: unknown): boolean {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return false;
@@ -173,7 +184,7 @@ export async function drainFlushingPath(
       const response = await client.post("/api/cli/moves/ingest", request, {
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
       });
-      requireDurableIngestAcknowledgement(response, batch.length);
+      requireDurableIngestAcknowledgement(response, batch.length, collectionScopeRoots(batch));
       return { flushed: batch.length, quarantined: 0 };
     } catch (error) {
       const reason = deadLetterReason(error);

@@ -80,7 +80,8 @@ export function isValidRepoSyncId(value: unknown): value is string {
   return typeof value === "string" && REPO_SYNC_ID_RE.test(value);
 }
 
-function localGitConfigValue(cwd: string, key: string): string | undefined {
+/** Read one repository-local Git config value without falling back to global config. */
+export function localGitConfigValue(cwd: string, key: string): string | undefined {
   try {
     const value = execFileSync("git", ["config", "--local", "--get", key], {
       cwd,
@@ -92,6 +93,15 @@ function localGitConfigValue(cwd: string, key: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Write one repository-local Git config value using the binding cache mechanism. */
+export function setLocalGitConfigValue(cwd: string, key: string, value: string): void {
+  execFileSync("git", ["config", "--local", key, value], {
+    cwd,
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
+  });
 }
 
 /**

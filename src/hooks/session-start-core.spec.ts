@@ -14,6 +14,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
+import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
@@ -58,6 +59,7 @@ vi.mock("../lib/activation.js", () => ({
   repoActiveFlag: vi.fn(),
   setRepoActive: vi.fn(),
 }));
+vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
 vi.mock("../lib/git.js", () => ({ githubRepositoryFullName: vi.fn(), gitToplevel: vi.fn() }));
 vi.mock("../lib/post-commit-hook.js", () => ({
   ensureEffectivePostCommitHook: vi.fn(),
@@ -121,6 +123,7 @@ beforeEach(() => {
   vi.mocked(daemonRequest).mockResolvedValue(null);
   vi.mocked(leaseDecisionFeedback).mockResolvedValue(undefined);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+  vi.mocked(fetchAndCacheCollectScope).mockResolvedValue({ kind: "unfetched" });
   vi.mocked(repoActiveFlag).mockReturnValue("true");
   vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
     path: "/repo/.git/hooks/post-commit",
@@ -220,6 +223,7 @@ describe("processSessionStart", () => {
       },
     });
     expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+    expect(fetchAndCacheCollectScope).toHaveBeenCalledWith("/repo");
   });
 
   it("stays silent in an inactive checkout and never resolves its binding", async () => {

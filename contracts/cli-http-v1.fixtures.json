@@ -1,6 +1,28 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
   "contractVersion": 4,
+  "scopeGlobVectors": [
+    {
+      "pattern": "src/**/*.test.ts",
+      "path": "src/auth/login.test.ts",
+      "matches": true
+    },
+    {
+      "pattern": "src/**/*.test.ts",
+      "path": "src/auth/login.ts",
+      "matches": false
+    },
+    {
+      "pattern": "src/*.ts",
+      "path": "src/auth/login.ts",
+      "matches": false
+    },
+    {
+      "pattern": "**/*.test.ts",
+      "path": "packages/api/router.test.ts",
+      "matches": true
+    }
+  ],
   "cases": [
     {
       "name": "WorkOS Connect device configuration",
@@ -277,7 +299,32 @@
         "accepted": 1,
         "acknowledged": 1,
         "disposition": "persisted",
-        "verdictFooter": null
+        "verdictFooter": null,
+        "collectScopeVersion": 1787078400000
+      }
+    },
+    {
+      "name": "collection scope policy",
+      "definition": "DecisionCollectScopeResponse",
+      "valid": true,
+      "value": {
+        "policy": {
+          "repositories": ["primitive/api"],
+          "directories": ["packages/api"],
+          "globs": ["src/**/*.test.ts"],
+          "branches": ["main"],
+          "updatedAt": 1787078400000
+        },
+        "collectScopeVersion": 1787078400000
+      }
+    },
+    {
+      "name": "absent collection scope is universal version zero",
+      "definition": "DecisionCollectScopeResponse",
+      "valid": true,
+      "value": {
+        "policy": null,
+        "collectScopeVersion": 0
       }
     },
     {
@@ -351,8 +398,25 @@
         "repoSyncId": "repoSync123",
         "paths": ["src/index.ts"],
         "coverage": "complete",
+        "branch": "feature/location-scope",
         "clientMode": "block",
         "clientVersion": "0.2.0",
+        "proposal": "Edit the contract"
+      }
+    },
+    {
+      "name": "malformed preflight branch degrades to unknown",
+      "definition": "PreflightRequestV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "invocation-branch",
+        "repoSyncId": "repoSync123",
+        "paths": ["src/index.ts"],
+        "coverage": "complete",
+        "branch": "feature//malformed",
         "proposal": "Edit the contract"
       }
     },
@@ -1120,6 +1184,14 @@
             "status": "active"
           }
         ],
+        "scope": {
+          "location": {
+            "repository": false,
+            "directories": ["packages/api"],
+            "globs": [],
+            "branches": ["main"]
+          }
+        },
         "truncated": false
       }
     },
@@ -1170,6 +1242,14 @@
       "value": {
         "intent": "Publish the generated contract",
         "protocolVersion": 3,
+        "scope": {
+          "location": {
+            "repository": false,
+            "directories": ["packages/api"],
+            "globs": [],
+            "branches": ["main"]
+          }
+        },
         "stageOverride": "draft"
       }
     },
@@ -1180,7 +1260,15 @@
       "value": {
         "decisionId": "decision-1",
         "shortId": "0123abcd",
-        "createdAt": 100
+        "createdAt": 100,
+        "scope": {
+          "location": {
+            "repository": false,
+            "directories": ["packages/api"],
+            "globs": [],
+            "branches": ["main"]
+          }
+        }
       }
     },
     {
@@ -1208,6 +1296,39 @@
         "id": "decision-1",
         "rationale": "Keep the generated contract current",
         "alternatives": ["Retain handwritten mirrors"]
+      }
+    },
+    {
+      "name": "decision rescope request",
+      "definition": "DecisionRescopeRequest",
+      "valid": true,
+      "value": {
+        "id": "decision-1",
+        "location": {
+          "repository": false,
+          "directories": ["packages/api"],
+          "globs": [],
+          "branches": ["main"]
+        }
+      }
+    },
+    {
+      "name": "decision rescope response",
+      "definition": "DecisionRescopeResponse",
+      "valid": true,
+      "value": {
+        "outcome": "ok",
+        "decisionId": "decision-1",
+        "shortId": "0123abcd",
+        "stage": "adopted",
+        "scope": {
+          "location": {
+            "repository": false,
+            "directories": ["packages/api"],
+            "globs": [],
+            "branches": ["main"]
+          }
+        }
       }
     },
     {

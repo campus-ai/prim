@@ -53,6 +53,19 @@ export interface DecisionCascadeResponse {
   [k: string]: unknown | undefined;
 }
 
+export interface DecisionCollectScopeResponse {
+  policy: {
+    repositories?: string[];
+    directories?: string[];
+    globs?: string[];
+    branches?: string[];
+    updatedAt: number;
+    [k: string]: unknown | undefined;
+  } | null;
+  collectScopeVersion: number;
+  [k: string]: unknown | undefined;
+}
+
 export interface DecisionConfirmRequest {
   id: string;
   confirmed?: boolean;
@@ -95,6 +108,16 @@ export interface DecisionCreateRequest {
   files?: string[];
   protocolVersion?: 3;
   repoSyncId?: string;
+  scope?: {
+    location?: {
+      repository?: boolean;
+      directories?: string[];
+      globs?: string[];
+      branches?: string[];
+      [k: string]: unknown | undefined;
+    };
+    [k: string]: unknown | undefined;
+  };
   stageOverride?: "candidate" | "draft" | "adopted";
   [k: string]: unknown | undefined;
 }
@@ -103,6 +126,17 @@ export interface DecisionCreateResponse {
   decisionId: string;
   shortId: string;
   createdAt: number;
+  scope?: {
+    location: {
+      repository: boolean;
+      directories: string[];
+      globs: string[];
+      branches: string[];
+      [k: string]: unknown | undefined;
+    };
+    [k: string]: unknown | undefined;
+  };
+  scopeWarnings?: string[];
   [k: string]: unknown | undefined;
 }
 
@@ -158,6 +192,16 @@ export interface DecisionDetailResponse {
     status: "active" | "superseded" | "under_review";
     [k: string]: unknown | undefined;
   }[];
+  scope: {
+    location: {
+      repository: boolean;
+      directories: string[];
+      globs: string[];
+      branches: string[];
+      [k: string]: unknown | undefined;
+    };
+    [k: string]: unknown | undefined;
+  };
   truncated: boolean;
   [k: string]: unknown | undefined;
 }
@@ -191,6 +235,54 @@ export interface DecisionRelateSuccessResponse {
   parentShortId?: string;
   [k: string]: unknown | undefined;
 }
+
+export interface DecisionRescopeRequest {
+  id: string;
+  location?: {
+    repository?: boolean;
+    directories?: string[];
+    globs?: string[];
+    branches?: string[];
+    [k: string]: unknown | undefined;
+  } | null;
+  [k: string]: unknown | undefined;
+}
+
+export type DecisionRescopeResponse =
+  | {
+      outcome: "no_op";
+      stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+      scope: {
+        location: {
+          repository: boolean;
+          directories: string[];
+          globs: string[];
+          branches: string[];
+          [k: string]: unknown | undefined;
+        };
+        [k: string]: unknown | undefined;
+      };
+      scopeWarnings?: string[];
+      [k: string]: unknown | undefined;
+    }
+  | {
+      outcome: "ok";
+      decisionId: string;
+      shortId?: string;
+      stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+      scope: {
+        location: {
+          repository: boolean;
+          directories: string[];
+          globs: string[];
+          branches: string[];
+          [k: string]: unknown | undefined;
+        };
+        [k: string]: unknown | undefined;
+      };
+      scopeWarnings?: string[];
+      [k: string]: unknown | undefined;
+    };
 
 export type DecisionStageSuccessResponse =
   | {
@@ -271,6 +363,7 @@ export interface DurableMoveIngestResponse {
     decisionId: string;
     decisionShortId?: string;
   } | null;
+  collectScopeVersion?: number;
 }
 
 export interface FeedbackAckRequest {
@@ -536,6 +629,7 @@ export interface PreflightRequestV3 {
    */
   paths: string[];
   coverage: "complete" | "unverified";
+  branch?: string;
   clientMode?: "block" | "warn";
   clientVersion?: string;
   proposal: string;

@@ -30,7 +30,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
-import { resolveRepositoryContext } from "../lib/git.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
@@ -222,6 +223,27 @@ async function main(): Promise<void> {
       await emit();
       return;
     }
+  }
+  const pathsComplete =
+    !resolution.targetsIncomplete &&
+    !resolution.targetsTruncated &&
+    resolution.rejected.length === 0 &&
+    resolution.shellMutation !== "unresolved";
+  const hasPathEvidence =
+    resolution.fileRefs.length > 0 ||
+    resolution.rejected.length > 0 ||
+    resolution.targetsIncomplete ||
+    resolution.targetsTruncated ||
+    resolution.shellMutation === "unresolved";
+  if (
+    !cachedCollectScopeAdmits(cwd, {
+      repository: resolvedRepository.repoFullName,
+      branch: currentBranch(cwd),
+      ...(isHermesDenial || !hasPathEvidence ? {} : { paths: resolution.fileRefs, pathsComplete }),
+    })
+  ) {
+    await emit();
+    return;
   }
   const enriched = enrichment.parsed;
   // Stamp the same worktree provenance as passive prim-hook. The classifier

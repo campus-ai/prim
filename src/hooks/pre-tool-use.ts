@@ -31,6 +31,8 @@
 
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { currentBranch, githubRepositoryFullName } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
 import {
   appendCodexContext,
@@ -227,6 +229,13 @@ async function main(): Promise<void> {
     );
     return;
   }
+  const branch = currentBranch(cwd);
+  const collectScopeAdmits = cachedCollectScopeAdmits(cwd, {
+    repository: githubRepositoryFullName(cwd) ?? undefined,
+    branch,
+    paths: targets.paths,
+    pathsComplete: targets.coverage === "complete",
+  });
   const request: PreflightRequest = {
     protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
     agent,
@@ -237,7 +246,8 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
-    proposal: proposalFor(envelope.tool_input),
+    proposal: collectScopeAdmits ? proposalFor(envelope.tool_input) : "",
+    ...(branch === undefined ? {} : { branch }),
   };
   let result: ConflictCheckResult;
   try {

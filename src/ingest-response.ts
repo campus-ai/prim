@@ -7,11 +7,14 @@
  * proves that every move is durably present (including deduplicated replays).
  */
 
+import { scheduleCollectScopeRefresh } from "./lib/collect-scope.js";
+
 export interface DurableIngestResponse {
   disposition: "persisted";
   acknowledged: number;
   accepted?: number;
   verdictFooter?: unknown;
+  collectScopeVersion?: number;
 }
 
 export class IngestAcknowledgementError extends Error {
@@ -24,6 +27,7 @@ export class IngestAcknowledgementError extends Error {
 export function requireDurableIngestAcknowledgement(
   value: unknown,
   expected: number,
+  cwd: string | readonly string[] = process.cwd(),
 ): DurableIngestResponse {
   if (typeof value !== "object" || value === null) {
     throw new IngestAcknowledgementError("ingest response was not an object");
@@ -36,6 +40,16 @@ export function requireDurableIngestAcknowledgement(
     throw new IngestAcknowledgementError(
       `ingest acknowledged ${String(response.acknowledged)} of ${String(expected)} moves`,
     );
+  }
+  if (
+    typeof response.collectScopeVersion === "number" &&
+    Number.isSafeInteger(response.collectScopeVersion) &&
+    response.collectScopeVersion >= 0
+  ) {
+    const roots = typeof cwd === "string" ? [cwd] : cwd;
+    for (const root of new Set(roots)) {
+      scheduleCollectScopeRefresh(root, response.collectScopeVersion);
+    }
   }
   return value as DurableIngestResponse;
 }

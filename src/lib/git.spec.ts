@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   canonicalGitRoot,
   canonicalRepositoryPath,
+  currentBranch,
   githubRepositoryFullName,
   normalizeOriginRemote,
   resolveRepositoryContext,
@@ -54,6 +55,28 @@ describe("githubRepositoryFullName", () => {
       "git@github.com:campus-ai/-repo.git",
     ]);
     expect(githubRepositoryFullName(root)).toBe("campus-ai/-repo");
+  });
+});
+
+describe("currentBranch", () => {
+  it("returns the symbolic branch and omits detached HEAD", () => {
+    const hooks = join(root, ".test-hooks");
+    mkdirSync(hooks);
+    git(root, "config", "core.hooksPath", hooks);
+    git(root, "config", "user.email", "test@example.com");
+    git(root, "config", "user.name", "Test");
+    writeFileSync(join(root, "README.md"), "test\n");
+    git(root, "add", "README.md");
+    git(root, "commit", "-qm", "init");
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: root,
+      encoding: "utf-8",
+    }).trim();
+
+    expect(currentBranch(root)).toBe(branch);
+
+    git(root, "checkout", "--detach", "-q");
+    expect(currentBranch(root)).toBeUndefined();
   });
 });
 
@@ -110,6 +133,9 @@ function git(cwd: string, ...args: string[]): void {
 function repository(): string {
   const root = mkdtempSync(join(tmpdir(), "prim-repo-context-"));
   git(root, "init", "-q");
+  const hooks = join(root, ".test-hooks");
+  mkdirSync(hooks);
+  git(root, "config", "core.hooksPath", hooks);
   git(root, "config", "user.email", "test@example.com");
   git(root, "config", "user.name", "Test");
   git(root, "config", "commit.gpgsign", "false");

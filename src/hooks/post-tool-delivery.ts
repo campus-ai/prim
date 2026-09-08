@@ -13,5 +13,5 @@ export async function deliverPostToolMove(move: Move, orgId: string | undefined)
     { batch: [move] },
     { signal: AbortSignal.timeout(INGEST_TIMEOUT_MS) },
   );
-  return requireDurableIngestAcknowledgement(response, 1);
+  return requireDurableIngestAcknowledgement(response, 1, move.env.gitRoot ?? move.env.cwd);
 }
