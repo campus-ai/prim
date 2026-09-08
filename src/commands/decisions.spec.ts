@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   askConfirmation: vi.fn(),
   fetchCreate: vi.fn(),
+  rescopeDecision: vi.fn(),
   isRepoActiveForCapture: vi.fn(),
   repoSyncId: vi.fn(),
   setRepoActive: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock("../decisions/create.js", async () => {
     await vi.importActual<typeof import("../decisions/create.js")>("../decisions/create.js");
   return { ...actual, fetchCreate: mocks.fetchCreate };
 });
+
+vi.mock("../decisions/rescope.js", () => ({
+  rescopeDecision: mocks.rescopeDecision,
+}));
 
 import { registerDecisionsCommands } from "./decisions.js";
 
@@ -64,6 +69,12 @@ async function runCreate(...args: string[]): Promise<void> {
   );
 }
 
+async function runRescope(...args: string[]): Promise<void> {
+  await buildProgram().parseAsync(["decisions", "rescope", "decision-1", ...args], {
+    from: "user",
+  });
+}
+
 describe("decisions create activation consent", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -74,6 +85,7 @@ describe("decisions create activation consent", () => {
     vi.stubEnv("PRIM_NON_INTERACTIVE", "");
     process.exitCode = 0;
     mocks.fetchCreate.mockResolvedValue(OUTCOME);
+    mocks.rescopeDecision.mockResolvedValue(0);
     mocks.repoSyncId.mockReturnValue("sync-1");
     mocks.canonicalRepositoryPath.mockImplementation((path: string) => path);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -174,6 +186,44 @@ describe("decisions create activation consent", () => {
       }),
     );
     expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");
+  });
+
+  it("sends ISO time flags as a scope without requiring a repository binding", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--effective-from",
+      "2026-09-08T00:00:00Z",
+      "--effective-until",
+      "1789158896789",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          time: {
+            effectiveFrom: Date.parse("2026-09-08T00:00:00Z"),
+            effectiveUntil: 1_789_158_896_789,
+          },
+        },
+      }),
+    );
+    expect(mocks.repoSyncId).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid time flags before prompting or transport", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(false);
+
+    await runCreate("--effective-from", "not-a-date");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(mocks.askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("--effective-from"));
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2),
+    );
   });
 
   it("rejects --files locally when the repository is unbound", async () => {
@@ -281,5 +331,49 @@ describe("decisions create activation consent", () => {
     expect(errorSpy).toHaveBeenNthCalledWith(1, APPROVED);
     expect(mocks.fetchCreate).toHaveBeenCalledOnce();
     expect(mocks.setRepoActive).not.toHaveBeenCalled();
+  });
+});
+
+describe("decisions rescope effective windows", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    process.exitCode = 0;
+    mocks.rescopeDecision.mockResolvedValue(0);
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.exitCode = ORIGINAL_EXIT_CODE;
+    vi.restoreAllMocks();
+  });
+
+  it("sends an explicit null window for --clear-window", async () => {
+    await runRescope("--clear-window");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({ id: "decision-1", time: null });
+  });
+
+  it("sends parsed time bounds to the rescope transport", async () => {
+    await runRescope("--effective-from", "1", "--effective-until", "2");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      time: { effectiveFrom: 1, effectiveUntil: 2 },
+    });
+  });
+
+  it("does not send a legacy empty rescope request when no time option was supplied", async () => {
+    await runRescope();
+
+    expect(mocks.rescopeDecision).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("provide --effective-from"));
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2),
+    );
   });
 });

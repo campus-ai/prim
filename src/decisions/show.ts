@@ -57,6 +57,18 @@ export interface DecisionFlagSummary {
   reason?: string;
 }
 
+export interface DecisionLocationScope {
+  repository: boolean;
+  directories: string[];
+  globs: string[];
+  branches: string[];
+}
+
+export interface DecisionTimeScope {
+  effectiveFrom?: number;
+  effectiveUntil?: number;
+}
+
 export interface DecisionShowResult {
   decision: {
     id: string;
@@ -84,6 +96,7 @@ export interface DecisionShowResult {
   flags: DecisionFlagSummary[];
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
+  scope?: { location: DecisionLocationScope; time: DecisionTimeScope };
   truncated: boolean;
 }
 
@@ -179,6 +192,23 @@ function pushEdges(lines: string[], label: string, arrow: string, nodes: Decisio
   }
 }
 
+function effectiveTimestamp(value: number): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function describeEffectiveWindow(scope: DecisionTimeScope): string | undefined {
+  const bounds = [
+    ...(scope.effectiveFrom === undefined
+      ? []
+      : [`from ${effectiveTimestamp(scope.effectiveFrom)}`]),
+    ...(scope.effectiveUntil === undefined
+      ? []
+      : [`until ${effectiveTimestamp(scope.effectiveUntil)}`]),
+  ];
+  return bounds.length === 0 ? undefined : bounds.join("; ");
+}
+
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
@@ -193,6 +223,10 @@ export function formatShowHuman(result: DecisionShowResult): string {
   if (d.area) {
     const area = terminalSafeLine(d.area);
     lines.push(`  area: ${color(area, colorForArea(area))}`);
+  }
+  const effectiveWindow = result.scope && describeEffectiveWindow(result.scope.time);
+  if (effectiveWindow) {
+    lines.push(`  effective: ${effectiveWindow}`);
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);

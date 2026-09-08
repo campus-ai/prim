@@ -25,6 +25,10 @@ export interface CollectScopePolicy {
   directories?: string[];
   globs?: string[];
   branches?: string[];
+  /** Inclusive client-clock instant at which collection begins. */
+  effectiveFrom?: number;
+  /** Exclusive client-clock instant at which collection stops. */
+  effectiveUntil?: number;
   updatedAt: number;
 }
 
@@ -37,6 +41,8 @@ export interface CollectScopeFacts {
   paths?: readonly string[];
   /** Required when `paths` is supplied and a path policy exists. */
   pathsComplete?: boolean;
+  /** Local hook clock; injectable only to make boundary behavior deterministic. */
+  now?: number;
 }
 
 export type CachedCollectScope =
@@ -71,6 +77,15 @@ function optionalStringArray(
   return [...value];
 }
 
+function optionalSafeInteger(
+  record: Record<string, unknown>,
+  key: "effectiveFrom" | "effectiveUntil",
+): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
 function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -80,11 +95,22 @@ function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
     directories: optionalStringArray(record, "directories"),
     globs: optionalStringArray(record, "globs"),
     branches: optionalStringArray(record, "branches"),
+    effectiveFrom: optionalSafeInteger(record, "effectiveFrom"),
+    effectiveUntil: optionalSafeInteger(record, "effectiveUntil"),
   };
   if (
     Object.entries(fields).some(
       ([key, parsed]) => record[key] !== undefined && parsed === undefined,
     )
+  ) {
+    return undefined;
+  }
+  if (
+    (record.effectiveFrom !== undefined && fields.effectiveFrom === undefined) ||
+    (record.effectiveUntil !== undefined && fields.effectiveUntil === undefined) ||
+    (fields.effectiveFrom !== undefined &&
+      fields.effectiveUntil !== undefined &&
+      fields.effectiveFrom >= fields.effectiveUntil)
   ) {
     return undefined;
   }
@@ -94,19 +120,17 @@ function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
     ...(fields.directories === undefined ? {} : { directories: fields.directories }),
     ...(fields.globs === undefined ? {} : { globs: fields.globs }),
     ...(fields.branches === undefined ? {} : { branches: fields.branches }),
+    ...(fields.effectiveFrom === undefined ? {} : { effectiveFrom: fields.effectiveFrom }),
+    ...(fields.effectiveUntil === undefined ? {} : { effectiveUntil: fields.effectiveUntil }),
   };
 }
 
 function projectPolicy(
   policy: NonNullable<DecisionCollectScopeResponse["policy"]>,
 ): CollectScopePolicy {
-  return {
-    updatedAt: policy.updatedAt,
-    ...(policy.repositories === undefined ? {} : { repositories: [...policy.repositories] }),
-    ...(policy.directories === undefined ? {} : { directories: [...policy.directories] }),
-    ...(policy.globs === undefined ? {} : { globs: [...policy.globs] }),
-    ...(policy.branches === undefined ? {} : { branches: [...policy.branches] }),
-  };
+  const projected = policyFromUnknown(policy);
+  if (projected === undefined) throw new Error("invalid collection scope policy");
+  return projected;
 }
 
 /** Read the last server-issued collection policy saved in local Git config. */
@@ -204,6 +228,15 @@ function branchAdmits(branches: string[], branch: string | undefined): boolean {
   return branch !== undefined && branches.some((pattern) => branchPatternMatches(pattern, branch));
 }
 
+function timeAdmits(policy: CollectScopePolicy, now: number | undefined): boolean {
+  if (policy.effectiveFrom === undefined && policy.effectiveUntil === undefined) return true;
+  if (now === undefined || !Number.isSafeInteger(now)) return false;
+  return (
+    (policy.effectiveFrom === undefined || now >= policy.effectiveFrom) &&
+    (policy.effectiveUntil === undefined || now < policy.effectiveUntil)
+  );
+}
+
 function directoryAdmits(directory: string, path: string): boolean {
   return isScopeDirectoryPrefix(directory) && path.startsWith(`${directory}/`);
 }
@@ -219,10 +252,10 @@ function pathAdmits(policy: CollectScopePolicy, path: string): boolean {
 /**
  * Decide whether one local event may be collected under a policy.
  *
- * Policy dimensions compose narrowly: repository and branch selectors must
- * admit their known facts, while any path-bearing event must have every
+ * Policy dimensions compose narrowly: repository, branch, and time selectors
+ * must admit their known facts, while any path-bearing event must have every
  * complete target admitted by a directory or glob selector. Path-less events
- * intentionally bypass only the path selectors.
+ * intentionally bypass only the path selectors. Time uses the local hook clock.
  */
 export function collectScopeAdmits(
   policy: CollectScopePolicy | null | undefined,
@@ -238,6 +271,7 @@ export function collectScopeAdmits(
   if (hasSelectors(policy.branches) && !branchAdmits(policy.branches, facts.branch)) {
     return false;
   }
+  if (!timeAdmits(policy, facts.now ?? Date.now())) return false;
 
   const hasPathSelectors = hasSelectors(policy.directories) || hasSelectors(policy.globs);
   if (!hasPathSelectors || facts.paths === undefined) return true;

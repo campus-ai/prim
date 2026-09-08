@@ -59,6 +59,8 @@ export interface DecisionCollectScopeResponse {
     directories?: string[];
     globs?: string[];
     branches?: string[];
+    effectiveFrom?: number;
+    effectiveUntil?: number;
     updatedAt: number;
     [k: string]: unknown | undefined;
   } | null;
@@ -116,6 +118,11 @@ export interface DecisionCreateRequest {
       branches?: string[];
       [k: string]: unknown | undefined;
     };
+    time?: {
+      effectiveFrom?: number;
+      effectiveUntil?: number;
+      [k: string]: unknown | undefined;
+    };
     [k: string]: unknown | undefined;
   };
   stageOverride?: "candidate" | "draft" | "adopted";
@@ -132,6 +139,11 @@ export interface DecisionCreateResponse {
       directories: string[];
       globs: string[];
       branches: string[];
+      [k: string]: unknown | undefined;
+    };
+    time: {
+      effectiveFrom?: number;
+      effectiveUntil?: number;
       [k: string]: unknown | undefined;
     };
     [k: string]: unknown | undefined;
@@ -200,6 +212,11 @@ export interface DecisionDetailResponse {
       branches: string[];
       [k: string]: unknown | undefined;
     };
+    time: {
+      effectiveFrom?: number;
+      effectiveUntil?: number;
+      [k: string]: unknown | undefined;
+    };
     [k: string]: unknown | undefined;
   };
   truncated: boolean;
@@ -245,6 +262,11 @@ export interface DecisionRescopeRequest {
     branches?: string[];
     [k: string]: unknown | undefined;
   } | null;
+  time?: {
+    effectiveFrom?: number;
+    effectiveUntil?: number;
+    [k: string]: unknown | undefined;
+  } | null;
   [k: string]: unknown | undefined;
 }
 
@@ -258,6 +280,11 @@ export type DecisionRescopeResponse =
           directories: string[];
           globs: string[];
           branches: string[];
+          [k: string]: unknown | undefined;
+        };
+        time: {
+          effectiveFrom?: number;
+          effectiveUntil?: number;
           [k: string]: unknown | undefined;
         };
         [k: string]: unknown | undefined;
@@ -276,6 +303,11 @@ export type DecisionRescopeResponse =
           directories: string[];
           globs: string[];
           branches: string[];
+          [k: string]: unknown | undefined;
+        };
+        time: {
+          effectiveFrom?: number;
+          effectiveUntil?: number;
           [k: string]: unknown | undefined;
         };
         [k: string]: unknown | undefined;

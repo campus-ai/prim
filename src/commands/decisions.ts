@@ -12,11 +12,13 @@
  *   prim decisions demote <idOrShortId>
  *   prim decisions withdraw <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
+ *   prim decisions rescope <idOrShortId> --effective-from|--effective-until|--clear-window
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
- *                          --confidence|--reversibility|--files|--draft|--adopt]
+ *                          --confidence|--reversibility|--files|--effective-from|
+ *                          --effective-until|--draft|--adopt]
  *
  * The `decisions` command group is created once here; every subcommand
  * attaches to this same group. AX contract throughout: STDOUT is always
@@ -39,10 +41,16 @@ import {
 } from "../decisions/confirm.js";
 import {
   type CreateRequest,
+  createScopeWarnings,
   fetchCreate,
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
+import {
+  type EffectiveWindow,
+  EffectiveWindowInputError,
+  effectiveWindowFromOptions,
+} from "../decisions/effective-window.js";
 import {
   demoteDecision,
   promoteDecision,
@@ -75,6 +83,7 @@ import {
   formatRepairsJson,
   resolveRepair,
 } from "../decisions/repairs.js";
+import { rescopeDecision } from "../decisions/rescope.js";
 import {
   DecisionNotFoundError,
   fetchShow,
@@ -85,6 +94,7 @@ import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisio
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 
 const EXIT_NOT_FOUND = 4;
@@ -157,8 +167,25 @@ interface CreateOptions {
   confidence?: string;
   reversibility?: string;
   files?: string[];
+  effectiveFrom?: string;
+  effectiveUntil?: string;
   draft?: boolean;
   adopt?: boolean;
+}
+
+interface RescopeOptions {
+  effectiveFrom?: string;
+  effectiveUntil?: string;
+  clearWindow?: boolean;
+}
+
+function rejectEffectiveWindow(
+  command: "create" | "rescope",
+  error: EffectiveWindowInputError,
+): void {
+  console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
+  console.log(JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2));
+  process.exitCode = EXIT_USAGE;
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -410,6 +437,14 @@ export function registerDecisionsCommands(program: Command): void {
       "Comma-separated exact repo-relative paths this decision governs (repeatable)",
       collectPaths,
     )
+    .option(
+      "--effective-from <instant>",
+      "Inclusive ISO-8601 or Unix-millisecond start for this Decision",
+    )
+    .option(
+      "--effective-until <instant>",
+      "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
+    )
     .action(async (opts: CreateOptions, command: Command) => {
       if (opts.draft && opts.adopt) {
         console.error("[prim] create rejected: --draft and --adopt cannot be used together.");
@@ -417,8 +452,25 @@ export function registerDecisionsCommands(program: Command): void {
         process.exitCode = EXIT_USAGE;
         return;
       }
+      let time: EffectiveWindow | undefined;
+      try {
+        const requestedTime = effectiveWindowFromOptions(opts);
+        if (requestedTime === null) {
+          throw new EffectiveWindowInputError(
+            "--clear-window is only available with `decisions rescope`",
+          );
+        }
+        time = requestedTime;
+      } catch (error) {
+        if (error instanceof EffectiveWindowInputError) {
+          rejectEffectiveWindow("create", error);
+          return;
+        }
+        throw error;
+      }
       const requestedFiles = opts.files ?? [];
-      let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId"> = {};
+      let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId" | "scope"> =
+        {};
       if (requestedFiles.length > 0) {
         const binding = repoSyncId(process.cwd());
         const root = canonicalGitRoot(process.cwd());
@@ -438,6 +490,9 @@ export function registerDecisionsCommands(program: Command): void {
           repoSyncId: binding,
           files: canonical as string[],
         };
+      }
+      if (time !== undefined) {
+        explicitScope = { ...explicitScope, scope: { time } };
       }
       if (!isRepoActiveForCapture(process.cwd())) {
         const globals = command.optsWithGlobals();
@@ -471,6 +526,9 @@ export function registerDecisionsCommands(program: Command): void {
       };
       try {
         const outcome = await fetchCreate(request);
+        for (const warning of createScopeWarnings(request, outcome)) {
+          console.error(terminalSafeLine(`[prim] create warning: ${warning}`));
+        }
         console.error(formatCreateHuman(outcome));
         console.log(formatCreateJson(outcome));
       } catch (err) {
@@ -484,6 +542,41 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw err;
       }
+    });
+
+  decisions
+    .command("rescope <idOrShortId>")
+    .description("Replace a Decision's effective window; use --clear-window to remove it")
+    .option(
+      "--effective-from <instant>",
+      "Inclusive ISO-8601 or Unix-millisecond start for this Decision",
+    )
+    .option(
+      "--effective-until <instant>",
+      "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
+    )
+    .option("--clear-window", "Remove this Decision's effective window")
+    .action(async (id: string, opts: RescopeOptions) => {
+      let time: EffectiveWindow | null | undefined;
+      try {
+        time = effectiveWindowFromOptions(opts);
+      } catch (error) {
+        if (error instanceof EffectiveWindowInputError) {
+          rejectEffectiveWindow("rescope", error);
+          return;
+        }
+        throw error;
+      }
+      if (time === undefined) {
+        rejectEffectiveWindow(
+          "rescope",
+          new EffectiveWindowInputError(
+            "provide --effective-from, --effective-until, or --clear-window",
+          ),
+        );
+        return;
+      }
+      process.exitCode = await rescopeDecision({ id, time });
     });
 
   decisions

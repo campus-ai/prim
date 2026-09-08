@@ -11,7 +11,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type CliClient, HttpError } from "../client.js";
-import { type CreateOutcome, fetchCreate, formatCreateHuman, formatCreateJson } from "./create.js";
+import {
+  type CreateOutcome,
+  createScopeWarnings,
+  fetchCreate,
+  formatCreateHuman,
+  formatCreateJson,
+} from "./create.js";
 
 const FULL_ID = "qx7fpmycwabtzke040y7vecnnh8870pg";
 const SHORT_ID = "abc12345";
@@ -95,6 +101,32 @@ describe("fetchCreate", () => {
     );
   });
 
+  it("posts a time scope without requiring repository-only create fields", async () => {
+    const post = vi.fn().mockResolvedValue(OUTCOME);
+    await fetchCreate(
+      {
+        intent: "Freeze the public API during the migration",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789, effectiveUntil: 1_789_158_896_789 },
+        },
+      },
+      { getClient: () => clientWith(post) },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/create",
+      {
+        intent: "Freeze the public API during the migration",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789, effectiveUntil: 1_789_158_896_789 },
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("returns the created identity from the server", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     const result = await fetchCreate(
@@ -111,5 +143,41 @@ describe("fetchCreate", () => {
     await expect(
       fetchCreate({ intent: "Use X", attribution: "agent" }, { getClient: () => clientWith(post) }),
     ).rejects.toThrow("not bound to an organization");
+  });
+});
+
+describe("createScopeWarnings", () => {
+  it("surfaces time warnings and detects an old response that omits scope", () => {
+    const request = {
+      intent: "Freeze the public API during the migration",
+      attribution: "user" as const,
+      scope: { time: { effectiveFrom: 1_789_072_496_789 } },
+    };
+
+    expect(
+      createScopeWarnings(request, { ...OUTCOME, scopeWarnings: ["window was ignored"] }),
+    ).toEqual([
+      "window was ignored",
+      "the server did not confirm this Decision scope; upgrade Primitive and retry",
+    ]);
+  });
+
+  it("does not invent an old-server warning when time scope was confirmed", () => {
+    expect(
+      createScopeWarnings(
+        {
+          intent: "Freeze the public API during the migration",
+          attribution: "user",
+          scope: { time: { effectiveUntil: 1_789_158_896_789 } },
+        },
+        {
+          ...OUTCOME,
+          scope: {
+            location: { repository: false, directories: [], globs: [], branches: [] },
+            time: { effectiveUntil: 1_789_158_896_789 },
+          },
+        },
+      ),
+    ).toEqual([]);
   });
 });

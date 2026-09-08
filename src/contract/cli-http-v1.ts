@@ -252,7 +252,7 @@ export function isFeedbackAckRequest(value: unknown): value is FeedbackAckReques
 }
 
 /**
- * The server degrades invalid optional rollout and location-scope fields
+ * The server degrades invalid optional rollout, location-scope, and time-scope fields
  * instead of rejecting the request. CLI producers already emit the canonical
  * subset, so structural validation is the correct non-mutating producer check.
  */

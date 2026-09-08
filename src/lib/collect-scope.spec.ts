@@ -49,6 +49,16 @@ describe("collectScopeAdmits", () => {
     expect(collectScopeAdmits(null, { paths: [], pathsComplete: false })).toBe(true);
   });
 
+  it("uses the local hook clock with an inclusive start and exclusive end", () => {
+    const windowed = { effectiveFrom: 100, effectiveUntil: 200, updatedAt: 1 };
+
+    expect(collectScopeAdmits(windowed, { now: 99 })).toBe(false);
+    expect(collectScopeAdmits(windowed, { now: 100 })).toBe(true);
+    expect(collectScopeAdmits(windowed, { now: 199 })).toBe(true);
+    expect(collectScopeAdmits(windowed, { now: 200 })).toBe(false);
+    expect(collectScopeAdmits(windowed, { now: Number.NaN })).toBe(false);
+  });
+
   it("requires every configured dimension and every path in a mixed move", () => {
     const matching = {
       repository: "CAMPUS-AI/PRIMITIVE",
@@ -136,6 +146,19 @@ describe("collection scope cache", () => {
     expect(readCachedCollectScope(cwd)).toEqual({ kind: "invalid" });
   });
 
+  it("fails closed for an inverted cached effective window", () => {
+    const cwd = repository();
+    setLocalGitConfigValue(
+      cwd,
+      "prim.collectScope",
+      JSON.stringify({ updatedAt: 1, effectiveFrom: 200, effectiveUntil: 200 }),
+    );
+    setLocalGitConfigValue(cwd, "prim.collectScopeVersion", "1");
+
+    expect(readCachedCollectScope(cwd)).toEqual({ kind: "invalid" });
+    expect(cachedCollectScopeAdmits(cwd, { now: 200 })).toBe(false);
+  });
+
   it("fails closed when a policy and its version do not agree", () => {
     const cwd = repository();
     setLocalGitConfigValue(cwd, "prim.collectScope", JSON.stringify(POLICY));
@@ -160,6 +183,21 @@ describe("collection scope cache", () => {
       policy: POLICY,
       version: POLICY.updatedAt,
     });
+  });
+
+  it("persists effective-window policy fields alongside its cache version", () => {
+    const cwd = repository();
+    const policy = { effectiveFrom: 100, effectiveUntil: 200, updatedAt: 101 };
+
+    expect(writeCachedCollectScope(cwd, { policy, collectScopeVersion: policy.updatedAt })).toEqual(
+      {
+        kind: "policy",
+        policy,
+        version: policy.updatedAt,
+      },
+    );
+    expect(cachedCollectScopeAdmits(cwd, { now: 100 })).toBe(true);
+    expect(cachedCollectScopeAdmits(cwd, { now: 200 })).toBe(false);
   });
 
   it("fetches and caches only a contract-valid response", async () => {
