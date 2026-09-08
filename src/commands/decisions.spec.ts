@@ -212,6 +212,53 @@ describe("decisions create activation consent", () => {
     expect(mocks.repoSyncId).not.toHaveBeenCalled();
   });
 
+  it("sends repeated audience selectors without requiring a repository binding", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--for-user",
+      "user-1",
+      "--for-user",
+      "user-2",
+      "--for-role",
+      "admin",
+      "--for-agent",
+      "codex",
+      "--for-credential",
+      "service_token",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          users: [
+            { kind: "user", userId: "user-1" },
+            { kind: "user", userId: "user-2" },
+            { kind: "role", role: "admin" },
+            { kind: "agent", agent: "codex" },
+            { kind: "credential", credential: "service_token" },
+          ],
+        },
+      }),
+    );
+    expect(mocks.repoSyncId).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid audience selector before prompting or transport", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(false);
+
+    await runCreate("--for-agent", "not-a-client");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(mocks.askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("--for-agent"));
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_user_scope" }, null, 2),
+    );
+  });
+
   it("rejects invalid time flags before prompting or transport", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(false);
 
@@ -366,12 +413,25 @@ describe("decisions rescope effective windows", () => {
     });
   });
 
-  it("does not send a legacy empty rescope request when no time option was supplied", async () => {
+  it("resets an audience with user selectors without requiring a time option", async () => {
+    await runRescope("--for-user", "user-1", "--for-role", "member", "--for-agent", "hermes");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      users: [
+        { kind: "user", userId: "user-1" },
+        { kind: "role", role: "member" },
+        { kind: "agent", agent: "hermes" },
+      ],
+    });
+  });
+
+  it("does not send a legacy empty rescope request when no scope option was supplied", async () => {
     await runRescope();
 
     expect(mocks.rescopeDecision).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(2);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("provide --effective-from"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("provide an effective window"));
     expect(logSpy).toHaveBeenCalledWith(
       JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2),
     );

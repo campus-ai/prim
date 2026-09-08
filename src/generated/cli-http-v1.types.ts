@@ -61,10 +61,29 @@ export interface DecisionCollectScopeResponse {
     branches?: string[];
     effectiveFrom?: number;
     effectiveUntil?: number;
+    users?: (
+      | {
+          kind: "user";
+          userId: string;
+        }
+      | {
+          kind: "role";
+          role: "owner" | "admin" | "member";
+        }
+      | {
+          kind: "agent";
+          agent: "claude_code" | "codex" | "hermes";
+        }
+      | {
+          kind: "credential";
+          credential: "workos_jwt" | "workos_api_key" | "service_token";
+        }
+    )[];
     updatedAt: number;
     [k: string]: unknown | undefined;
   } | null;
   collectScopeVersion: number;
+  callerIncluded: boolean;
   [k: string]: unknown | undefined;
 }
 
@@ -123,6 +142,24 @@ export interface DecisionCreateRequest {
       effectiveUntil?: number;
       [k: string]: unknown | undefined;
     };
+    users?: (
+      | {
+          kind: "user";
+          userId: string;
+        }
+      | {
+          kind: "role";
+          role: "owner" | "admin" | "member";
+        }
+      | {
+          kind: "agent";
+          agent: "claude_code" | "codex" | "hermes";
+        }
+      | {
+          kind: "credential";
+          credential: "workos_jwt" | "workos_api_key" | "service_token";
+        }
+    )[];
     [k: string]: unknown | undefined;
   };
   stageOverride?: "candidate" | "draft" | "adopted";
@@ -146,6 +183,24 @@ export interface DecisionCreateResponse {
       effectiveUntil?: number;
       [k: string]: unknown | undefined;
     };
+    users: (
+      | {
+          kind: "user";
+          userId: string;
+        }
+      | {
+          kind: "role";
+          role: "owner" | "admin" | "member";
+        }
+      | {
+          kind: "agent";
+          agent: "claude_code" | "codex" | "hermes";
+        }
+      | {
+          kind: "credential";
+          credential: "workos_jwt" | "workos_api_key" | "service_token";
+        }
+    )[];
     [k: string]: unknown | undefined;
   };
   scopeWarnings?: string[];
@@ -217,6 +272,25 @@ export interface DecisionDetailResponse {
       effectiveUntil?: number;
       [k: string]: unknown | undefined;
     };
+    users: (
+      | {
+          kind: "user";
+          userId: string;
+          displayName: string;
+        }
+      | {
+          kind: "role";
+          role: "owner" | "admin" | "member";
+        }
+      | {
+          kind: "agent";
+          agent: "claude_code" | "codex" | "hermes";
+        }
+      | {
+          kind: "credential";
+          credential: "workos_jwt" | "workos_api_key" | "service_token";
+        }
+    )[];
     [k: string]: unknown | undefined;
   };
   truncated: boolean;
@@ -267,6 +341,26 @@ export interface DecisionRescopeRequest {
     effectiveUntil?: number;
     [k: string]: unknown | undefined;
   } | null;
+  users?:
+    | (
+        | {
+            kind: "user";
+            userId: string;
+          }
+        | {
+            kind: "role";
+            role: "owner" | "admin" | "member";
+          }
+        | {
+            kind: "agent";
+            agent: "claude_code" | "codex" | "hermes";
+          }
+        | {
+            kind: "credential";
+            credential: "workos_jwt" | "workos_api_key" | "service_token";
+          }
+      )[]
+    | null;
   [k: string]: unknown | undefined;
 }
 
@@ -287,6 +381,24 @@ export type DecisionRescopeResponse =
           effectiveUntil?: number;
           [k: string]: unknown | undefined;
         };
+        users: (
+          | {
+              kind: "user";
+              userId: string;
+            }
+          | {
+              kind: "role";
+              role: "owner" | "admin" | "member";
+            }
+          | {
+              kind: "agent";
+              agent: "claude_code" | "codex" | "hermes";
+            }
+          | {
+              kind: "credential";
+              credential: "workos_jwt" | "workos_api_key" | "service_token";
+            }
+        )[];
         [k: string]: unknown | undefined;
       };
       scopeWarnings?: string[];
@@ -310,6 +422,24 @@ export type DecisionRescopeResponse =
           effectiveUntil?: number;
           [k: string]: unknown | undefined;
         };
+        users: (
+          | {
+              kind: "user";
+              userId: string;
+            }
+          | {
+              kind: "role";
+              role: "owner" | "admin" | "member";
+            }
+          | {
+              kind: "agent";
+              agent: "claude_code" | "codex" | "hermes";
+            }
+          | {
+              kind: "credential";
+              credential: "workos_jwt" | "workos_api_key" | "service_token";
+            }
+        )[];
         [k: string]: unknown | undefined;
       };
       scopeWarnings?: string[];

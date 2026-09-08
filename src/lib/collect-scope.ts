@@ -16,9 +16,16 @@ import { isScopeDirectoryPrefix, matchesScopeGlob } from "./scope-glob.js";
 
 export const PRIM_COLLECT_SCOPE_KEY = "prim.collectScope";
 export const PRIM_COLLECT_SCOPE_VERSION_KEY = "prim.collectScopeVersion";
+/** Server-resolved identity/role/credential admission for the cached policy. */
+export const PRIM_COLLECT_SCOPE_CALLER_INCLUDED_KEY = "prim.collectScopeCallerIncluded";
 export const COLLECT_SCOPE_TIMEOUT_MS = 1_000;
 const COLLECT_SCOPE_PATH = "/api/cli/decisions/collect-scope";
 const MAX_BRANCH_PATTERN_CHARS = 255;
+
+type CollectScopeUserMember = NonNullable<
+  NonNullable<DecisionCollectScopeResponse["policy"]>["users"]
+>[number];
+type CollectScopeAgent = Extract<CollectScopeUserMember, { kind: "agent" }>["agent"];
 
 export interface CollectScopePolicy {
   repositories?: string[];
@@ -29,6 +36,8 @@ export interface CollectScopePolicy {
   effectiveFrom?: number;
   /** Exclusive client-clock instant at which collection stops. */
   effectiveUntil?: number;
+  /** Audience alternatives resolved by the server alongside local agent facts. */
+  users?: CollectScopeUserMember[];
   updatedAt: number;
 }
 
@@ -41,6 +50,10 @@ export interface CollectScopeFacts {
   paths?: readonly string[];
   /** Required when `paths` is supplied and a path policy exists. */
   pathsComplete?: boolean;
+  /** Agent declared by a hook invocation; unlike identity, this is local context. */
+  agent?: CollectScopeAgent;
+  /** Server-resolved identity, role, and credential membership for this caller. */
+  callerIncluded?: boolean;
   /** Local hook clock; injectable only to make boundary behavior deterministic. */
   now?: number;
 }
@@ -49,7 +62,12 @@ export type CachedCollectScope =
   | { kind: "unfetched" }
   | { kind: "invalid" }
   | { kind: "none"; version: number }
-  | { kind: "policy"; policy: CollectScopePolicy; version: number };
+  | {
+      kind: "policy";
+      policy: CollectScopePolicy;
+      version: number;
+      callerIncluded?: boolean;
+    };
 
 export interface CollectScopeDependencies {
   getClient: () => CliClient;
@@ -86,6 +104,50 @@ function optionalSafeInteger(
   return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
 }
 
+function optionalUserScopeMembers(
+  record: Record<string, unknown>,
+): CollectScopeUserMember[] | undefined {
+  const value = record.users;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const members: CollectScopeUserMember[] = [];
+  for (const member of value) {
+    if (typeof member !== "object" || member === null || Array.isArray(member)) return undefined;
+    const candidate = member as Record<string, unknown>;
+    if (candidate.kind === "user" && typeof candidate.userId === "string" && candidate.userId) {
+      members.push({ kind: "user", userId: candidate.userId });
+      continue;
+    }
+    if (
+      candidate.kind === "role" &&
+      (candidate.role === "owner" || candidate.role === "admin" || candidate.role === "member")
+    ) {
+      members.push({ kind: "role", role: candidate.role });
+      continue;
+    }
+    if (
+      candidate.kind === "agent" &&
+      (candidate.agent === "claude_code" ||
+        candidate.agent === "codex" ||
+        candidate.agent === "hermes")
+    ) {
+      members.push({ kind: "agent", agent: candidate.agent });
+      continue;
+    }
+    if (
+      candidate.kind === "credential" &&
+      (candidate.credential === "workos_jwt" ||
+        candidate.credential === "workos_api_key" ||
+        candidate.credential === "service_token")
+    ) {
+      members.push({ kind: "credential", credential: candidate.credential });
+      continue;
+    }
+    return undefined;
+  }
+  return members;
+}
+
 function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -97,6 +159,7 @@ function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
     branches: optionalStringArray(record, "branches"),
     effectiveFrom: optionalSafeInteger(record, "effectiveFrom"),
     effectiveUntil: optionalSafeInteger(record, "effectiveUntil"),
+    users: optionalUserScopeMembers(record),
   };
   if (
     Object.entries(fields).some(
@@ -122,6 +185,7 @@ function policyFromUnknown(value: unknown): CollectScopePolicy | undefined {
     ...(fields.branches === undefined ? {} : { branches: fields.branches }),
     ...(fields.effectiveFrom === undefined ? {} : { effectiveFrom: fields.effectiveFrom }),
     ...(fields.effectiveUntil === undefined ? {} : { effectiveUntil: fields.effectiveUntil }),
+    ...(fields.users === undefined ? {} : { users: fields.users }),
   };
 }
 
@@ -137,6 +201,7 @@ function projectPolicy(
 export function readCachedCollectScope(cwd: string): CachedCollectScope {
   const rawPolicy = localGitConfigValue(cwd, PRIM_COLLECT_SCOPE_KEY);
   const rawVersion = localGitConfigValue(cwd, PRIM_COLLECT_SCOPE_VERSION_KEY);
+  const rawCallerIncluded = localGitConfigValue(cwd, PRIM_COLLECT_SCOPE_CALLER_INCLUDED_KEY);
   if (rawPolicy === undefined) {
     return rawVersion === undefined ? { kind: "unfetched" } : { kind: "invalid" };
   }
@@ -146,9 +211,19 @@ export function readCachedCollectScope(cwd: string): CachedCollectScope {
 
   try {
     const policy = policyFromUnknown(JSON.parse(rawPolicy) as unknown);
-    return policy === undefined || policy.updatedAt !== version
-      ? { kind: "invalid" }
-      : { kind: "policy", policy, version };
+    if (policy === undefined || policy.updatedAt !== version) return { kind: "invalid" };
+    if (hasSelectors(policy.users)) {
+      if (rawCallerIncluded !== "true" && rawCallerIncluded !== "false") {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "policy",
+        policy,
+        version,
+        callerIncluded: rawCallerIncluded === "true",
+      };
+    }
+    return { kind: "policy", policy, version };
   } catch {
     return { kind: "invalid" };
   }
@@ -159,6 +234,12 @@ export function writeCachedCollectScope(
   cwd: string,
   response: DecisionCollectScopeResponse,
 ): CachedCollectScope {
+  if (
+    !isSafeVersion(response.collectScopeVersion) ||
+    typeof response.callerIncluded !== "boolean"
+  ) {
+    throw new Error("invalid collection scope response");
+  }
   const policy = response.policy === null ? undefined : projectPolicy(response.policy);
   if (policy !== undefined && policy.updatedAt !== response.collectScopeVersion) {
     throw new Error("collection scope response version did not match its policy");
@@ -168,13 +249,23 @@ export function writeCachedCollectScope(
     PRIM_COLLECT_SCOPE_KEY,
     policy === undefined ? "none" : JSON.stringify(policy),
   );
+  setLocalGitConfigValue(
+    cwd,
+    PRIM_COLLECT_SCOPE_CALLER_INCLUDED_KEY,
+    String(response.callerIncluded),
+  );
   setLocalGitConfigValue(cwd, PRIM_COLLECT_SCOPE_VERSION_KEY, String(response.collectScopeVersion));
   return policy === undefined
     ? { kind: "none", version: response.collectScopeVersion }
-    : { kind: "policy", policy, version: response.collectScopeVersion };
+    : {
+        kind: "policy",
+        policy,
+        version: response.collectScopeVersion,
+        ...(hasSelectors(policy.users) ? { callerIncluded: response.callerIncluded } : {}),
+      };
 }
 
-function hasSelectors(values: string[] | undefined): values is string[] {
+function hasSelectors<T>(values: T[] | undefined): values is T[] {
   return values !== undefined && values.length > 0;
 }
 
@@ -250,12 +341,28 @@ function pathAdmits(policy: CollectScopePolicy, path: string): boolean {
 }
 
 /**
+ * Audience members are alternatives. The API resolves identity, role, and
+ * credential membership into callerIncluded; hooks only compare their
+ * declared agent, never assert a local user identity.
+ */
+function userScopeAdmits(policy: CollectScopePolicy, facts: CollectScopeFacts): boolean {
+  if (!hasSelectors(policy.users)) return true;
+  const agentIncluded = policy.users.some(
+    (member) => member.kind === "agent" && member.agent === facts.agent,
+  );
+  const hasNonAgentMember = policy.users.some((member) => member.kind !== "agent");
+  if (!hasNonAgentMember) return agentIncluded;
+  return facts.callerIncluded === true || agentIncluded;
+}
+
+/**
  * Decide whether one local event may be collected under a policy.
  *
- * Policy dimensions compose narrowly: repository, branch, and time selectors
- * must admit their known facts, while any path-bearing event must have every
- * complete target admitted by a directory or glob selector. Path-less events
- * intentionally bypass only the path selectors. Time uses the local hook clock.
+ * Policy dimensions compose narrowly: repository, branch, time, and audience
+ * selectors must all admit their known facts, while any path-bearing event must
+ * have every complete target admitted by a directory or glob selector. Path-less
+ * events intentionally bypass only the path selectors. Time uses the local hook
+ * clock; audience identity is server-resolved and agent matching is local.
  */
 export function collectScopeAdmits(
   policy: CollectScopePolicy | null | undefined,
@@ -272,6 +379,7 @@ export function collectScopeAdmits(
     return false;
   }
   if (!timeAdmits(policy, facts.now ?? Date.now())) return false;
+  if (!userScopeAdmits(policy, facts)) return false;
 
   const hasPathSelectors = hasSelectors(policy.directories) || hasSelectors(policy.globs);
   if (!hasPathSelectors || facts.paths === undefined) return true;
@@ -283,7 +391,12 @@ export function collectScopeAdmits(
 export function cachedCollectScopeAdmits(cwd: string, facts: CollectScopeFacts): boolean {
   const cached = readCachedCollectScope(cwd);
   if (cached.kind === "invalid") return false;
-  return collectScopeAdmits(cached.kind === "policy" ? cached.policy : null, facts);
+  return collectScopeAdmits(
+    cached.kind === "policy" ? cached.policy : null,
+    cached.kind === "policy" && cached.callerIncluded !== undefined
+      ? { ...facts, callerIncluded: cached.callerIncluded }
+      : facts,
+  );
 }
 
 /** Fetch the policy route and commit a validated response into local Git config. */

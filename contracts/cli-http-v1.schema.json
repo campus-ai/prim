@@ -643,6 +643,77 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991
                 },
+                "users": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "user"
+                          },
+                          "userId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["kind", "userId"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "role"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": ["owner", "admin", "member"]
+                          }
+                        },
+                        "required": ["kind", "role"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": ["claude_code", "codex", "hermes"]
+                          }
+                        },
+                        "required": ["kind", "agent"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "credential"
+                          },
+                          "credential": {
+                            "type": "string",
+                            "enum": [
+                              "workos_jwt",
+                              "workos_api_key",
+                              "service_token"
+                            ]
+                          }
+                        },
+                        "required": ["kind", "credential"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
                 "updatedAt": {
                   "type": "integer",
                   "minimum": 0,
@@ -661,9 +732,12 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "callerIncluded": {
+          "type": "boolean"
         }
       },
-      "required": ["policy", "collectScopeVersion"],
+      "required": ["policy", "collectScopeVersion", "callerIncluded"],
       "additionalProperties": {}
     },
     "DecisionConfirmRequest": {
@@ -849,6 +923,77 @@
                 }
               },
               "additionalProperties": {}
+            },
+            "users": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["kind", "userId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "role"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["owner", "admin", "member"]
+                      }
+                    },
+                    "required": ["kind", "role"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "agent"
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": ["claude_code", "codex", "hermes"]
+                      }
+                    },
+                    "required": ["kind", "agent"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "credential"
+                      },
+                      "credential": {
+                        "type": "string",
+                        "enum": [
+                          "workos_jwt",
+                          "workos_api_key",
+                          "service_token"
+                        ]
+                      }
+                    },
+                    "required": ["kind", "credential"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
             }
           },
           "additionalProperties": {}
@@ -925,9 +1070,80 @@
                 }
               },
               "additionalProperties": {}
+            },
+            "users": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["kind", "userId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "role"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["owner", "admin", "member"]
+                      }
+                    },
+                    "required": ["kind", "role"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "agent"
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": ["claude_code", "codex", "hermes"]
+                      }
+                    },
+                    "required": ["kind", "agent"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "credential"
+                      },
+                      "credential": {
+                        "type": "string",
+                        "enum": [
+                          "workos_jwt",
+                          "workos_api_key",
+                          "service_token"
+                        ]
+                      }
+                    },
+                    "required": ["kind", "credential"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
             }
           },
-          "required": ["location", "time"],
+          "required": ["location", "time", "users"],
           "additionalProperties": {}
         },
         "scopeWarnings": {
@@ -1197,9 +1413,83 @@
                 }
               },
               "additionalProperties": {}
+            },
+            "users": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "userId", "displayName"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "role"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["owner", "admin", "member"]
+                      }
+                    },
+                    "required": ["kind", "role"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "agent"
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": ["claude_code", "codex", "hermes"]
+                      }
+                    },
+                    "required": ["kind", "agent"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "credential"
+                      },
+                      "credential": {
+                        "type": "string",
+                        "enum": [
+                          "workos_jwt",
+                          "workos_api_key",
+                          "service_token"
+                        ]
+                      }
+                    },
+                    "required": ["kind", "credential"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
             }
           },
-          "required": ["location", "time"],
+          "required": ["location", "time", "users"],
           "additionalProperties": {}
         },
         "truncated": {
@@ -1362,6 +1652,84 @@
               "type": "null"
             }
           ]
+        },
+        "users": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["kind", "userId"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "role"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["owner", "admin", "member"]
+                      }
+                    },
+                    "required": ["kind", "role"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "agent"
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": ["claude_code", "codex", "hermes"]
+                      }
+                    },
+                    "required": ["kind", "agent"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "credential"
+                      },
+                      "credential": {
+                        "type": "string",
+                        "enum": [
+                          "workos_jwt",
+                          "workos_api_key",
+                          "service_token"
+                        ]
+                      }
+                    },
+                    "required": ["kind", "credential"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": ["id"],
@@ -1437,9 +1805,80 @@
                     }
                   },
                   "additionalProperties": {}
+                },
+                "users": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "user"
+                          },
+                          "userId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["kind", "userId"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "role"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": ["owner", "admin", "member"]
+                          }
+                        },
+                        "required": ["kind", "role"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": ["claude_code", "codex", "hermes"]
+                          }
+                        },
+                        "required": ["kind", "agent"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "credential"
+                          },
+                          "credential": {
+                            "type": "string",
+                            "enum": [
+                              "workos_jwt",
+                              "workos_api_key",
+                              "service_token"
+                            ]
+                          }
+                        },
+                        "required": ["kind", "credential"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
                 }
               },
-              "required": ["location", "time"],
+              "required": ["location", "time", "users"],
               "additionalProperties": {}
             },
             "scopeWarnings": {
@@ -1527,9 +1966,80 @@
                     }
                   },
                   "additionalProperties": {}
+                },
+                "users": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "user"
+                          },
+                          "userId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["kind", "userId"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "role"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": ["owner", "admin", "member"]
+                          }
+                        },
+                        "required": ["kind", "role"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": ["claude_code", "codex", "hermes"]
+                          }
+                        },
+                        "required": ["kind", "agent"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "credential"
+                          },
+                          "credential": {
+                            "type": "string",
+                            "enum": [
+                              "workos_jwt",
+                              "workos_api_key",
+                              "service_token"
+                            ]
+                          }
+                        },
+                        "required": ["kind", "credential"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
                 }
               },
-              "required": ["location", "time"],
+              "required": ["location", "time", "users"],
               "additionalProperties": {}
             },
             "scopeWarnings": {

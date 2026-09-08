@@ -26,6 +26,7 @@ const POLICY = {
 const RESPONSE: DecisionCollectScopeResponse = {
   policy: POLICY,
   collectScopeVersion: POLICY.updatedAt,
+  callerIncluded: true,
 };
 
 const temporaryDirectories: string[] = [];
@@ -115,6 +116,30 @@ describe("collectScopeAdmits", () => {
       ),
     ).toBe(true);
   });
+
+  it("combines the server caller verdict with local agent alternatives", () => {
+    const audience = {
+      users: [
+        { kind: "role" as const, role: "admin" as const },
+        { kind: "agent" as const, agent: "codex" as const },
+      ],
+      updatedAt: 1,
+    };
+
+    expect(collectScopeAdmits(audience, { callerIncluded: true })).toBe(true);
+    expect(collectScopeAdmits(audience, { callerIncluded: false, agent: "codex" })).toBe(true);
+    expect(collectScopeAdmits(audience, { callerIncluded: false, agent: "hermes" })).toBe(false);
+  });
+
+  it("fails closed for a non-agent audience when no server caller verdict is available", () => {
+    const audience = {
+      users: [{ kind: "credential" as const, credential: "service_token" as const }],
+      updatedAt: 1,
+    };
+
+    expect(collectScopeAdmits(audience, {})).toBe(false);
+    expect(collectScopeAdmits(audience, { callerIncluded: true })).toBe(true);
+  });
 });
 
 describe("collection scope cache", () => {
@@ -189,15 +214,58 @@ describe("collection scope cache", () => {
     const cwd = repository();
     const policy = { effectiveFrom: 100, effectiveUntil: 200, updatedAt: 101 };
 
-    expect(writeCachedCollectScope(cwd, { policy, collectScopeVersion: policy.updatedAt })).toEqual(
-      {
-        kind: "policy",
+    expect(
+      writeCachedCollectScope(cwd, {
         policy,
-        version: policy.updatedAt,
-      },
-    );
+        collectScopeVersion: policy.updatedAt,
+        callerIncluded: true,
+      }),
+    ).toEqual({
+      kind: "policy",
+      policy,
+      version: policy.updatedAt,
+    });
     expect(cachedCollectScopeAdmits(cwd, { now: 100 })).toBe(true);
     expect(cachedCollectScopeAdmits(cwd, { now: 200 })).toBe(false);
+  });
+
+  it("persists server caller admission and evaluates only the hook agent locally", () => {
+    const cwd = repository();
+    const policy = {
+      users: [
+        { kind: "role" as const, role: "admin" as const },
+        { kind: "agent" as const, agent: "codex" as const },
+      ],
+      updatedAt: 102,
+    };
+
+    expect(
+      writeCachedCollectScope(cwd, {
+        policy,
+        collectScopeVersion: policy.updatedAt,
+        callerIncluded: false,
+      }),
+    ).toEqual({
+      kind: "policy",
+      policy,
+      version: policy.updatedAt,
+      callerIncluded: false,
+    });
+    expect(cachedCollectScopeAdmits(cwd, { agent: "codex" })).toBe(true);
+    expect(cachedCollectScopeAdmits(cwd, { agent: "hermes" })).toBe(false);
+  });
+
+  it("fails closed for an audience cache that lacks a server caller verdict", () => {
+    const cwd = repository();
+    const policy = {
+      users: [{ kind: "role", role: "admin" }],
+      updatedAt: 103,
+    };
+    setLocalGitConfigValue(cwd, "prim.collectScope", JSON.stringify(policy));
+    setLocalGitConfigValue(cwd, "prim.collectScopeVersion", String(policy.updatedAt));
+
+    expect(readCachedCollectScope(cwd)).toEqual({ kind: "invalid" });
+    expect(cachedCollectScopeAdmits(cwd, { agent: "codex" })).toBe(false);
   });
 
   it("fetches and caches only a contract-valid response", async () => {
