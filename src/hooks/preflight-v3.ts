@@ -8,7 +8,9 @@ import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-sco
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
-export const PREFLIGHT_TIMEOUT_MS = 6_500;
+// Leave one second for the server to finalize a 5.5-second semantic evaluation
+// and for the response to reach the hook.
+export const PREFLIGHT_TIMEOUT_MS = 7_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export const MAX_CLIENT_VERSION_CHARS = 32;
