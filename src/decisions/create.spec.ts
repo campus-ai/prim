@@ -11,7 +11,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { type CliClient, HttpError } from "../client.js";
-import { type CreateOutcome, fetchCreate, formatCreateHuman, formatCreateJson } from "./create.js";
+import {
+  type CreateOutcome,
+  createScopeWarnings,
+  fetchCreate,
+  formatCreateHuman,
+  formatCreateJson,
+} from "./create.js";
 
 const FULL_ID = "qx7fpmycwabtzke040y7vecnnh8870pg";
 const SHORT_ID = "abc12345";
@@ -95,6 +101,42 @@ describe("fetchCreate", () => {
     );
   });
 
+  it("posts coarse location scope selectors without dropping them", async () => {
+    const post = vi.fn().mockResolvedValue(OUTCOME);
+    await fetchCreate(
+      {
+        intent: "Govern API changes",
+        attribution: "user",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api"],
+            globs: ["src/**/*.ts"],
+            branches: ["main"],
+          },
+        },
+      },
+      { getClient: () => clientWith(post) },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/create",
+      {
+        intent: "Govern API changes",
+        attribution: "user",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api"],
+            globs: ["src/**/*.ts"],
+            branches: ["main"],
+          },
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("returns the created identity from the server", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     const result = await fetchCreate(
@@ -111,5 +153,40 @@ describe("fetchCreate", () => {
     await expect(
       fetchCreate({ intent: "Use X", attribution: "agent" }, { getClient: () => clientWith(post) }),
     ).rejects.toThrow("not bound to an organization");
+  });
+});
+
+describe("createScopeWarnings", () => {
+  it("surfaces server scope warnings and detects an old response that omits scope", () => {
+    const request = {
+      intent: "Govern API changes",
+      attribution: "user" as const,
+      scope: { location: { directories: ["packages/api"] } },
+    };
+
+    expect(
+      createScopeWarnings(request, { ...OUTCOME, scopeWarnings: ["invalid glob removed"] }),
+    ).toEqual([
+      "invalid glob removed",
+      "the server did not confirm this Decision scope; upgrade Primitive and retry",
+    ]);
+  });
+
+  it("does not invent an old-server warning when scope was confirmed", () => {
+    expect(
+      createScopeWarnings(
+        {
+          intent: "Govern API changes",
+          attribution: "user",
+          scope: { location: { repository: true } },
+        },
+        {
+          ...OUTCOME,
+          scope: {
+            location: { repository: true, directories: [], globs: [], branches: [] },
+          },
+        },
+      ),
+    ).toEqual([]);
   });
 });

@@ -157,6 +157,7 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(isPreflightRequestV3(preflight({ paths: ["src/a.ts", "src/a.ts"] }))).toBe(false);
     expect(isPreflightRequestV3(preflight({ paths: [], coverage: "complete" }))).toBe(false);
     expect(isPreflightRequestV3(preflight({ proposal: "a".repeat(6_145) }))).toBe(false);
+    expect(isPreflightRequestV3(preflight({ branch: "feature//malformed" }))).toBe(true);
   });
 
   it("labels generated structural validation where semantic refinements remain separate", () => {
