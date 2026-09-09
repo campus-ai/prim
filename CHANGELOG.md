@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0-alpha.87](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.86...v0.1.0-alpha.87) (2026-09-09)
+
+
+### Features
+
+* **collection:** enforce local collection scope ([b439883](https://github.com/campus-ai/prim/commit/b43988385240a86e874086d58b14ee5daf14f597))
+* **decisions:** add location-scoped authoring ([aae6bf7](https://github.com/campus-ai/prim/commit/aae6bf7c8f4f29197d151123b3f608af984f4822))
+* **decisions:** honor time scopes in CLI authoring ([553c037](https://github.com/campus-ai/prim/commit/553c0379d1468902083a4ee82904c1ef249b45c2))
+* **decisions:** scope CLI decision audiences ([b3f621b](https://github.com/campus-ai/prim/commit/b3f621b92ce4929cc7c310fec53a16815eb3ecf0))
+* **decisions:** scope CLI decision audiences ([80f0b51](https://github.com/campus-ai/prim/commit/80f0b514a90d8a22e6e25b5ec63ee7a5c16ec65c))
+
+
+### Bug Fixes
+
+* **decisions:** label repo-less scope accurately ([#320](https://github.com/campus-ai/prim/issues/320)) ([a49b812](https://github.com/campus-ai/prim/commit/a49b812bef3d75d1aa6aa4bdd612d5fd056421de))
+
 ## [0.1.0-alpha.86](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.85...v0.1.0-alpha.86) (2026-09-07)
 
 
