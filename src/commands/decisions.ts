@@ -12,13 +12,14 @@
  *   prim decisions demote <idOrShortId>
  *   prim decisions withdraw <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
- *   prim decisions rescope <idOrShortId> [--effective-from|--effective-until|--clear-window]
+ *   prim decisions rescope <idOrShortId> [--scope-repo|--scope-dir|--scope-glob|--scope-branch]
+ *                                      [--effective-from|--effective-until|--clear-window]
  *                                      [--for-user|--for-role|--for-agent|--for-credential]
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
- *                          --confidence|--reversibility|--files|--effective-from|
+ *                          --confidence|--reversibility|--files|--scope-*|--effective-from|
  *                          --effective-until|--for-user|--for-role|--for-agent|
  *                          --for-credential|--draft|--adopt]
  *
@@ -178,6 +179,10 @@ interface CreateOptions {
   forCredential: string[];
   draft?: boolean;
   adopt?: boolean;
+  scopeRepo?: boolean;
+  scopeDir?: string[];
+  scopeGlob?: string[];
+  scopeBranch?: string[];
 }
 
 interface UserScopeOptions {
@@ -191,7 +196,13 @@ interface RescopeOptions extends UserScopeOptions {
   effectiveFrom?: string;
   effectiveUntil?: string;
   clearWindow?: boolean;
+  scopeRepo?: boolean;
+  scopeDir?: string[];
+  scopeGlob?: string[];
+  scopeBranch?: string[];
 }
+
+type DecisionLocationScope = NonNullable<NonNullable<CreateRequest["scope"]>["location"]>;
 
 function rejectEffectiveWindow(
   command: "create" | "rescope",
@@ -265,6 +276,20 @@ function rejectUserScope(command: "create" | "rescope", error: UserScopeInputErr
   console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
   console.log(JSON.stringify({ ok: false, error: "invalid_user_scope" }, null, 2));
   process.exitCode = EXIT_USAGE;
+}
+
+function locationScopeFromOptions(
+  options: Pick<RescopeOptions, "scopeRepo" | "scopeDir" | "scopeGlob" | "scopeBranch">,
+): DecisionLocationScope | undefined {
+  const location: DecisionLocationScope = {
+    ...(options.scopeRepo ? { repository: true } : {}),
+    ...(options.scopeDir && options.scopeDir.length > 0 ? { directories: options.scopeDir } : {}),
+    ...(options.scopeGlob && options.scopeGlob.length > 0 ? { globs: options.scopeGlob } : {}),
+    ...(options.scopeBranch && options.scopeBranch.length > 0
+      ? { branches: options.scopeBranch }
+      : {}),
+  };
+  return Object.keys(location).length === 0 ? undefined : location;
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -548,6 +573,20 @@ export function registerDecisionsCommands(program: Command): void {
       collectItem,
       [],
     )
+    .option("--scope-repo", "Scope this Decision to the whole repository")
+    .option(
+      "--scope-dir <prefix>",
+      "Repo-relative directory prefix to govern (repeatable)",
+      collectItem,
+      [],
+    )
+    .option("--scope-glob <glob>", "Repo-relative glob to govern (repeatable)", collectItem, [])
+    .option(
+      "--scope-branch <pattern>",
+      "Git branch pattern to govern (repeatable)",
+      collectItem,
+      [],
+    )
     .action(async (opts: CreateOptions, command: Command) => {
       if (opts.draft && opts.adopt) {
         console.error("[prim] create rejected: --draft and --adopt cannot be used together.");
@@ -582,11 +621,12 @@ export function registerDecisionsCommands(program: Command): void {
         throw error;
       }
       const requestedFiles = opts.files ?? [];
+      const location = locationScopeFromOptions(opts);
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId" | "scope"> =
         {};
-      if (requestedFiles.length > 0) {
+      if (requestedFiles.length > 0 || location !== undefined) {
         const binding = repoSyncId(process.cwd());
-        const root = canonicalGitRoot(process.cwd());
+        const root = requestedFiles.length > 0 ? canonicalGitRoot(process.cwd()) : undefined;
         const canonical = requestedFiles.map((path) =>
           canonicalRepositoryPath(path, root ?? process.cwd(), root),
         );
@@ -601,10 +641,11 @@ export function registerDecisionsCommands(program: Command): void {
         explicitScope = {
           protocolVersion: 3,
           repoSyncId: binding,
-          files: canonical as string[],
+          ...(canonical.length > 0 ? { files: canonical as string[] } : {}),
         };
       }
       const scope = {
+        ...(location === undefined ? {} : { location }),
         ...(time === undefined ? {} : { time }),
         ...(users === undefined ? {} : { users }),
       };
@@ -664,7 +705,21 @@ export function registerDecisionsCommands(program: Command): void {
   decisions
     .command("rescope <idOrShortId>")
     .description(
-      "Replace a Decision's effective window and/or audience; use --clear-window to remove it",
+      "Replace a Decision's location scope, effective window, and/or audience; use --clear-window to remove it",
+    )
+    .option("--scope-repo", "Scope this Decision to the whole repository")
+    .option(
+      "--scope-dir <prefix>",
+      "Repo-relative directory prefix to govern (repeatable)",
+      collectItem,
+      [],
+    )
+    .option("--scope-glob <glob>", "Repo-relative glob to govern (repeatable)", collectItem, [])
+    .option(
+      "--scope-branch <pattern>",
+      "Git branch pattern to govern (repeatable)",
+      collectItem,
+      [],
     )
     .option(
       "--effective-from <instant>",
@@ -720,17 +775,16 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw error;
       }
-      if (time === undefined && users === undefined) {
-        rejectEffectiveWindow(
-          "rescope",
-          new EffectiveWindowInputError(
-            "provide an effective window or at least one audience selector",
-          ),
-        );
-        return;
-      }
+      const location = locationScopeFromOptions(opts);
+      const hasLocationSelector = location !== undefined;
+      const hasNonLocationScope = time !== undefined || users !== undefined;
       process.exitCode = await rescopeDecision({
         id,
+        // Preserve the established no-selector behavior: it clears location.
+        // When the author changes time or audience alone, omission instead
+        // leaves the existing location scope untouched.
+        ...(!hasNonLocationScope ? { location: location ?? null } : {}),
+        ...(hasNonLocationScope && hasLocationSelector ? { location } : {}),
         ...(time === undefined ? {} : { time }),
         ...(users === undefined ? {} : { users }),
       });

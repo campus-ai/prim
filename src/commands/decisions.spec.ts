@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   askConfirmation: vi.fn(),
   fetchCreate: vi.fn(),
-  rescopeDecision: vi.fn(),
   isRepoActiveForCapture: vi.fn(),
   repoSyncId: vi.fn(),
   setRepoActive: vi.fn(),
   canonicalRepositoryPath: vi.fn(),
+  rescopeDecision: vi.fn(),
 }));
 
 vi.mock("../lib/activation.js", () => ({
@@ -34,9 +34,7 @@ vi.mock("../decisions/create.js", async () => {
   return { ...actual, fetchCreate: mocks.fetchCreate };
 });
 
-vi.mock("../decisions/rescope.js", () => ({
-  rescopeDecision: mocks.rescopeDecision,
-}));
+vi.mock("../decisions/rescope.js", () => ({ rescopeDecision: mocks.rescopeDecision }));
 
 import { registerDecisionsCommands } from "./decisions.js";
 
@@ -188,7 +186,39 @@ describe("decisions create activation consent", () => {
     expect(mocks.canonicalRepositoryPath).toHaveBeenNthCalledWith(1, "src/a.ts", "/repo", "/repo");
   });
 
-  it("sends ISO time flags as a scope without requiring a repository binding", async () => {
+  it("sends coarse scope selectors without canonicalizing directory or glob syntax", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--scope-repo",
+      "--scope-dir",
+      "packages/api",
+      "--scope-dir",
+      "apps/web",
+      "--scope-glob",
+      "src/**/*.test.ts",
+      "--scope-branch",
+      "main",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocolVersion: 3,
+        repoSyncId: "sync-1",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api", "apps/web"],
+            globs: ["src/**/*.test.ts"],
+            branches: ["main"],
+          },
+        },
+      }),
+    );
+    expect(mocks.canonicalRepositoryPath).not.toHaveBeenCalled();
+  });
+
+  it("sends ISO time flags without requiring a repository binding", async () => {
     mocks.repoSyncId.mockReturnValue(undefined);
     mocks.isRepoActiveForCapture.mockReturnValue(true);
 
@@ -259,6 +289,21 @@ describe("decisions create activation consent", () => {
     );
   });
 
+  it("combines location and time scope at create", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-dir", "packages/api", "--effective-from", "2026-09-08T00:00:00Z");
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          location: { directories: ["packages/api"] },
+          time: { effectiveFrom: Date.parse("2026-09-08T00:00:00Z") },
+        },
+      }),
+    );
+  });
+
   it("rejects invalid time flags before prompting or transport", async () => {
     mocks.isRepoActiveForCapture.mockReturnValue(false);
 
@@ -282,6 +327,18 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(2);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("run `prim enable`"));
+  });
+
+  it("rejects location scope locally when the repository is unbound", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-dir", "packages/api");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("run `prim enable`"));
+    expect(mocks.canonicalRepositoryPath).not.toHaveBeenCalled();
   });
 
   it("requires an explicit attribution", async () => {
@@ -379,37 +436,13 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).toHaveBeenCalledOnce();
     expect(mocks.setRepoActive).not.toHaveBeenCalled();
   });
-});
 
-describe("decisions rescope effective windows", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    process.exitCode = 0;
-    mocks.rescopeDecision.mockResolvedValue(0);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    process.exitCode = ORIGINAL_EXIT_CODE;
-    vi.restoreAllMocks();
-  });
-
-  it("sends an explicit null window for --clear-window", async () => {
-    await runRescope("--clear-window");
-
-    expect(mocks.rescopeDecision).toHaveBeenCalledWith({ id: "decision-1", time: null });
-  });
-
-  it("sends parsed time bounds to the rescope transport", async () => {
-    await runRescope("--effective-from", "1", "--effective-until", "2");
+  it("rescopes time without clearing location selectors", async () => {
+    await runRescope("--effective-until", "1789158896789");
 
     expect(mocks.rescopeDecision).toHaveBeenCalledWith({
       id: "decision-1",
-      time: { effectiveFrom: 1, effectiveUntil: 2 },
+      time: { effectiveUntil: 1_789_158_896_789 },
     });
   });
 
@@ -426,14 +459,23 @@ describe("decisions rescope effective windows", () => {
     });
   });
 
-  it("does not send a legacy empty rescope request when no scope option was supplied", async () => {
-    await runRescope();
+  it("rescopes location and time together", async () => {
+    await runRescope("--scope-glob", "**/*.sql", "--effective-from", "2026-09-08T00:00:00Z");
 
-    expect(mocks.rescopeDecision).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(2);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("provide an effective window"));
-    expect(logSpy).toHaveBeenCalledWith(
-      JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2),
-    );
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      location: { globs: ["**/*.sql"] },
+      time: { effectiveFrom: Date.parse("2026-09-08T00:00:00Z") },
+    });
+  });
+
+  it("rescopes location and audience together without clearing either dimension", async () => {
+    await runRescope("--scope-dir", "packages/api", "--for-role", "admin");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      location: { directories: ["packages/api"] },
+      users: [{ kind: "role", role: "admin" }],
+    });
   });
 });

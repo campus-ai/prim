@@ -35,7 +35,7 @@ export function boundedClientVersion(raw: string | null | undefined): string {
 export type Coverage = "complete" | "unverified";
 export type PreflightClientMode = "block" | "warn";
 // biome-ignore format: keep the small wire contract compact
-export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; proposal: string; branch?: string };
+export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; branch?: string; proposal: string };
 export type PreflightResponse = PreflightResponseV3;
 // biome-ignore format: compact internal shapes keep this boundary auditable
 export type TargetResolution = {

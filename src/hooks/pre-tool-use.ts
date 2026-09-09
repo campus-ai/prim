@@ -220,6 +220,7 @@ async function main(): Promise<void> {
     return;
   }
   const binding = repoSyncId(cwd);
+  const branch = currentBranch(cwd);
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
@@ -229,7 +230,6 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const branch = currentBranch(cwd);
   const collectScopeAdmits = cachedCollectScopeAdmits(cwd, {
     repository: githubRepositoryFullName(cwd) ?? undefined,
     branch,
@@ -247,8 +247,8 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
-    proposal: collectScopeAdmits ? proposalFor(envelope.tool_input) : "",
     ...(branch === undefined ? {} : { branch }),
+    proposal: collectScopeAdmits ? proposalFor(envelope.tool_input) : "",
   };
   let result: ConflictCheckResult;
   try {

@@ -1,6 +1,7 @@
 /**
- * `prim decisions rescope` — replace a Decision's time and/or audience scope
- * without changing its authored content or lifecycle stage.
+ * `prim decisions rescope` — replace a Decision's location scope, effective
+ * window, and/or audience without changing its authored content or lifecycle
+ * stage.
  *
  * The generated contract is the wire authority. Command output stays split:
  * machine-readable response JSON on stdout, and terminal-safe status/warnings

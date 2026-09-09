@@ -101,6 +101,42 @@ describe("fetchCreate", () => {
     );
   });
 
+  it("posts coarse location scope selectors without dropping them", async () => {
+    const post = vi.fn().mockResolvedValue(OUTCOME);
+    await fetchCreate(
+      {
+        intent: "Govern API changes",
+        attribution: "user",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api"],
+            globs: ["src/**/*.ts"],
+            branches: ["main"],
+          },
+        },
+      },
+      { getClient: () => clientWith(post) },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/create",
+      {
+        intent: "Govern API changes",
+        attribution: "user",
+        scope: {
+          location: {
+            repository: true,
+            directories: ["packages/api"],
+            globs: ["src/**/*.ts"],
+            branches: ["main"],
+          },
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("posts a time scope without requiring repository-only create fields", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     await fetchCreate(
@@ -185,34 +221,34 @@ describe("fetchCreate", () => {
 });
 
 describe("createScopeWarnings", () => {
-  it("surfaces time warnings and detects an old response that omits scope", () => {
+  it("surfaces server scope warnings and detects an old response that omits scope", () => {
     const request = {
-      intent: "Freeze the public API during the migration",
+      intent: "Govern API changes",
       attribution: "user" as const,
-      scope: { time: { effectiveFrom: 1_789_072_496_789 } },
+      scope: { location: { directories: ["packages/api"] } },
     };
 
     expect(
-      createScopeWarnings(request, { ...OUTCOME, scopeWarnings: ["window was ignored"] }),
+      createScopeWarnings(request, { ...OUTCOME, scopeWarnings: ["invalid glob removed"] }),
     ).toEqual([
-      "window was ignored",
+      "invalid glob removed",
       "the server did not confirm this Decision scope; upgrade Primitive and retry",
     ]);
   });
 
-  it("does not invent an old-server warning when time scope was confirmed", () => {
+  it("does not invent an old-server warning when scope was confirmed", () => {
     expect(
       createScopeWarnings(
         {
-          intent: "Freeze the public API during the migration",
+          intent: "Govern API changes",
           attribution: "user",
-          scope: { time: { effectiveUntil: 1_789_158_896_789 } },
+          scope: { location: { repository: true } },
         },
         {
           ...OUTCOME,
           scope: {
-            location: { repository: false, directories: [], globs: [], branches: [] },
-            time: { effectiveUntil: 1_789_158_896_789 },
+            location: { repository: true, directories: [], globs: [], branches: [] },
+            time: {},
             users: [],
           },
         },

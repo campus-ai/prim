@@ -60,8 +60,89 @@ describe("decisions lifecycle command registration", () => {
     expect(names).toContain("promote");
     expect(names).toContain("demote");
     expect(names).toContain("withdraw");
+    expect(names).toContain("rescope");
     expect(names).not.toContain("delete");
     expect(names).not.toContain("edit");
+  });
+
+  it("rescopes a Decision with repeated coarse selector flags", async () => {
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      shortId: "0123abcd",
+      stage: "adopted",
+      scope: {
+        location: {
+          repository: true,
+          directories: ["packages/api"],
+          globs: ["src/**/*.ts"],
+          branches: ["main"],
+        },
+        time: {},
+        users: [],
+      },
+    });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await buildProgram().parseAsync(
+      [
+        "--non-interactive",
+        "decisions",
+        "rescope",
+        "decision-1",
+        "--scope-repo",
+        "--scope-dir",
+        "packages/api",
+        "--scope-glob",
+        "src/**/*.ts",
+        "--scope-branch",
+        "main",
+      ],
+      { from: "user" },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/rescope",
+      {
+        id: "decision-1",
+        location: {
+          repository: true,
+          directories: ["packages/api"],
+          globs: ["src/**/*.ts"],
+          branches: ["main"],
+        },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(process.exitCode).toBe(0);
+    expect(stderr).toHaveBeenCalledWith("[prim] rescoped dec_0123abcd.");
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({ outcome: "ok" });
+  });
+
+  it("clears explicit location selectors when rescope receives none", async () => {
+    post.mockResolvedValueOnce({
+      outcome: "ok",
+      decisionId: "decision-1",
+      stage: "adopted",
+      scope: {
+        location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
+        users: [],
+      },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "rescope", "decision-1"], {
+      from: "user",
+    });
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/rescope",
+      { id: "decision-1", location: null },
+      expect.anything(),
+    );
   });
 
   it("publishes noninteractively without invoking a confirmation prompt", async () => {
