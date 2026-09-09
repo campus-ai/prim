@@ -58,6 +58,28 @@ describe("githubRepositoryFullName", () => {
   });
 });
 
+describe("currentBranch", () => {
+  it("returns the symbolic branch and omits detached HEAD", () => {
+    const hooks = join(root, ".test-hooks");
+    mkdirSync(hooks);
+    git(root, "config", "core.hooksPath", hooks);
+    git(root, "config", "user.email", "test@example.com");
+    git(root, "config", "user.name", "Test");
+    writeFileSync(join(root, "README.md"), "test\n");
+    git(root, "add", "README.md");
+    git(root, "commit", "-qm", "init");
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: root,
+      encoding: "utf-8",
+    }).trim();
+
+    expect(currentBranch(root)).toBe(branch);
+
+    git(root, "checkout", "--detach", "-q");
+    expect(currentBranch(root)).toBeUndefined();
+  });
+});
+
 describe("canonicalRepositoryPath", () => {
   it("canonicalizes an existing file and an exact new leaf", () => {
     mkdirSync(join(root, "src"));

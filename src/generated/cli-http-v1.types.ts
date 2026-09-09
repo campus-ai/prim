@@ -53,6 +53,19 @@ export interface DecisionCascadeResponse {
   [k: string]: unknown | undefined;
 }
 
+export interface DecisionCollectScopeResponse {
+  policy: {
+    repositories?: string[];
+    directories?: string[];
+    globs?: string[];
+    branches?: string[];
+    updatedAt: number;
+    [k: string]: unknown | undefined;
+  } | null;
+  collectScopeVersion: number;
+  [k: string]: unknown | undefined;
+}
+
 export interface DecisionConfirmRequest {
   id: string;
   confirmed?: boolean;
@@ -350,6 +363,7 @@ export interface DurableMoveIngestResponse {
     decisionId: string;
     decisionShortId?: string;
   } | null;
+  collectScopeVersion?: number;
 }
 
 export interface FeedbackAckRequest {

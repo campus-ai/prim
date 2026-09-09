@@ -9,6 +9,7 @@ vi.mock("../lib/post-commit-hook.js", () => ({
   ensureEffectivePostRewriteHook: vi.fn(),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
+vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
 vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
 // Keep the real isNonInteractive (env/flag ladder), stub only the TTY prompt.
@@ -20,6 +21,7 @@ vi.mock("./github.js", () => ({ runGithubConnect: vi.fn() }));
 
 import { execFileSync } from "node:child_process";
 import { daemonRequest } from "../daemon/client.js";
+import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { askConfirmation } from "../lib/confirmation.js";
 import {
   ensureEffectivePostCommitHook,
@@ -70,6 +72,7 @@ beforeEach(() => {
     repoSyncId: "repoSync123",
     repositoryFullName: "campus-ai/primitive",
   });
+  vi.mocked(fetchAndCacheCollectScope).mockResolvedValue({ kind: "unfetched" });
   vi.mocked(askConfirmation).mockResolvedValue(false);
   vi.stubEnv("CI", "");
   vi.stubEnv("PRIM_NON_INTERACTIVE", "");
@@ -98,6 +101,7 @@ describe("prim enable / disable", () => {
     expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
     expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
     expect(bindRepository).toHaveBeenCalledWith("/repo");
+    expect(fetchAndCacheCollectScope).toHaveBeenCalledWith("/repo");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",
       ["config", "--local", "prim.active", "true"],

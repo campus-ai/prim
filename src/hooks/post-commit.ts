@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
@@ -187,13 +188,25 @@ export function runPostCommit(): void {
   }
   const commit = readCommit();
   if (commit) {
+    const repositoryFullName = githubRepositoryFullName(cwd) ?? undefined;
+    if (
+      !cachedCollectScopeAdmits(cwd, {
+        repository: repositoryFullName,
+        branch: commit.branch,
+        ...(commit.files.length > 0 || !commit.filesComplete
+          ? { paths: commit.files, pathsComplete: commit.filesComplete }
+          : {}),
+      })
+    ) {
+      return;
+    }
     const repository = resolveRepositoryContext(cwd);
     const identity = getOrCreateWorkspaceId(cwd);
     const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
     const attribution = commitAttributionFromEnvironment(process.env, workspaceId);
     const move = toCommitMove(commit, resolveCliVersion(), cwd, {
       repository,
-      repoFullName: githubRepositoryFullName(cwd) ?? undefined,
+      repoFullName: repositoryFullName,
       repoSyncId: repoSyncId(cwd),
       workspaceId,
       attribution,

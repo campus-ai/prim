@@ -9,6 +9,7 @@
 import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
+import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { gitToplevel } from "../lib/git.js";
 import {
@@ -94,6 +95,13 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
         return;
       }
       binding = connected;
+    }
+    if (active) {
+      try {
+        await fetchAndCacheCollectScope(root);
+      } catch {
+        // The cache refresh is best effort; activation remains usable offline.
+      }
     }
     phase = "local activation";
     setRepoActive(root, active);

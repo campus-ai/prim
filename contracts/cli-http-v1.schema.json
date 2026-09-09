@@ -216,6 +216,16 @@
         "$ref": "#/$defs/CliErrorResponse"
       }
     },
+    "decisionsCollectScope": {
+      "method": "GET",
+      "path": "/api/cli/decisions/collect-scope",
+      "success": {
+        "$ref": "#/$defs/DecisionCollectScopeResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
     "decisionsCreate": {
       "method": "POST",
       "path": "/api/cli/decisions/create",
@@ -589,6 +599,61 @@
         "trigger",
         "truncated"
       ],
+      "additionalProperties": {}
+    },
+    "DecisionCollectScopeResponse": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "repositories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "directories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "updatedAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": ["updatedAt"],
+              "additionalProperties": {}
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collectScopeVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["policy", "collectScopeVersion"],
       "additionalProperties": {}
     },
     "DecisionConfirmRequest": {
@@ -1644,6 +1709,11 @@
               "type": "null"
             }
           ]
+        },
+        "collectScopeVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": ["disposition", "acknowledged", "accepted", "verdictFooter"],

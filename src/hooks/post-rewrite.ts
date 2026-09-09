@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
@@ -203,6 +204,9 @@ export function runPostRewrite(): void {
     if (!validSource(source) || snapshot.pairs.length === 0) return;
     const cwd = gitText(["rev-parse", "--show-toplevel"]) ?? process.cwd();
     if (!isRepoActiveForCapture(cwd)) return;
+    const branch = validBranch(process.env.PRIM_REWRITE_BRANCH);
+    const repositoryFullName = githubRepositoryFullName(cwd) ?? undefined;
+    if (!cachedCollectScopeAdmits(cwd, { repository: repositoryFullName, branch })) return;
     const repository = resolveRepositoryContext(cwd);
     const identity = getOrCreateWorkspaceId(cwd);
     const workspaceId = identity.status === "ready" ? identity.workspaceId : undefined;
@@ -210,13 +214,13 @@ export function runPostRewrite(): void {
       {
         source,
         pairs: snapshot.pairs,
-        branch: validBranch(process.env.PRIM_REWRITE_BRANCH),
+        branch,
       },
       resolveCliVersion(),
       cwd,
       {
         repository,
-        repoFullName: githubRepositoryFullName(cwd) ?? undefined,
+        repoFullName: repositoryFullName,
         repoSyncId: repoSyncId(cwd),
         workspaceId,
         capturedAt: snapshot.capturedAt,

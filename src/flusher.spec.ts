@@ -214,6 +214,19 @@ describe("flush replay stability", () => {
     expect(existsSync(flushing)).toBe(false);
   });
 
+  it("delivers a legacy move without env provenance when the response has scope drift", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, { ...move("legacy-env"), env: undefined } as unknown as Move);
+
+    await expect(
+      drainFlushingPath(
+        flushing,
+        fakeClient({ disposition: "persisted", acknowledged: 1, collectScopeVersion: 2 }),
+      ),
+    ).resolves.toEqual({ flushed: 1, quarantined: 0 });
+    expect(existsSync(flushing)).toBe(false);
+  });
+
   it.each([
     ["legacy response", { accepted: 1 }],
     ["partial acknowledgement", { disposition: "persisted", acknowledged: 0, accepted: 0 }],

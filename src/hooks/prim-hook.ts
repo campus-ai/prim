@@ -32,7 +32,8 @@ import {
 } from "../decisions/feedback.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
-import { resolveRepositoryContext } from "../lib/git.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { processCodexMessageContext } from "./codex-message-context.js";
@@ -121,25 +122,49 @@ async function main(): Promise<void> {
     const enrichment = repository
       ? enrichHookPayloadWithFileRefs({ parsed, agent, cwd, repository })
       : undefined;
-    const enriched = enrichment?.parsed ?? parsed;
-    const invocationId = postToolInvocationId(enriched, agent);
-    const base = toMove(
-      enriched,
-      resolveCliVersion(),
-      agent,
-      workspaceId,
-      repository,
-      invocationId,
-    );
-    const scrubbed = await scrubFromCwd(enriched, cwd);
-    const move = {
-      ...base,
-      payload: enrichment ? preserveHookFileMetadata(scrubbed, enrichment.resolution) : scrubbed,
-    };
-    const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
-    appendMove(move, orgId);
-    if (shouldFlushAfter(move.eventType)) {
-      spawnBackgroundFlush();
+    const resolution = enrichment?.resolution;
+    const hasPathEvidence =
+      resolution !== undefined &&
+      (resolution.fileRefs.length > 0 ||
+        resolution.rejected.length > 0 ||
+        resolution.targetsIncomplete ||
+        resolution.targetsTruncated ||
+        resolution.shellMutation === "unresolved");
+    const pathsComplete =
+      resolution !== undefined &&
+      !resolution.targetsIncomplete &&
+      !resolution.targetsTruncated &&
+      resolution.rejected.length === 0 &&
+      resolution.shellMutation !== "unresolved";
+    if (
+      cachedCollectScopeAdmits(cwd, {
+        repository: resolvedRepository?.repoFullName,
+        branch: currentBranch(cwd),
+        ...(hasPathEvidence && resolution !== undefined
+          ? { paths: resolution.fileRefs, pathsComplete }
+          : {}),
+      })
+    ) {
+      const enriched = enrichment?.parsed ?? parsed;
+      const invocationId = postToolInvocationId(enriched, agent);
+      const base = toMove(
+        enriched,
+        resolveCliVersion(),
+        agent,
+        workspaceId,
+        repository,
+        invocationId,
+      );
+      const scrubbed = await scrubFromCwd(enriched, cwd);
+      const move = {
+        ...base,
+        payload: enrichment ? preserveHookFileMetadata(scrubbed, enrichment.resolution) : scrubbed,
+      };
+      const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
+      appendMove(move, orgId);
+      if (shouldFlushAfter(move.eventType)) {
+        spawnBackgroundFlush();
+      }
     }
   } catch (error) {
     writeHookDebug("capture failed", error);

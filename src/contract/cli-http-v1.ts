@@ -16,6 +16,7 @@ import {
   isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
+  isDecisionCollectScopeResponse,
   isDecisionConfirmRequest,
   isDecisionConfirmSuccessResponse,
   isDecisionCreateRequestStructure,
@@ -68,6 +69,7 @@ export {
   isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
+  isDecisionCollectScopeResponse,
   isDecisionConfirmRequest,
   isDecisionConfirmSuccessResponse,
   isDecisionCreateRequestStructure,
@@ -250,12 +252,19 @@ export function isFeedbackAckRequest(value: unknown): value is FeedbackAckReques
 }
 
 /**
- * The server degrades invalid optional rollout fields instead of rejecting the
- * request. CLI producers already emit the canonical subset, so structural
- * validation is the correct non-mutating producer check.
+ * The server degrades invalid optional rollout and location-scope fields
+ * instead of rejecting the request. CLI producers already emit the canonical
+ * subset, so structural validation is the correct non-mutating producer check.
  */
 export function isDecisionCreateRequest(value: unknown): value is DecisionCreateRequest {
-  return isDecisionCreateRequestStructure(value);
+  if (isDecisionCreateRequestStructure(value)) {
+    return true;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const { scope: _scope, ...requestWithoutScope } = value as Record<string, unknown>;
+  return isDecisionCreateRequestStructure(requestWithoutScope);
 }
 
 export function isFeedbackLeaseResponse(value: unknown): value is FeedbackLeaseResponse {
@@ -349,6 +358,7 @@ export const cliHttpV1Validators = {
   CliAuthStatusResponse: isCliAuthStatusResponse,
   CliErrorResponse: isCliErrorResponse,
   DecisionCascadeResponse: isDecisionCascadeResponse,
+  DecisionCollectScopeResponse: isDecisionCollectScopeResponse,
   DecisionConfirmRequest: isDecisionConfirmRequest,
   DecisionConfirmSuccessResponse: isDecisionConfirmSuccessResponse,
   DecisionCreateRequest: isDecisionCreateRequest,

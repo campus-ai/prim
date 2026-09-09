@@ -9,7 +9,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  cachedCollectScopeAdmits: vi.fn(),
   currentBranch: vi.fn(),
+  githubRepositoryFullName: vi.fn(),
   isRepoActive: vi.fn(),
   parseAgent: vi.fn(),
   prepareCodexContext: vi.fn(),
@@ -23,8 +25,14 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActive: mocks.isRepoActive,
   repoSyncId: mocks.repoSyncId,
 }));
-vi.mock("../lib/git.js", () => ({ currentBranch: mocks.currentBranch }));
 vi.mock("../lib/bin-path.js", () => ({ packageVersion: vi.fn(() => "1.2.3") }));
+vi.mock("../lib/collect-scope.js", () => ({
+  cachedCollectScopeAdmits: mocks.cachedCollectScopeAdmits,
+}));
+vi.mock("../lib/git.js", () => ({
+  currentBranch: mocks.currentBranch,
+  githubRepositoryFullName: mocks.githubRepositoryFullName,
+}));
 vi.mock("./agent.js", () => ({ parseAgent: mocks.parseAgent }));
 vi.mock("./codex-context.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./codex-context.js")>();
@@ -123,6 +131,8 @@ beforeEach(() => {
   mocks.isRepoActive.mockReturnValue(true);
   mocks.repoSyncId.mockReturnValue("sync-1");
   mocks.currentBranch.mockReturnValue("main");
+  mocks.githubRepositoryFullName.mockReturnValue("campus-ai/primitive");
+  mocks.cachedCollectScopeAdmits.mockReturnValue(true);
   mocks.resolvePreflightTargets.mockReturnValue({
     mutation: "edit",
     paths: ["src/a.ts"],
@@ -201,6 +211,22 @@ describe("PreToolUse entrypoint (codex)", () => {
     );
   });
 
+  it("preserves enforcement preflight while blanking excluded proposal content", async () => {
+    mocks.cachedCollectScopeAdmits.mockReturnValue(false);
+    mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
+
+    const output = await runHook();
+
+    expect(output).toEqual({});
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: "main",
+        paths: ["src/a.ts"],
+        proposal: "",
+      }),
+    );
+  });
+
   it("omits branch from the preflight request for detached HEAD", async () => {
     mocks.currentBranch.mockReturnValue(undefined);
     mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
@@ -210,7 +236,6 @@ describe("PreToolUse entrypoint (codex)", () => {
     const request = mocks.requestPreflight.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(request).not.toHaveProperty("branch");
   });
-
   it("surfaces hidden Decision disclosures even on a clean allow", async () => {
     const acknowledge = vi.fn().mockResolvedValue(undefined);
     mocks.resultForPreflight.mockReturnValue(conflictResult("allow", "", DISCLOSURE));

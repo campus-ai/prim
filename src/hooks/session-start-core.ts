@@ -10,6 +10,7 @@ import {
   renderFeedback,
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
+import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   ensureEffectivePostCommitHook,
@@ -80,6 +81,11 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
         signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
         quietRefresh: true,
       });
+      try {
+        await fetchAndCacheCollectScope(root);
+      } catch {
+        // Collection scope is refreshed opportunistically and never delays a session.
+      }
       return { root, binding };
     } catch {
       // Binding is opportunistic. A later enable/SessionStart retries it.

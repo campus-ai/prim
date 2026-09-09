@@ -299,7 +299,32 @@
         "accepted": 1,
         "acknowledged": 1,
         "disposition": "persisted",
-        "verdictFooter": null
+        "verdictFooter": null,
+        "collectScopeVersion": 1787078400000
+      }
+    },
+    {
+      "name": "collection scope policy",
+      "definition": "DecisionCollectScopeResponse",
+      "valid": true,
+      "value": {
+        "policy": {
+          "repositories": ["primitive/api"],
+          "directories": ["packages/api"],
+          "globs": ["src/**/*.test.ts"],
+          "branches": ["main"],
+          "updatedAt": 1787078400000
+        },
+        "collectScopeVersion": 1787078400000
+      }
+    },
+    {
+      "name": "absent collection scope is universal version zero",
+      "definition": "DecisionCollectScopeResponse",
+      "valid": true,
+      "value": {
+        "policy": null,
+        "collectScopeVersion": 0
       }
     },
     {

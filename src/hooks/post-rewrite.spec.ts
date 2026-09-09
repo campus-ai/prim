@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
+import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
@@ -33,6 +34,7 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActiveForCapture: vi.fn(),
   repoSyncId: vi.fn(),
 }));
+vi.mock("../lib/collect-scope.js", () => ({ cachedCollectScopeAdmits: vi.fn() }));
 vi.mock("../lib/git.js", () => ({
   githubRepositoryFullName: vi.fn(),
   resolveRepositoryContext: vi.fn(),
@@ -76,6 +78,7 @@ beforeEach(() => {
   vi.mocked(execFileSync).mockReturnValue("/repo\n");
   vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as unknown as ReturnType<typeof spawn>);
   vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+  vi.mocked(cachedCollectScopeAdmits).mockReturnValue(true);
   vi.mocked(repoSyncId).mockReturnValue("repoSync123");
   vi.mocked(resolveRepositoryContext).mockReturnValue({
     repoRoot: "/repo",
@@ -261,6 +264,23 @@ describe("runPostRewrite", () => {
 
     expect(toRewriteMove).not.toHaveBeenCalled();
     expect(appendMove).not.toHaveBeenCalled();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("does not journal a rewrite outside the collection policy", () => {
+    const path = privatePairsFile();
+    launcherEnv(path);
+    vi.mocked(cachedCollectScopeAdmits).mockReturnValue(false);
+
+    runPostRewrite();
+
+    expect(cachedCollectScopeAdmits).toHaveBeenCalledWith("/repo", {
+      repository: "campus-ai/primitive",
+      branch: "feature",
+    });
+    expect(toRewriteMove).not.toHaveBeenCalled();
+    expect(appendMove).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
     expect(existsSync(path)).toBe(false);
   });
 
