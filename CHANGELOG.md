@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.89](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.88...v0.1.0-alpha.89) (2026-09-09)
+
+
+### Bug Fixes
+
+* **preflight:** keep hooks alive for semantic checks ([#323](https://github.com/campus-ai/prim/issues/323)) ([195279d](https://github.com/campus-ai/prim/commit/195279dc52d41aa5dc5d618cddb545a2d658eead))
+
 ## [0.1.0-alpha.88](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.87...v0.1.0-alpha.88) (2026-09-09)
 
 
