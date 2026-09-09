@@ -19,6 +19,18 @@
 import { type CliClient, getClient } from "../client.js";
 import { renderIdentifier } from "./recent.js";
 
+export interface DecisionLocationScope {
+  [key: string]: unknown | undefined;
+  repository?: boolean;
+  directories?: string[];
+  globs?: string[];
+  branches?: string[];
+}
+
+export interface DecisionScope {
+  location?: DecisionLocationScope;
+}
+
 export interface CreateRequest {
   intent: string;
   attribution: "user" | "agent";
@@ -33,6 +45,8 @@ export interface CreateRequest {
   files?: string[];
   protocolVersion?: 3;
   repoSyncId?: string;
+  /** Optional coarse repository selectors, normalized by the server. */
+  scope?: DecisionScope;
   /** Explicit lifecycle birth stage; absent preserves provisional creation. */
   stageOverride?: "candidate" | "draft" | "adopted";
 }
@@ -42,6 +56,10 @@ export interface CreateOutcome {
   decisionId: string;
   shortId?: string;
   createdAt: number;
+  scope?: {
+    location: Required<DecisionLocationScope>;
+  };
+  scopeWarnings?: string[];
 }
 
 export const CREATE_TIMEOUT_MS = 10_000;
@@ -72,6 +90,7 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
     files: request.files,
     protocolVersion: request.protocolVersion,
     repoSyncId: request.repoSyncId,
+    scope: request.scope,
     stageOverride: request.stageOverride,
   };
   const body: Record<string, unknown> = {};
@@ -82,6 +101,18 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
     }
   }
   return body;
+}
+
+/** Warnings that must remain visible when scope data is degraded server-side. */
+export function createScopeWarnings(request: CreateRequest, outcome: CreateOutcome): string[] {
+  const warnings = outcome.scopeWarnings ?? [];
+  if (request.scope?.location !== undefined && outcome.scope === undefined) {
+    return [
+      ...warnings,
+      "the server did not confirm this Decision scope; upgrade Primitive and retry",
+    ];
+  }
+  return warnings;
 }
 
 export async function fetchCreate(

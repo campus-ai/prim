@@ -57,6 +57,13 @@ export interface DecisionFlagSummary {
   reason?: string;
 }
 
+export interface DecisionLocationScope {
+  repository: boolean;
+  directories: string[];
+  globs: string[];
+  branches: string[];
+}
+
 export interface DecisionShowResult {
   decision: {
     id: string;
@@ -84,6 +91,7 @@ export interface DecisionShowResult {
   flags: DecisionFlagSummary[];
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
+  scope?: { location: DecisionLocationScope };
   truncated: boolean;
 }
 
@@ -179,6 +187,20 @@ function pushEdges(lines: string[], label: string, arrow: string, nodes: Decisio
   }
 }
 
+function describeScope(scope: DecisionLocationScope): string {
+  const selectors = [
+    ...(scope.repository ? ["repository"] : []),
+    ...(scope.directories.length > 0
+      ? [`directories: ${scope.directories.map(terminalSafeLine).join(", ")}`]
+      : []),
+    ...(scope.globs.length > 0 ? [`globs: ${scope.globs.map(terminalSafeLine).join(", ")}`] : []),
+    ...(scope.branches.length > 0
+      ? [`branches: ${scope.branches.map(terminalSafeLine).join(", ")}`]
+      : []),
+  ];
+  return selectors.length > 0 ? selectors.join("; ") : "whole repository";
+}
+
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
@@ -193,6 +215,9 @@ export function formatShowHuman(result: DecisionShowResult): string {
   if (d.area) {
     const area = terminalSafeLine(d.area);
     lines.push(`  area: ${color(area, colorForArea(area))}`);
+  }
+  if (result.scope) {
+    lines.push(`  scope: ${describeScope(result.scope.location)}`);
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);

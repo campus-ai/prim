@@ -25,6 +25,8 @@ import {
   isDecisionIdRequest,
   isDecisionRelateRequest,
   isDecisionRelateSuccessResponse,
+  isDecisionRescopeRequest,
+  isDecisionRescopeResponse,
   isDecisionStageSuccessResponse,
   isDecisionSupersedeRequest,
   isDecisionsAffectingResponse,
@@ -75,6 +77,8 @@ export {
   isDecisionIdRequest,
   isDecisionRelateRequest,
   isDecisionRelateSuccessResponse,
+  isDecisionRescopeRequest,
+  isDecisionRescopeResponse,
   isDecisionStageSuccessResponse,
   isDecisionSupersedeRequest,
   isDecisionsAffectingResponse,
@@ -199,18 +203,22 @@ export function isWorkosConnectDeviceConfigurationSuccess(
 
 /**
  * Validate the canonical outbound V3 request, including every producer-side
- * refinement. The server-only rollout-field degradation transform is not
- * mirrored: this producer emits canonical annotations.
+ * refinement. `branch` is server-degraded when malformed, so omit it from
+ * structural validation here without mutating the caller's request.
  */
 export function isPreflightRequestV3(value: unknown): value is PreflightRequestV3 {
-  if (!isPreflightRequestV3Structure(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const { branch: _branch, ...requestWithoutBranch } = value as Record<string, unknown>;
+  if (!isPreflightRequestV3Structure(requestWithoutBranch)) {
     return false;
   }
   return (
-    value.paths.every(isCanonicalRepositoryPath) &&
-    new Set(value.paths).size === value.paths.length &&
-    (value.coverage !== "complete" || value.paths.length > 0) &&
-    new TextEncoder().encode(value.proposal).length <= MAX_PROPOSAL_BYTES
+    requestWithoutBranch.paths.every(isCanonicalRepositoryPath) &&
+    new Set(requestWithoutBranch.paths).size === requestWithoutBranch.paths.length &&
+    (requestWithoutBranch.coverage !== "complete" || requestWithoutBranch.paths.length > 0) &&
+    new TextEncoder().encode(requestWithoutBranch.proposal).length <= MAX_PROPOSAL_BYTES
   );
 }
 
@@ -350,6 +358,8 @@ export const cliHttpV1Validators = {
   DecisionIdRequest: isDecisionIdRequest,
   DecisionRelateRequest: isDecisionRelateRequest,
   DecisionRelateSuccessResponse: isDecisionRelateSuccessResponse,
+  DecisionRescopeRequest: isDecisionRescopeRequest,
+  DecisionRescopeResponse: isDecisionRescopeResponse,
   DecisionStageSuccessResponse: isDecisionStageSuccessResponse,
   DecisionSupersedeRequest: isDecisionSupersedeRequest,
   DecisionsAffectingResponse: isDecisionsAffectingResponse,

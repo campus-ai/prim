@@ -54,6 +54,11 @@ function gitValue(cwd: string, args: string[]): string | undefined {
   }
 }
 
+/** Return the checked-out branch name, or undefined for detached/non-git worktrees. */
+export function currentBranch(cwd: string): string | undefined {
+  return gitValue(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+}
+
 /** Return a strict GitHub owner/repository name from origin, never credentials. */
 export function githubRepositoryFullName(cwd: string): string | null {
   const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);

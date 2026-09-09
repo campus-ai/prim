@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  currentBranch: vi.fn(),
   isRepoActive: vi.fn(),
   parseAgent: vi.fn(),
   prepareCodexContext: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActive: mocks.isRepoActive,
   repoSyncId: mocks.repoSyncId,
 }));
+vi.mock("../lib/git.js", () => ({ currentBranch: mocks.currentBranch }));
 vi.mock("../lib/bin-path.js", () => ({ packageVersion: vi.fn(() => "1.2.3") }));
 vi.mock("./agent.js", () => ({ parseAgent: mocks.parseAgent }));
 vi.mock("./codex-context.js", async (importOriginal) => {
@@ -120,6 +122,7 @@ beforeEach(() => {
   mocks.parseAgent.mockReturnValue("codex");
   mocks.isRepoActive.mockReturnValue(true);
   mocks.repoSyncId.mockReturnValue("sync-1");
+  mocks.currentBranch.mockReturnValue("main");
   mocks.resolvePreflightTargets.mockReturnValue({
     mutation: "edit",
     paths: ["src/a.ts"],
@@ -184,6 +187,28 @@ describe("PreToolUse entrypoint (codex)", () => {
     // this was a real verdict, not a crashed main() falling open.
     expect(mocks.requestPreflight).toHaveBeenCalledTimes(1);
     expect(mocks.resultForPreflight).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the current Git branch with a preflight request", async () => {
+    mocks.currentBranch.mockReturnValue("feature/decision-scope");
+    mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
+
+    await runHook();
+
+    expect(mocks.currentBranch).toHaveBeenCalledWith("/repo");
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "feature/decision-scope" }),
+    );
+  });
+
+  it("omits branch from the preflight request for detached HEAD", async () => {
+    mocks.currentBranch.mockReturnValue(undefined);
+    mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
+
+    await runHook();
+
+    const request = mocks.requestPreflight.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request).not.toHaveProperty("branch");
   });
 
   it("surfaces hidden Decision disclosures even on a clean allow", async () => {
