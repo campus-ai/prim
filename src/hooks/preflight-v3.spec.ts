@@ -177,7 +177,7 @@ describe("resolvePreflightTargets", () => {
 });
 
 describe("v3 wire helpers", () => {
-  it("sends one direct request and accepts a response after six seconds", async () => {
+  it("sends one direct request and accepts a response after the server budget", async () => {
     vi.useFakeTimers();
     mockPost.mockImplementationOnce(
       () =>
@@ -192,7 +192,7 @@ describe("v3 wire helpers", () => {
                 conflicts: [],
                 bypassed: [],
               }),
-            6_000,
+            8_500,
           );
         }),
     );
@@ -209,7 +209,7 @@ describe("v3 wire helpers", () => {
       proposal: "compatible edit",
     });
 
-    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.advanceTimersByTimeAsync(8_500);
 
     await expect(pending).resolves.toMatchObject({ verdict: "allow" });
     expect(mockPost).toHaveBeenCalledOnce();
