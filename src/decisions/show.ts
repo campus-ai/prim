@@ -69,6 +69,15 @@ export interface DecisionTimeScope {
   effectiveUntil?: number;
 }
 
+export type DecisionUserScopeReadMember =
+  | { kind: "user"; userId: string; displayName: string }
+  | { kind: "role"; role: "owner" | "admin" | "member" }
+  | { kind: "agent"; agent: "claude_code" | "codex" | "hermes" }
+  | {
+      kind: "credential";
+      credential: "workos_jwt" | "workos_api_key" | "service_token";
+    };
+
 export interface DecisionShowResult {
   decision: {
     id: string;
@@ -96,7 +105,12 @@ export interface DecisionShowResult {
   flags: DecisionFlagSummary[];
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
-  scope?: { location: DecisionLocationScope; time: DecisionTimeScope };
+  scope?: {
+    location: DecisionLocationScope;
+    time: DecisionTimeScope;
+    /** Optional only for compatibility with server versions before audience reads. */
+    users?: DecisionUserScopeReadMember[];
+  };
   truncated: boolean;
 }
 
@@ -223,6 +237,37 @@ function describeEffectiveWindow(scope: DecisionTimeScope): string | undefined {
   return bounds.length === 0 ? undefined : bounds.join("; ");
 }
 
+function describeAudienceMember(member: DecisionUserScopeReadMember): string {
+  switch (member.kind) {
+    case "user":
+      return terminalSafeLine(member.displayName || member.userId);
+    case "role":
+      return `${terminalSafeLine(member.role)}s`;
+    case "agent":
+      return (
+        {
+          claude_code: "Claude Code agent",
+          codex: "Codex agent",
+          hermes: "Hermes agent",
+        }[member.agent] ?? terminalSafeLine(member.agent)
+      );
+    case "credential":
+      return (
+        {
+          workos_jwt: "WorkOS JWT credential",
+          workos_api_key: "WorkOS API key credential",
+          service_token: "Service token credential",
+        }[member.credential] ?? terminalSafeLine(member.credential)
+      );
+  }
+}
+
+function describeAudience(users: DecisionUserScopeReadMember[] | undefined): string {
+  return users === undefined || users.length === 0
+    ? "everyone"
+    : users.map(describeAudienceMember).join(", ");
+}
+
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
@@ -244,6 +289,9 @@ export function formatShowHuman(result: DecisionShowResult): string {
     if (effectiveWindow) {
       lines.push(`  effective: ${effectiveWindow}`);
     }
+  }
+  if (result.scope) {
+    lines.push(`  audience: ${describeAudience(result.scope.users)}`);
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);

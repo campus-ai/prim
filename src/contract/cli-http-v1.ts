@@ -252,9 +252,10 @@ export function isFeedbackAckRequest(value: unknown): value is FeedbackAckReques
 }
 
 /**
- * The server degrades invalid optional rollout, location-scope, and time-scope fields
- * instead of rejecting the request. CLI producers already emit the canonical
- * subset, so structural validation is the correct non-mutating producer check.
+ * The server degrades invalid optional rollout, location-scope, time-scope, and
+ * audience-scope fields instead of rejecting the request. CLI producers already
+ * emit the canonical subset, so structural validation is the correct
+ * non-mutating producer check.
  */
 export function isDecisionCreateRequest(value: unknown): value is DecisionCreateRequest {
   if (isDecisionCreateRequestStructure(value)) {

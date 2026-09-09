@@ -37,6 +37,7 @@ const RESPONSE = {
       effectiveFrom: 1_789_072_496_789,
       effectiveUntil: 1_789_158_896_789,
     },
+    users: [],
   },
 };
 
@@ -109,15 +110,52 @@ describe("rescopeDecision", () => {
     );
   });
 
+  it("sends a user-only rescope request and returns its canonical audience", async () => {
+    const response = {
+      ...RESPONSE,
+      scope: {
+        ...RESPONSE.scope,
+        users: [
+          { kind: "user" as const, userId: "user-1" },
+          { kind: "agent" as const, agent: "codex" as const },
+        ],
+      },
+    };
+    const post = vi.fn().mockResolvedValue(response);
+    const output = dependencies(post);
+    const request = {
+      id: "decision-1",
+      users: [
+        { kind: "user" as const, userId: "user-1" },
+        { kind: "agent" as const, agent: "codex" as const },
+      ],
+    };
+
+    await expect(rescopeDecision(request, output.dependencies)).resolves.toBe(
+      DECISION_RESCOPE_EXIT.ok,
+    );
+
+    expect(post).toHaveBeenCalledWith("/api/cli/decisions/rescope", request, expect.anything());
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      scope: { users: request.users },
+    });
+  });
+
   it("projects only contract-owned response fields to stdout", async () => {
-    const post = vi.fn().mockResolvedValue({ ...RESPONSE, internalNote: "do not disclose" });
+    const post = vi.fn().mockResolvedValue({
+      ...RESPONSE,
+      internalNote: "do not disclose",
+      scope: { ...RESPONSE.scope, internalField: "do not disclose" },
+    });
     const output = dependencies(post);
 
     await expect(rescopeDecision(REQUEST, output.dependencies)).resolves.toBe(
       DECISION_RESCOPE_EXIT.ok,
     );
 
-    expect(JSON.parse(output.stdout[0] ?? "")).not.toHaveProperty("internalNote");
+    const response = JSON.parse(output.stdout[0] ?? "") as Record<string, unknown>;
+    expect(response).not.toHaveProperty("internalNote");
+    expect(response.scope).not.toHaveProperty("internalField");
   });
 
   it("returns a not-found exit and machine-readable failure for a missing Decision", async () => {
@@ -151,6 +189,7 @@ describe("formatRescopeHuman", () => {
           scope: {
             location: { repository: false, directories: [], globs: [], branches: [] },
             time: {},
+            users: [],
           },
         },
       ),

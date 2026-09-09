@@ -239,6 +239,7 @@ async function main(): Promise<void> {
     !cachedCollectScopeAdmits(cwd, {
       repository: resolvedRepository.repoFullName,
       branch: currentBranch(cwd),
+      agent,
       ...(isHermesDenial || !hasPathEvidence ? {} : { paths: resolution.fileRefs, pathsComplete }),
     })
   ) {

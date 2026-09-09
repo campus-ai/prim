@@ -140,6 +140,7 @@ async function main(): Promise<void> {
       cachedCollectScopeAdmits(cwd, {
         repository: resolvedRepository?.repoFullName,
         branch: currentBranch(cwd),
+        agent,
         ...(hasPathEvidence && resolution !== undefined
           ? { paths: resolution.fileRefs, pathsComplete }
           : {}),

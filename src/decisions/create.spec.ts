@@ -163,6 +163,44 @@ describe("fetchCreate", () => {
     );
   });
 
+  it("posts canonical audience selectors alongside other scope dimensions", async () => {
+    const post = vi.fn().mockResolvedValue(OUTCOME);
+    await fetchCreate(
+      {
+        intent: "Use the service token only for deployment decisions",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789 },
+          users: [
+            { kind: "user", userId: "user-1" },
+            { kind: "role", role: "admin" },
+            { kind: "agent", agent: "codex" },
+            { kind: "credential", credential: "service_token" },
+          ],
+        },
+      },
+      { getClient: () => clientWith(post) },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/create",
+      {
+        intent: "Use the service token only for deployment decisions",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789 },
+          users: [
+            { kind: "user", userId: "user-1" },
+            { kind: "role", role: "admin" },
+            { kind: "agent", agent: "codex" },
+            { kind: "credential", credential: "service_token" },
+          ],
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("returns the created identity from the server", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     const result = await fetchCreate(
@@ -211,6 +249,7 @@ describe("createScopeWarnings", () => {
           scope: {
             location: { repository: true, directories: [], globs: [], branches: [] },
             time: {},
+            users: [],
           },
         },
       ),

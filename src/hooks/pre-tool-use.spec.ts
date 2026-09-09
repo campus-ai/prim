@@ -225,6 +225,13 @@ describe("PreToolUse entrypoint (codex)", () => {
         proposal: "",
       }),
     );
+    expect(mocks.cachedCollectScopeAdmits).toHaveBeenCalledWith("/repo", {
+      repository: "campus-ai/primitive",
+      branch: "main",
+      agent: "codex",
+      paths: ["src/a.ts"],
+      pathsComplete: false,
+    });
   });
 
   it("omits branch from the preflight request for detached HEAD", async () => {

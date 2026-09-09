@@ -14,12 +14,14 @@
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions rescope <idOrShortId> [--scope-repo|--scope-dir|--scope-glob|--scope-branch]
  *                                      [--effective-from|--effective-until|--clear-window]
+ *                                      [--for-user|--for-role|--for-agent|--for-credential]
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
  *                          --confidence|--reversibility|--files|--scope-*|--effective-from|
- *                          --effective-until|--draft|--adopt]
+ *                          --effective-until|--for-user|--for-role|--for-agent|
+ *                          --for-credential|--draft|--adopt]
  *
  * The `decisions` command group is created once here; every subcommand
  * attaches to this same group. AX contract throughout: STDOUT is always
@@ -42,6 +44,7 @@ import {
 } from "../decisions/confirm.js";
 import {
   type CreateRequest,
+  type DecisionUserScopeMember,
   createScopeWarnings,
   fetchCreate,
   formatCreateHuman,
@@ -170,6 +173,10 @@ interface CreateOptions {
   files?: string[];
   effectiveFrom?: string;
   effectiveUntil?: string;
+  forUser: string[];
+  forRole: string[];
+  forAgent: string[];
+  forCredential: string[];
   draft?: boolean;
   adopt?: boolean;
   scopeRepo?: boolean;
@@ -178,7 +185,14 @@ interface CreateOptions {
   scopeBranch?: string[];
 }
 
-interface RescopeOptions {
+interface UserScopeOptions {
+  forUser: string[];
+  forRole: string[];
+  forAgent: string[];
+  forCredential: string[];
+}
+
+interface RescopeOptions extends UserScopeOptions {
   effectiveFrom?: string;
   effectiveUntil?: string;
   clearWindow?: boolean;
@@ -196,6 +210,71 @@ function rejectEffectiveWindow(
 ): void {
   console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
   console.log(JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2));
+  process.exitCode = EXIT_USAGE;
+}
+
+class UserScopeInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserScopeInputError";
+  }
+}
+
+const USER_SCOPE_ROLES = new Set(["owner", "admin", "member"]);
+const USER_SCOPE_AGENTS = new Set(["claude_code", "codex", "hermes"]);
+const USER_SCOPE_CREDENTIALS = new Set(["workos_jwt", "workos_api_key", "service_token"]);
+
+function requiredScopeValue(flag: string, value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new UserScopeInputError(`${flag} must not be blank`);
+  }
+  return trimmed;
+}
+
+/** Convert repeatable CLI audience flags into the canonical wire selectors. */
+function userScopeFromOptions(opts: UserScopeOptions): DecisionUserScopeMember[] | undefined {
+  const users = opts.forUser ?? [];
+  const roles = opts.forRole ?? [];
+  const agents = opts.forAgent ?? [];
+  const credentials = opts.forCredential ?? [];
+  const members: DecisionUserScopeMember[] = [];
+
+  for (const value of users) {
+    members.push({ kind: "user", userId: requiredScopeValue("--for-user", value) });
+  }
+  for (const value of roles) {
+    const role = requiredScopeValue("--for-role", value);
+    if (!USER_SCOPE_ROLES.has(role)) {
+      throw new UserScopeInputError("--for-role must be owner, admin, or member");
+    }
+    members.push({ kind: "role", role: role as "owner" | "admin" | "member" });
+  }
+  for (const value of agents) {
+    const agent = requiredScopeValue("--for-agent", value);
+    if (!USER_SCOPE_AGENTS.has(agent)) {
+      throw new UserScopeInputError("--for-agent must be claude_code, codex, or hermes");
+    }
+    members.push({ kind: "agent", agent: agent as "claude_code" | "codex" | "hermes" });
+  }
+  for (const value of credentials) {
+    const credential = requiredScopeValue("--for-credential", value);
+    if (!USER_SCOPE_CREDENTIALS.has(credential)) {
+      throw new UserScopeInputError(
+        "--for-credential must be workos_jwt, workos_api_key, or service_token",
+      );
+    }
+    members.push({
+      kind: "credential",
+      credential: credential as "workos_jwt" | "workos_api_key" | "service_token",
+    });
+  }
+  return members.length > 0 ? members : undefined;
+}
+
+function rejectUserScope(command: "create" | "rescope", error: UserScopeInputError): void {
+  console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
+  console.log(JSON.stringify({ ok: false, error: "invalid_user_scope" }, null, 2));
   process.exitCode = EXIT_USAGE;
 }
 
@@ -470,6 +549,30 @@ export function registerDecisionsCommands(program: Command): void {
       "--effective-until <instant>",
       "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
     )
+    .option(
+      "--for-user <userId>",
+      "Include one organization user in this audience (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-role <role>",
+      "Include one role: owner | admin | member (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-agent <agent>",
+      "Include one agent: claude_code | codex | hermes (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-credential <credential>",
+      "Include one credential: workos_jwt | workos_api_key | service_token (repeatable)",
+      collectItem,
+      [],
+    )
     .option("--scope-repo", "Scope this Decision to the whole repository")
     .option(
       "--scope-dir <prefix>",
@@ -507,6 +610,16 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw error;
       }
+      let users: DecisionUserScopeMember[] | undefined;
+      try {
+        users = userScopeFromOptions(opts);
+      } catch (error) {
+        if (error instanceof UserScopeInputError) {
+          rejectUserScope("create", error);
+          return;
+        }
+        throw error;
+      }
       const requestedFiles = opts.files ?? [];
       const location = locationScopeFromOptions(opts);
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId" | "scope"> =
@@ -534,6 +647,7 @@ export function registerDecisionsCommands(program: Command): void {
       const scope = {
         ...(location === undefined ? {} : { location }),
         ...(time === undefined ? {} : { time }),
+        ...(users === undefined ? {} : { users }),
       };
       if (Object.keys(scope).length > 0) {
         explicitScope = { ...explicitScope, scope };
@@ -591,7 +705,7 @@ export function registerDecisionsCommands(program: Command): void {
   decisions
     .command("rescope <idOrShortId>")
     .description(
-      "Replace a Decision's location scope and/or effective window; use --clear-window to remove it",
+      "Replace a Decision's location scope, effective window, and/or audience; use --clear-window to remove it",
     )
     .option("--scope-repo", "Scope this Decision to the whole repository")
     .option(
@@ -616,6 +730,30 @@ export function registerDecisionsCommands(program: Command): void {
       "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
     )
     .option("--clear-window", "Remove this Decision's effective window")
+    .option(
+      "--for-user <userId>",
+      "Set one organization user in this audience (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-role <role>",
+      "Set one role: owner | admin | member (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-agent <agent>",
+      "Set one agent: claude_code | codex | hermes (repeatable)",
+      collectItem,
+      [],
+    )
+    .option(
+      "--for-credential <credential>",
+      "Set one credential: workos_jwt | workos_api_key | service_token (repeatable)",
+      collectItem,
+      [],
+    )
     .action(async (id: string, opts: RescopeOptions) => {
       let time: EffectiveWindow | null | undefined;
       try {
@@ -627,13 +765,28 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw error;
       }
+      let users: DecisionUserScopeMember[] | undefined;
+      try {
+        users = userScopeFromOptions(opts);
+      } catch (error) {
+        if (error instanceof UserScopeInputError) {
+          rejectUserScope("rescope", error);
+          return;
+        }
+        throw error;
+      }
       const location = locationScopeFromOptions(opts);
       const hasLocationSelector = location !== undefined;
+      const hasNonLocationScope = time !== undefined || users !== undefined;
       process.exitCode = await rescopeDecision({
         id,
-        ...(time === undefined ? { location: location ?? null } : {}),
-        ...(time === undefined || !hasLocationSelector ? {} : { location }),
+        // Preserve the established no-selector behavior: it clears location.
+        // When the author changes time or audience alone, omission instead
+        // leaves the existing location scope untouched.
+        ...(!hasNonLocationScope ? { location: location ?? null } : {}),
+        ...(hasNonLocationScope && hasLocationSelector ? { location } : {}),
         ...(time === undefined ? {} : { time }),
+        ...(users === undefined ? {} : { users }),
       });
     });
 

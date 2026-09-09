@@ -181,6 +181,24 @@ describe("formatShowHuman", () => {
     expect(out).not.toContain("effective:");
   });
 
+  it("renders named people and audience selector labels", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      scope: {
+        location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
+        users: [
+          { kind: "user", userId: "user-1", displayName: "Ada Lovelace" },
+          { kind: "role", role: "admin" },
+          { kind: "agent", agent: "codex" },
+          { kind: "credential", credential: "service_token" },
+        ],
+      },
+    });
+
+    expect(out).toContain("audience: Ada Lovelace, admins, Codex agent, Service token credential");
+  });
+
   it("lists referenced files from the flat files array", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("convex/auth-strategy.ts");

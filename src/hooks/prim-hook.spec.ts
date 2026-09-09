@@ -173,6 +173,7 @@ describe("prim-hook collection scope", () => {
     expect(mocks.cachedCollectScopeAdmits).toHaveBeenCalledWith("/repo", {
       repository: "campus-ai/primitive",
       branch: "main",
+      agent: "claude_code",
       paths: ["src/a.ts"],
       pathsComplete: true,
     });

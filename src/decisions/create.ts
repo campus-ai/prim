@@ -32,9 +32,21 @@ export interface DecisionTimeScope {
   effectiveUntil?: number;
 }
 
+/** One canonical audience selector for a Decision. */
+export type DecisionUserScopeMember =
+  | { kind: "user"; userId: string }
+  | { kind: "role"; role: "owner" | "admin" | "member" }
+  | { kind: "agent"; agent: "claude_code" | "codex" | "hermes" }
+  | {
+      kind: "credential";
+      credential: "workos_jwt" | "workos_api_key" | "service_token";
+    };
+
 export interface DecisionScope {
   location?: DecisionLocationScope;
   time?: DecisionTimeScope;
+  /** Audience alternatives; an empty array means everyone. */
+  users?: DecisionUserScopeMember[];
 }
 
 export interface CreateRequest {
@@ -65,6 +77,7 @@ export interface CreateOutcome {
   scope?: {
     location: Required<DecisionLocationScope>;
     time: DecisionTimeScope;
+    users: DecisionUserScopeMember[];
   };
   scopeWarnings?: string[];
 }

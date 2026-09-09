@@ -233,6 +233,7 @@ async function main(): Promise<void> {
   const collectScopeAdmits = cachedCollectScopeAdmits(cwd, {
     repository: githubRepositoryFullName(cwd) ?? undefined,
     branch,
+    agent,
     paths: targets.paths,
     pathsComplete: targets.coverage === "complete",
   });

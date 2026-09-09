@@ -315,9 +315,28 @@
           "branches": ["main"],
           "effectiveFrom": 1787078400000,
           "effectiveUntil": 1790232000000,
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user_collect_scope"
+            },
+            {
+              "kind": "role",
+              "role": "admin"
+            },
+            {
+              "kind": "agent",
+              "agent": "codex"
+            },
+            {
+              "kind": "credential",
+              "credential": "service_token"
+            }
+          ],
           "updatedAt": 1787078400000
         },
-        "collectScopeVersion": 1787078400000
+        "collectScopeVersion": 1787078400000,
+        "callerIncluded": true
       }
     },
     {
@@ -326,7 +345,8 @@
       "valid": true,
       "value": {
         "policy": null,
-        "collectScopeVersion": 0
+        "collectScopeVersion": 0,
+        "callerIncluded": true
       }
     },
     {
@@ -1196,7 +1216,14 @@
           "time": {
             "effectiveFrom": 1787078400000,
             "effectiveUntil": 1790232000000
-          }
+          },
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user-1",
+              "displayName": "Ada"
+            }
+          ]
         },
         "truncated": false
       }
@@ -1258,7 +1285,13 @@
           "time": {
             "effectiveFrom": 1787078400000,
             "effectiveUntil": 1790232000000
-          }
+          },
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user-1"
+            }
+          ]
         },
         "stageOverride": "draft"
       }
@@ -1281,7 +1314,13 @@
           "time": {
             "effectiveFrom": 1787078400000,
             "effectiveUntil": 1790232000000
-          }
+          },
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user-1"
+            }
+          ]
         }
       }
     },
@@ -1349,7 +1388,13 @@
           "time": {
             "effectiveFrom": 1787078400000,
             "effectiveUntil": 1790232000000
-          }
+          },
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user-1"
+            }
+          ]
         }
       }
     },

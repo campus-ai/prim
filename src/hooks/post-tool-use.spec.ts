@@ -210,6 +210,13 @@ describe("PostToolUse entrypoint (codex)", () => {
     const output = await runHook();
 
     expect(output).toEqual({});
+    expect(mocks.cachedCollectScopeAdmits).toHaveBeenCalledWith("/repo", {
+      repository: "org/repo",
+      branch: "main",
+      agent: "codex",
+      paths: ["src/a.ts"],
+      pathsComplete: true,
+    });
     expect(mocks.toMove).not.toHaveBeenCalled();
     expect(mocks.deliverPostToolMove).not.toHaveBeenCalled();
   });
