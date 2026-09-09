@@ -633,6 +633,16 @@
                     "type": "string"
                   }
                 },
+                "effectiveFrom": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "effectiveUntil": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
                 "updatedAt": {
                   "type": "integer",
                   "minimum": 0,
@@ -822,6 +832,23 @@
                 }
               },
               "additionalProperties": {}
+            },
+            "time": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "effectiveFrom": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "effectiveUntil": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "additionalProperties": {}
             }
           },
           "additionalProperties": {}
@@ -835,7 +862,8 @@
       "additionalProperties": {},
       "x-primitive-runtime-refinements": [
         "degrade_invalid_rollout_fields",
-        "degrade_invalid_location_scope"
+        "degrade_invalid_location_scope",
+        "degrade_invalid_time_scope"
       ]
     },
     "DecisionCreateResponse": {
@@ -881,9 +909,25 @@
               },
               "required": ["repository", "directories", "globs", "branches"],
               "additionalProperties": {}
+            },
+            "time": {
+              "type": "object",
+              "properties": {
+                "effectiveFrom": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "effectiveUntil": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "additionalProperties": {}
             }
           },
-          "required": ["location"],
+          "required": ["location", "time"],
           "additionalProperties": {}
         },
         "scopeWarnings": {
@@ -1137,9 +1181,25 @@
               },
               "required": ["repository", "directories", "globs", "branches"],
               "additionalProperties": {}
+            },
+            "time": {
+              "type": "object",
+              "properties": {
+                "effectiveFrom": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "effectiveUntil": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "additionalProperties": {}
             }
           },
-          "required": ["location"],
+          "required": ["location", "time"],
           "additionalProperties": {}
         },
         "truncated": {
@@ -1278,6 +1338,30 @@
               "type": "null"
             }
           ]
+        },
+        "time": {
+          "anyOf": [
+            {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "effectiveFrom": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "effectiveUntil": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "additionalProperties": {}
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": ["id"],
@@ -1337,9 +1421,25 @@
                     "branches"
                   ],
                   "additionalProperties": {}
+                },
+                "time": {
+                  "type": "object",
+                  "properties": {
+                    "effectiveFrom": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "effectiveUntil": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "additionalProperties": {}
                 }
               },
-              "required": ["location"],
+              "required": ["location", "time"],
               "additionalProperties": {}
             },
             "scopeWarnings": {
@@ -1411,9 +1511,25 @@
                     "branches"
                   ],
                   "additionalProperties": {}
+                },
+                "time": {
+                  "type": "object",
+                  "properties": {
+                    "effectiveFrom": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "effectiveUntil": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "additionalProperties": {}
                 }
               },
-              "required": ["location"],
+              "required": ["location", "time"],
               "additionalProperties": {}
             },
             "scopeWarnings": {

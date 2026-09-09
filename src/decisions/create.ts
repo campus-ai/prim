@@ -27,8 +27,14 @@ export interface DecisionLocationScope {
   branches?: string[];
 }
 
+export interface DecisionTimeScope {
+  effectiveFrom?: number;
+  effectiveUntil?: number;
+}
+
 export interface DecisionScope {
   location?: DecisionLocationScope;
+  time?: DecisionTimeScope;
 }
 
 export interface CreateRequest {
@@ -45,7 +51,7 @@ export interface CreateRequest {
   files?: string[];
   protocolVersion?: 3;
   repoSyncId?: string;
-  /** Optional coarse repository selectors, normalized by the server. */
+  /** Optional coarse selectors and absolute effective window, normalized server-side. */
   scope?: DecisionScope;
   /** Explicit lifecycle birth stage; absent preserves provisional creation. */
   stageOverride?: "candidate" | "draft" | "adopted";
@@ -58,6 +64,7 @@ export interface CreateOutcome {
   createdAt: number;
   scope?: {
     location: Required<DecisionLocationScope>;
+    time: DecisionTimeScope;
   };
   scopeWarnings?: string[];
 }
@@ -103,10 +110,10 @@ function toRequestBody(request: CreateRequest): Record<string, unknown> {
   return body;
 }
 
-/** Warnings that must remain visible when scope data is degraded server-side. */
+/** Warnings that must remain visible when optional scope data is degraded server-side. */
 export function createScopeWarnings(request: CreateRequest, outcome: CreateOutcome): string[] {
   const warnings = outcome.scopeWarnings ?? [];
-  if (request.scope?.location !== undefined && outcome.scope === undefined) {
+  if (request.scope !== undefined && outcome.scope === undefined) {
     return [
       ...warnings,
       "the server did not confirm this Decision scope; upgrade Primitive and retry",

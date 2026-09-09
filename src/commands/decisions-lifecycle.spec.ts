@@ -78,6 +78,7 @@ describe("decisions lifecycle command registration", () => {
           globs: ["src/**/*.ts"],
           branches: ["main"],
         },
+        time: {},
       },
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -125,6 +126,7 @@ describe("decisions lifecycle command registration", () => {
       stage: "adopted",
       scope: {
         location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
       },
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);

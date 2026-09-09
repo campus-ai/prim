@@ -1,6 +1,6 @@
 /**
- * `prim decisions rescope` — replace the coarse location selectors for a
- * Decision without changing its authored content or lifecycle stage.
+ * `prim decisions rescope` — replace a Decision's location scope and/or
+ * effective window without changing its authored content or lifecycle stage.
  *
  * The generated contract is the wire authority. Command output stays split:
  * machine-readable response JSON on stdout, and terminal-safe status/warnings
@@ -72,15 +72,27 @@ class DecisionRescopeResponseError extends Error {
   }
 }
 
-function projectSuccess(response: DecisionRescopeResponse): DecisionRescopeResponse {
-  const scope = {
+function projectScope(scope: DecisionRescopeResponse["scope"]): DecisionRescopeResponse["scope"] {
+  return {
     location: {
-      repository: response.scope.location.repository,
-      directories: response.scope.location.directories,
-      globs: response.scope.location.globs,
-      branches: response.scope.location.branches,
+      repository: scope.location.repository,
+      directories: scope.location.directories,
+      globs: scope.location.globs,
+      branches: scope.location.branches,
+    },
+    time: {
+      ...(scope.time.effectiveFrom === undefined
+        ? {}
+        : { effectiveFrom: scope.time.effectiveFrom }),
+      ...(scope.time.effectiveUntil === undefined
+        ? {}
+        : { effectiveUntil: scope.time.effectiveUntil }),
     },
   };
+}
+
+function projectSuccess(response: DecisionRescopeResponse): DecisionRescopeResponse {
+  const scope = projectScope(response.scope);
   if (response.outcome === "no_op") {
     return {
       outcome: "no_op",

@@ -313,6 +313,8 @@
           "directories": ["packages/api"],
           "globs": ["src/**/*.test.ts"],
           "branches": ["main"],
+          "effectiveFrom": 1787078400000,
+          "effectiveUntil": 1790232000000,
           "updatedAt": 1787078400000
         },
         "collectScopeVersion": 1787078400000
@@ -1190,6 +1192,10 @@
             "directories": ["packages/api"],
             "globs": [],
             "branches": ["main"]
+          },
+          "time": {
+            "effectiveFrom": 1787078400000,
+            "effectiveUntil": 1790232000000
           }
         },
         "truncated": false
@@ -1248,6 +1254,10 @@
             "directories": ["packages/api"],
             "globs": [],
             "branches": ["main"]
+          },
+          "time": {
+            "effectiveFrom": 1787078400000,
+            "effectiveUntil": 1790232000000
           }
         },
         "stageOverride": "draft"
@@ -1267,6 +1277,10 @@
             "directories": ["packages/api"],
             "globs": [],
             "branches": ["main"]
+          },
+          "time": {
+            "effectiveFrom": 1787078400000,
+            "effectiveUntil": 1790232000000
           }
         }
       }
@@ -1309,6 +1323,10 @@
           "directories": ["packages/api"],
           "globs": [],
           "branches": ["main"]
+        },
+        "time": {
+          "effectiveFrom": 1787078400000,
+          "effectiveUntil": 1790232000000
         }
       }
     },
@@ -1327,6 +1345,10 @@
             "directories": ["packages/api"],
             "globs": [],
             "branches": ["main"]
+          },
+          "time": {
+            "effectiveFrom": 1787078400000,
+            "effectiveUntil": 1790232000000
           }
         }
       }

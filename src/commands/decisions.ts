@@ -13,11 +13,13 @@
  *   prim decisions withdraw <idOrShortId>
  *   prim decisions supersede <idOrShortId> --by <replacementIdOrShortId>
  *   prim decisions rescope <idOrShortId> [--scope-repo|--scope-dir|--scope-glob|--scope-branch]
+ *                                      [--effective-from|--effective-until|--clear-window]
  *   prim decisions confirm <idOrShortId> [--reject]
  *   prim decisions repairs [list|confirm <id> <sha> --review-token <token>|reject <id> <sha>]
  *   prim decisions create --intent=<text> --attribution=<user|agent>
  *                         [--kind|--rationale|--area|--decided|--alternatives|
- *                          --confidence|--reversibility|--files|--draft|--adopt]
+ *                          --confidence|--reversibility|--files|--scope-*|--effective-from|
+ *                          --effective-until|--draft|--adopt]
  *
  * The `decisions` command group is created once here; every subcommand
  * attaches to this same group. AX contract throughout: STDOUT is always
@@ -45,6 +47,11 @@ import {
   formatCreateHuman,
   formatCreateJson,
 } from "../decisions/create.js";
+import {
+  type EffectiveWindow,
+  EffectiveWindowInputError,
+  effectiveWindowFromOptions,
+} from "../decisions/effective-window.js";
 import {
   demoteDecision,
   promoteDecision,
@@ -161,6 +168,8 @@ interface CreateOptions {
   confidence?: string;
   reversibility?: string;
   files?: string[];
+  effectiveFrom?: string;
+  effectiveUntil?: string;
   draft?: boolean;
   adopt?: boolean;
   scopeRepo?: boolean;
@@ -170,6 +179,9 @@ interface CreateOptions {
 }
 
 interface RescopeOptions {
+  effectiveFrom?: string;
+  effectiveUntil?: string;
+  clearWindow?: boolean;
   scopeRepo?: boolean;
   scopeDir?: string[];
   scopeGlob?: string[];
@@ -177,6 +189,15 @@ interface RescopeOptions {
 }
 
 type DecisionLocationScope = NonNullable<NonNullable<CreateRequest["scope"]>["location"]>;
+
+function rejectEffectiveWindow(
+  command: "create" | "rescope",
+  error: EffectiveWindowInputError,
+): void {
+  console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
+  console.log(JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2));
+  process.exitCode = EXIT_USAGE;
+}
 
 function locationScopeFromOptions(
   options: Pick<RescopeOptions, "scopeRepo" | "scopeDir" | "scopeGlob" | "scopeBranch">,
@@ -441,6 +462,14 @@ export function registerDecisionsCommands(program: Command): void {
       "Comma-separated exact repo-relative paths this decision governs (repeatable)",
       collectPaths,
     )
+    .option(
+      "--effective-from <instant>",
+      "Inclusive ISO-8601 or Unix-millisecond start for this Decision",
+    )
+    .option(
+      "--effective-until <instant>",
+      "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
+    )
     .option("--scope-repo", "Scope this Decision to the whole repository")
     .option(
       "--scope-dir <prefix>",
@@ -461,6 +490,22 @@ export function registerDecisionsCommands(program: Command): void {
         console.log(JSON.stringify({ ok: false, error: "conflicting_stage_override" }, null, 2));
         process.exitCode = EXIT_USAGE;
         return;
+      }
+      let time: EffectiveWindow | undefined;
+      try {
+        const requestedTime = effectiveWindowFromOptions(opts);
+        if (requestedTime === null) {
+          throw new EffectiveWindowInputError(
+            "--clear-window is only available with `decisions rescope`",
+          );
+        }
+        time = requestedTime;
+      } catch (error) {
+        if (error instanceof EffectiveWindowInputError) {
+          rejectEffectiveWindow("create", error);
+          return;
+        }
+        throw error;
       }
       const requestedFiles = opts.files ?? [];
       const location = locationScopeFromOptions(opts);
@@ -484,8 +529,14 @@ export function registerDecisionsCommands(program: Command): void {
           protocolVersion: 3,
           repoSyncId: binding,
           ...(canonical.length > 0 ? { files: canonical as string[] } : {}),
-          ...(location === undefined ? {} : { scope: { location } }),
         };
+      }
+      const scope = {
+        ...(location === undefined ? {} : { location }),
+        ...(time === undefined ? {} : { time }),
+      };
+      if (Object.keys(scope).length > 0) {
+        explicitScope = { ...explicitScope, scope };
       }
       if (!isRepoActiveForCapture(process.cwd())) {
         const globals = command.optsWithGlobals();
@@ -539,7 +590,9 @@ export function registerDecisionsCommands(program: Command): void {
 
   decisions
     .command("rescope <idOrShortId>")
-    .description("Replace a Decision's location scope; omit selector flags to clear it")
+    .description(
+      "Replace a Decision's location scope and/or effective window; use --clear-window to remove it",
+    )
     .option("--scope-repo", "Scope this Decision to the whole repository")
     .option(
       "--scope-dir <prefix>",
@@ -554,9 +607,34 @@ export function registerDecisionsCommands(program: Command): void {
       collectItem,
       [],
     )
+    .option(
+      "--effective-from <instant>",
+      "Inclusive ISO-8601 or Unix-millisecond start for this Decision",
+    )
+    .option(
+      "--effective-until <instant>",
+      "Exclusive ISO-8601 or Unix-millisecond end for this Decision",
+    )
+    .option("--clear-window", "Remove this Decision's effective window")
     .action(async (id: string, opts: RescopeOptions) => {
+      let time: EffectiveWindow | null | undefined;
+      try {
+        time = effectiveWindowFromOptions(opts);
+      } catch (error) {
+        if (error instanceof EffectiveWindowInputError) {
+          rejectEffectiveWindow("rescope", error);
+          return;
+        }
+        throw error;
+      }
       const location = locationScopeFromOptions(opts);
-      process.exitCode = await rescopeDecision({ id, location: location ?? null });
+      const hasLocationSelector = location !== undefined;
+      process.exitCode = await rescopeDecision({
+        id,
+        ...(time === undefined ? { location: location ?? null } : {}),
+        ...(time === undefined || !hasLocationSelector ? {} : { location }),
+        ...(time === undefined ? {} : { time }),
+      });
     });
 
   decisions

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   repoSyncId: vi.fn(),
   setRepoActive: vi.fn(),
   canonicalRepositoryPath: vi.fn(),
+  rescopeDecision: vi.fn(),
 }));
 
 vi.mock("../lib/activation.js", () => ({
@@ -32,6 +33,8 @@ vi.mock("../decisions/create.js", async () => {
     await vi.importActual<typeof import("../decisions/create.js")>("../decisions/create.js");
   return { ...actual, fetchCreate: mocks.fetchCreate };
 });
+
+vi.mock("../decisions/rescope.js", () => ({ rescopeDecision: mocks.rescopeDecision }));
 
 import { registerDecisionsCommands } from "./decisions.js";
 
@@ -64,6 +67,12 @@ async function runCreate(...args: string[]): Promise<void> {
   );
 }
 
+async function runRescope(...args: string[]): Promise<void> {
+  await buildProgram().parseAsync(["decisions", "rescope", "decision-1", ...args], {
+    from: "user",
+  });
+}
+
 describe("decisions create activation consent", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -74,6 +83,7 @@ describe("decisions create activation consent", () => {
     vi.stubEnv("PRIM_NON_INTERACTIVE", "");
     process.exitCode = 0;
     mocks.fetchCreate.mockResolvedValue(OUTCOME);
+    mocks.rescopeDecision.mockResolvedValue(0);
     mocks.repoSyncId.mockReturnValue("sync-1");
     mocks.canonicalRepositoryPath.mockImplementation((path: string) => path);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -208,6 +218,59 @@ describe("decisions create activation consent", () => {
     expect(mocks.canonicalRepositoryPath).not.toHaveBeenCalled();
   });
 
+  it("sends ISO time flags without requiring a repository binding", async () => {
+    mocks.repoSyncId.mockReturnValue(undefined);
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate(
+      "--effective-from",
+      "2026-09-08T00:00:00Z",
+      "--effective-until",
+      "1789158896789",
+    );
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          time: {
+            effectiveFrom: Date.parse("2026-09-08T00:00:00Z"),
+            effectiveUntil: 1_789_158_896_789,
+          },
+        },
+      }),
+    );
+    expect(mocks.repoSyncId).not.toHaveBeenCalled();
+  });
+
+  it("combines location and time scope at create", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-dir", "packages/api", "--effective-from", "2026-09-08T00:00:00Z");
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: {
+          location: { directories: ["packages/api"] },
+          time: { effectiveFrom: Date.parse("2026-09-08T00:00:00Z") },
+        },
+      }),
+    );
+  });
+
+  it("rejects invalid time flags before prompting or transport", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(false);
+
+    await runCreate("--effective-from", "not-a-date");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(mocks.askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("--effective-from"));
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_effective_window" }, null, 2),
+    );
+  });
+
   it("rejects --files locally when the repository is unbound", async () => {
     mocks.repoSyncId.mockReturnValue(undefined);
     mocks.isRepoActiveForCapture.mockReturnValue(true);
@@ -325,5 +388,24 @@ describe("decisions create activation consent", () => {
     expect(errorSpy).toHaveBeenNthCalledWith(1, APPROVED);
     expect(mocks.fetchCreate).toHaveBeenCalledOnce();
     expect(mocks.setRepoActive).not.toHaveBeenCalled();
+  });
+
+  it("rescopes time without clearing location selectors", async () => {
+    await runRescope("--effective-until", "1789158896789");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      time: { effectiveUntil: 1_789_158_896_789 },
+    });
+  });
+
+  it("rescopes location and time together", async () => {
+    await runRescope("--scope-glob", "**/*.sql", "--effective-from", "2026-09-08T00:00:00Z");
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      location: { globs: ["**/*.sql"] },
+      time: { effectiveFrom: Date.parse("2026-09-08T00:00:00Z") },
+    });
   });
 });

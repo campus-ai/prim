@@ -152,6 +152,35 @@ describe("formatShowHuman", () => {
     expect(out).toContain("fan-out: 6");
   });
 
+  it("renders an inclusive start and exclusive end from the time scope", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      scope: {
+        location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {
+          effectiveFrom: Date.parse("2026-09-08T00:00:00.000Z"),
+          effectiveUntil: Date.parse("2026-09-09T00:00:00.000Z"),
+        },
+      },
+    });
+
+    expect(out).toContain(
+      "effective: from 2026-09-08T00:00:00.000Z; until 2026-09-09T00:00:00.000Z",
+    );
+  });
+
+  it("omits an effective-window line when the scope has no time bounds", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      scope: {
+        location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
+      },
+    });
+
+    expect(out).not.toContain("effective:");
+  });
+
   it("lists referenced files from the flat files array", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("convex/auth-strategy.ts");
@@ -167,6 +196,7 @@ describe("formatShowHuman", () => {
           globs: ["src/**/*.test.ts"],
           branches: ["main"],
         },
+        time: {},
       },
     });
 
@@ -180,6 +210,7 @@ describe("formatShowHuman", () => {
       ...DETAIL,
       scope: {
         location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
       },
     });
 

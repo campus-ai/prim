@@ -64,6 +64,11 @@ export interface DecisionLocationScope {
   branches: string[];
 }
 
+export interface DecisionTimeScope {
+  effectiveFrom?: number;
+  effectiveUntil?: number;
+}
+
 export interface DecisionShowResult {
   decision: {
     id: string;
@@ -91,7 +96,7 @@ export interface DecisionShowResult {
   flags: DecisionFlagSummary[];
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
-  scope?: { location: DecisionLocationScope };
+  scope?: { location: DecisionLocationScope; time: DecisionTimeScope };
   truncated: boolean;
 }
 
@@ -201,6 +206,23 @@ function describeScope(scope: DecisionLocationScope): string {
   return selectors.length > 0 ? selectors.join("; ") : "whole repository";
 }
 
+function effectiveTimestamp(value: number): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function describeEffectiveWindow(scope: DecisionTimeScope): string | undefined {
+  const bounds = [
+    ...(scope.effectiveFrom === undefined
+      ? []
+      : [`from ${effectiveTimestamp(scope.effectiveFrom)}`]),
+    ...(scope.effectiveUntil === undefined
+      ? []
+      : [`until ${effectiveTimestamp(scope.effectiveUntil)}`]),
+  ];
+  return bounds.length === 0 ? undefined : bounds.join("; ");
+}
+
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
@@ -218,6 +240,10 @@ export function formatShowHuman(result: DecisionShowResult): string {
   }
   if (result.scope) {
     lines.push(`  scope: ${describeScope(result.scope.location)}`);
+    const effectiveWindow = describeEffectiveWindow(result.scope.time);
+    if (effectiveWindow) {
+      lines.push(`  effective: ${effectiveWindow}`);
+    }
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);

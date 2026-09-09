@@ -15,6 +15,10 @@ const REQUEST = {
     globs: ["src/**/*.ts"],
     branches: ["main"],
   },
+  time: {
+    effectiveFrom: 1_789_072_496_789,
+    effectiveUntil: 1_789_158_896_789,
+  },
 };
 
 const RESPONSE = {
@@ -28,6 +32,10 @@ const RESPONSE = {
       directories: ["packages/api"],
       globs: ["src/**/*.ts"],
       branches: ["main"],
+    },
+    time: {
+      effectiveFrom: 1_789_072_496_789,
+      effectiveUntil: 1_789_158_896_789,
     },
   },
 };
@@ -52,7 +60,7 @@ function dependencies(post: CliClient["post"]): {
 }
 
 describe("rescopeDecision", () => {
-  it("posts location selectors and emits server warnings through the injected stderr writer", async () => {
+  it("posts location selectors and an effective window through the injected stderr writer", async () => {
     const post = vi
       .fn()
       .mockResolvedValue({ ...RESPONSE, scopeWarnings: ["invalid glob removed"] });
@@ -84,6 +92,19 @@ describe("rescopeDecision", () => {
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/rescope",
       { id: "decision-1", location: null },
+      expect.anything(),
+    );
+  });
+
+  it("sends an explicit null time to clear a Decision window", async () => {
+    const post = vi.fn().mockResolvedValue(RESPONSE);
+    const output = dependencies(post);
+
+    await rescopeDecision({ id: "decision-1", time: null }, output.dependencies);
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/rescope",
+      { id: "decision-1", time: null },
       expect.anything(),
     );
   });
@@ -127,7 +148,10 @@ describe("formatRescopeHuman", () => {
         {
           outcome: "no_op",
           stage: "adopted",
-          scope: { location: { repository: false, directories: [], globs: [], branches: [] } },
+          scope: {
+            location: { repository: false, directories: [], globs: [], branches: [] },
+            time: {},
+          },
         },
       ),
     ).toBe("[prim] decision-1 already has that scope; nothing to change.");

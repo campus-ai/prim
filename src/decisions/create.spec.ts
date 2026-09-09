@@ -137,6 +137,32 @@ describe("fetchCreate", () => {
     );
   });
 
+  it("posts a time scope without requiring repository-only create fields", async () => {
+    const post = vi.fn().mockResolvedValue(OUTCOME);
+    await fetchCreate(
+      {
+        intent: "Freeze the public API during the migration",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789, effectiveUntil: 1_789_158_896_789 },
+        },
+      },
+      { getClient: () => clientWith(post) },
+    );
+
+    expect(post).toHaveBeenCalledWith(
+      "/api/cli/decisions/create",
+      {
+        intent: "Freeze the public API during the migration",
+        attribution: "user",
+        scope: {
+          time: { effectiveFrom: 1_789_072_496_789, effectiveUntil: 1_789_158_896_789 },
+        },
+      },
+      expect.anything(),
+    );
+  });
+
   it("returns the created identity from the server", async () => {
     const post = vi.fn().mockResolvedValue(OUTCOME);
     const result = await fetchCreate(
@@ -184,6 +210,7 @@ describe("createScopeWarnings", () => {
           ...OUTCOME,
           scope: {
             location: { repository: true, directories: [], globs: [], branches: [] },
+            time: {},
           },
         },
       ),
