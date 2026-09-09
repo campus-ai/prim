@@ -223,7 +223,7 @@ describe("formatShowHuman", () => {
     );
   });
 
-  it("describes an unselected repository-bound scope as whole-repository", () => {
+  it("does not invent repository scope when no location selectors exist", () => {
     const out = formatShowHuman({
       ...DETAIL,
       scope: {
@@ -232,7 +232,7 @@ describe("formatShowHuman", () => {
       },
     });
 
-    expect(out).toContain("scope: whole repository");
+    expect(out).toContain("scope: no location selectors");
   });
 
   it("renders contexts by name, not id", () => {

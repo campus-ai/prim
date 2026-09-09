@@ -217,7 +217,9 @@ function describeScope(scope: DecisionLocationScope): string {
       ? [`branches: ${scope.branches.map(terminalSafeLine).join(", ")}`]
       : []),
   ];
-  return selectors.length > 0 ? selectors.join("; ") : "whole repository";
+  // Repository-wide scope is explicit. A selector-less response can be a
+  // repo-less Decision, so do not imply that it governs an entire repository.
+  return selectors.length > 0 ? selectors.join("; ") : "no location selectors";
 }
 
 function effectiveTimestamp(value: number): string {
