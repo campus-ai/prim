@@ -145,6 +145,27 @@ function repository(): string {
   return root;
 }
 
+describe("currentBranch", () => {
+  it("returns the symbolic branch and omits detached HEAD", () => {
+    const repo = repository();
+    git(repo, "branch", "-M", "feature/decision-scope");
+
+    expect(currentBranch(repo)).toBe("feature/decision-scope");
+
+    git(repo, "checkout", "--detach", "-q");
+    expect(currentBranch(repo)).toBeUndefined();
+  });
+
+  it("omits a non-git directory", () => {
+    const outside = mkdtempSync(join(tmpdir(), "prim-not-a-repo-"));
+    try {
+      expect(currentBranch(outside)).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("normalizeOriginRemote", () => {
   it("removes URL and SCP credentials without changing the repository path", () => {
     expect(normalizeOriginRemote("https://token@example.com/Org/Repo.git?x=1#fragment")).toBe(

@@ -192,6 +192,20 @@ function pushEdges(lines: string[], label: string, arrow: string, nodes: Decisio
   }
 }
 
+function describeScope(scope: DecisionLocationScope): string {
+  const selectors = [
+    ...(scope.repository ? ["repository"] : []),
+    ...(scope.directories.length > 0
+      ? [`directories: ${scope.directories.map(terminalSafeLine).join(", ")}`]
+      : []),
+    ...(scope.globs.length > 0 ? [`globs: ${scope.globs.map(terminalSafeLine).join(", ")}`] : []),
+    ...(scope.branches.length > 0
+      ? [`branches: ${scope.branches.map(terminalSafeLine).join(", ")}`]
+      : []),
+  ];
+  return selectors.length > 0 ? selectors.join("; ") : "whole repository";
+}
+
 function effectiveTimestamp(value: number): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
@@ -224,9 +238,12 @@ export function formatShowHuman(result: DecisionShowResult): string {
     const area = terminalSafeLine(d.area);
     lines.push(`  area: ${color(area, colorForArea(area))}`);
   }
-  const effectiveWindow = result.scope && describeEffectiveWindow(result.scope.time);
-  if (effectiveWindow) {
-    lines.push(`  effective: ${effectiveWindow}`);
+  if (result.scope) {
+    lines.push(`  scope: ${describeScope(result.scope.location)}`);
+    const effectiveWindow = describeEffectiveWindow(result.scope.time);
+    if (effectiveWindow) {
+      lines.push(`  effective: ${effectiveWindow}`);
+    }
   }
   if (typeof d.fanOut === "number") {
     lines.push(`  fan-out: ${String(d.fanOut)}`);

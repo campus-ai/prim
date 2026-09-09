@@ -20,6 +20,7 @@ import { type CliClient, getClient } from "../client.js";
 import { renderIdentifier } from "./recent.js";
 
 export interface DecisionLocationScope {
+  [key: string]: unknown | undefined;
   repository?: boolean;
   directories?: string[];
   globs?: string[];

@@ -199,6 +199,18 @@ describe("PreToolUse entrypoint (codex)", () => {
     expect(mocks.resultForPreflight).toHaveBeenCalledTimes(1);
   });
 
+  it("sends the current Git branch with a preflight request", async () => {
+    mocks.currentBranch.mockReturnValue("feature/decision-scope");
+    mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
+
+    await runHook();
+
+    expect(mocks.currentBranch).toHaveBeenCalledWith("/repo");
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "feature/decision-scope" }),
+    );
+  });
+
   it("preserves enforcement preflight while blanking excluded proposal content", async () => {
     mocks.cachedCollectScopeAdmits.mockReturnValue(false);
     mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
@@ -215,7 +227,7 @@ describe("PreToolUse entrypoint (codex)", () => {
     );
   });
 
-  it("omits branch when HEAD is detached", async () => {
+  it("omits branch from the preflight request for detached HEAD", async () => {
     mocks.currentBranch.mockReturnValue(undefined);
     mocks.resultForPreflight.mockReturnValue(conflictResult("allow"));
 
@@ -224,7 +236,6 @@ describe("PreToolUse entrypoint (codex)", () => {
     const request = mocks.requestPreflight.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(request).not.toHaveProperty("branch");
   });
-
   it("surfaces hidden Decision disclosures even on a clean allow", async () => {
     const acknowledge = vi.fn().mockResolvedValue(undefined);
     mocks.resultForPreflight.mockReturnValue(conflictResult("allow", "", DISCLOSURE));

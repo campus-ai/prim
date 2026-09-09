@@ -186,6 +186,37 @@ describe("formatShowHuman", () => {
     expect(out).toContain("convex/auth-strategy.ts");
   });
 
+  it("renders repository, path, glob, and branch scope selectors", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      scope: {
+        location: {
+          repository: true,
+          directories: ["packages/api"],
+          globs: ["src/**/*.test.ts"],
+          branches: ["main"],
+        },
+        time: {},
+      },
+    });
+
+    expect(out).toContain(
+      "scope: repository; directories: packages/api; globs: src/**/*.test.ts; branches: main",
+    );
+  });
+
+  it("describes an unselected repository-bound scope as whole-repository", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      scope: {
+        location: { repository: false, directories: [], globs: [], branches: [] },
+        time: {},
+      },
+    });
+
+    expect(out).toContain("scope: whole repository");
+  });
+
   it("renders contexts by name, not id", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("auth.spec");
