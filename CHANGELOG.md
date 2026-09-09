@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.88](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.87...v0.1.0-alpha.88) (2026-09-09)
+
+
+### Bug Fixes
+
+* **preflight:** extend hook deadline for semantic evaluation ([#321](https://github.com/campus-ai/prim/issues/321)) ([7d083b8](https://github.com/campus-ai/prim/commit/7d083b80a0515242c7c10c5b74a2979f44f6b6c1))
+
 ## [0.1.0-alpha.87](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.86...v0.1.0-alpha.87) (2026-09-09)
 
 
