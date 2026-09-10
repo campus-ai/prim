@@ -218,6 +218,7 @@ export interface DecisionDetailResponse {
     alternatives: string[];
     area?: string;
     producerKind?: string;
+    stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
     status: "active" | "superseded" | "under_review";
     supersededBy: string | null;
     confidence: "high" | "medium" | "low";

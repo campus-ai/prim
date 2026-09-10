@@ -26,12 +26,17 @@ import { renderIdentifier } from "./recent.js";
 
 const NOT_FOUND_RE = /not found/i;
 
-function colorStatus(status: "active" | "superseded" | "under_review"): string {
+export type DecisionStage = "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
+
+type DecisionLegacyStatus = "active" | "superseded" | "under_review";
+type DecisionDisplayStatus = DecisionStage | DecisionLegacyStatus;
+
+function colorStatus(status: DecisionDisplayStatus): string {
   const safeStatus = terminalSafeLine(status);
-  if (status === "under_review") {
+  if (status === "under_review" || status === "provisional") {
     return color(safeStatus, "orange");
   }
-  if (status === "active") {
+  if (status === "active" || status === "adopted") {
     return color(safeStatus, "green");
   }
   return color(safeStatus, "gray");
@@ -89,7 +94,12 @@ export interface DecisionShowResult {
     alternatives: string[];
     area?: string;
     producerKind?: string;
-    status: "active" | "superseded" | "under_review";
+    /**
+     * Canonical lifecycle stage. Optional only while an updated CLI can still
+     * read a server released before this additive detail field.
+     */
+    stage?: DecisionStage;
+    status: DecisionLegacyStatus;
     supersededBy?: string | null;
     confidence?: "high" | "medium" | "low";
     reversibility?: "high" | "low";
@@ -274,9 +284,13 @@ export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
   const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
   const confidence = d.confidence ?? "(unset)";
+  // `status` remains a legacy compatibility shim: it reports "active" for an
+  // author-visible abandoned Decision. Prefer the canonical lifecycle stage
+  // whenever an updated server provides it.
+  const displayedStatus = d.stage ?? d.status;
   const lines = [
     `[prim] ${id} — ${terminalSafeLine(d.intent)}`,
-    `  status: ${colorStatus(d.status)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
+    `  status: ${colorStatus(displayedStatus)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
   ];
   if (d.supersededBy) {
     lines.push(`  superseded by: ${terminalSafeLine(d.supersededBy)}`);

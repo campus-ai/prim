@@ -1188,6 +1188,7 @@
           "decided": ["Generate validators"],
           "alternatives": [],
           "producerKind": "cli",
+          "stage": "provisional",
           "supersededBy": null,
           "confidence": "high",
           "reversibility": "high"
