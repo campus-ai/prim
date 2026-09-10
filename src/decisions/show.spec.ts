@@ -40,6 +40,7 @@ const DETAIL: DecisionShowResult = {
     alternatives: ["leave as-is", "remove provider"],
     area: "auth",
     producerKind: "claude_code",
+    stage: "adopted",
     status: "active",
     supersededBy: null,
     confidence: "high",
@@ -131,12 +132,31 @@ describe("fetchShow", () => {
 });
 
 describe("formatShowHuman", () => {
-  it("verdicts the decision with id, intent, status, and area", () => {
+  it("verdicts the decision with id, intent, canonical stage, and area", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("dec_230a72aa");
     expect(out).toContain("Update the AUTH_PROVIDER constant");
-    expect(out).toContain("status: active");
+    expect(out).toContain("status: adopted");
     expect(out).toContain("area: auth");
+  });
+
+  it("renders an abandoned canonical stage instead of the legacy active shim", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      decision: { ...DETAIL.decision, stage: "abandoned", status: "active" },
+    });
+
+    expect(out).toContain("status: abandoned");
+    expect(out).not.toContain("status: active");
+  });
+
+  it("falls back to legacy status when an older server omits the additive stage", () => {
+    const out = formatShowHuman({
+      ...DETAIL,
+      decision: { ...DETAIL.decision, stage: undefined, status: "active" },
+    });
+
+    expect(out).toContain("status: active");
   });
 
   it("renders alternatives, rationale, and decided points", () => {

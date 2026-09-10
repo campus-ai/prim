@@ -1197,6 +1197,16 @@
             "producerKind": {
               "type": "string"
             },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "provisional",
+                "adopted",
+                "superseded",
+                "abandoned"
+              ]
+            },
             "status": {
               "type": "string",
               "enum": ["active", "superseded", "under_review"]
@@ -1241,6 +1251,7 @@
             "intent",
             "intentKind",
             "alternatives",
+            "stage",
             "status",
             "supersededBy",
             "confidence",
