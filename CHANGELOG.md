@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.90](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.89...v0.1.0-alpha.90) (2026-09-10)
+
+
+### Bug Fixes
+
+* **decisions:** render canonical stage in CLI detail ([edafb99](https://github.com/campus-ai/prim/commit/edafb99ac6d8b66ec9a661cc4626c3c872f9e102))
+
 ## [0.1.0-alpha.89](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.88...v0.1.0-alpha.89) (2026-09-09)
 
 
