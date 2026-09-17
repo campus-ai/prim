@@ -12,6 +12,9 @@
  * (`write_file` / `patch`), matching the server's per-agent tool awareness.
  */
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+import { resolveRepositoryContext } from "../lib/git.js";
 import type { Agent } from "./agent.js";
 
 // Hermes shell-hook event name → prim's internal Claude Code event name.
@@ -28,6 +31,145 @@ const HERMES_EVENT_MAP: Record<string, string> = {
   subagent_stop: "SubagentStop",
 };
 
+const CURSOR_EVENT_MAP: Record<string, string> = {
+  sessionStart: "SessionStart",
+  beforeSubmitPrompt: "UserPromptSubmit",
+  preToolUse: "PreToolUse",
+  postToolUse: "PostToolUse",
+  postToolUseFailure: "PostToolUseFailure",
+  afterAgentResponse: "AssistantResponse",
+  subagentStop: "SubagentStop",
+  stop: "Stop",
+  sessionEnd: "SessionEnd",
+};
+
+const CURSOR_TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
+const SAFE_CORRELATION_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/u;
+const CURSOR_LOCAL_ONLY_FIELDS = new Set([
+  "conversation_id",
+  "generation_id",
+  "user_email",
+  "account_email",
+  "transcript_path",
+  "transcript",
+  "thought",
+  "thoughts",
+  "thinking",
+  "tool_output",
+]);
+
+function requiredId(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`Cursor hook envelope is missing ${field}`);
+  }
+  return value;
+}
+
+function cursorToolUseId(value: string): string {
+  if (SAFE_CORRELATION_ID_RE.test(value)) return value;
+  return `cursor:tool:v1:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function workspaceCandidates(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const roots = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (roots.some((root) => !isAbsolute(root))) {
+    throw new TypeError("Cursor workspace roots must be absolute");
+  }
+  return roots;
+}
+
+function pathIdentity(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/** Resolve Cursor's effective tool cwd before any repository canonicalization. */
+export function resolveCursorCwd(parsed: Record<string, unknown>): string {
+  const roots = workspaceCandidates(parsed.workspace_roots).map(pathIdentity);
+  const rootRepositories = roots.map((root) => resolveRepositoryContext(root)?.repoRoot);
+  const repositoryRoots = new Set(rootRepositories.filter((root): root is string => !!root));
+  if (repositoryRoots.size > 1) {
+    throw new TypeError("Cursor hook envelope spans multiple repositories");
+  }
+  if (roots.length > 1 && rootRepositories.some((root) => root === undefined)) {
+    throw new TypeError("Cursor hook envelope has ambiguous workspace roots");
+  }
+  const expectedRepo = [...repositoryRoots][0];
+
+  const rawCwd = typeof parsed.cwd === "string" && parsed.cwd.length > 0 ? parsed.cwd : undefined;
+  if (rawCwd && !isAbsolute(rawCwd)) {
+    throw new TypeError("Cursor hook cwd must be absolute");
+  }
+  const envelopeCwd = rawCwd ? pathIdentity(rawCwd) : undefined;
+  const input =
+    typeof parsed.tool_input === "object" &&
+    parsed.tool_input !== null &&
+    !Array.isArray(parsed.tool_input)
+      ? (parsed.tool_input as Record<string, unknown>)
+      : undefined;
+  const rawToolCwd =
+    parsed.tool_name === "Shell" && typeof input?.working_directory === "string"
+      ? input.working_directory
+      : undefined;
+  const base = envelopeCwd ?? (roots.length === 1 ? roots[0] : expectedRepo);
+  if (rawToolCwd && !isAbsolute(rawToolCwd) && !base) {
+    throw new TypeError("relative Cursor tool cwd has no workspace base");
+  }
+  const toolCwd = rawToolCwd
+    ? pathIdentity(isAbsolute(rawToolCwd) ? rawToolCwd : resolve(base as string, rawToolCwd))
+    : undefined;
+  const selected = toolCwd ?? envelopeCwd ?? (roots.length === 1 ? roots[0] : expectedRepo);
+  if (!selected) {
+    throw new TypeError("Cursor hook envelope has no unambiguous workspace");
+  }
+
+  const selectedRepo = resolveRepositoryContext(selected)?.repoRoot;
+  if (expectedRepo && selectedRepo !== expectedRepo) {
+    throw new TypeError("Cursor hook cwd conflicts with workspace repository");
+  }
+  return selected;
+}
+
+function normalizeCursorEnvelope(parsed: Record<string, unknown>): Record<string, unknown> {
+  const rawEvent = requiredId(parsed.hook_event_name, "hook_event_name");
+  const event = CURSOR_EVENT_MAP[rawEvent];
+  if (!event) throw new TypeError(`unsupported Cursor hook event: ${rawEvent}`);
+  const sessionId = requiredId(parsed.conversation_id, "conversation_id");
+  const turnId = requiredId(parsed.generation_id, "generation_id");
+  if (parsed.session_id !== undefined && parsed.session_id !== sessionId) {
+    throw new TypeError("Cursor conversation_id conflicts with session_id");
+  }
+  if (parsed.turn_id !== undefined && parsed.turn_id !== turnId) {
+    throw new TypeError("Cursor generation_id conflicts with turn_id");
+  }
+  const rawToolUseId = CURSOR_TOOL_EVENTS.has(event)
+    ? requiredId(parsed.tool_use_id, "tool_use_id")
+    : undefined;
+
+  const normalized: Record<string, unknown> = {
+    ...Object.fromEntries(
+      Object.entries(parsed).filter(([key]) => !CURSOR_LOCAL_ONLY_FIELDS.has(key)),
+    ),
+    hook_event_name: event,
+    session_id: sessionId,
+    turn_id: turnId,
+    cwd: resolveCursorCwd(parsed),
+    ...(rawToolUseId === undefined ? {} : { tool_use_id: cursorToolUseId(rawToolUseId) }),
+  };
+  if (typeof parsed.tool_output === "string") {
+    try {
+      normalized.tool_response = JSON.parse(parsed.tool_output) as unknown;
+    } catch {
+      normalized.tool_response = parsed.tool_output;
+    }
+  }
+  return normalized;
+}
+
 /**
  * The parsed envelope with `hook_event_name` mapped to prim's internal
  * vocabulary for Hermes; the same object untouched for Claude Code and
@@ -39,6 +181,9 @@ export function normalizeEnvelope(
   parsed: Record<string, unknown>,
   agent: Agent,
 ): Record<string, unknown> {
+  if (agent === "cursor") {
+    return normalizeCursorEnvelope(parsed);
+  }
   if (agent === "codex") {
     const event = parsed.hook_event_name;
     if (

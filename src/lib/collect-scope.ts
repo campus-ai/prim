@@ -129,6 +129,7 @@ function optionalUserScopeMembers(
       candidate.kind === "agent" &&
       (candidate.agent === "claude_code" ||
         candidate.agent === "codex" ||
+        candidate.agent === "cursor" ||
         candidate.agent === "hermes")
     ) {
       members.push({ kind: "agent", agent: candidate.agent });

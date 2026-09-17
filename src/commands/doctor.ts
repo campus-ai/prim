@@ -62,6 +62,10 @@ import {
   performStatus as codexStatus,
 } from "./codex-install.js";
 import {
+  inspectHookRuntimeResolutions as cursorHookRuntimeResolutions,
+  performStatus as cursorStatus,
+} from "./cursor-install.js";
+import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
 } from "./hermes-install.js";
@@ -574,6 +578,41 @@ export function classifyCodexHooks(statuses: readonly AgentHookSurface[]): Check
   };
 }
 
+export function classifyCursorHooks(
+  statuses: readonly (AgentHookSurface & {
+    footer?: boolean;
+    footerPreservedCustom?: boolean;
+  })[],
+): Check {
+  const installed = statuses.filter((status) => status.present);
+  if (installed.length === 0)
+    return { name: "cursor-hooks", status: "ok", detail: "not installed" };
+  if (installed.some((status) => !status.complete)) {
+    return {
+      name: "cursor-hooks",
+      status: "fail",
+      detail: "incomplete or drifted native lifecycle — run `prim cursor install --force`",
+    };
+  }
+  const user = statuses.find((status) => status.footer !== undefined);
+  if (user?.present && user.footer === false && !user.footerPreservedCustom) {
+    return {
+      name: "cursor-hooks",
+      status: "fail",
+      detail:
+        "native lifecycle ready but Cursor CLI footer is missing — run `prim cursor install --scope user --force`",
+    };
+  }
+  if (statuses.some((status) => status.footerPreservedCustom)) {
+    return {
+      name: "cursor-hooks",
+      status: "warn",
+      detail: "native lifecycle ready; custom Cursor CLI footer preserved",
+    };
+  }
+  return { name: "cursor-hooks", status: "ok", detail: "complete native lifecycle ready" };
+}
+
 export function classifyHermesHooks(status: AgentHookSurface & { autoAccept: boolean }): Check {
   if (!status.present) {
     return { name: "hermes-hooks", status: "ok", detail: "not installed" };
@@ -604,6 +643,17 @@ function checkAgentHooks(): Check[] {
     const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
     checks.push({
       name: "codex-hooks",
+      status: "fail",
+      detail: detail ?? "hook configuration is unreadable",
+    });
+  }
+  try {
+    const status = cursorStatus();
+    checks.push(classifyCursorHooks([status.project, status.user]));
+  } catch (error) {
+    const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
+    checks.push({
+      name: "cursor-hooks",
       status: "fail",
       detail: detail ?? "hook configuration is unreadable",
     });
@@ -743,6 +793,7 @@ function checkHookRuntime(): Check {
       [
         ...claudeHookRuntimeResolutions(),
         ...codexHookRuntimeResolutions(),
+        ...cursorHookRuntimeResolutions(),
         ...hermesHookRuntimeResolutions(),
       ],
       inspectHookRuntime,

@@ -11,7 +11,7 @@ export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
 // The server allows a 7.5-second semantic evaluation plus one second for its
 // owner to finalize. Leave one additional second for the response to reach
 // the hook before failing open visibly.
-export const PREFLIGHT_TIMEOUT_MS = 9_500;
+export const PREFLIGHT_TIMEOUT_MS = 6_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export const MAX_CLIENT_VERSION_CHARS = 32;
@@ -54,7 +54,10 @@ export function resolvePreflightTargets(args: TargetArgs): TargetResolution {
   let coverage: Coverage = "complete";
   let mutation: "none" | "present" = "present";
   let definite = false;
-  if ((args.agent === "claude_code" || args.agent === "codex") && args.toolName === "Bash") {
+  const shellTool =
+    ((args.agent === "claude_code" || args.agent === "codex") && args.toolName === "Bash") ||
+    (args.agent === "cursor" && args.toolName === "Shell");
+  if (shellTool) {
     const command =
       typeof args.toolInput === "string"
         ? args.toolInput

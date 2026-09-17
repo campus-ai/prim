@@ -77,7 +77,7 @@ export interface DecisionTimeScope {
 export type DecisionUserScopeReadMember =
   | { kind: "user"; userId: string; displayName: string }
   | { kind: "role"; role: "owner" | "admin" | "member" }
-  | { kind: "agent"; agent: "claude_code" | "codex" | "hermes" }
+  | { kind: "agent"; agent: "claude_code" | "codex" | "cursor" | "hermes" }
   | {
       kind: "credential";
       credential: "workos_jwt" | "workos_api_key" | "service_token";
@@ -260,6 +260,7 @@ function describeAudienceMember(member: DecisionUserScopeReadMember): string {
         {
           claude_code: "Claude Code agent",
           codex: "Codex agent",
+          cursor: "Cursor agent",
           hermes: "Hermes agent",
         }[member.agent] ?? terminalSafeLine(member.agent)
       );

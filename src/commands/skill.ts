@@ -6,6 +6,7 @@
  * prim skill status    — Report whether the skill block is installed
  */
 
+import { createHash } from "node:crypto";
 import {
   constants,
   closeSync,
@@ -15,6 +16,9 @@ import {
   openSync,
   readFileSync,
   readSync,
+  readdirSync,
+  rmdirSync,
+  unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -23,8 +27,10 @@ import type { Command } from "commander";
 import { createPatch } from "diff";
 import { parse as parseYaml } from "yaml";
 import { atomicWriteFile } from "../lib/atomic-file.js";
+import { gitToplevel } from "../lib/git.js";
 import { printJson } from "../output.js";
 import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
+import { cursorConfigDirectory } from "./cursor-install.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -151,6 +157,147 @@ export const AGENT_TARGET = {
   hermes: ".hermes.md",
 } as const;
 
+const CURSOR_SKILL_OWNER = "@primitive.ai/prim";
+const CURSOR_SKILL_MANIFEST = ".prim-owned.json";
+
+type CursorSkillManifest = {
+  version: 1;
+  owner: typeof CURSOR_SKILL_OWNER;
+  contentSha256: string;
+};
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+export function cursorSkillDirectory(cwd: string, scope: string | undefined): string {
+  const base = scope === "user" ? cursorConfigDirectory() : (gitToplevel(cwd) ?? cwd);
+  return join(base, scope === "user" ? "skills" : ".cursor/skills", "prim");
+}
+
+function cursorSkillPaths(
+  cwd: string,
+  scope: string | undefined,
+): {
+  directory: string;
+  skill: string;
+  manifest: string;
+} {
+  const directory = cursorSkillDirectory(cwd, scope);
+  return {
+    directory,
+    skill: join(directory, "SKILL.md"),
+    manifest: join(directory, CURSOR_SKILL_MANIFEST),
+  };
+}
+
+function readCursorSkillManifest(path: string): CursorSkillManifest | undefined {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    if (
+      record.version !== 1 ||
+      record.owner !== CURSOR_SKILL_OWNER ||
+      typeof record.contentSha256 !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(record.contentSha256)
+    ) {
+      return;
+    }
+    return record as CursorSkillManifest;
+  } catch {
+    return;
+  }
+}
+
+function cursorSkillStatus(
+  cwd: string,
+  scope: string | undefined,
+): {
+  installed: boolean;
+  owned: boolean;
+  edited: boolean;
+  target: string;
+} {
+  const paths = cursorSkillPaths(cwd, scope);
+  const manifest = readCursorSkillManifest(paths.manifest);
+  const content = existsSync(paths.skill) ? readFileSync(paths.skill, "utf8") : undefined;
+  const owned = manifest !== undefined;
+  const installed = owned && content !== undefined && sha256(content) === manifest.contentSha256;
+  return {
+    installed,
+    owned,
+    edited: owned && content !== undefined && !installed,
+    target: paths.skill,
+  };
+}
+
+function validCursorSkillScope(scope: string | undefined): boolean {
+  if (scope === undefined || scope === "project" || scope === "user") return true;
+  console.error(`Unknown --scope "${scope}" (expected user or project)`);
+  return false;
+}
+
+function installCursorSkill(cwd: string, opts: { scope?: string; dryRun?: boolean }): number {
+  const paths = cursorSkillPaths(cwd, opts.scope);
+  const status = cursorSkillStatus(cwd, opts.scope);
+  const manifestExists = existsSync(paths.manifest);
+  const skillExists = existsSync(paths.skill);
+  if ((manifestExists && !status.owned) || (!manifestExists && skillExists) || status.edited) {
+    console.error(`Refusing to overwrite a foreign or edited Cursor skill at ${paths.skill}`);
+    return 1;
+  }
+  const content = loadSkill();
+  const manifest: CursorSkillManifest = {
+    version: 1,
+    owner: CURSOR_SKILL_OWNER,
+    contentSha256: sha256(content),
+  };
+  if (status.installed && readFileSync(paths.skill, "utf8") === content) {
+    console.log(`No changes — Cursor skill already up to date at ${paths.skill}`);
+    return 0;
+  }
+  if (opts.dryRun) {
+    const existing = skillExists ? readFileSync(paths.skill, "utf8") : "";
+    process.stdout.write(createPatch(paths.skill, existing, content, "current", "proposed"));
+    return 0;
+  }
+  atomicWriteFile(paths.skill, content, { ensureParent: true });
+  atomicWriteFile(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, { ensureParent: true });
+  console.log(`Installed Cursor skill at ${paths.skill}`);
+  return 0;
+}
+
+function uninstallCursorSkill(cwd: string, scope: string | undefined): number {
+  const paths = cursorSkillPaths(cwd, scope);
+  const status = cursorSkillStatus(cwd, scope);
+  if (!status.owned) {
+    console.log(`No Primitive-owned Cursor skill at ${paths.skill}`);
+    return 0;
+  }
+  if (status.edited) {
+    console.error(`Refusing to remove an edited Cursor skill at ${paths.skill}`);
+    return 1;
+  }
+  if (existsSync(paths.skill)) unlinkSync(paths.skill);
+  if (existsSync(paths.manifest)) unlinkSync(paths.manifest);
+  try {
+    if (readdirSync(paths.directory).length === 0) rmdirSync(paths.directory);
+  } catch {
+    // Preserve foreign directory contents and tolerate a concurrent remover.
+  }
+  console.log(`Removed Primitive-owned Cursor skill from ${paths.skill}`);
+  return 0;
+}
+
+/** Whether either native Cursor skill scope has an intact Primitive-owned skill. */
+export function hasUsableCursorSkill(projectRoot: string): boolean {
+  return (
+    cursorSkillStatus(projectRoot, "project").installed ||
+    cursorSkillStatus(projectRoot, "user").installed
+  );
+}
+
 // User scope writes the rules block to each agent's machine-global rules file so
 // every project inherits prim guidance — no per-repo `skill install`. Absolute
 // and cwd-independent (mirrors the session installers' USER_SCOPE_PATH). Hermes
@@ -230,12 +377,12 @@ function resolveTarget(
     // User scope is machine-global, so the target is absolute — never resolved
     // against cwd. It requires an explicit agent to know which rules file.
     if (!opts.agent) {
-      console.error("--scope user requires --agent (claude, codex, or hermes)");
+      console.error("--scope user requires --agent (claude, codex, cursor, or hermes)");
       return null;
     }
     const userTarget = userTargetFor(opts.agent);
     if (userTarget) return userTarget;
-    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, or hermes)`);
+    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, cursor, or hermes)`);
     return null;
   }
   if (opts.agent) {
@@ -245,7 +392,7 @@ function resolveTarget(
     // reach resolve() as a function — a crash. Only the three real string values
     // route; everything else (typos and prototype keys alike) aborts cleanly.
     if (typeof mapped === "string") return resolve(cwd, mapped);
-    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, or hermes)`);
+    console.error(`Unknown --agent "${opts.agent}" (expected claude, codex, cursor, or hermes)`);
     return null;
   }
   const matches = detectTargets(cwd);
@@ -263,6 +410,10 @@ export function runInstall(
   // Claude reads a skills-directory plugin, not a rules-file block. An explicit
   // --target still writes a file block (the escape hatch).
   if (opts.agent === "claude" && !opts.target) return installClaudePlugin(cwd, opts);
+  if (opts.agent === "cursor" && !opts.target) {
+    if (!validCursorSkillScope(opts.scope)) return 1;
+    return installCursorSkill(cwd, opts);
+  }
 
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -290,6 +441,10 @@ export function runUninstall(
   opts: { target?: string; agent?: string; scope?: string },
 ): number {
   if (opts.agent === "claude" && !opts.target) return uninstallClaudePlugin(cwd, opts);
+  if (opts.agent === "cursor" && !opts.target) {
+    if (!validCursorSkillScope(opts.scope)) return 1;
+    return uninstallCursorSkill(cwd, opts.scope);
+  }
 
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -313,6 +468,18 @@ export function runStatus(
   opts: { target?: string; agent?: string; scope?: string; json?: boolean },
 ): number {
   if (opts.agent === "claude" && !opts.target) return statusClaudePlugin(cwd, opts);
+  if (opts.agent === "cursor" && !opts.target) {
+    if (!validCursorSkillScope(opts.scope)) return 1;
+    const status = cursorSkillStatus(cwd, opts.scope);
+    if (opts.json) printJson(status);
+    else
+      console.log(
+        status.installed
+          ? `Primitive Cursor skill installed at ${status.target}`
+          : `No intact Primitive-owned Cursor skill at ${status.target}`,
+      );
+    return status.installed ? 0 : 1;
+  }
 
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -350,7 +517,7 @@ export function registerSkillCommands(program: Command) {
     .command("install")
     .description("Install the prim skill block into your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
-    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .option("--agent <agent>", "claude, codex, cursor, or hermes")
     .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .option("--dry-run", "Print a unified diff without writing")
     .action((opts: { target?: string; agent?: string; scope?: string; dryRun?: boolean }) => {
@@ -366,7 +533,7 @@ export function registerSkillCommands(program: Command) {
     .command("uninstall")
     .description("Remove the prim skill block from your project rules file")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
-    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .option("--agent <agent>", "claude, codex, cursor, or hermes")
     .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .action((opts: { target?: string; agent?: string; scope?: string }) => {
       process.exit(runUninstall(process.cwd(), opts));
@@ -376,7 +543,7 @@ export function registerSkillCommands(program: Command) {
     .command("status")
     .description("Report whether the prim skill block is installed")
     .option("--target <path>", "Path to the rules file (overrides auto-detection)")
-    .option("--agent <agent>", "claude, codex, or hermes (selects the default rules file)")
+    .option("--agent <agent>", "claude, codex, cursor, or hermes")
     .option("--scope <scope>", "project (default, this repo) or user (machine-global — every repo)")
     .option("--json", "Output as JSON")
     .action((opts: { target?: string; agent?: string; scope?: string; json?: boolean }) => {

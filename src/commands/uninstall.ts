@@ -75,6 +75,11 @@ export function planUninstallSteps(inRepository: boolean): UninstallStep[] {
           args: ["codex", "uninstall", "--scope", "project"],
         },
         {
+          key: "cursor-project",
+          label: "Cursor project integration",
+          args: ["cursor", "uninstall", "--scope", "project"],
+        },
+        {
           key: "hooks-project",
           label: "project Git hooks",
           args: ["hooks", "uninstall", "--scope", "project"],
@@ -93,6 +98,11 @@ export function planUninstallSteps(inRepository: boolean): UninstallStep[] {
       key: "codex-user",
       label: "Codex user integration",
       args: ["codex", "uninstall", "--scope", "user"],
+    },
+    {
+      key: "cursor-user",
+      label: "Cursor user integration",
+      args: ["cursor", "uninstall", "--scope", "user"],
     },
     { key: "hermes-user", label: "Hermes integration", args: ["hermes", "uninstall"] },
     {
@@ -120,6 +130,7 @@ export function uninstallStepSucceeded(step: UninstallStep, result: UninstallRun
   if (
     !step.key.startsWith("claude-") &&
     !step.key.startsWith("codex-") &&
+    !step.key.startsWith("cursor-") &&
     step.key !== "hermes-user"
   ) {
     return true;
@@ -134,7 +145,11 @@ export function uninstallStepSucceeded(step: UninstallStep, result: UninstallRun
         parsed.statusline === false
       );
     }
-    return parsed.gate === false && parsed.capture === false;
+    return (
+      parsed.gate === false &&
+      parsed.capture === false &&
+      (!step.key.startsWith("cursor-user") || parsed.footer === false)
+    );
   } catch {
     return false;
   }

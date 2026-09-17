@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const TMP_ID = "00000000-0000-4000-8000-000000000001";
 
-vi.mock("node:crypto", () => ({ randomUUID: vi.fn(() => TMP_ID) }));
+vi.mock("node:crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:crypto")>()),
+  randomUUID: vi.fn(() => TMP_ID),
+}));
 vi.mock("node:fs", () => ({
   constants: {
     O_RDONLY: 0,
@@ -19,6 +22,9 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(() => ""),
   readSync: vi.fn(() => 0),
+  readdirSync: vi.fn(() => []),
+  rmdirSync: vi.fn(),
+  unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
   openSync: vi.fn(() => 1),
   fsyncSync: vi.fn(),

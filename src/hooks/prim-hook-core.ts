@@ -69,6 +69,17 @@ export function toolOutcomeFor(
   if (agent === "codex") {
     return event === "PostToolUse" ? "returned" : undefined;
   }
+  if (agent === "cursor") {
+    if (event === "PostToolUse") return "succeeded";
+    if (event === "PostToolUseFailure") {
+      if (parsed.is_interrupt === true) return "interrupted";
+      const failureType = lowerString(parsed.failure_type);
+      if (failureType === "permission_denied") return "prevented";
+      if (failureType === "error" || failureType === "timeout") return "failed";
+      return "unknown";
+    }
+    return undefined;
+  }
 
   const extra = parsed.extra as Record<string, unknown> | undefined;
   if (event === "post_approval_response") {
@@ -115,7 +126,7 @@ export function toMove(
     moveId = `posttool:v1:${createHash("sha256")
       .update(JSON.stringify([agent, sessionId, eventType, invocationId]))
       .digest("hex")}`;
-  } else if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId) {
+  } else if (CORRELATED_TOOL_EVENTS.has(eventType) && sessionId && agent !== "cursor") {
     // Malformed/older host envelopes can omit the invocation id. Keep the two
     // independent capture paths idempotent by hashing the stable tool facts;
     // the dedicated prefix cannot collide with a host-provided identity.
@@ -172,7 +183,7 @@ export type CommitInfo = {
 
 export type CommitAttribution = {
   sessionId: string;
-  producer: Exclude<AgentProducer, "hermes">;
+  producer: Extract<AgentProducer, "claude_code" | "codex">;
 };
 
 export type CommitMoveContext = {
@@ -426,6 +437,6 @@ export function toRewriteMove(
  * drain, so a session's moves reach the server promptly instead of waiting
  * for the next interactive `prim` invocation.
  */
-export function shouldFlushAfter(eventType: string): boolean {
-  return eventType === "SessionEnd";
+export function shouldFlushAfter(eventType: string, agent: Agent = "claude_code"): boolean {
+  return eventType === "SessionEnd" || (agent === "cursor" && eventType === "Stop");
 }

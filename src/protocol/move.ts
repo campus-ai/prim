@@ -23,7 +23,7 @@ export const AGENT_ENVELOPE_VERSION = 3 as const;
  */
 export const ENVELOPE_VERSION = LEGACY_ENVELOPE_VERSION;
 
-export type AgentProducer = "claude_code" | "codex" | "hermes";
+export type AgentProducer = "claude_code" | "codex" | "cursor" | "hermes";
 
 export type ToolOutcome =
   | "succeeded"
@@ -70,7 +70,7 @@ export type MoveV1 = MoveFields & {
   /**
    * Which coding agent produced this move. Stamped from the hook's
    * `--agent` flag; omitted for Claude Code (the backend treats an absent
-   * value as "claude_code"), set to "codex" / "hermes" for those sessions.
+   * value as "claude_code"), set to the explicit host producer for other sessions.
    */
   producer?: AgentProducer;
 };

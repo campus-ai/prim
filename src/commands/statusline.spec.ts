@@ -45,6 +45,12 @@ describe("renderStatusline", () => {
     expect(mockDecisionIngestionStatus).toHaveBeenCalledWith(process.cwd());
   });
 
+  it("uses the host-provided workspace cwd when rendering Cursor CLI state", async () => {
+    mockDaemonRequest.mockResolvedValue(snapshot(1, []));
+    await renderStatusline("/cursor/workspace");
+    expect(mockDecisionIngestionStatus).toHaveBeenCalledWith("/cursor/workspace");
+  });
+
   it("renders disabled decision ingestion in a healthy location where capture is inactive", async () => {
     mockDecisionIngestionStatus.mockReturnValue("disabled");
     mockDaemonRequest.mockResolvedValue(snapshot(2));

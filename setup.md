@@ -20,9 +20,9 @@ to the user to run. During installation, the only action a human takes is clicki
 pins `@latest`, so the user never installs or manages a prim version and always
 runs the newest CLI.
 
-First, identify which agent you are — **Claude Code**, **OpenAI Codex**, or
-**Hermes**. It changes one flag in the install command (Hermes is auto-detected,
-so you can skip even that), how you present the welcome at the end, and which
+First, identify which agent you are — **Claude Code**, **Cursor**, **OpenAI Codex**,
+or **Hermes**. It changes one flag in the install command (Cursor and Hermes are
+auto-detected, so you can skip even that), how you present the welcome at the end, and which
 memory surface you mine for seeding proposals; nothing else.
 
 ## 1. Install — one command
@@ -40,6 +40,8 @@ would come after the package name (for example,
 and applies only to that Prim invocation.
 
 - If you are **OpenAI Codex**, add `--agent codex`.
+- If you are **Cursor**, `setup` auto-detects Cursor Agent; add `--agent cursor`
+  to be explicit.
 - If you are **Hermes**, `setup` auto-detects it; add `--agent hermes` to be explicit.
 - Add `--no-daemon` to explicitly opt out of the supervised companion daemon
   and its continuous-delivery guarantee. This stops an existing service and
@@ -89,6 +91,13 @@ fire non-managed hooks until they're trusted. After setup, tell the user: "Run
 `/hooks` in Codex and trust the prim hooks — until you do, decision capture stays
 inert."
 
+### Cursor only
+
+`setup --agent cursor` installs Cursor's native v1 hooks and an owned native skill.
+At user scope it also configures the Cursor CLI footer when no custom footer exists.
+Tell the user where the skill landed and, when the footer changed, to restart Cursor
+CLI. Primitive never replaces a custom footer, including with `--force`.
+
 ### Hermes only
 
 `setup` (auto-detected, or `--agent hermes`) registers the prim hooks in Hermes's
@@ -105,7 +114,7 @@ The welcome message is a **required deliverable** of setup: once install
 succeeded, the user must always see it. `setup` already ran it once; run it again
 to capture its structured output cleanly (this won't prompt — prim is authorized
 now). Pass `--agent` so the capture guidance speaks to your agent's hook
-reality (Claude's hooks are live at install; Codex/Hermes stay inert until
+reality (Claude and Cursor hooks are live at install; Codex/Hermes stay inert until
 trusted):
 
 ```
@@ -125,11 +134,11 @@ Then **run the confirmations** and surface their results — informational (a
 non-zero must NOT abort the run or retract the welcome), but run them so the user
 sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
-- `npx --yes @primitive.ai/prim@latest claude status` — or `codex status` / `hermes status` to match your agent
+- `npx --yes @primitive.ai/prim@latest claude status` — or `cursor status` / `codex status` / `hermes status` to match your agent
 - `npx --yes @primitive.ai/prim@latest daemon status` — must report healthy unless setup used `--no-daemon`
-- `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude the `~/.claude/skills/prim` plugin; for others the rules-file block)
+- `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `cursor`/`codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude and Cursor, their native skill directories; for Codex and Hermes, the rules-file block)
 
-Add one line of setup specifics: where the skill landed (Claude's plugin dir or the agent's rules file), and
+Add one line of setup specifics: where the skill landed (Claude's or Cursor's skill directory, or the agent's rules file), and
 (Codex only) the `/hooks` trust reminder or (Hermes only) the hook-consent
 reminder. The daemon confirm is expected to vary;
 an unexpected non-zero from auth or skill is worth a note — but never retract the
@@ -140,8 +149,9 @@ welcome.
 **If welcome's STDOUT shows `"org": "seed"`** — you haven't recorded a decision
 yet (this fires even in an org that already has decisions). **Read the prim
 skill you just installed** — at the path `skill status` reported above (Claude:
-`~/.claude/skills/prim/SKILL.md` under the default `--scope user`; Codex /
-Hermes: the managed prim block in the rules file). It won't be auto-loaded as a
+`~/.claude/skills/prim/SKILL.md` under the default `--scope user`; Cursor:
+`~/.cursor/skills/prim/SKILL.md`; Codex / Hermes: the managed prim block in the
+rules file). It won't be auto-loaded as a
 skill in this session (that takes a restart or `/reload-plugins`); reading the
 installed file is the point. The skill owns the seeding procedure — candidate
 selection, the duplicate check, the personal-environment exclusion,
@@ -162,6 +172,8 @@ a memory surface; consult yours:
 - **Codex** — the memories injected into this thread. The feature is opt-in:
   none injected just means found-nothing here — don't dig into memory files
   the user chose not to inject.
+- **Cursor** — the memories and rules already available in the active Cursor
+  conversation; do not search unrelated local memory stores.
 - **Hermes** — the memory snapshot in your system prompt (`MEMORY.md` /
   `USER.md` from `~/.hermes/memories/`).
 
@@ -205,8 +217,8 @@ user` where noted, then `prim enable` in each repo you want captured.
    already authenticated; otherwise `npx --yes @primitive.ai/prim@latest auth login`
    (browser; blocks up to 2 min — run it in the background and surface the URL).
 3. **Session integration**: `npx --yes @primitive.ai/prim@latest claude install`
-   (or `codex install`). Wires the capture + presence hooks into
-   the repo's `.claude/settings.json` / `.codex/hooks.json` (resolved from the git
+   (or `cursor install` / `codex install`). Wires the capture + presence hooks into
+   the repo's `.claude/settings.json` / `.cursor/hooks.json` / `.codex/hooks.json` (resolved from the git
    root, so any subdirectory works). Add `--scope user` to install machine-wide.
 4. **Daemon**: `npx --yes @primitive.ai/prim@latest daemon start`. It owns the
    continuous journal drain and powers the "team: N online" count. Skip it only
@@ -218,11 +230,12 @@ user` where noted, then `prim enable` in each repo you want captured.
    fire everywhere but only act where activated — see step 7). Separate from the
    session hooks in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
-   (claude/codex/hermes). Teaches you to work with the decision graph. For
+   (claude/cursor/codex/hermes). Teaches you to work with the decision graph. For
    **claude** it installs a skills-directory plugin at `<repo>/.claude/skills/prim/`
    (or `~/.claude/skills/prim/` with `--scope user`) that auto-loads as a
    model-invoked skill — restart Claude Code or run `/reload-plugins` to pick it up.
-   For **codex**/**hermes** it writes the managed guide block into that agent's
+   For **cursor** it installs an owned native skill at `<repo>/.cursor/skills/prim/`
+   (or `~/.cursor/skills/prim/` with `--scope user`). For **codex**/**hermes** it writes the managed guide block into that agent's
    rules file (codex→AGENTS.md, hermes→.hermes.md). Add `--scope user` for the
    global location. Omit `--agent` to auto-detect an existing rules file (block
    path), or pass `--target <path>`.

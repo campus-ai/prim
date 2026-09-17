@@ -292,6 +292,28 @@
       }
     },
     {
+      "name": "cursor move producer",
+      "definition": "MoveIngestRequest",
+      "valid": true,
+      "value": {
+        "batch": [
+          {
+            "moveId": "cursor-move-1",
+            "capturedAt": 100,
+            "sessionId": "conversation-1",
+            "invocationId": "tool-1",
+            "eventType": "PostToolUse",
+            "envelopeVersion": 3,
+            "producer": "cursor",
+            "toolOutcome": "succeeded",
+            "payload": {
+              "tool_name": "Write"
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "durable move acknowledgement",
       "definition": "DurableMoveIngestResponse",
       "valid": true,
@@ -414,7 +436,7 @@
       "valid": true,
       "value": {
         "protocolVersion": 3,
-        "agent": "codex",
+        "agent": "cursor",
         "sessionId": "session-1",
         "invocationId": "invocation-1",
         "repoSyncId": "repoSync123",

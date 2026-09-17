@@ -13,12 +13,14 @@ import {
   aggregateCheckResults,
   anyUnverified,
   buildCodexOutput,
+  buildCursorOutput,
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
   extractFilePaths,
   extractFileTargets,
   failOpenCodex,
+  failOpenCursor,
   failOpenHermes,
   failOpenOutput,
   parseApplyPatchPaths,
@@ -234,6 +236,18 @@ describe("buildHookOutput", () => {
     expect(out.hookSpecificOutput?.permissionDecision).toBe("deny");
     expect(out.hookSpecificOutput?.permissionDecisionReason).toContain("blocked");
   });
+
+  it("maps Cursor ask and deny to native deny while clean failure paths allow", () => {
+    const blocked = buildCursorOutput("ask", [
+      resultFixture({ verdict: "ask", reason: "reconcile first" }),
+    ]);
+    expect(blocked).toEqual({
+      permission: "deny",
+      user_message: "reconcile first",
+      agent_message: "reconcile first",
+    });
+    expect(failOpenCursor()).toEqual({ permission: "allow" });
+  });
 });
 
 describe("extractFilePaths", () => {
@@ -279,6 +293,20 @@ describe("extractFilePaths", () => {
 
   it("returns empty when file_path is missing", () => {
     expect(extractFilePaths("Edit", { old_string: "a" })).toEqual([]);
+  });
+
+  it("extracts Cursor Write and Delete targets without accepting conflicts", () => {
+    expect(extractFileTargets("Write", { file_path: "src/a.ts" }, "cursor")).toEqual({
+      paths: ["src/a.ts"],
+      complete: true,
+    });
+    expect(extractFileTargets("Delete", { path: "src/b.ts" }, "cursor")).toEqual({
+      paths: ["src/b.ts"],
+      complete: true,
+    });
+    expect(
+      extractFileTargets("Write", { file_path: "src/a.ts", path: "src/b.ts" }, "cursor"),
+    ).toEqual({ paths: ["src/a.ts", "src/b.ts"], complete: false });
   });
 
   it("parses apply_patch paths for Codex (Update / Add / Delete)", () => {

@@ -72,7 +72,7 @@ export interface DecisionCollectScopeResponse {
         }
       | {
           kind: "agent";
-          agent: "claude_code" | "codex" | "hermes";
+          agent: "claude_code" | "codex" | "cursor" | "hermes";
         }
       | {
           kind: "credential";
@@ -153,7 +153,7 @@ export interface DecisionCreateRequest {
         }
       | {
           kind: "agent";
-          agent: "claude_code" | "codex" | "hermes";
+          agent: "claude_code" | "codex" | "cursor" | "hermes";
         }
       | {
           kind: "credential";
@@ -194,7 +194,7 @@ export interface DecisionCreateResponse {
         }
       | {
           kind: "agent";
-          agent: "claude_code" | "codex" | "hermes";
+          agent: "claude_code" | "codex" | "cursor" | "hermes";
         }
       | {
           kind: "credential";
@@ -285,7 +285,7 @@ export interface DecisionDetailResponse {
         }
       | {
           kind: "agent";
-          agent: "claude_code" | "codex" | "hermes";
+          agent: "claude_code" | "codex" | "cursor" | "hermes";
         }
       | {
           kind: "credential";
@@ -354,7 +354,7 @@ export interface DecisionRescopeRequest {
           }
         | {
             kind: "agent";
-            agent: "claude_code" | "codex" | "hermes";
+            agent: "claude_code" | "codex" | "cursor" | "hermes";
           }
         | {
             kind: "credential";
@@ -393,7 +393,7 @@ export type DecisionRescopeResponse =
             }
           | {
               kind: "agent";
-              agent: "claude_code" | "codex" | "hermes";
+              agent: "claude_code" | "codex" | "cursor" | "hermes";
             }
           | {
               kind: "credential";
@@ -434,7 +434,7 @@ export type DecisionRescopeResponse =
             }
           | {
               kind: "agent";
-              agent: "claude_code" | "codex" | "hermes";
+              agent: "claude_code" | "codex" | "cursor" | "hermes";
             }
           | {
               kind: "credential";
@@ -756,7 +756,7 @@ export interface MoveIngestRequest {
         capturedOrganizationId: string;
         captureAuthorityKind: "workos" | "service_token";
         decisionLifecycleProtocolVersion: number;
-        producer?: "claude_code" | "codex" | "hermes";
+        producer?: "claude_code" | "codex" | "cursor" | "hermes";
         toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
         envelopeVersion: 4;
         [k: string]: unknown | undefined;
@@ -772,7 +772,7 @@ export interface MoveIngestRequest {
         capturedOrganizationId?: string;
         captureAuthorityKind?: "workos" | "service_token";
         decisionLifecycleProtocolVersion?: number;
-        producer?: "claude_code" | "codex" | "hermes";
+        producer?: "claude_code" | "codex" | "cursor" | "hermes";
         toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
         envelopeVersion?: number;
         [k: string]: unknown | undefined;
@@ -783,7 +783,7 @@ export interface MoveIngestRequest {
 
 export interface PreflightRequestV3 {
   protocolVersion: 3;
-  agent: "claude_code" | "codex" | "hermes";
+  agent: "claude_code" | "codex" | "cursor" | "hermes";
   sessionId: string;
   invocationId: string;
   repoSyncId: string;

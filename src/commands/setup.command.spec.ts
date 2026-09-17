@@ -49,6 +49,22 @@ describe("planSetupSteps", () => {
     ]);
   });
 
+  it("cursor: user scope installs native hooks, the global skill, and CLI footer together", () => {
+    const steps = planSetupSteps({ agent: "cursor", daemon: true, scope: "user" });
+    expect(steps[0]).toMatchObject({
+      args: ["cursor", "install", "--scope", "user"],
+      label: "Cursor integration",
+    });
+    expect(steps.find((step) => step.key === "skill")?.args).toEqual([
+      "skill",
+      "install",
+      "--agent",
+      "cursor",
+      "--scope",
+      "user",
+    ]);
+  });
+
   it("--no-daemon: persists the opt-out so SessionStart cannot heal it back on", () => {
     expect(keys({ agent: "claude", daemon: false, scope: "project" })).toEqual([
       "session",
@@ -155,6 +171,11 @@ describe("planCleanupUninstalls", () => {
 describe("detectAgent", () => {
   it("detects hermes from HERMES_INTERACTIVE — its interactive entrypoint sets it unconditionally", () => {
     expect(detectAgent({ HERMES_INTERACTIVE: "1" })).toBe("hermes");
+  });
+
+  it("detects Cursor Agent and keeps the Hermes marker authoritative when both exist", () => {
+    expect(detectAgent({ CURSOR_AGENT: "1" })).toBe("cursor");
+    expect(detectAgent({ CURSOR_AGENT: "1", HERMES_INTERACTIVE: "1" })).toBe("hermes");
   });
 
   it("falls back to claude when no agent signal is present (manual run — the unchanged default)", () => {

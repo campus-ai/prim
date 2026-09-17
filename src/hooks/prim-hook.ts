@@ -37,8 +37,10 @@ import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
 import { processCodexMessageContext } from "./codex-message-context.js";
+import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
+import { readHookStdin } from "./hook-stdin.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { postToolInvocationId, shouldFlushAfter, toMove } from "./prim-hook-core.js";
 import { scrubFromCwd, writeHookDebug } from "./redact.js";
@@ -79,11 +81,13 @@ async function main(): Promise<void> {
   let raw: string;
   let parsed: Record<string, unknown>;
   try {
-    raw = readFileSync(0, "utf-8");
-    parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
+    raw = await readHookStdin();
+    const incoming = JSON.parse(raw) as Record<string, unknown>;
+    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-hook")) return;
+    parsed = normalizeEnvelope(incoming, agent);
   } catch (error) {
     writeHookDebug("capture failed", error);
-    await emitOutput(buildHookOutput({}));
+    await emitOutput(cursorPassiveOutput());
     return;
   }
   // Normalize Hermes event names into prim's internal vocabulary at the wire
@@ -99,7 +103,9 @@ async function main(): Promise<void> {
     agent === "codex" &&
     (parsed.hook_event_name === "UserPromptSubmit" || parsed.hook_event_name === "Stop");
   if (!isRepoActiveForCapture(cwd)) {
-    if (isClaudeStop || isCodexContextEvent) await emitOutput(buildHookOutput({}));
+    if (isClaudeStop || isCodexContextEvent || agent === "cursor") {
+      await emitOutput(cursorPassiveOutput());
+    }
     return;
   }
 
@@ -136,7 +142,15 @@ async function main(): Promise<void> {
       !resolution.targetsTruncated &&
       resolution.rejected.length === 0 &&
       resolution.shellMutation !== "unresolved";
+    const cursorAmbiguousTargets =
+      agent === "cursor" &&
+      resolution !== undefined &&
+      (resolution.rejected.length > 0 ||
+        resolution.targetsIncomplete ||
+        resolution.targetsTruncated ||
+        resolution.shellMutation === "unresolved");
     if (
+      !cursorAmbiguousTargets &&
       cachedCollectScopeAdmits(cwd, {
         repository: resolvedRepository?.repoFullName,
         branch: currentBranch(cwd),
@@ -163,7 +177,7 @@ async function main(): Promise<void> {
       };
       const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
       appendMove(move, orgId);
-      if (shouldFlushAfter(move.eventType)) {
+      if (shouldFlushAfter(move.eventType, agent)) {
         spawnBackgroundFlush();
       }
     }
@@ -174,6 +188,11 @@ async function main(): Promise<void> {
   if (isCodexContextEvent) {
     const result = await processCodexMessageContext(parsed);
     await emitOutput(result.output, result.acknowledge);
+    return;
+  }
+
+  if (agent === "cursor") {
+    await emitOutput(cursorPassiveOutput());
     return;
   }
 
@@ -209,5 +228,14 @@ async function main(): Promise<void> {
 
 void main().catch(async (error: unknown) => {
   writeHookDebug("capture failed", error);
-  if (!outputAttempted) await emitOutput(buildHookOutput({}));
+  if (!outputAttempted) await emitOutput(cursorPassiveOutput());
 });
+
+function cursorPassiveOutput(): object {
+  if (parseAgent(process.argv) !== "cursor") return buildHookOutput({});
+  const index = process.argv.indexOf("--event");
+  const event = index === -1 ? undefined : process.argv[index + 1];
+  if (event === "beforeSubmitPrompt") return { continue: true };
+  if (event === "preToolUse") return { permission: "allow" };
+  return {};
+}

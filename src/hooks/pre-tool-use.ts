@@ -39,19 +39,24 @@ import {
   hasVisibleCodexMessage,
   prepareCodexContext,
 } from "./codex-context.js";
+import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
+import { readHookStdin } from "./hook-stdin.js";
 import { normalizeEnvelope } from "./normalize.js";
 import {
   type CodexHookOutput,
   type ConflictCheckResult,
   type ConflictVerdict,
+  type CursorHookOutput,
   type HermesHookOutput,
   type HookEnv,
   type HookOutput,
   buildCodexOutput,
+  buildCursorOutput,
   buildHermesOutput,
   buildHookOutput,
   demoteForMode,
   failOpenCodex,
+  failOpenCursor,
   failOpenHermes,
   failOpenOutput,
   readHookMode,
@@ -79,29 +84,13 @@ type PreToolUseInput = {
   cwd?: string;
 };
 
-async function readStdin(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const timer = setTimeout(() => {
-      reject(new Error("stdin read timeout"));
-    }, STDIN_TIMEOUT_MS);
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString("utf-8"));
-    });
-    process.stdin.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
 // The agent is stable for the process (stamped into the install command), so
 // resolve it once — both main() and its catch handler emit through it.
 const agent = parseAgent(process.argv);
 
-async function emit(output: HookOutput | CodexHookOutput | HermesHookOutput): Promise<boolean> {
+async function emit(
+  output: HookOutput | CodexHookOutput | CursorHookOutput | HermesHookOutput,
+): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     try {
       process.stdout.write(`${JSON.stringify(output)}\n`, (error) => resolve(!error));
@@ -112,7 +101,7 @@ async function emit(output: HookOutput | CodexHookOutput | HermesHookOutput): Pr
 }
 
 async function emitWithAcknowledgment(
-  output: HookOutput | CodexHookOutput | HermesHookOutput,
+  output: HookOutput | CodexHookOutput | CursorHookOutput | HermesHookOutput,
   acknowledge?: (handedOff: boolean) => Promise<void>,
 ): Promise<void> {
   const handedOff = await emit(output);
@@ -121,8 +110,9 @@ async function emitWithAcknowledgment(
 
 // The silent fail-open shaped for the active agent: Claude explicitly allows;
 // Codex and Hermes use an empty object (no block).
-function failOpen(): HookOutput | CodexHookOutput | HermesHookOutput {
+function failOpen(): HookOutput | CodexHookOutput | CursorHookOutput | HermesHookOutput {
   if (agent === "hermes") return failOpenHermes();
+  if (agent === "cursor") return failOpenCursor();
   return agent === "codex" ? failOpenCodex() : failOpenOutput();
 }
 
@@ -149,6 +139,9 @@ async function emitUnverified(message: string, envelope?: PreToolUseInput): Prom
   if (agent === "hermes") {
     process.stderr.write(`[primitive] ${message}\n`);
     await emit(failOpenHermes());
+  } else if (agent === "cursor") {
+    process.stderr.write(`[primitive] ${message}\n`);
+    await emit(buildCursorOutput("allow", [result]));
   } else {
     let output =
       agent === "codex" ? buildCodexOutput("allow", [result]) : buildHookOutput("allow", [result]);
@@ -173,17 +166,19 @@ async function emitUnverified(message: string, envelope?: PreToolUseInput): Prom
 async function main(): Promise<void> {
   let raw: string;
   try {
-    raw = await readStdin();
+    raw = await readHookStdin(STDIN_TIMEOUT_MS);
   } catch {
     await emit(failOpen());
     return;
   }
   let envelope: PreToolUseInput;
   try {
-    envelope = normalizeEnvelope(
-      JSON.parse(raw) as Record<string, unknown>,
-      agent,
-    ) as PreToolUseInput;
+    const incoming = JSON.parse(raw) as Record<string, unknown>;
+    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-pre-tool-use")) {
+      await emit(failOpenCursor());
+      return;
+    }
+    envelope = normalizeEnvelope(incoming, agent) as PreToolUseInput;
   } catch {
     await emit(failOpen());
     return;
@@ -217,6 +212,10 @@ async function main(): Promise<void> {
   }
   if (targets.paths.length === 0 && !targets.definite) {
     await emit(failOpen());
+    return;
+  }
+  if (agent === "cursor" && targets.coverage === "unverified") {
+    await emitUnverified("tool targets were ambiguous or outside the active repository", envelope);
     return;
   }
   const binding = repoSyncId(cwd);
@@ -273,9 +272,11 @@ async function main(): Promise<void> {
   let output =
     agent === "hermes"
       ? buildHermesOutput(aggregate, [result])
-      : agent === "codex"
-        ? buildCodexOutput(aggregate, [result])
-        : buildHookOutput(aggregate, [result]);
+      : agent === "cursor"
+        ? buildCursorOutput(aggregate, [result])
+        : agent === "codex"
+          ? buildCodexOutput(aggregate, [result])
+          : buildHookOutput(aggregate, [result]);
   if (
     agent === "codex" &&
     hasVisibleCodexMessage(output) &&

@@ -14,6 +14,9 @@ function successfulOutput(args: string[]): string {
   if (args[0] === "claude") {
     return JSON.stringify({ gate: false, capture: false, feedback: false, statusline: false });
   }
+  if (args[0] === "cursor") {
+    return JSON.stringify({ gate: false, capture: false, footer: false });
+  }
   if (args[0] === "codex" || args[0] === "hermes") {
     return JSON.stringify({ gate: false, capture: false });
   }
@@ -26,9 +29,11 @@ describe("planUninstallSteps", () => {
       ["daemon", "stop"],
       ["claude", "uninstall", "--scope", "project"],
       ["codex", "uninstall", "--scope", "project"],
+      ["cursor", "uninstall", "--scope", "project"],
       ["hooks", "uninstall", "--scope", "project"],
       ["claude", "uninstall", "--scope", "user"],
       ["codex", "uninstall", "--scope", "user"],
+      ["cursor", "uninstall", "--scope", "user"],
       ["hermes", "uninstall"],
       ["hooks", "uninstall", "--scope", "user"],
     ]);
@@ -40,6 +45,7 @@ describe("planUninstallSteps", () => {
       "daemon",
       "claude-user",
       "codex-user",
+      "cursor-user",
       "hermes-user",
       "hooks-user",
     ]);

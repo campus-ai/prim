@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   parseAgent: vi.fn(),
   prepareCodexContext: vi.fn(),
   repoSyncId: vi.fn(),
+  resolveRepositoryContext: vi.fn(),
   requestPreflight: vi.fn(),
   resolvePreflightTargets: vi.fn(),
   resultForPreflight: vi.fn(),
@@ -25,13 +26,17 @@ vi.mock("../lib/activation.js", () => ({
   isRepoActive: mocks.isRepoActive,
   repoSyncId: mocks.repoSyncId,
 }));
-vi.mock("../lib/bin-path.js", () => ({ packageVersion: vi.fn(() => "1.2.3") }));
+vi.mock("../lib/bin-path.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/bin-path.js")>()),
+  packageVersion: vi.fn(() => "1.2.3"),
+}));
 vi.mock("../lib/collect-scope.js", () => ({
   cachedCollectScopeAdmits: mocks.cachedCollectScopeAdmits,
 }));
 vi.mock("../lib/git.js", () => ({
   currentBranch: mocks.currentBranch,
   githubRepositoryFullName: mocks.githubRepositoryFullName,
+  resolveRepositoryContext: mocks.resolveRepositoryContext,
 }));
 vi.mock("./agent.js", () => ({ parseAgent: mocks.parseAgent }));
 vi.mock("./codex-context.js", async (importOriginal) => {
@@ -132,6 +137,7 @@ beforeEach(() => {
   mocks.repoSyncId.mockReturnValue("sync-1");
   mocks.currentBranch.mockReturnValue("main");
   mocks.githubRepositoryFullName.mockReturnValue("campus-ai/primitive");
+  mocks.resolveRepositoryContext.mockReturnValue({ repoRoot: "/repo" });
   mocks.cachedCollectScopeAdmits.mockReturnValue(true);
   mocks.resolvePreflightTargets.mockReturnValue({
     mutation: "edit",
@@ -338,6 +344,59 @@ describe("PreToolUse entrypoint (codex)", () => {
     expectTerminalSafePresentation(hookSpecific.additionalContext as string);
     expect((output.systemMessage as string).length).toBeLessThanOrEqual(240);
     expect((hookSpecific.additionalContext as string).length).toBeLessThanOrEqual(240);
+  });
+});
+
+describe("PreToolUse entrypoint (cursor)", () => {
+  const cursorEnvelope = JSON.stringify({
+    hook_event_name: "preToolUse",
+    conversation_id: "session-1",
+    generation_id: "turn-1",
+    cursor_version: "3.19.19",
+    workspace_roots: ["/repo"],
+    tool_name: "Write",
+    tool_use_id: "call-1",
+    tool_input: { file_path: "/repo/src/a.ts" },
+  });
+
+  it("maps ask to native deny with the reconcile directive", async () => {
+    mocks.parseAgent.mockReturnValue("cursor");
+    mocks.resultForPreflight.mockReturnValue(
+      conflictResult("ask", "conflict", "To reconcile, run: prim reconcile dec_ab12cd34"),
+    );
+
+    const output = await runHook(cursorEnvelope);
+
+    expect(output).toEqual({
+      permission: "deny",
+      user_message: "conflict\n\nTo reconcile, run: prim reconcile dec_ab12cd34",
+      agent_message: "conflict\n\nTo reconcile, run: prim reconcile dec_ab12cd34",
+    });
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "cursor", sessionId: "session-1", invocationId: "call-1" }),
+    );
+  });
+
+  it("maps Cursor's multiline native tool id to one protocol-safe invocation id", async () => {
+    mocks.parseAgent.mockReturnValue("cursor");
+    mocks.resultForPreflight.mockReturnValue(conflictResult("deny", "conflict"));
+    const envelope = JSON.stringify({
+      ...JSON.parse(cursorEnvelope),
+      tool_use_id: "call-1\nfc_2",
+    });
+
+    expect(await runHook(envelope)).toMatchObject({ permission: "deny" });
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invocationId: expect.stringMatching(/^cursor:tool:v1:[0-9a-f]{64}$/u),
+      }),
+    );
+  });
+
+  it("returns a native allow response for malformed input", async () => {
+    mocks.parseAgent.mockReturnValue("cursor");
+    expect(await runHook("not json")).toEqual({ permission: "allow" });
+    expect(mocks.requestPreflight).not.toHaveBeenCalled();
   });
 });
 

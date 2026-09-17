@@ -69,13 +69,29 @@ async function runWithReadFailure(detail: string, debug: boolean): Promise<void>
   if (debug) process.env.PRIM_HOOK_DEBUG = "1";
   else Reflect.deleteProperty(process.env, "PRIM_HOOK_DEBUG");
 
-  mocks.readFileSync.mockImplementation(() => {
-    throw new Error(detail);
-  });
+  mockStdin({ error: new Error(detail) });
+  mocks.readFileSync.mockReturnValue('{"version":"1.2.3"}');
   mocks.handoffHookOutput.mockResolvedValue(true);
 
   await import("./prim-hook.js");
   await vi.waitFor(() => expect(mocks.handoffHookOutput).toHaveBeenCalledTimes(1));
+}
+
+function mockStdin(input: { payload?: string; error?: Error }): void {
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  vi.spyOn(process.stdin, "on").mockImplementation(((event: string, listener: () => void) => {
+    handlers.set(event, listener);
+    if (event === "error") {
+      queueMicrotask(() => {
+        if (input.error) handlers.get("error")?.(input.error);
+        else {
+          handlers.get("data")?.(Buffer.from(input.payload ?? ""));
+          handlers.get("end")?.();
+        }
+      });
+    }
+    return process.stdin;
+  }) as typeof process.stdin.on);
 }
 
 beforeEach(() => {
@@ -134,18 +150,16 @@ describe("prim-hook debug output", () => {
 
 describe("prim-hook collection scope", () => {
   it("does not build or journal a move outside the collection policy", async () => {
-    mocks.readFileSync.mockImplementation((path: number | string) => {
-      if (path === 0) {
-        return JSON.stringify({
-          hook_event_name: "PostToolUse",
-          session_id: "session-1",
-          tool_name: "Edit",
-          tool_input: { file_path: "src/a.ts" },
-          cwd: "/repo",
-        });
-      }
-      return '{"version":"1.2.3"}';
+    mockStdin({
+      payload: JSON.stringify({
+        hook_event_name: "PostToolUse",
+        session_id: "session-1",
+        tool_name: "Edit",
+        tool_input: { file_path: "src/a.ts" },
+        cwd: "/repo",
+      }),
     });
+    mocks.readFileSync.mockReturnValue('{"version":"1.2.3"}');
     mocks.parseAgent.mockReturnValue("claude_code");
     mocks.isRepoActiveForCapture.mockReturnValue(true);
     mocks.repoSyncId.mockReturnValue("repoSync123");

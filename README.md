@@ -39,7 +39,7 @@ One command does the whole install — auth, session hooks, daemon, git hooks,
 skill, and the welcome:
 
 ```bash
-prim setup                 # add --agent codex or --agent hermes; --no-daemon explicitly opts out
+prim setup                 # add --agent cursor, codex, or hermes; --no-daemon explicitly opts out
 ```
 
 Or run the steps individually:
@@ -49,7 +49,7 @@ Or run the steps individually:
 prim auth login
 
 # 2. Wire the session hooks (decision capture + presence)
-prim claude install        # or: prim codex install / prim hermes install
+prim claude install        # or: prim cursor install / prim codex install / prim hermes install
 
 # 3. Start the companion daemon (latency + team presence)
 prim daemon start
@@ -85,6 +85,7 @@ step-by-step the agent follows — and the manual fallback — live in
 
 ```bash
 prim setup                   # Run the whole install in one shot
+prim setup --agent cursor    # Same, for Cursor IDE and Cursor CLI
 prim setup --agent codex     # Same, for OpenAI Codex
 prim setup --agent hermes    # Same, for Hermes Agent (global-only config)
 prim setup --no-daemon       # Stop it and persistently opt out of supervised delivery
@@ -102,13 +103,13 @@ prim uninstall
 
 Stops the companion daemon, removes the current repository's Prim-owned agent
 and Git-hook surfaces when run inside a Git repository, removes the user-scoped
-Claude, Codex, Hermes, and Git-hook surfaces, then deletes only schema-valid
+Claude, Cursor, Codex, Hermes, and Git-hook surfaces, then deletes only schema-valid
 Prim runtime bytes. Foreign configuration is retained; ambiguous ownership
 makes the command fail closed and retain the runtimes. If a removal races or
 fails after one runtime changes, its JSON result reports each runtime's exact
 state so rerunning can safely finish cleanup. Authentication,
 undelivered journals, repository bindings, and agent skill guidance are kept.
-Use `prim skill uninstall --agent <claude|codex|hermes> --scope <project|user>`
+Use `prim skill uninstall --agent <claude|cursor|codex|hermes> --scope <project|user>`
 when you also want to remove a known skill target.
 
 ### Auth
@@ -142,8 +143,8 @@ graph, and presence is reported. Each hook
 self-resolves the CLI at run time (PATH, then a local install, then
 `npx --yes @latest`), so it keeps working with no global install.
 
-Installs into the current project by default — the repo's `.claude/settings.json`
-/ `.codex/hooks.json`, resolved from the git root (so any subdirectory works);
+Installs into the current project by default — the repo's `.claude/settings.json`,
+`.cursor/hooks.json`, or `.codex/hooks.json`, resolved from the git root (so any subdirectory works);
 pass `--scope user` to install machine-wide. Hermes is the exception: it reads
 shell hooks only from the global `~/.hermes/config.yaml`, so `prim hermes install`
 is always user-scoped — and prim merges in place, leaving the rest of that file
@@ -152,6 +153,8 @@ is always user-scoped — and prim merges in place, leaving the rest of that fil
 ```bash
 prim claude install                # Install Claude Code hooks (project scope; uninstall / status)
 prim claude install --scope user   # Install machine-wide instead
+prim cursor install                # Install native Cursor hooks (project scope)
+prim cursor install --scope user   # Install hooks, skill, and CLI footer machine-wide
 prim codex install                 # Install OpenAI Codex hooks (project scope)
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
@@ -308,9 +311,11 @@ and offers to install into `.husky/`.
 prim statusline        # Render the team-presence statusline (reads the daemon)
 ```
 
-Claude Code has one custom status-line slot. Installation uses a staged,
-lightweight Primitive renderer when that slot is empty or already Primitive's;
-an existing custom status line is preserved and reported explicitly. Use
+Claude Code and Cursor CLI each have one custom status-line slot. Their user-scope
+installations use a staged, lightweight Primitive renderer when that slot is empty
+or already Primitive's; an existing custom status line is preserved even with
+`--force` and reported explicitly. Cursor's Primitive footer replaces Cursor's
+default footer and requires a Cursor CLI restart after installation or removal. Use
 `prim daemon status` or `prim doctor` for the same health signal in that case.
 
 ### Welcome
@@ -337,6 +342,7 @@ prim moves flush          # Drain the local journals to the server (also runs fr
 
 ```bash
 prim skill install --agent claude   # Install the decision-graph guide for Claude Code
+prim skill install --agent cursor   # Install the native Cursor skill
 prim skill install --agent codex    # …or write the guide into another agent's rules file
 prim skill uninstall --agent claude # Remove it
 prim skill status --agent claude    # Report whether it's installed
@@ -347,9 +353,11 @@ Teaches your agent how to work with the decision graph. For **Claude Code**
 `<repo>/.claude/skills/prim/` (or `~/.claude/skills/prim/` with `--scope user`)
 — a `.claude-plugin/plugin.json` + `SKILL.md` that auto-loads as the model-invoked
 `prim@skills-dir` skill, no marketplace step; restart Claude Code or run
-`/reload-plugins` after installing. For every other agent it writes a managed
-block into the rules file that agent reads (`--agent codex` → AGENTS.md,
-`--agent hermes` → .hermes.md, or an auto-detected .cursor/rules, …). A bare
+`/reload-plugins` after installing. For **Cursor**, it installs an owned `SKILL.md`
+at `<repo>/.cursor/skills/prim/` (or `~/.cursor/skills/prim/` with `--scope user`)
+without overwriting foreign or locally edited files. For the remaining agents it
+writes a managed block into the rules file that agent reads (`--agent codex` →
+AGENTS.md or `--agent hermes` → .hermes.md). A bare
 `prim skill install` (no `--agent`) auto-detects a rules file and writes the
 block; pass `--target <path>` for an explicit file.
 
