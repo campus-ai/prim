@@ -38,8 +38,8 @@ function successfulOutput(args: string[]): string {
   if (args[0] === "claude") {
     return JSON.stringify({ gate: false, capture: false, feedback: false, statusline: false });
   }
-  if (args[0] === "codex" || args[0] === "hermes") {
-    return JSON.stringify({ gate: false, capture: false });
+  if (args[0] === "codex" || args[0] === "hermes" || args[0] === "cursor") {
+    return JSON.stringify({ gate: false, capture: false, footer: false });
   }
   return "";
 }

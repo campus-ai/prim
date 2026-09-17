@@ -55,9 +55,9 @@ const CMD_GUTTER = 38;
 // How many recent decisions to inline for an active org (the "3-5" target).
 const RECENT_LIMIT = 5;
 
-export type WelcomeAgent = "claude" | "codex" | "hermes";
+export type WelcomeAgent = "claude" | "codex" | "cursor" | "hermes";
 
-const WELCOME_AGENTS: readonly string[] = ["claude", "codex", "hermes"];
+const WELCOME_AGENTS: readonly string[] = ["claude", "codex", "cursor", "hermes"];
 
 /**
  * Resolve the agent whose capture guidance the welcome speaks to. An explicit
@@ -76,6 +76,9 @@ export function resolveWelcomeAgent(
   if (agentFlag === undefined && env.HERMES_INTERACTIVE) {
     return "hermes";
   }
+  if (agentFlag === undefined && env.CURSOR_AGENT) {
+    return "cursor";
+  }
   return undefined;
 }
 
@@ -93,6 +96,7 @@ const CAPTURE_LINES: Record<AgentCopyKey, string[]> = {
     "Capture starts once you trust the prim hooks — run /hooks in Codex;",
     "until then nothing is recorded.",
   ],
+  cursor: ["Capture is automatic in trusted Cursor workspaces; restart Cursor CLI for the footer."],
   hermes: [
     "Capture starts once you approve the prim hooks when Hermes prompts;",
     "until then nothing is recorded.",
@@ -110,6 +114,7 @@ const PASSIVE_LINES: Record<AgentCopyKey, string[]> = {
     "Once you trust the prim hooks (/hooks in Codex), Primitive captures",
     "decisions passively while you work.",
   ],
+  cursor: ["In trusted Cursor workspaces, Primitive captures decisions passively while you work."],
   hermes: [
     "Once you approve the prim hooks, Primitive captures decisions",
     "passively while you work.",
@@ -125,6 +130,8 @@ const GUIDANCE_PASSIVE: Record<AgentCopyKey, string> = {
   claude: "Otherwise, Primitive passively captures decisions in the background while you work.",
   codex:
     "Otherwise, once you trust the prim hooks (run /hooks in Codex), Primitive passively captures decisions in the background while you work.",
+  cursor:
+    "Otherwise, Primitive passively captures decisions in trusted Cursor workspaces while you work.",
   hermes:
     "Otherwise, once you approve the prim hooks when Hermes prompts, Primitive passively captures decisions in the background while you work.",
   generic:
@@ -272,10 +279,7 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
   program
     .command("welcome")
     .description("Print a brief orientation to Primitive's decision graph")
-    .option(
-      "--agent <agent>",
-      "claude, codex, or hermes — tailors the capture guidance (Hermes auto-detected)",
-    )
+    .option("--agent <agent>", "claude, codex, cursor, or hermes — tailors the capture guidance")
     .action(async (options: { agent?: string }) => {
       const agent = resolveWelcomeAgent(options.agent, process.env);
       const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);

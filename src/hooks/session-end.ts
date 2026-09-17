@@ -12,6 +12,8 @@
 
 import { daemonRequest } from "../daemon/client.js";
 import { parseAgent } from "./agent.js";
+import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
+import { readHookStdin } from "./hook-stdin.js";
 import { normalizeEnvelope } from "./normalize.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
@@ -22,24 +24,6 @@ interface SessionEnvelope {
   hook_event_name?: string;
 }
 
-function readStdin(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const timer = setTimeout(() => {
-      reject(new Error("stdin read timeout"));
-    }, STDIN_TIMEOUT_MS);
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString("utf-8"));
-    });
-    process.stdin.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
 function emit(): void {
   process.stdout.write("{}\n");
 }
@@ -48,17 +32,19 @@ async function main(): Promise<void> {
   const agent = parseAgent(process.argv);
   let raw: string;
   try {
-    raw = await readStdin();
+    raw = await readHookStdin(STDIN_TIMEOUT_MS);
   } catch {
     emit();
     return;
   }
   let envelope: SessionEnvelope;
   try {
-    envelope = normalizeEnvelope(
-      JSON.parse(raw) as Record<string, unknown>,
-      agent,
-    ) as SessionEnvelope;
+    const incoming = JSON.parse(raw) as Record<string, unknown>;
+    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-session-end")) {
+      emit();
+      return;
+    }
+    envelope = normalizeEnvelope(incoming, agent) as SessionEnvelope;
   } catch {
     emit();
     return;

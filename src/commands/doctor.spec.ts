@@ -23,6 +23,7 @@ import {
   classifyAuthCredential,
   classifyClaudeHooks,
   classifyCodexHooks,
+  classifyCursorHooks,
   classifyDaemonHealth,
   classifyDoctor,
   classifyHermesHooks,
@@ -311,6 +312,36 @@ describe("agent hook diagnostics", () => {
         autoAccept: false,
       }).status,
     ).toBe("ok");
+  });
+
+  it("reports Cursor lifecycle, missing footer, and preserved custom footer distinctly", () => {
+    const project = { present: false, gate: false, capture: false, complete: false };
+    expect(
+      classifyCursorHooks([
+        project,
+        {
+          present: true,
+          gate: true,
+          capture: true,
+          complete: true,
+          footer: false,
+          footerPreservedCustom: false,
+        },
+      ]),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining("footer is missing") });
+    expect(
+      classifyCursorHooks([
+        project,
+        {
+          present: true,
+          gate: true,
+          capture: true,
+          complete: true,
+          footer: false,
+          footerPreservedCustom: true,
+        },
+      ]),
+    ).toMatchObject({ status: "warn", detail: expect.stringContaining("custom") });
   });
 });
 

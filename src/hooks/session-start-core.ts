@@ -1,6 +1,6 @@
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
-import { hasUsableCodexGuidance } from "../commands/skill.js";
+import { hasUsableCodexGuidance, hasUsableCursorSkill } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
 import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
@@ -110,7 +110,7 @@ interface SessionEnvelope {
 }
 
 export interface SessionStartResult {
-  output: HookOutput;
+  output: HookOutput | { additional_context?: string };
   acknowledge?: () => Promise<unknown>;
 }
 
@@ -177,7 +177,7 @@ export async function processSessionStart(
 
   // Claude retains its existing terminal-auth notice; Codex renders the same
   // condition in its status report below so the report is the only auth line.
-  if (isSessionEnded() && agent !== "codex") {
+  if (isSessionEnded() && agent !== "codex" && agent !== "cursor") {
     const notice = reauthNoticeFields(agent);
     if (notice) {
       return {
@@ -217,6 +217,39 @@ export async function processSessionStart(
       .join("\n\n");
     return {
       output: buildHookOutput({ additionalContext }),
+      acknowledge: async () => {
+        await context?.acknowledge(true);
+      },
+    };
+  }
+
+  if (agent === "cursor") {
+    const activeProject = await activeProjectRoot(cwd);
+    projectRoot = activeProject?.root ?? null;
+    active = projectRoot !== null;
+    let context: Awaited<ReturnType<typeof prepareCodexContext>> | undefined;
+    try {
+      context = await prepareCodexContext({
+        cwd,
+        sessionId: envelope.session_id,
+        startup: true,
+        includeDigest: true,
+        namespace: "cursor",
+      });
+    } catch {
+      // Presence and the installed-workflow reminder remain independently useful.
+    }
+    let proactive = false;
+    try {
+      proactive = projectRoot !== null && active && hasUsableCursorSkill(projectRoot);
+    } catch {
+      // Skill detection is advisory and must not suppress status context.
+    }
+    const additionalContext = [proactive ? CODEX_PRIM_REMINDER : undefined, context?.context]
+      .filter((value): value is string => value !== undefined)
+      .join("\n\n");
+    return {
+      output: additionalContext ? { additional_context: additionalContext } : {},
       acknowledge: async () => {
         await context?.acknowledge(true);
       },

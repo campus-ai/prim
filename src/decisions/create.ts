@@ -36,7 +36,7 @@ export interface DecisionTimeScope {
 export type DecisionUserScopeMember =
   | { kind: "user"; userId: string }
   | { kind: "role"; role: "owner" | "admin" | "member" }
-  | { kind: "agent"; agent: "claude_code" | "codex" | "hermes" }
+  | { kind: "agent"; agent: "claude_code" | "codex" | "cursor" | "hermes" }
   | {
       kind: "credential";
       credential: "workos_jwt" | "workos_api_key" | "service_token";

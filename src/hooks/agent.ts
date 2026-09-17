@@ -7,12 +7,12 @@
  * `claude_code` — preserving the original Claude behavior. Hooks branch their
  * tool-shape extraction, output mapping, and move `producer` on this.
  */
-export type Agent = "claude_code" | "codex" | "hermes";
+export type Agent = "claude_code" | "codex" | "cursor" | "hermes";
 
 export function parseAgent(argv: readonly string[]): Agent {
   const i = argv.indexOf("--agent");
   const value = i !== -1 ? argv[i + 1] : undefined;
-  if (value === "codex" || value === "hermes") {
+  if (value === "codex" || value === "cursor" || value === "hermes") {
     return value;
   }
   return "claude_code";

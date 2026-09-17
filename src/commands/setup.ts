@@ -3,7 +3,7 @@
  *
  * Runs the same steps an agent would drive from `setup.md`, but as a single
  * command: auth verification/login → pre-auth → session integration (Claude
- * Code or Codex) → companion daemon → git hooks → agent skill → welcome. It
+ * Code, Codex, Cursor, or Hermes) → companion daemon → git hooks → agent skill → welcome. It
  * orchestrates by re-invoking the prim binary's own subcommands, so every step
  * behaves byte-for-byte like running it by hand — including the interactive
  * browser login — with no logic duplicated here.
@@ -32,7 +32,7 @@ import { gitToplevel } from "../lib/git.js";
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
 
-export type SetupAgent = "claude" | "codex" | "hermes";
+export type SetupAgent = "claude" | "codex" | "cursor" | "hermes";
 export type SetupScope = "project" | "user";
 
 export type SetupStep = {
@@ -55,6 +55,7 @@ export type SetupStep = {
 const SESSION_LABELS: Record<SetupAgent, string> = {
   claude: "Claude Code integration",
   codex: "Codex integration",
+  cursor: "Cursor integration",
   hermes: "Hermes integration",
 };
 
@@ -108,8 +109,8 @@ export function planSetupSteps(opts: {
     args: ["hooks", "install", ...scopeArgs],
     required: true,
   });
-  // The rules file follows the agent: claude→CLAUDE.md, codex→AGENTS.md,
-  // hermes→.hermes.md. Passing --agent lets `skill install` pick it
+  // Guidance follows the agent: native skills for Claude/Cursor and rules files
+  // for Codex/Hermes. Passing --agent lets `skill install` pick it
   // deterministically — vs. auto-detection, which could land a non-Claude agent
   // on CLAUDE.md (its no-candidate default).
   const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
@@ -234,6 +235,9 @@ export function detectAgent(env: NodeJS.ProcessEnv): SetupAgent {
   if (env.HERMES_INTERACTIVE) {
     return "hermes";
   }
+  if (env.CURSOR_AGENT) {
+    return "cursor";
+  }
   return "claude";
 }
 
@@ -285,7 +289,7 @@ export function registerSetupCommand(
     .description(
       "Install everything in one shot (auth, session + git hooks, daemon, skill, welcome)",
     )
-    .option("--agent <agent>", "claude, codex, or hermes (auto-detected when omitted)")
+    .option("--agent <agent>", "claude, codex, cursor, or hermes (auto-detected when omitted)")
     .option(
       "--scope <scope>",
       "user (default — install once for every repo) or project (this repo only)",
@@ -301,9 +305,14 @@ export function registerSetupCommand(
       // CLI's convention for rejected input); when omitted, infer from the env so
       // a bare `prim setup` wires the integration matching the calling agent.
       const { agent: agentInput, detected } = resolveAgent(opts.agent, process.env);
-      if (agentInput !== "claude" && agentInput !== "codex" && agentInput !== "hermes") {
+      if (
+        agentInput !== "claude" &&
+        agentInput !== "codex" &&
+        agentInput !== "cursor" &&
+        agentInput !== "hermes"
+      ) {
         process.stderr.write(
-          `[prim] unknown --agent "${agentInput}" (expected claude, codex, or hermes)\n`,
+          `[prim] unknown --agent "${agentInput}" (expected claude, codex, cursor, or hermes)\n`,
         );
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
         return;

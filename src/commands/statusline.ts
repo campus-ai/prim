@@ -62,9 +62,8 @@ function debug(msg: string): void {
   }
 }
 
-export async function renderStatusline(): Promise<string> {
+export async function renderStatusline(cwd = process.cwd()): Promise<string> {
   const version = readPackageVersion();
-  const cwd = process.cwd();
   let ingestion: ReturnType<typeof decisionIngestionStatus> | undefined;
   const resolveIngestion = () => {
     ingestion ??= decisionIngestionStatus(cwd);

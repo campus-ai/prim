@@ -36,7 +36,9 @@ import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
 import { appendCodexContext, prepareCodexContext } from "./codex-context.js";
+import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
 import { enrichHookPayloadWithFileRefs, preserveHookFileMetadata } from "./file-refs.js";
+import { readHookStdin } from "./hook-stdin.js";
 import { normalizeEnvelope } from "./normalize.js";
 import { deliverPostToolMove } from "./post-tool-delivery.js";
 import { postToolInvocationId, toMove, toolOutcomeFor } from "./prim-hook-core.js";
@@ -49,6 +51,7 @@ const EDITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "Ba
 const CODEX_EDITING_TOOLS = new Set(["apply_patch", "Bash"]);
 // Hermes routes file edits through write_file and patch.
 const HERMES_EDITING_TOOLS = new Set(["write_file", "patch"]);
+const CURSOR_EDITING_TOOLS = new Set(["Write", "Delete", "Shell"]);
 
 function editingToolsFor(agent: Agent): Set<string> {
   if (agent === "codex") {
@@ -56,6 +59,9 @@ function editingToolsFor(agent: Agent): Set<string> {
   }
   if (agent === "hermes") {
     return HERMES_EDITING_TOOLS;
+  }
+  if (agent === "cursor") {
+    return CURSOR_EDITING_TOOLS;
   }
   return EDITING_TOOLS;
 }
@@ -86,24 +92,6 @@ interface PostToolUseEnvelope {
   cwd?: string;
 }
 
-function readStdin(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const timer = setTimeout(() => {
-      reject(new Error("stdin read timeout"));
-    }, STDIN_TIMEOUT_MS);
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString("utf-8"));
-    });
-    process.stdin.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
 export type PostToolUseHookOutput = {
   systemMessage?: string;
   hookSpecificOutput?: {
@@ -112,7 +100,9 @@ export type PostToolUseHookOutput = {
   };
 };
 
-async function emit(output: PostToolUseHookOutput = {}): Promise<boolean> {
+type CursorPostToolOutput = { additional_context?: string };
+
+async function emit(output: PostToolUseHookOutput | CursorPostToolOutput = {}): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     try {
       process.stdout.write(`${JSON.stringify(output)}\n`, (error) => resolve(!error));
@@ -123,11 +113,42 @@ async function emit(output: PostToolUseHookOutput = {}): Promise<boolean> {
 }
 
 async function emitWithAcknowledgment(
-  output: PostToolUseHookOutput,
+  output: PostToolUseHookOutput | CursorPostToolOutput,
   acknowledge?: (handedOff: boolean) => Promise<void>,
 ): Promise<void> {
   const handedOff = await emit(output);
   await acknowledge?.(handedOff);
+}
+
+async function emitCursorContext(envelope: PostToolUseEnvelope): Promise<void> {
+  if (
+    typeof envelope.session_id !== "string" ||
+    envelope.session_id.length === 0 ||
+    typeof envelope.cwd !== "string" ||
+    envelope.cwd.length === 0
+  ) {
+    await emit();
+    return;
+  }
+  try {
+    const context = await prepareCodexContext({
+      cwd: envelope.cwd,
+      sessionId: envelope.session_id,
+      includeDigest: true,
+      namespace: "cursor",
+    });
+    await emitWithAcknowledgment(
+      context.context ? { additional_context: context.context } : {},
+      context.acknowledge,
+    );
+  } catch {
+    await emit();
+  }
+}
+
+async function finish(agent: Agent, envelope?: PostToolUseEnvelope): Promise<void> {
+  if (agent === "cursor" && envelope) await emitCursorContext(envelope);
+  else await emit();
 }
 
 function debug(msg: string): void {
@@ -140,14 +161,19 @@ async function main(): Promise<void> {
   const agent = parseAgent(process.argv);
   let raw: string;
   try {
-    raw = await readStdin();
+    raw = await readHookStdin(STDIN_TIMEOUT_MS);
   } catch {
     await emit();
     return;
   }
   let parsed: Record<string, unknown>;
   try {
-    parsed = normalizeEnvelope(JSON.parse(raw) as Record<string, unknown>, agent);
+    const incoming = JSON.parse(raw) as Record<string, unknown>;
+    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-post-tool-use")) {
+      await emit();
+      return;
+    }
+    parsed = normalizeEnvelope(incoming, agent);
   } catch {
     await emit();
     return;
@@ -155,23 +181,24 @@ async function main(): Promise<void> {
   let envelope = parsed as PostToolUseEnvelope;
   const isToolResult =
     envelope.hook_event_name === "PostToolUse" ||
-    (agent === "claude_code" && envelope.hook_event_name === "PostToolUseFailure");
+    ((agent === "claude_code" || agent === "cursor") &&
+      envelope.hook_event_name === "PostToolUseFailure");
   const isHermesDenial =
     agent === "hermes" &&
     envelope.hook_event_name === "post_approval_response" &&
     toolOutcomeFor(parsed, agent) === "prevented";
   if (!isToolResult && !isHermesDenial) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   const invocationId = postToolInvocationId(parsed, agent);
   if (isHermesDenial && !invocationId) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
   if (!isHermesDenial && !editingToolsFor(agent).has(toolName)) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   if (
@@ -184,7 +211,7 @@ async function main(): Promise<void> {
     envelope = parsed as PostToolUseEnvelope;
   }
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   // Derive identity and repository context from the original cwd. `toMove`
@@ -192,12 +219,12 @@ async function main(): Promise<void> {
   const cwd = (parsed.cwd as string | undefined) ?? process.cwd();
   // Opt-in gate: ingest only in repos where prim is activated (prim.active).
   if (!isRepoActiveForCapture(cwd)) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   const resolvedRepository = resolveRepositoryContext(cwd);
   if (!resolvedRepository) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   const repository = { ...resolvedRepository, repoSyncId: repoSyncId(cwd) };
@@ -216,11 +243,11 @@ async function main(): Promise<void> {
   // real tool-result path.
   if (!isHermesDenial) {
     if (resolution.shellMutation === "none") {
-      await emit();
+      await finish(agent, envelope);
       return;
     }
     if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
-      await emit();
+      await finish(agent, envelope);
       return;
     }
   }
@@ -236,6 +263,16 @@ async function main(): Promise<void> {
     resolution.targetsTruncated ||
     resolution.shellMutation === "unresolved";
   if (
+    agent === "cursor" &&
+    (resolution.rejected.length > 0 ||
+      resolution.targetsIncomplete ||
+      resolution.targetsTruncated ||
+      resolution.shellMutation === "unresolved")
+  ) {
+    await finish(agent, envelope);
+    return;
+  }
+  if (
     !cachedCollectScopeAdmits(cwd, {
       repository: resolvedRepository.repoFullName,
       branch: currentBranch(cwd),
@@ -243,7 +280,7 @@ async function main(): Promise<void> {
       ...(isHermesDenial || !hasPathEvidence ? {} : { paths: resolution.fileRefs, pathsComplete }),
     })
   ) {
-    await emit();
+    await finish(agent, envelope);
     return;
   }
   const enriched = enrichment.parsed;
@@ -291,7 +328,7 @@ async function main(): Promise<void> {
       // The existing STDERR verdict remains the authoritative user signal.
     }
   }
-  await emit();
+  await finish(agent, envelope);
 }
 
 main().catch(async () => {

@@ -213,6 +213,29 @@ describe("toolOutcomeFor", () => {
   });
 
   it.each([
+    ["PostToolUse", undefined, false, "succeeded"],
+    ["PostToolUseFailure", "permission_denied", false, "prevented"],
+    ["PostToolUseFailure", "error", false, "failed"],
+    ["PostToolUseFailure", "timeout", false, "failed"],
+    ["PostToolUseFailure", "newer_failure", false, "unknown"],
+    ["PostToolUseFailure", "error", true, "interrupted"],
+  ] as const)(
+    "maps Cursor %s failure %s (interrupt %s) to %s",
+    (event, failureType, isInterrupt, expected) => {
+      expect(
+        toolOutcomeFor(
+          {
+            hook_event_name: event,
+            ...(failureType ? { failure_type: failureType } : {}),
+            ...(isInterrupt ? { is_interrupt: true } : {}),
+          },
+          "cursor",
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
     ["ok", "succeeded"],
     ["success", "succeeded"],
     ["error", "failed"],

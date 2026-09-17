@@ -34,7 +34,7 @@ export type LocalRepositoryBindingState = "connected" | "unbound" | "invalid";
 // Project-scope agent config files, relative to the REPO ROOT (where a
 // project-scope install writes them). Never the user-scope files under $HOME —
 // see hasProjectPrimInstall.
-const PROJECT_INSTALL_FILES = [".claude/settings.json", ".codex/hooks.json"];
+const PROJECT_INSTALL_FILES = [".claude/settings.json", ".codex/hooks.json", ".cursor/hooks.json"];
 
 // prim's actual hook bin names — matched EXACTLY so unrelated config text that
 // merely contains the substring "prim-" cannot back-fill activation.

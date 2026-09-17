@@ -126,6 +126,12 @@ export type CodexHookOutput = {
   };
 };
 
+export type CursorHookOutput = {
+  permission: "allow" | "deny";
+  user_message?: string;
+  agent_message?: string;
+};
+
 function blockingReason(results: ConflictCheckResult[]): string {
   const parts = results
     .filter((result) => result.verdict === "ask" || result.verdict === "deny")
@@ -207,6 +213,19 @@ export function buildCodexOutput(
     : {};
 }
 
+/** Render Cursor's flat native preToolUse response. Cursor has no ask tier. */
+export function buildCursorOutput(
+  aggregate: ConflictVerdict,
+  results: ConflictCheckResult[],
+): CursorHookOutput {
+  if (aggregate === "deny" || aggregate === "ask") {
+    const reason = blockingReason(results);
+    return { permission: "deny", user_message: reason, agent_message: reason };
+  }
+  const notes = advisoryNote(aggregate, results);
+  return notes ? { permission: "allow", agent_message: notes } : { permission: "allow" };
+}
+
 /**
  * The silent fail-open output we emit when the hook can't reach the server
  * or the stdin JSON is malformed. Hooks must NEVER block the user on their
@@ -225,6 +244,10 @@ export function failOpenOutput(): HookOutput {
 
 export function failOpenCodex(): CodexHookOutput {
   return {};
+}
+
+export function failOpenCursor(): CursorHookOutput {
+  return { permission: "allow" };
 }
 
 /**
@@ -366,6 +389,19 @@ function extractHermesFileTargets(toolName: string, toolInput: unknown): FileTar
   const mode = input.mode;
   return { paths, complete: paths.length > 0 && (mode === undefined || mode === "replace") };
 }
+
+function extractCursorFileTargets(toolName: string, toolInput: unknown): FileTargets | null {
+  if (toolName !== "Write" && toolName !== "Delete") return null;
+  if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) {
+    return { paths: [], complete: false };
+  }
+  const input = toolInput as Record<string, unknown>;
+  const candidates = [input.file_path, input.path].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  const paths = [...new Set(candidates)];
+  return { paths, complete: paths.length === 1 };
+}
 /**
  * Extracts the file paths a tool call would touch, dispatched by `agent`.
  * Claude Code exposes a single `file_path` on Edit/Write/MultiEdit; Codex
@@ -387,6 +423,9 @@ export function extractFileTargets(
 ): FileTargets | null {
   if (agent === "codex") {
     return extractCodexFileTargets(toolName, toolInput);
+  }
+  if (agent === "cursor") {
+    return extractCursorFileTargets(toolName, toolInput);
   }
   if (agent === "hermes") {
     return extractHermesFileTargets(toolName, toolInput);

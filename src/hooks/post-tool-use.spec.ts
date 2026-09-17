@@ -93,8 +93,8 @@ function mockStdin(payload: string): void {
   }) as typeof process.stdin.on);
 }
 
-async function runHook(): Promise<Record<string, unknown>> {
-  mockStdin(ENVELOPE);
+async function runHook(payload = ENVELOPE): Promise<Record<string, unknown>> {
+  mockStdin(payload);
   await import("./post-tool-use.js");
   await vi.waitFor(() => expect(writes.length).toBeGreaterThan(0));
   return JSON.parse(writes[0]) as Record<string, unknown>;
@@ -260,5 +260,60 @@ describe("PostToolUse entrypoint (claude_code)", () => {
     expect(writes[0]).toBe("{}\n");
     expect(stderrWrites.join("")).toContain("Conflict caught before merge");
     expect(mocks.prepareCodexContext).not.toHaveBeenCalled();
+  });
+});
+
+describe("PostToolUse entrypoint (cursor)", () => {
+  const cursorEnvelope = (event: "postToolUse" | "postToolUseFailure", tool = "Write") =>
+    JSON.stringify({
+      hook_event_name: event,
+      conversation_id: "session-1",
+      generation_id: "turn-1",
+      cursor_version: "3.19.19",
+      workspace_roots: ["/repo"],
+      tool_name: tool,
+      tool_use_id: "call-1",
+      tool_input: { file_path: "/repo/src/a.ts" },
+      ...(event === "postToolUseFailure" ? { failure_type: "permission_denied" } : {}),
+    });
+
+  beforeEach(() => {
+    mocks.parseAgent.mockReturnValue("cursor");
+    mocks.resolveRepositoryContext.mockReturnValue({ repoRoot: "/repo", repoFullName: "org/repo" });
+  });
+
+  it("delivers refreshed native context after a read-only tool", async () => {
+    const acknowledge = vi.fn().mockResolvedValue(undefined);
+    mocks.prepareCodexContext.mockResolvedValue({
+      context: DIGEST,
+      feedAvailable: true,
+      acknowledge,
+    });
+
+    const output = await runHook(cursorEnvelope("postToolUse", "Read"));
+
+    expect(output).toEqual({ additional_context: DIGEST });
+    expect(mocks.prepareCodexContext).toHaveBeenCalledWith({
+      cwd: "/repo",
+      sessionId: "session-1",
+      includeDigest: true,
+      namespace: "cursor",
+    });
+    expect(acknowledge).toHaveBeenCalledWith(true);
+    expect(mocks.deliverPostToolMove).not.toHaveBeenCalled();
+  });
+
+  it("correlates a failed edit and still refreshes context", async () => {
+    mocks.prepareCodexContext.mockResolvedValue({
+      context: undefined,
+      feedAvailable: true,
+      acknowledge: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(await runHook(cursorEnvelope("postToolUseFailure"))).toEqual({});
+    expect(mocks.deliverPostToolMove).toHaveBeenCalledOnce();
+    expect(mocks.prepareCodexContext).toHaveBeenCalledWith(
+      expect.objectContaining({ namespace: "cursor", includeDigest: true }),
+    );
   });
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSiteUrl, isSessionEnded } from "../client.js";
 import { refreshClaudePlugins } from "../commands/claude-plugin.js";
-import { hasUsableCodexGuidance, loadSkill } from "../commands/skill.js";
+import { hasUsableCodexGuidance, hasUsableCursorSkill, loadSkill } from "../commands/skill.js";
 import { daemonRequest } from "../daemon/client.js";
 import { kickDaemonEnsure } from "../daemon/self-heal.js";
 import {
@@ -43,7 +43,7 @@ vi.mock("../client.js", () => ({
 vi.mock("../commands/claude-plugin.js", () => ({ refreshClaudePlugins: vi.fn() }));
 vi.mock("../commands/skill.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../commands/skill.js")>();
-  return { ...actual, hasUsableCodexGuidance: vi.fn() };
+  return { ...actual, hasUsableCodexGuidance: vi.fn(), hasUsableCursorSkill: vi.fn() };
 });
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn() }));
 vi.mock("../daemon/self-heal.js", () => ({ kickDaemonEnsure: vi.fn() }));
@@ -60,7 +60,11 @@ vi.mock("../lib/activation.js", () => ({
   setRepoActive: vi.fn(),
 }));
 vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
-vi.mock("../lib/git.js", () => ({ githubRepositoryFullName: vi.fn(), gitToplevel: vi.fn() }));
+vi.mock("../lib/git.js", () => ({
+  githubRepositoryFullName: vi.fn(),
+  gitToplevel: vi.fn(),
+  resolveRepositoryContext: vi.fn(() => ({ repoRoot: "/repo" })),
+}));
 vi.mock("../lib/post-commit-hook.js", () => ({
   ensureEffectivePostCommitHook: vi.fn(),
   ensureEffectivePostRewriteHook: vi.fn(),
@@ -136,6 +140,7 @@ beforeEach(() => {
     kind: "direct",
   });
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
+  vi.mocked(hasUsableCursorSkill).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
   vi.mocked(getOrCreateWorkspaceId).mockReturnValue({ status: "not_git" });
 });
@@ -174,6 +179,28 @@ describe("processSessionStart", () => {
       expect(reminder).toContain("at the task boundary");
       expect(reminder).toContain("requested only implementation or recording fails");
     }
+  });
+
+  it("returns native Cursor startup context with an isolated digest namespace", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(hasUsableCursorSkill).mockReturnValue(true);
+    const result = await processSessionStart(
+      JSON.stringify({
+        hook_event_name: "sessionStart",
+        conversation_id: "session-1",
+        generation_id: "turn-1",
+        cursor_version: "3.19.19",
+        workspace_roots: ["/repo"],
+      }),
+      "cursor",
+    );
+
+    expect(result.output).toEqual({
+      additional_context: `${EXPECTED_CODEX_REMINDER}\n\n${CODEX_DOWN_REPORT}`,
+    });
+    expect(hasUsableCursorSkill).toHaveBeenCalledWith("/repo");
+    await result.acknowledge?.();
+    expect(existsSync(join(temporaryHome, ".config", "prim", "cursor"))).toBe(true);
   });
 
   it("injects the proactive reminder in an active repo with a recognized skill", async () => {

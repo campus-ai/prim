@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeEnvelope } from "./normalize.js";
 
@@ -72,5 +76,87 @@ describe("normalizeEnvelope", () => {
   it("tolerates a missing or non-string event name", () => {
     expect(normalizeEnvelope({}, "hermes")).toEqual({});
     expect(normalizeEnvelope({ hook_event_name: 42 }, "hermes").hook_event_name).toBe(42);
+  });
+
+  it("normalizes Cursor identity, event, cwd, output, and sensitive fields", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-cursor-normalize-"));
+    execFileSync("git", ["init", "-q", root]);
+    const output = normalizeEnvelope(
+      {
+        hook_event_name: "postToolUse",
+        conversation_id: "conversation-1",
+        generation_id: "generation-1",
+        tool_name: "Write",
+        tool_use_id: "tool-1",
+        tool_input: { file_path: join(root, "src/app.ts") },
+        tool_output: '{"ok":true}',
+        workspace_roots: [root],
+        user_email: "private@example.com",
+        transcript_path: "/private/transcript.json",
+        thoughts: "not for capture",
+      },
+      "cursor",
+    );
+    expect(output).toMatchObject({
+      hook_event_name: "PostToolUse",
+      session_id: "conversation-1",
+      turn_id: "generation-1",
+      tool_use_id: "tool-1",
+      cwd: root,
+      tool_response: { ok: true },
+    });
+    expect(output).not.toHaveProperty("conversation_id");
+    expect(output).not.toHaveProperty("generation_id");
+    expect(output).not.toHaveProperty("tool_output");
+    expect(output).not.toHaveProperty("user_email");
+    expect(output).not.toHaveProperty("transcript_path");
+    expect(output).not.toHaveProperty("thoughts");
+  });
+
+  it("rejects missing, conflicting, and cross-repository Cursor identity", () => {
+    const first = mkdtempSync(join(tmpdir(), "prim-cursor-first-"));
+    const second = mkdtempSync(join(tmpdir(), "prim-cursor-second-"));
+    execFileSync("git", ["init", "-q", first]);
+    execFileSync("git", ["init", "-q", second]);
+    const base = {
+      hook_event_name: "preToolUse",
+      conversation_id: "conversation-1",
+      generation_id: "generation-1",
+      tool_name: "Write",
+      tool_use_id: "tool-1",
+      tool_input: { file_path: join(first, "a.ts") },
+      workspace_roots: [first],
+    };
+    expect(() => normalizeEnvelope({ ...base, tool_use_id: undefined }, "cursor")).toThrow(
+      /tool_use_id/u,
+    );
+    expect(() => normalizeEnvelope({ ...base, session_id: "different" }, "cursor")).toThrow(
+      /conflicts/u,
+    );
+    expect(() =>
+      normalizeEnvelope({ ...base, workspace_roots: [first, second] }, "cursor"),
+    ).toThrow(/multiple repositories/u);
+    expect(() =>
+      normalizeEnvelope({ ...base, workspace_roots: ["relative/repository"] }, "cursor"),
+    ).toThrow(/must be absolute/u);
+  });
+
+  it("uses the unique repository when multiple workspace folders share it", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-cursor-multi-root-"));
+    execFileSync("git", ["init", "-q", root]);
+    mkdirSync(join(root, "packages", "a"), { recursive: true });
+    mkdirSync(join(root, "packages", "b"), { recursive: true });
+
+    const output = normalizeEnvelope(
+      {
+        hook_event_name: "sessionStart",
+        conversation_id: "conversation-1",
+        generation_id: "generation-1",
+        workspace_roots: [join(root, "packages", "a"), join(root, "packages", "b")],
+      },
+      "cursor",
+    );
+
+    expect(output.cwd).toBe(root);
   });
 });

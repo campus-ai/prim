@@ -64,6 +64,10 @@ function stateDirectory(): string {
   return join(temporaryHome, ".config", "prim", "codex", "decision-digests");
 }
 
+function cursorStateDirectory(): string {
+  return join(temporaryHome, ".config", "prim", "cursor", "decision-digests");
+}
+
 function draftStateDirectory(): string {
   return join(temporaryHome, ".config", "prim", "codex", "decision-draft-deliveries");
 }
@@ -314,6 +318,34 @@ describe("Codex hook context", () => {
     expect(state.watermarkMs).toBeGreaterThan(0);
     expect(statSync(stateDirectory()).mode & 0o777).toBe(0o700);
     expect(statSync(statePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("isolates Cursor digest delivery state from Codex for the same session", async () => {
+    const decision = row("shared", { producerKind: "cursor" });
+    mocks.decisionDigestSnapshot.mockResolvedValue({ decisions: [decision], cachedAt: Date.now() });
+
+    const codex = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "shared-session",
+      startup: true,
+      namespace: "codex",
+    });
+    expect(codex.context).toContain("Intent shared");
+    await codex.acknowledge(true);
+
+    const cursor = await prepareCodexContext({
+      cwd: "/repo",
+      sessionId: "shared-session",
+      startup: true,
+      namespace: "cursor",
+    });
+    expect(cursor.context).toContain("Intent shared");
+    await cursor.acknowledge(true);
+
+    expect(readdirSync(stateDirectory()).filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    expect(
+      readdirSync(cursorStateDirectory()).filter((name) => name.endsWith(".json")),
+    ).toHaveLength(1);
   });
 
   it("pins a private page until each visibly handed-off command is persisted", async () => {

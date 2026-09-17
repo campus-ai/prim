@@ -65,16 +65,18 @@ export function resolveHookFileRefs(args: {
   cwd: string;
   repository: RepositoryContext;
 }): HookFileResolution {
-  const command =
-    (args.agent === "claude_code" || args.agent === "codex") && args.toolName === "Bash"
-      ? typeof args.toolInput === "string"
-        ? args.toolInput
-        : args.toolInput &&
-            typeof args.toolInput === "object" &&
-            typeof (args.toolInput as Record<string, unknown>).command === "string"
-          ? ((args.toolInput as Record<string, unknown>).command as string)
-          : undefined
-      : undefined;
+  const isShellTool =
+    ((args.agent === "claude_code" || args.agent === "codex") && args.toolName === "Bash") ||
+    (args.agent === "cursor" && args.toolName === "Shell");
+  const command = isShellTool
+    ? typeof args.toolInput === "string"
+      ? args.toolInput
+      : args.toolInput &&
+          typeof args.toolInput === "object" &&
+          typeof (args.toolInput as Record<string, unknown>).command === "string"
+        ? ((args.toolInput as Record<string, unknown>).command as string)
+        : undefined
+    : undefined;
   const shell = command === undefined ? undefined : analyzeShellTargets(command);
   const shellMutation =
     shell?.mutation === "none"

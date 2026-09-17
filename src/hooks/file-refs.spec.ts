@@ -66,6 +66,25 @@ describe("resolveHookFileRefs", () => {
     });
   });
 
+  it("resolves Cursor Shell targets relative to its normalized working directory", () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-cursor-shell-")));
+    const nested = join(root, "nested");
+    mkdirSync(nested);
+    const result = resolveHookFileRefs({
+      toolName: "Shell",
+      toolInput: { command: "printf x > app.ts" },
+      agent: "cursor",
+      cwd: nested,
+      repository: { repoRoot: root, repoKey: "repo_v1_test" },
+    });
+    expect(result).toMatchObject({
+      fileRefs: ["nested/app.ts"],
+      rejected: [],
+      shellMutation: "resolved",
+      targetsIncomplete: false,
+    });
+  });
+
   it("restores canonical refs after workspace content redaction", () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), "prim-file-redaction-")));
     const enrichment = enrichHookPayloadWithFileRefs({

@@ -221,7 +221,7 @@ class UserScopeInputError extends Error {
 }
 
 const USER_SCOPE_ROLES = new Set(["owner", "admin", "member"]);
-const USER_SCOPE_AGENTS = new Set(["claude_code", "codex", "hermes"]);
+const USER_SCOPE_AGENTS = new Set(["claude_code", "codex", "cursor", "hermes"]);
 const USER_SCOPE_CREDENTIALS = new Set(["workos_jwt", "workos_api_key", "service_token"]);
 
 function requiredScopeValue(flag: string, value: string): string {
@@ -253,9 +253,12 @@ function userScopeFromOptions(opts: UserScopeOptions): DecisionUserScopeMember[]
   for (const value of agents) {
     const agent = requiredScopeValue("--for-agent", value);
     if (!USER_SCOPE_AGENTS.has(agent)) {
-      throw new UserScopeInputError("--for-agent must be claude_code, codex, or hermes");
+      throw new UserScopeInputError("--for-agent must be claude_code, codex, cursor, or hermes");
     }
-    members.push({ kind: "agent", agent: agent as "claude_code" | "codex" | "hermes" });
+    members.push({
+      kind: "agent",
+      agent: agent as "claude_code" | "codex" | "cursor" | "hermes",
+    });
   }
   for (const value of credentials) {
     const credential = requiredScopeValue("--for-credential", value);
@@ -563,7 +566,7 @@ export function registerDecisionsCommands(program: Command): void {
     )
     .option(
       "--for-agent <agent>",
-      "Include one agent: claude_code | codex | hermes (repeatable)",
+      "Include one agent: claude_code | codex | cursor | hermes (repeatable)",
       collectItem,
       [],
     )
@@ -744,7 +747,7 @@ export function registerDecisionsCommands(program: Command): void {
     )
     .option(
       "--for-agent <agent>",
-      "Set one agent: claude_code | codex | hermes (repeatable)",
+      "Set one agent: claude_code | codex | cursor | hermes (repeatable)",
       collectItem,
       [],
     )
