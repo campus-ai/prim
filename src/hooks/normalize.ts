@@ -44,6 +44,7 @@ const CURSOR_EVENT_MAP: Record<string, string> = {
 };
 
 const CURSOR_TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
+const SAFE_CORRELATION_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CURSOR_LOCAL_ONLY_FIELDS = new Set([
   "conversation_id",
   "generation_id",
@@ -62,6 +63,11 @@ function requiredId(value: unknown, field: string): string {
     throw new TypeError(`Cursor hook envelope is missing ${field}`);
   }
   return value;
+}
+
+function cursorToolUseId(value: string): string {
+  if (SAFE_CORRELATION_ID_RE.test(value)) return value;
+  return `cursor:tool:v1:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function workspaceCandidates(value: unknown): string[] {
@@ -140,7 +146,9 @@ function normalizeCursorEnvelope(parsed: Record<string, unknown>): Record<string
   if (parsed.turn_id !== undefined && parsed.turn_id !== turnId) {
     throw new TypeError("Cursor generation_id conflicts with turn_id");
   }
-  if (CURSOR_TOOL_EVENTS.has(event)) requiredId(parsed.tool_use_id, "tool_use_id");
+  const rawToolUseId = CURSOR_TOOL_EVENTS.has(event)
+    ? requiredId(parsed.tool_use_id, "tool_use_id")
+    : undefined;
 
   const normalized: Record<string, unknown> = {
     ...Object.fromEntries(
@@ -150,6 +158,7 @@ function normalizeCursorEnvelope(parsed: Record<string, unknown>): Record<string
     session_id: sessionId,
     turn_id: turnId,
     cwd: resolveCursorCwd(parsed),
+    ...(rawToolUseId === undefined ? {} : { tool_use_id: cursorToolUseId(rawToolUseId) }),
   };
   if (typeof parsed.tool_output === "string") {
     try {

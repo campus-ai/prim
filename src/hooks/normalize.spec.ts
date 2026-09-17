@@ -113,6 +113,24 @@ describe("normalizeEnvelope", () => {
     expect(output).not.toHaveProperty("thoughts");
   });
 
+  it("derives one protocol-safe Cursor invocation id from an unsafe native id", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-cursor-tool-id-"));
+    execFileSync("git", ["init", "-q", root]);
+    const base = {
+      conversation_id: "conversation-1",
+      generation_id: "generation-1",
+      tool_name: "Write",
+      tool_use_id: "call-1\nfc_2",
+      tool_input: { file_path: join(root, "src/app.ts") },
+      workspace_roots: [root],
+    };
+    const pre = normalizeEnvelope({ ...base, hook_event_name: "preToolUse" }, "cursor");
+    const post = normalizeEnvelope({ ...base, hook_event_name: "postToolUse" }, "cursor");
+
+    expect(pre.tool_use_id).toMatch(/^cursor:tool:v1:[0-9a-f]{64}$/u);
+    expect(post.tool_use_id).toBe(pre.tool_use_id);
+  });
+
   it("rejects missing, conflicting, and cross-repository Cursor identity", () => {
     const first = mkdtempSync(join(tmpdir(), "prim-cursor-first-"));
     const second = mkdtempSync(join(tmpdir(), "prim-cursor-second-"));

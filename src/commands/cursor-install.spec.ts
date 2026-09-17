@@ -17,6 +17,16 @@ import {
 } from "./cursor-install.js";
 
 describe("Cursor native hook configuration", () => {
+  const jsoncUnsafe = (command: string): string =>
+    command
+      .replace('case "$1" in [/]* ', 'case "$1" in /*')
+      .replace("*[/][/]*", "*//*")
+      .replace("*[/].[/]*", "*/./*")
+      .replace("*[/]..[/]*", "*/../*")
+      .replace("*[/].", "*/.")
+      .replace("*[/]..", "*/..")
+      .replace("?*[/]", "?*/");
+
   it("installs the complete flat v1 lifecycle with a bounded mutation gate", () => {
     const output = applyCursorInstall({}, "project");
     expect(output.version).toBe(1);
@@ -59,6 +69,28 @@ describe("Cursor native hook configuration", () => {
     expect(output.custom).toEqual({ retained: true });
     expect(output.hooks?.stop?.slice(0, 2)).toEqual([foreign, editedPrimitive]);
     expect(isOwnedCursorHookCommand(editedPrimitive.command)).toBe(false);
+  });
+
+  it("survives Cursor's JSONC comment stripping", () => {
+    const settings = applyCursorInstall({}, "project");
+    const serialized = JSON.stringify(settings);
+    const stripped = serialized.replace(/\/\/.*$/gmu, "").replace(/\/\*[\s\S]*?\*\//gu, "");
+    expect(JSON.parse(stripped)).toEqual(settings);
+  });
+
+  it("migrates the exact JSONC-unsafe registration without preserving duplicates", () => {
+    const current = applyCursorInstall({}, "project");
+    const legacy = {
+      ...current,
+      hooks: Object.fromEntries(
+        Object.entries(current.hooks ?? {}).map(([event, entries]) => [
+          event,
+          entries.map((entry) => ({ ...entry, command: jsoncUnsafe(entry.command) })),
+        ]),
+      ),
+    };
+    expect(applyCursorInstall(legacy, "project")).toEqual(current);
+    expect(applyCursorUninstall(legacy).hooks).toEqual({});
   });
 
   it("is idempotent and uninstalls only exact owned commands", () => {
@@ -104,6 +136,23 @@ describe("Cursor native hook configuration", () => {
       timeoutMs: 2_000,
     });
     expect(applyCursorFooterUninstall(installed.config)).toEqual({
+      config: { theme: "dark" },
+      removed: true,
+    });
+
+    const legacyFooter = {
+      theme: "dark",
+      statusLine: {
+        ...(installed.config.statusLine as Record<string, unknown>),
+        command: jsoncUnsafe((installed.config.statusLine as Record<string, string>).command),
+      },
+    };
+    expect(applyCursorFooterInstall(legacyFooter)).toEqual({
+      config: installed.config,
+      installed: true,
+      preservedCustom: false,
+    });
+    expect(applyCursorFooterUninstall(legacyFooter)).toEqual({
       config: { theme: "dark" },
       removed: true,
     });

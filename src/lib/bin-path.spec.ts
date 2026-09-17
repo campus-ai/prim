@@ -121,6 +121,9 @@ describe("stableHookCommand", () => {
     expect(command).not.toContain(process.execPath);
     expect(command).not.toContain(packageVersion());
     expect(command).not.toMatch(/\bnpx\b|@latest|command -v|node_modules|ignore-scripts/u);
+    // Cursor parses hooks.json as JSONC with a comment stripper that also
+    // treats comment tokens inside command strings as comments.
+    expect(command).not.toMatch(/\/\/|\/\*|\*\//u);
     expect(commandMatchesBin(command, "prim-pre-tool-use")).toBe(true);
   });
 
@@ -150,6 +153,9 @@ describe("stableHookCommand", () => {
     const command = stableHookCommand("prim-hook");
     expect(spawnSync("/bin/sh", ["-c", command], { env: {} }).status).toBe(78);
     expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "relative" } }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "/home//other" } }).status).toBe(
+      78,
+    );
     expect(spawnSync("/bin/sh", ["-c", command], { env: { HOME: "/home/../other" } }).status).toBe(
       78,
     );

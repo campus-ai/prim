@@ -139,8 +139,27 @@ const OWNED_COMMANDS = new Set(
   ),
 );
 
+function jsoncUnsafeCommand(command: string): string {
+  return command
+    .replace('case "$1" in [/]* ', 'case "$1" in /*')
+    .replace("*[/][/]*", "*//*")
+    .replace("*[/].[/]*", "*/./*")
+    .replace("*[/]..[/]*", "*/../*")
+    .replace("*[/].", "*/.")
+    .replace("*[/]..", "*/..")
+    .replace("?*[/]", "?*/");
+}
+
+// alpha.91 emitted shell glob tokens containing JSON comment delimiters.
+// Cursor's JSONC parser rewrites those tokens even inside a JSON string, so
+// recognize the exact historical commands only to migrate or uninstall them.
+const JSONC_UNSAFE_OWNED_COMMANDS = new Set([...OWNED_COMMANDS].map(jsoncUnsafeCommand));
+
 export function isOwnedCursorHookCommand(command: unknown): command is string {
-  return typeof command === "string" && OWNED_COMMANDS.has(command);
+  return (
+    typeof command === "string" &&
+    (OWNED_COMMANDS.has(command) || JSONC_UNSAFE_OWNED_COMMANDS.has(command))
+  );
 }
 
 function hookFor(registration: CursorRegistration, scope: Scope): CursorHook {
@@ -231,8 +250,17 @@ const FOOTER = {
   timeoutMs: 2_000,
 } as const;
 
+const JSONC_UNSAFE_FOOTER = {
+  ...FOOTER,
+  command: jsoncUnsafeCommand(FOOTER.command),
+} as const;
+
 function exactFooter(value: unknown): boolean {
   return plainObject(value) && JSON.stringify(value) === JSON.stringify(FOOTER);
+}
+
+function jsoncUnsafeFooter(value: unknown): boolean {
+  return plainObject(value) && JSON.stringify(value) === JSON.stringify(JSONC_UNSAFE_FOOTER);
 }
 
 export function applyCursorFooterInstall(config: Record<string, unknown>): {
@@ -243,6 +271,9 @@ export function applyCursorFooterInstall(config: Record<string, unknown>): {
   if (config.statusLine === undefined)
     return { config: { ...config, statusLine: FOOTER }, installed: true, preservedCustom: false };
   if (exactFooter(config.statusLine)) return { config, installed: true, preservedCustom: false };
+  if (jsoncUnsafeFooter(config.statusLine)) {
+    return { config: { ...config, statusLine: FOOTER }, installed: true, preservedCustom: false };
+  }
   return { config, installed: false, preservedCustom: true };
 }
 
@@ -250,7 +281,9 @@ export function applyCursorFooterUninstall(config: Record<string, unknown>): {
   config: Record<string, unknown>;
   removed: boolean;
 } {
-  if (!exactFooter(config.statusLine)) return { config, removed: false };
+  if (!exactFooter(config.statusLine) && !jsoncUnsafeFooter(config.statusLine)) {
+    return { config, removed: false };
+  }
   return {
     config: Object.fromEntries(Object.entries(config).filter(([key]) => key !== "statusLine")),
     removed: true,

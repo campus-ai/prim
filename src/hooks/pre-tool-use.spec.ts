@@ -377,6 +377,22 @@ describe("PreToolUse entrypoint (cursor)", () => {
     );
   });
 
+  it("maps Cursor's multiline native tool id to one protocol-safe invocation id", async () => {
+    mocks.parseAgent.mockReturnValue("cursor");
+    mocks.resultForPreflight.mockReturnValue(conflictResult("deny", "conflict"));
+    const envelope = JSON.stringify({
+      ...JSON.parse(cursorEnvelope),
+      tool_use_id: "call-1\nfc_2",
+    });
+
+    expect(await runHook(envelope)).toMatchObject({ permission: "deny" });
+    expect(mocks.requestPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invocationId: expect.stringMatching(/^cursor:tool:v1:[0-9a-f]{64}$/u),
+      }),
+    );
+  });
+
   it("returns a native allow response for malformed input", async () => {
     mocks.parseAgent.mockReturnValue("cursor");
     expect(await runHook("not json")).toEqual({ permission: "allow" });

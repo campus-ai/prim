@@ -152,8 +152,8 @@ export function stableHookCommand(bin: string, args = ""): string {
     // it as inert data during the rolling window so an older uninstall or
     // reinstall can remove the stable entry without invoking npm or PATH.
     `prim_legacy_reader='-p ${PKG_NAME}@stable prim-shim.sh ${bin} '; `,
-    'prim_absolute() { case "$1" in /*) ;; *) return 1 ;; esac; ' +
-      'case "$1" in [[:space:]]*|*[[:space:]]|*//*|*/./*|*/../*|*/.|*/..|?*/) return 1 ;; esac; }; ',
+    'prim_absolute() { case "$1" in [/]* ) ;; *) return 1 ;; esac; ' +
+      'case "$1" in [[:space:]]*|*[[:space:]]|*[/][/]*|*[/].[/]*|*[/]..[/]*|*[/].|*[/]..|?*[/]) return 1 ;; esac; }; ',
     'prim_config=${PRIM_CONFIG_DIR:-}; if ! prim_absolute "$prim_config"; then ' +
       'prim_config=${XDG_CONFIG_HOME:-}; if prim_absolute "$prim_config"; then ',
     'case "$prim_config" in /) prim_config=/prim ;; *) prim_config="$prim_config/prim" ;; esac; ',
