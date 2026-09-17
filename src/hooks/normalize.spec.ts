@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -102,7 +102,7 @@ describe("normalizeEnvelope", () => {
       session_id: "conversation-1",
       turn_id: "generation-1",
       tool_use_id: "tool-1",
-      cwd: root,
+      cwd: realpathSync.native(root),
       tool_response: { ok: true },
     });
     expect(output).not.toHaveProperty("conversation_id");
@@ -175,6 +175,6 @@ describe("normalizeEnvelope", () => {
       "cursor",
     );
 
-    expect(output.cwd).toBe(root);
+    expect(output.cwd).toBe(realpathSync.native(root));
   });
 });
