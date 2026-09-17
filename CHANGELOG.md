@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.91](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.90...v0.1.0-alpha.91) (2026-09-17)
+
+
+### Features
+
+* **cursor:** add native lifecycle integration ([0114bba](https://github.com/campus-ai/prim/commit/0114bbaab7ac287cd6c7be976700d69eab24d0b9))
+
 ## [0.1.0-alpha.90](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.89...v0.1.0-alpha.90) (2026-09-10)
 
 
