@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.92](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.91...v0.1.0-alpha.92) (2026-09-29)
+
+
+### Bug Fixes
+
+* **flusher:** bisect batches that fail with 5xx or time out ([#330](https://github.com/campus-ai/prim/issues/330)) ([32734bf](https://github.com/campus-ai/prim/commit/32734bf2043ac90971fab96aef7dfadae904aa5e))
+* **hook-runtime:** pin hooks to a version-stable node alias ([#331](https://github.com/campus-ai/prim/issues/331)) ([70359f3](https://github.com/campus-ai/prim/commit/70359f3c51c33c7897055ed42dc95ee99772745d))
+
 ## [0.1.0-alpha.91](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.90...v0.1.0-alpha.91) (2026-09-17)
 
 
