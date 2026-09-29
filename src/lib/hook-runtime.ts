@@ -17,7 +17,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { atomicWriteFile, syncDirectory, syncFile } from "./atomic-file.js";
 import { STABLE_HOOK_LAUNCHER_NAME, packageRoot, packageVersion } from "./bin-path.js";
 import { withFileLockSync } from "./file-lock.js";
@@ -512,12 +512,39 @@ function writeRelease(
   }
 }
 
+/**
+ * The first PATH `node` that resolves to the running Node. `process.execPath`
+ * is a versioned real path (e.g. Homebrew's Cellar) that an upgrade deletes,
+ * leaving every hook exiting 69; a package manager's alias follows upgrades.
+ */
+export function stableNodePath(
+  execPath: string = process.execPath,
+  searchPath: string = process.env.PATH ?? "",
+): string {
+  let target: string;
+  try {
+    target = realpathSync(execPath);
+  } catch {
+    return execPath;
+  }
+  for (const directory of searchPath.split(delimiter)) {
+    if (!isAbsolute(directory)) continue;
+    const candidate = join(directory, "node");
+    try {
+      if (realpathSync(candidate) === target) return candidate;
+    } catch {
+      // No node in this PATH entry.
+    }
+  }
+  return execPath;
+}
+
 /** Prepare and atomically select a durable, self-contained exact hook runtime. */
 export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHookRuntimeResult {
   const root = packageRoot();
   const sourceDir = options.sourceDir ?? (root ? join(root, "dist", "hook-runtime") : null);
   const version = options.version ?? packageVersion();
-  const nodePath = resolve(options.nodePath ?? process.execPath);
+  const nodePath = resolve(options.nodePath ?? stableNodePath());
   if (
     !sourceDir ||
     !version ||

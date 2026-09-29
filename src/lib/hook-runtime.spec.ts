@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as atomicFile from "./atomic-file.js";
@@ -26,6 +26,7 @@ import {
   hookRuntimePaths,
   inspectHookRuntime,
   removeHookRuntime,
+  stableNodePath,
   stageHookRuntime,
 } from "./hook-runtime.js";
 
@@ -482,6 +483,23 @@ describe("inspectHookRuntime", () => {
     expect(existsSync(invoked)).toBe(false);
   });
 
+  it("accepts a staged PATH alias of the running node", () => {
+    const root = temporaryRoot("prim-hook-runtime-inspect-alias-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const alias = join(root, "bin", "node");
+    mkdirSync(dirname(alias));
+    symlinkSync(process.execPath, alias);
+    const staged = stageHookRuntime({
+      sourceDir: sourceRuntime(root, "owned"),
+      version: "1.2.3",
+      nodePath: stableNodePath(process.execPath, join(root, "bin")),
+      env,
+    });
+
+    expect(readFileSync(join(staged.releaseDir, "node"), "utf8")).toBe(`${alias}\n`);
+    expect(inspectHookRuntime({ env })).toEqual({ state: "ready", version: "1.2.3" });
+  });
+
   it("rejects a selected release whose nested runtime directory is a symlink", () => {
     const root = temporaryRoot("prim-hook-runtime-inspect-nested-link-");
     const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
@@ -497,6 +515,27 @@ describe("inspectHookRuntime", () => {
     symlinkSync(external, dist);
 
     expect(inspectHookRuntime({ env })).toEqual({ state: "invalid" });
+  });
+});
+
+describe("stableNodePath", () => {
+  it("prefers a version-stable PATH alias over the versioned real path", () => {
+    const root = temporaryRoot("prim-hook-runtime-node-alias-");
+    const versioned = join(root, "Cellar", "node", "22.0.0", "bin", "node");
+    mkdirSync(dirname(versioned), { recursive: true });
+    writeFileSync(versioned, "", { mode: 0o700 });
+    const other = join(root, "other", "node");
+    mkdirSync(dirname(other));
+    writeFileSync(other, "", { mode: 0o700 });
+    const alias = join(root, "bin", "node");
+    mkdirSync(dirname(alias));
+    symlinkSync(versioned, alias);
+    const searchPath = ["relative", join(root, "missing"), dirname(other), dirname(alias)].join(
+      delimiter,
+    );
+
+    expect(stableNodePath(versioned, searchPath)).toBe(alias);
+    expect(stableNodePath(versioned, dirname(other))).toBe(versioned);
   });
 });
 
