@@ -672,6 +672,52 @@ describe("flush replay stability", () => {
     expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
   });
 
+  it.each([
+    ["a server fault", new HttpError(500, "Too many bytes read", { error: "Too many bytes read" })],
+    [
+      "a client timeout",
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    ],
+  ])("bisects an oversized batch after %s without quarantining", async (_label, failure) => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    const moves = [move("size-a"), move("size-b"), move("size-c")];
+    for (const item of moves) {
+      appendMoveToPath(flushing, item);
+    }
+    const delivered: string[] = [];
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.length > 1) {
+          return Promise.reject(failure);
+        }
+        delivered.push(...body.batch.map((item) => item.moveId));
+        return Promise.resolve({ disposition: "persisted", acknowledged: 1, accepted: 1 });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 3,
+      quarantined: 0,
+    });
+    expect(delivered).toEqual(moves.map((item) => item.moveId));
+    expect(existsSync(flushing)).toBe(false);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
+  it("retains the rotation when a single move keeps failing with a server fault", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, move("fault-a"));
+    appendMoveToPath(flushing, move("fault-b"));
+    const post = vi.fn().mockRejectedValue(new HttpError(500, "Server Error", null));
+    const client: CliClient = { get: vi.fn(), post };
+
+    await expect(drainFlushingPath(flushing, client)).rejects.toThrow("Server Error");
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(existsSync(flushing)).toBe(true);
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+  });
+
   it("retains the source rotation when durable quarantine cannot be written", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     appendMoveToPath(flushing, move("poison"));

@@ -131,6 +131,18 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
   return undefined;
 }
 
+/**
+ * A server fault or client timeout may be caused by the batch's size alone
+ * (Convex per-transaction read limits), so halves are worth retrying. A 503
+ * is the server's explicit "not now" and says nothing about the batch.
+ */
+function mayBeBatchSizeFailure(error: unknown): boolean {
+  if (error instanceof HttpError) {
+    return error.status >= 500 && error.status !== 503;
+  }
+  return error instanceof Error && error.name === "TimeoutError";
+}
+
 /** Stream exact NDJSON line bytes without lossy UTF-8 replacement. */
 async function* rawJournalLines(
   input: ReturnType<typeof createReadStream>,
@@ -188,17 +200,23 @@ export async function drainFlushingPath(
       return { flushed: batch.length, quarantined: 0 };
     } catch (error) {
       const reason = deadLetterReason(error);
-      if (!reason) {
+      if (!(reason || mayBeBatchSizeFailure(error))) {
         throw error;
       }
       if (batch.length > 1) {
-        // Ingest rejects a batch atomically. Bisect only closed permanent
+        // Ingest rejects a batch atomically. Bisect closed permanent
         // dispositions so valid neighbors can be durably acknowledged while
-        // the exact offending envelope is isolated locally.
+        // the exact offending envelope is isolated locally, and possible
+        // size failures so an oversized batch cannot block the journal.
         const midpoint = Math.floor(batch.length / 2);
         const left = await postBatch(batch.slice(0, midpoint));
         const right = await postBatch(batch.slice(midpoint));
         return addDrainCounts(left, right);
+      }
+      if (!reason) {
+        // A single move is never dead-lettered for a transient failure; the
+        // rotation stays on disk for the next sweep.
+        throw error;
       }
       const [move] = batch;
       const quarantined = quarantineMove(
