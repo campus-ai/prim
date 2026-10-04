@@ -38,7 +38,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { getSiteUrl } from "./client.js";
-import { drainResumeOffset, sweepOrphanedDrainCheckpoints } from "./drain-progress.js";
+import {
+  drainResumeOffset,
+  rotationIdentity,
+  sweepOrphanedDrainCheckpoints,
+} from "./drain-progress.js";
 import { primConfigDirectory } from "./lib/paths.js";
 import type { Move } from "./protocol/move.js";
 
@@ -178,6 +182,8 @@ export type FlushingFile = {
   // a file a live drain still owns.
   pid: number | undefined;
   sizeBytes: number;
+  /** Bytes past the rotation's drain checkpoint: what is not yet delivered. */
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;
@@ -199,6 +205,8 @@ function oldestCapturedAt(moves: Move[]): number | undefined {
 
 export type JournalFileSample = {
   sizeBytes: number;
+  /** sizeBytes less any bytes a drain checkpoint marks as already delivered. */
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;
@@ -219,7 +227,9 @@ export function sampleJournalFile(
   const fd = openSync(path, "r");
   try {
     const initial = fstatSync(fd);
-    const start = options.fromDrainCheckpoint ? drainResumeOffset(path, initial.size) : 0;
+    const start = options.fromDrainCheckpoint
+      ? drainResumeOffset(path, rotationIdentity(initial))
+      : 0;
     const target = Math.min(initial.size - start, Math.max(0, maxBytes));
     const buffer = Buffer.allocUnsafe(target);
     let sampledBytes = 0;
@@ -243,6 +253,7 @@ export function sampleJournalFile(
     const moves = parseMoves(content);
     return {
       sizeBytes: stat.size,
+      pendingBytes: Math.max(0, stat.size - start),
       mtimeMs: stat.mtimeMs,
       lineCount: sampled && stat.size > 0 ? Math.max(1, lines.length) : lines.length,
       oldestCapturedAt: oldestCapturedAt(moves),
@@ -379,6 +390,7 @@ export type BucketStats = {
   bucket: string;
   path: string;
   sizeBytes: number;
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;

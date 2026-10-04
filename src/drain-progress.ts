@@ -18,39 +18,46 @@
  * `journal.ndjson.flushing.*` is enumerated as a rotation.
  */
 
-import { randomBytes } from "node:crypto";
 import {
-  constants,
+  type Stats,
   chmodSync,
-  closeSync,
   existsSync,
-  fchmodSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   rmdirSync,
-  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { syncDirectory } from "./lib/atomic-file.js";
+import { atomicWriteFile, ensureDurableDirectory } from "./lib/atomic-file.js";
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 export const DRAIN_PROGRESS_DIRNAME = "drain-progress";
-// `<rotation>.json`, or an interrupted write's `<rotation>.json.<pid>.<hex>.tmp`.
-const CHECKPOINT_NAME = /^(.+)\.json(?:\.[0-9]+\.[0-9a-f]+\.tmp)?$/;
+// `<rotation>.json`, or the `<rotation>.json.<uuid>.tmp` an interrupted
+// atomicWriteFile leaves beside it.
+const CHECKPOINT_NAME =
+  /^(.+)\.json(?:\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp)?$/;
 
-export type DrainCheckpoint = {
-  v: 1;
+/**
+ * Which file, and which of its bytes, a checkpoint describes. The inode and
+ * device tie it to one file, so a checkpoint left behind for a retired
+ * rotation never steers a different file that reuses the name. The size ties
+ * it to that file's bytes when the drain began: a hook that opened the journal
+ * just before its rename can still append to the rotation afterwards. An
+ * inode past 2^53 loses precision as a number, but one file always converts
+ * to the same value, so equality stays exact.
+ */
+export type RotationIdentity = { size: number; ino: number; dev: number };
+
+export type DrainCheckpoint = RotationIdentity & {
+  v: 2;
   /** Byte offset of the first line not yet durably acknowledged or quarantined. */
   offset: number;
-  /** The rotation's size when drained; a rotation is never appended to. */
-  size: number;
 };
+
+export function rotationIdentity(stat: Pick<Stats, "size" | "ino" | "dev">): RotationIdentity {
+  return { size: stat.size, ino: stat.ino, dev: stat.dev };
+}
 
 export function drainProgressDirectory(flushingPath: string): string {
   return join(dirname(flushingPath), DRAIN_PROGRESS_DIRNAME);
@@ -67,10 +74,12 @@ function isByteCount(value: unknown): value is number {
 /**
  * Where a drain, or a pending-stats sample, of this rotation begins: the
  * checkpointed offset only when it provably describes the rotation's current
- * bytes, otherwise 0. A missing, unreadable, corrupt, or foreign checkpoint is
- * never an error — starting over replays moves the server dedups by moveId.
+ * file and bytes, otherwise 0. A missing, unreadable, corrupt, or foreign
+ * checkpoint is never an error — starting over replays moves the server
+ * dedups by moveId. A `v: 1` checkpoint carried no file identity, so it is
+ * ignored the same way.
  */
-export function drainResumeOffset(flushingPath: string, sizeBytes: number): number {
+export function drainResumeOffset(flushingPath: string, rotation: RotationIdentity): number {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(drainProgressPath(flushingPath), "utf8"));
@@ -80,10 +89,17 @@ export function drainResumeOffset(flushingPath: string, sizeBytes: number): numb
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return 0;
   }
-  const { v, offset, size } = parsed as Record<string, unknown>;
-  // Any size change means the checkpoint describes other bytes than the ones
-  // on disk now, so none of its progress can be trusted.
-  if (v !== 1 || size !== sizeBytes || !isByteCount(offset) || offset > sizeBytes) {
+  const { v, offset, size, ino, dev } = parsed as Record<string, unknown>;
+  // Another file, or any size change, means the checkpoint describes other
+  // bytes than the ones on disk now, so none of its progress can be trusted.
+  if (
+    v !== 2 ||
+    ino !== rotation.ino ||
+    dev !== rotation.dev ||
+    size !== rotation.size ||
+    !isByteCount(offset) ||
+    offset > rotation.size
+  ) {
     return 0;
   }
   return offset;
@@ -96,28 +112,11 @@ export function drainResumeOffset(flushingPath: string, sizeBytes: number): numb
  */
 export function writeDrainCheckpoint(flushingPath: string, checkpoint: DrainCheckpoint): void {
   const directory = drainProgressDirectory(flushingPath);
-  if (mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE }) !== undefined) {
-    syncDirectory(dirname(directory));
-  }
+  ensureDurableDirectory(directory, DIRECTORY_MODE);
   chmodSync(directory, DIRECTORY_MODE);
-
-  const path = drainProgressPath(flushingPath);
-  const temporaryPath = `${path}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`;
-  const flags = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW;
-  try {
-    const fd = openSync(temporaryPath, flags, FILE_MODE);
-    try {
-      fchmodSync(fd, FILE_MODE);
-      writeFileSync(fd, `${JSON.stringify(checkpoint)}\n`, "utf8");
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temporaryPath, path);
-    syncDirectory(directory);
-  } finally {
-    rmSync(temporaryPath, { force: true });
-  }
+  atomicWriteFile(drainProgressPath(flushingPath), `${JSON.stringify(checkpoint)}\n`, {
+    mode: FILE_MODE,
+  });
 }
 
 /**

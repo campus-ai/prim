@@ -24,9 +24,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ syncDirectory: vi.fn() }));
+type AtomicWriteFile = typeof import("./lib/atomic-file.js").atomicWriteFile;
 
-vi.mock("./lib/atomic-file.js", () => ({ syncDirectory: mocks.syncDirectory }));
+// Dead-letter directory fsyncs are stubbed so tests can fail them. Checkpoint
+// writes stay real behind a recording spy, so the two can be ordered; the spy's
+// base implementation delegates, so a mock reset or restore keeps it real.
+const mocks = vi.hoisted(() => {
+  const real: { atomicWriteFile?: AtomicWriteFile } = {};
+  return {
+    real,
+    syncDirectory: vi.fn(),
+    atomicWriteFile: vi.fn<AtomicWriteFile>((...args) => {
+      if (real.atomicWriteFile === undefined) {
+        throw new Error("atomic-file mock is not wired");
+      }
+      real.atomicWriteFile(...args);
+    }),
+  };
+});
+
+vi.mock("./lib/atomic-file.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/atomic-file.js")>();
+  mocks.real.atomicWriteFile = actual.atomicWriteFile;
+  return { ...actual, syncDirectory: mocks.syncDirectory, atomicWriteFile: mocks.atomicWriteFile };
+});
 
 import { type CliClient, HttpError } from "./client.js";
 import {
@@ -38,21 +59,31 @@ import {
 } from "./dead-letter.js";
 import {
   type DrainCheckpoint,
+  type RotationIdentity,
   drainProgressDirectory,
   drainProgressPath,
+  rotationIdentity,
   writeDrainCheckpoint,
 } from "./drain-progress.js";
 import {
   BATCH_MAX_BYTES,
+  type DrainCounts,
   batchMoves,
   drainFlushingPath as drainOrganizationBoundFlushingPath,
+  hasPendingDrainWork,
   recoverOrphans,
   selectRecoverable,
   shouldFlushPending,
 } from "./flusher.js";
 import { IngestAcknowledgementError } from "./ingest-response.js";
 import type { CurrentOrganizationBinding } from "./journal-organization.js";
-import { type FlushingFile, appendMoveToPath, readMovesFromPath } from "./journal.js";
+import {
+  type FlushingFile,
+  type PendingJournalStats,
+  appendMoveToPath,
+  listFlushingInDir,
+  readMovesFromPath,
+} from "./journal.js";
 import type { Move } from "./protocol/move.js";
 
 const binding: CurrentOrganizationBinding = {
@@ -163,6 +194,43 @@ describe("opportunistic age", () => {
       ),
     ).toBe(true);
   });
+
+  const idle: PendingJournalStats = {
+    pendingCount: 0,
+    strandedCount: 0,
+    strandedFileCount: 0,
+    sampled: false,
+    strandedSampled: false,
+  };
+
+  it("flushes a stranded rotation that holds nothing left to deliver", () => {
+    // A rotation whose checkpoint covers every line has no move and no age,
+    // but only a drain unlinks it.
+    const retirable = { ...idle, strandedFileCount: 1 };
+    expect(hasPendingDrainWork(retirable)).toBe(true);
+    expect(shouldFlushPending(retirable, 80_000, 60_000)).toBe(true);
+  });
+
+  it("finds no drain work only when nothing is pending, sampled, or stranded", () => {
+    expect(hasPendingDrainWork(idle)).toBe(false);
+    expect(shouldFlushPending(idle, 80_000, 60_000)).toBe(false);
+    expect(hasPendingDrainWork({ ...idle, pendingCount: 1, oldestPendingAt: 79_000 })).toBe(true);
+    expect(hasPendingDrainWork({ ...idle, sampled: true })).toBe(true);
+    // A young stranded backlog still waits for its age, as before.
+    expect(
+      shouldFlushPending(
+        {
+          ...idle,
+          pendingCount: 1,
+          strandedCount: 1,
+          strandedFileCount: 1,
+          oldestPendingAt: 79_000,
+        },
+        80_000,
+        60_000,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("flush replay stability", () => {
@@ -171,6 +239,7 @@ describe("flush replay stability", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "prim-flush-"));
     mocks.syncDirectory.mockReset();
+    mocks.atomicWriteFile.mockClear();
   });
 
   afterEach(() => {
@@ -768,6 +837,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
     dir = mkdtempSync(join(tmpdir(), "prim-drain-progress-"));
     flushing = join(dir, "journal.ndjson.flushing.1.2");
     mocks.syncDirectory.mockReset();
+    mocks.atomicWriteFile.mockClear();
   });
 
   afterEach(() => {
@@ -787,6 +857,18 @@ describe("drain checkpoints and byte-bounded batches", () => {
 
   function readCheckpoint(): DrainCheckpoint {
     return JSON.parse(readFileSync(drainProgressPath(flushing), "utf8")) as DrainCheckpoint;
+  }
+
+  /** The checkpoint at `offset` for the rotation as it is on disk now. */
+  function checkpointAt(offset: number): DrainCheckpoint {
+    return { v: 2, offset, ...rotationIdentity(statSync(flushing)) };
+  }
+
+  /** Offsets of every checkpoint the drain wrote, in order. */
+  function checkpointWrites(): number[] {
+    return mocks.atomicWriteFile.mock.calls
+      .filter(([target]) => target === drainProgressPath(flushing))
+      .map(([, content]) => (JSON.parse(String(content)) as DrainCheckpoint).offset);
   }
 
   /** Records every POSTed batch's moveIds; `fail` may reject one by returning an error. */
@@ -817,14 +899,13 @@ describe("drain checkpoints and byte-bounded batches", () => {
   it("resumes at the first unacknowledged batch instead of replaying acknowledged ones", async () => {
     const moves = Array.from({ length: 1_600 }, (_, index) => move(`resume-${String(index)}`));
     writeJournal(moves);
-    const size = statSync(flushing).size;
     const failing = recordingClient((_batch, call) =>
       call === 3 ? new Error("offline") : undefined,
     );
 
     await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
     expect(failing.posts.map((batch) => batch.length)).toEqual([500, 500, 500]);
-    expect(readCheckpoint()).toEqual({ v: 1, offset: journalBytes(moves.slice(0, 1_000)), size });
+    expect(readCheckpoint()).toEqual(checkpointAt(journalBytes(moves.slice(0, 1_000))));
 
     const healthy = recordingClient();
     await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
@@ -850,11 +931,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
 
     await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
     expect(failing.posts).toEqual([ids(moves), ["half-a", "half-b"], ["half-c", "half-d"]]);
-    expect(readCheckpoint()).toEqual({
-      v: 1,
-      offset: journalBytes(moves.slice(0, 2)),
-      size: statSync(flushing).size,
-    });
+    expect(readCheckpoint()).toEqual(checkpointAt(journalBytes(moves.slice(0, 2))));
 
     const healthy = recordingClient();
     await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
@@ -916,11 +993,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
     // with only the invalid tail: it is re-quarantined idempotently and the
     // rotation retires without a POST.
     writeFileSync(flushing, source);
-    writeDrainCheckpoint(flushing, {
-      v: 1,
-      offset: journalBytes([move("tail")]),
-      size: source.length,
-    });
+    writeDrainCheckpoint(flushing, checkpointAt(journalBytes([move("tail")])));
     const resumed = recordingClient();
     await expect(drainFlushingPath(flushing, resumed.client)).resolves.toEqual({
       flushed: 0,
@@ -934,8 +1007,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
 
   it("retires a fully checkpointed rotation without re-sending any move", async () => {
     writeJournal([move("done-a"), move("done-b")]);
-    const size = statSync(flushing).size;
-    writeDrainCheckpoint(flushing, { v: 1, offset: size, size });
+    writeDrainCheckpoint(flushing, checkpointAt(statSync(flushing).size));
     const healthy = recordingClient();
 
     await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
@@ -949,19 +1021,42 @@ describe("drain checkpoints and byte-bounded batches", () => {
 
   it.each([
     ["corrupt", () => "{not json"],
-    ["wrong-version", (offset: number, size: number) => JSON.stringify({ v: 2, offset, size })],
+    [
+      "legacy identity-less v1",
+      (offset: number, file: RotationIdentity) => JSON.stringify({ v: 1, offset, size: file.size }),
+    ],
+    [
+      "unknown-version",
+      (offset: number, file: RotationIdentity) => JSON.stringify({ ...file, v: 3, offset }),
+    ],
     [
       "size-mismatched",
-      (offset: number, size: number) => JSON.stringify({ v: 1, offset, size: size + 1 }),
+      (offset: number, file: RotationIdentity) =>
+        JSON.stringify({ ...file, v: 2, offset, size: file.size + 1 }),
+    ],
+    [
+      "other-file",
+      (offset: number, file: RotationIdentity) =>
+        JSON.stringify({ ...file, v: 2, offset, ino: file.ino + 1 }),
+    ],
+    [
+      "other-device",
+      (offset: number, file: RotationIdentity) =>
+        JSON.stringify({ ...file, v: 2, offset, dev: file.dev + 1 }),
     ],
     [
       "out-of-range",
-      (_offset: number, size: number) => JSON.stringify({ v: 1, offset: size + 1, size }),
+      (_offset: number, file: RotationIdentity) =>
+        JSON.stringify({ ...file, v: 2, offset: file.size + 1 }),
     ],
-    ["negative", (_offset: number, size: number) => JSON.stringify({ v: 1, offset: -1, size })],
+    [
+      "negative",
+      (_offset: number, file: RotationIdentity) => JSON.stringify({ ...file, v: 2, offset: -1 }),
+    ],
     [
       "fractional",
-      (offset: number, size: number) => JSON.stringify({ v: 1, offset: offset + 0.5, size }),
+      (offset: number, file: RotationIdentity) =>
+        JSON.stringify({ ...file, v: 2, offset: offset + 0.5 }),
     ],
   ])("ignores a %s checkpoint and drains from the first line", async (_label, checkpoint) => {
     const moves = [move("from-a"), move("from-b")];
@@ -969,7 +1064,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
     mkdirSync(drainProgressDirectory(flushing));
     writeFileSync(
       drainProgressPath(flushing),
-      checkpoint(journalBytes(moves.slice(0, 1)), statSync(flushing).size),
+      checkpoint(journalBytes(moves.slice(0, 1)), rotationIdentity(statSync(flushing))),
     );
     const healthy = recordingClient();
 
@@ -982,19 +1077,32 @@ describe("drain checkpoints and byte-bounded batches", () => {
     expect(existsSync(drainProgressPath(flushing))).toBe(false);
   });
 
-  it("still delivers and retires a rotation when progress cannot be recorded", async () => {
-    writeJournal([move("no-progress")]);
+  it("still delivers when progress cannot be recorded, and warns once per process", async () => {
+    // A fresh module, so no earlier test has already spent the warning.
+    vi.resetModules();
+    const fresh = await import("./flusher.js");
     // Block creation of the checkpoint directory.
     writeFileSync(drainProgressDirectory(flushing), "not a directory");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const healthy = recordingClient();
+    const second = join(dir, "journal.ndjson.flushing.3.4");
+    // Two batches each, so each drain attempts one checkpoint.
+    const moves = Array.from({ length: 501 }, (_, index) => move(`no-progress-${String(index)}`));
+    for (const path of [flushing, second]) {
+      for (const item of moves) {
+        appendMoveToPath(path, item);
+      }
+    }
 
-    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
-      flushed: 1,
-      quarantined: 0,
-    });
-    expect(existsSync(flushing)).toBe(false);
-    expect(stderr.mock.calls.flat().join("")).toContain("could not record drain progress");
+    for (const path of [flushing, second]) {
+      await expect(
+        fresh.drainFlushingPath(path, recordingClient().client, binding),
+      ).resolves.toEqual({ flushed: 501, quarantined: 0 });
+      expect(existsSync(path)).toBe(false);
+    }
+    const warnings = stderr.mock.calls
+      .flat()
+      .filter((chunk) => String(chunk).includes("could not record drain progress"));
+    expect(warnings).toHaveLength(1);
   });
 
   function sizedMove(id: string, payloadBytes: number): Move {
@@ -1034,6 +1142,261 @@ describe("drain checkpoints and byte-bounded batches", () => {
     expect(healthy.posts).toEqual([["small-a"], ["oversized"], ["small-b"]]);
     expect(existsSync(flushing)).toBe(false);
   });
+
+  const invalidLine = () => Buffer.from('{"moveId":\n', "utf8");
+  const invalidMove = () =>
+    new HttpError(400, "Malformed move(s) in batch", { error: "invalid_move", errorVersion: 1 });
+
+  function rawDeadLetters(): string[] {
+    return readdirSync(deadLetterDirectoryForRotation(flushing)).filter((name) =>
+      name.startsWith("raw-"),
+    );
+  }
+
+  it("leaves the checkpoint unchanged after a short acknowledgement", async () => {
+    const moves = Array.from({ length: 1_200 }, (_, index) => move(`short-${String(index)}`));
+    writeJournal(moves);
+    const post = vi.fn().mockImplementation((_path, body: { batch: Move[] }) =>
+      Promise.resolve({
+        disposition: "persisted",
+        // The second batch is acknowledged one move short.
+        acknowledged: body.batch.length - (post.mock.calls.length === 2 ? 1 : 0),
+        accepted: body.batch.length,
+      }),
+    );
+
+    await expect(drainFlushingPath(flushing, { get: vi.fn(), post })).rejects.toBeInstanceOf(
+      IngestAcknowledgementError,
+    );
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(checkpointWrites()).toEqual([journalBytes(moves.slice(0, 500))]);
+    expect(readCheckpoint()).toEqual(checkpointAt(journalBytes(moves.slice(0, 500))));
+    expect(existsSync(flushing)).toBe(true);
+  });
+
+  it("checkpoints past an invalid line inside a bisected batch's acknowledged prefix", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const [first, second, third, fourth] = ["mixed-a", "mixed-b", "mixed-c", "mixed-d"].map(move);
+    appendMoveToPath(flushing, first);
+    writeFileSync(flushing, invalidLine(), { flag: "a" });
+    for (const item of [second, third, fourth]) {
+      appendMoveToPath(flushing, item);
+    }
+    const failing = recordingClient((batch) => {
+      if (batch.length > 2) {
+        return timeout();
+      }
+      return batch.some((item) => item.moveId === "mixed-c") ? new Error("offline") : undefined;
+    });
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(failing.posts).toEqual([
+      ["mixed-a", "mixed-b", "mixed-c", "mixed-d"],
+      ["mixed-a", "mixed-b"],
+      ["mixed-c", "mixed-d"],
+    ]);
+    // The left half's last move lies past the invalid line, which is durably
+    // quarantined, so the checkpoint covers exactly a, the invalid line, and b.
+    expect(readCheckpoint()).toEqual(
+      checkpointAt(journalBytes([first]) + invalidLine().length + journalBytes([second])),
+    );
+    expect(rawDeadLetters()).toHaveLength(1);
+
+    const healthy = recordingClient();
+    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 0,
+    });
+    expect(healthy.posts).toEqual([["mixed-c", "mixed-d"]]);
+    expect(rawDeadLetters()).toHaveLength(1);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("resumes an orphan adopted from a dead drain at that drain's checkpoint", async () => {
+    const orphan = join(dir, "journal.ndjson.flushing.1700000000000.4242");
+    const moves = [move("orphan-a"), move("orphan-b"), move("orphan-c"), move("orphan-d")];
+    for (const item of moves) {
+      appendMoveToPath(orphan, item);
+    }
+    // The owning drain acknowledged half the rotation, then died.
+    const dying = recordingClient((batch) => {
+      if (batch.length > 2) {
+        return timeout();
+      }
+      return batch.some((item) => item.moveId === "orphan-c") ? new Error("offline") : undefined;
+    });
+    await expect(drainFlushingPath(orphan, dying.client)).rejects.toThrow("offline");
+
+    const candidates = listFlushingInDir(dir, "orgA");
+    expect(candidates).toEqual([
+      expect.objectContaining({ path: orphan, pid: 4242, lineCount: 2, sampled: false }),
+    ]);
+    const adopter = recordingClient();
+    const summary = await recoverOrphans(candidates, {
+      ownerPid: process.pid,
+      isAlive: () => false,
+      drain: (path, onProgress) => drainFlushingPath(path, adopter.client, { onProgress }),
+    });
+
+    expect(summary).toMatchObject({ flushed: 2, quarantined: 0, errors: [] });
+    expect(adopter.posts).toEqual([["orphan-c", "orphan-d"]]);
+    expect(existsSync(orphan)).toBe(false);
+    expect(existsSync(drainProgressPath(orphan))).toBe(false);
+  });
+
+  it("restarts from the first line after an append changes the rotation mid-drain", async () => {
+    const moves = Array.from({ length: 1_600 }, (_, index) => move(`grown-${String(index)}`));
+    writeJournal(moves);
+    const originalSize = statSync(flushing).size;
+    const late = move("late-append");
+    const failing = recordingClient((_batch, call) => {
+      if (call === 1) {
+        // A hook that opened the journal just before its rename appends here.
+        appendMoveToPath(flushing, late);
+      }
+      return call === 3 ? new Error("offline") : undefined;
+    });
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(readCheckpoint()).toMatchObject({
+      offset: journalBytes(moves.slice(0, 1_000)),
+      size: originalSize,
+    });
+    expect(statSync(flushing).size).toBeGreaterThan(originalSize);
+
+    const healthy = recordingClient();
+    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
+      flushed: 1_601,
+      quarantined: 0,
+    });
+    // The checkpoint no longer describes these bytes, so nothing is skipped.
+    expect(healthy.posts.flat()).toEqual([...ids(moves), "late-append"]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("posts a full batch at once, before a later invalid line whose quarantine fails", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const moves = Array.from({ length: 500 }, (_, index) => move(`full-${String(index)}`));
+    writeJournal(moves);
+    writeFileSync(flushing, invalidLine(), { flag: "a" });
+    // Block creation of the hardened dead-letter directory.
+    writeFileSync(deadLetterDirectoryForRotation(flushing), "not a directory");
+    const first = recordingClient();
+
+    await expect(drainFlushingPath(flushing, first.client)).rejects.toThrow();
+    expect(first.posts).toEqual([ids(moves)]);
+    expect(readCheckpoint()).toEqual(checkpointAt(journalBytes(moves)));
+
+    // Once the dead letter can be written, the next sweep resumes past the
+    // delivered batch and only quarantines the invalid line.
+    rmSync(deadLetterDirectoryForRotation(flushing));
+    const resumed = recordingClient();
+    await expect(drainFlushingPath(flushing, resumed.client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(resumed.posts).toEqual([]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("checkpoints past a run of invalid lines with no move pending before them", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const run = [invalidLine(), Buffer.from("not json\r\n", "utf8")];
+    writeFileSync(flushing, Buffer.concat(run));
+    appendMoveToPath(flushing, move("after-run"));
+    const failing = recordingClient(() => new Error("offline"));
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(readCheckpoint()).toEqual(checkpointAt(run[0].length + run[1].length));
+    expect(rawDeadLetters()).toHaveLength(2);
+
+    mocks.syncDirectory.mockClear();
+    const healthy = recordingClient();
+    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
+      flushed: 1,
+      quarantined: 0,
+    });
+    expect(healthy.posts).toEqual([["after-run"]]);
+    // The resumed sweep never re-quarantines the run.
+    expect(mocks.syncDirectory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "an invalid journal line",
+      () => {
+        writeFileSync(flushing, invalidLine());
+        appendMoveToPath(flushing, move("after-invalid"));
+        return invalidLine().length;
+      },
+    ],
+    [
+      "a rejected move",
+      () => {
+        writeJournal([move("poison"), move("after-poison")]);
+        return journalBytes([move("poison")]);
+      },
+    ],
+  ])("syncs %s's dead letter before the checkpoint that passes it", async (_label, setup) => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const quarantinedThrough = setup();
+    const failing = recordingClient((batch) =>
+      batch.some((item) => item.moveId === "poison") ? invalidMove() : new Error("offline"),
+    );
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(readCheckpoint()).toEqual(checkpointAt(quarantinedThrough));
+    const deadLetterSync = mocks.syncDirectory.mock.calls.findIndex(
+      ([path]) => path === deadLetterDirectoryForRotation(flushing),
+    );
+    const checkpointWrite = mocks.atomicWriteFile.mock.calls.findIndex(
+      ([target]) => target === drainProgressPath(flushing),
+    );
+    expect(deadLetterSync).toBeGreaterThanOrEqual(0);
+    expect(checkpointWrite).toBeGreaterThanOrEqual(0);
+    expect(mocks.syncDirectory.mock.invocationCallOrder[deadLetterSync]).toBeLessThan(
+      mocks.atomicWriteFile.mock.invocationCallOrder[checkpointWrite],
+    );
+  });
+
+  it("writes no checkpoint for a one-batch drain or for a drain's final slice", async () => {
+    writeJournal([move("only-a"), move("only-b")]);
+    await expect(drainFlushingPath(flushing, recordingClient().client)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 0,
+    });
+    expect(mocks.atomicWriteFile).not.toHaveBeenCalled();
+
+    const moves = Array.from({ length: 1_000 }, (_, index) => move(`final-${String(index)}`));
+    writeJournal(moves);
+    await expect(drainFlushingPath(flushing, recordingClient().client)).resolves.toEqual({
+      flushed: 1_000,
+      quarantined: 0,
+    });
+    // Only the first batch is checkpointed; the unlink follows the second.
+    expect(checkpointWrites()).toEqual([journalBytes(moves.slice(0, 500))]);
+    expect(existsSync(drainProgressDirectory(flushing))).toBe(false);
+  });
+
+  it("reports every retired slice as it happens, before a later failure", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    writeFileSync(flushing, invalidLine());
+    const moves = Array.from({ length: 1_200 }, (_, index) => move(`progress-${String(index)}`));
+    writeJournal(moves);
+    const failing = recordingClient((_batch, call) =>
+      call === 3 ? new Error("offline") : undefined,
+    );
+    const deltas: DrainCounts[] = [];
+
+    await expect(
+      drainFlushingPath(flushing, failing.client, { onProgress: (delta) => deltas.push(delta) }),
+    ).rejects.toThrow("offline");
+    expect(deltas).toEqual([
+      { flushed: 0, quarantined: 1 },
+      { flushed: 500, quarantined: 0 },
+      { flushed: 500, quarantined: 0 },
+    ]);
+  });
 });
 
 describe("selectRecoverable", () => {
@@ -1047,6 +1410,7 @@ describe("selectRecoverable", () => {
       path: "/x",
       pid: undefined,
       sizeBytes: 0,
+      pendingBytes: 0,
       mtimeMs: 0,
       lineCount: 0,
       sampled: false,
@@ -1097,6 +1461,33 @@ describe("selectRecoverable", () => {
     expect(result.flushed).toBe(1);
     expect(result.failedBuckets).toEqual(new Set(["orgA"]));
     expect(result.errors).toHaveLength(1);
+  });
+
+  it("credits a failed orphan drain with the slices it retired before failing", async () => {
+    const offline = new Error("offline");
+    const result = await recoverOrphans(
+      [
+        flushing({ bucket: "orgA", path: "/a", pid: 4242 }),
+        flushing({ bucket: "orgB", path: "/b", pid: 4242 }),
+      ],
+      {
+        now,
+        isAlive: dead,
+        drain: (path, onProgress) => {
+          if (path === "/b") {
+            return Promise.resolve({ flushed: 3, quarantined: 0 });
+          }
+          onProgress({ flushed: 500, quarantined: 0 });
+          onProgress({ flushed: 0, quarantined: 1 });
+          return Promise.reject(offline);
+        },
+      },
+    );
+
+    expect(result).toMatchObject({ flushed: 503, quarantined: 1 });
+    // The drain's own error is kept, not replaced.
+    expect(result.errors).toEqual([offline]);
+    expect(result.failedBuckets).toEqual(new Set(["orgA"]));
   });
 
   it("reaches another bucket beyond a legacy backlog larger than the old cap", async () => {

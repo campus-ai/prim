@@ -7,9 +7,10 @@
  *   1. Atomically rename <bucket>/journal.ndjson → .flushing.<ts>.<pid>.
  *      Concurrent hook appends start a fresh journal.ndjson; a concurrent
  *      drain that loses the rename race is a no-op (ENOENT).
- *   2. POST batches of up to 500 moves and 1 MiB to /api/cli/moves/ingest,
- *      checkpointing the rotation's byte offset past every durably
- *      acknowledged or quarantined slice (see drain-progress.ts).
+ *   2. POST batches of up to 500 moves and 1 MiB of journal lines to
+ *      /api/cli/moves/ingest, checkpointing the rotation's byte offset as
+ *      durably acknowledged or quarantined slices retire (see
+ *      drain-progress.ts).
  *   3. On success, unlink the .flushing file, then its checkpoint.
  *
  * flush() first re-drains any stranded .flushing files — orphaned when a
@@ -18,10 +19,11 @@
  * provably gone (a dead pid, or an aged legacy pid-less file), so a concurrent
  * drain's in-flight file is never stolen out from under it. On a POST failure
  * the .flushing file is left behind for the next sweep, which resumes at its
- * checkpoint, so no moves are lost on a clean failure and none the server
- * acknowledged are re-sent. Before any rotation, one refreshed bearer
- * generation is pinned and its server-derived organization tuple must match
- * each bucket.
+ * checkpoint, so no moves are lost on a clean failure and acknowledged slices
+ * are not re-sent — unless a checkpoint write was lost, which costs only a
+ * replay the server dedups by moveId. Before any rotation, one refreshed
+ * bearer generation is pinned and its server-derived organization tuple must
+ * match each bucket.
  */
 
 import { createReadStream, renameSync, statSync, unlinkSync } from "node:fs";
@@ -36,6 +38,7 @@ import {
 import {
   drainResumeOffset,
   removeDrainCheckpoint,
+  rotationIdentity,
   writeDrainCheckpoint,
 } from "./drain-progress.js";
 import { requireDurableIngestAcknowledgement } from "./ingest-response.js";
@@ -63,8 +66,10 @@ const BATCH_SIZE = 500;
 // Ingest cost scales with payload bytes, not move count: the server stores
 // each large payload before the batch commits, so a count bound alone let a
 // batch of large agent payloads outlive HTTP_TIMEOUT_MS even though the server
-// went on to commit it. Bounding raw line bytes bounds each POST's upload and
-// server time against that timeout; a single larger line is still sent, alone.
+// went on to commit it. Bounding raw journal line bytes approximately bounds
+// each POST's upload — the request re-serializes every move and adds roughly
+// 110 bytes of organization binding to each — and so its server time against
+// that timeout; a single larger line is still sent, alone.
 export const BATCH_MAX_BYTES = 1_048_576;
 const HTTP_TIMEOUT_MS = 10_000;
 const OPPORTUNISTIC_FLUSH_AFTER_MS = 60_000;
@@ -79,15 +84,16 @@ const ORPHAN_QUARANTINE_MS = 60_000;
  * Whether a batch already holding `count` moves and `bytes` raw line bytes
  * must be posted before a `nextBytes`-byte line joins it. A batch always takes
  * its first move, so a line over the byte bound is sent alone, never stranded.
+ * The count bound is checked after a move joins instead, so a batch closes the
+ * moment it fills.
  */
-function batchIsFull(
+function exceedsBatchBytes(
   count: number,
   bytes: number,
   nextBytes: number,
-  size: number,
   maxBytes: number,
 ): boolean {
-  return count > 0 && (count >= size || bytes + nextBytes > maxBytes);
+  return count > 0 && bytes + nextBytes > maxBytes;
 }
 
 /**
@@ -106,13 +112,18 @@ export function batchMoves(
   let bytes = 0;
   for (const move of moves) {
     const lineBytes = Buffer.byteLength(`${JSON.stringify(move)}\n`);
-    if (batchIsFull(batch.length, bytes, lineBytes, size, maxBytes)) {
+    if (exceedsBatchBytes(batch.length, bytes, lineBytes, maxBytes)) {
       batches.push(batch);
       batch = [];
       bytes = 0;
     }
     batch.push(move);
     bytes += lineBytes;
+    if (batch.length >= size) {
+      batches.push(batch);
+      batch = [];
+      bytes = 0;
+    }
   }
   if (batch.length > 0) {
     batches.push(batch);
@@ -235,43 +246,61 @@ async function* rawJournalLines(
   }
 }
 
+export type DrainProgress = (delta: DrainCounts) => void;
+
+// A failed checkpoint write usually has a lasting cause (a full disk, a
+// blocked directory), so every later leaf of every drain would repeat the same
+// warning while delivery carries on. Say it once per process.
+let drainProgressWarned = false;
+
 /**
  * Drain an already-rotated `.flushing` file: POST its moves in batches, then
  * unlink on success. On a POST failure it throws WITHOUT unlinking, so the
  * file stays on disk for the next sweep — no moves are lost on a clean
- * failure. Progress is checkpointed past every durably acknowledged or
- * quarantined slice, so that sweep resumes at the first unacknowledged line
+ * failure. Progress is checkpointed as durably acknowledged or quarantined
+ * slices retire, so that sweep resumes at the first unacknowledged line
  * instead of re-POSTing batches the server already committed — including one
- * it committed after this client timed out. Shared by the normal rotate path
- * and orphan recovery.
+ * it committed after this client timed out. `onProgress` hears each retired
+ * slice as it happens, so a caller can credit a drain that later throws.
+ * Shared by the normal rotate path and orphan recovery.
  */
 export async function drainFlushingPath(
   flushingPath: string,
   client: CliClient,
   binding: CurrentOrganizationBinding,
-  options: { deadLetterPersistence?: DeadLetterPersistenceOptions } = {},
+  options: {
+    deadLetterPersistence?: DeadLetterPersistenceOptions;
+    onProgress?: DrainProgress;
+  } = {},
 ): Promise<DrainCounts> {
-  // The rotation's size pins which bytes a checkpoint describes.
-  const size = statSync(flushingPath).size;
-  const resumeAt = drainResumeOffset(flushingPath, size);
-  let progressWarned = false;
-  const recordProgress = (retired: readonly JournalEntry[]): void => {
-    const last = retired.at(-1);
-    if (last === undefined) {
+  // The rotation's inode, device, and size pin which bytes a checkpoint
+  // describes.
+  const rotation = rotationIdentity(statSync(flushingPath));
+  const resumeAt = drainResumeOffset(flushingPath, rotation);
+  const recordProgress = (end: number | undefined): void => {
+    // Once a slice reaches the rotation's end only the unlink remains, so a
+    // checkpoint there would buy nothing but fsyncs: a crash in between
+    // replays from the previous checkpoint, which the server dedups. A
+    // one-batch drain therefore writes no checkpoint at all.
+    if (end === undefined || end >= rotation.size) {
       return;
     }
     try {
-      writeDrainCheckpoint(flushingPath, { v: 1, offset: last.end, size });
+      writeDrainCheckpoint(flushingPath, { v: 2, offset: end, ...rotation });
     } catch (error) {
       // Progress saves replays; it is never a delivery precondition. A failed
       // write leaves an older checkpoint that only re-sends deduped moves.
-      if (!progressWarned) {
-        progressWarned = true;
+      if (!drainProgressWarned) {
+        drainProgressWarned = true;
         process.stderr.write(
           `[prim] could not record drain progress: ${error instanceof Error ? error.message : String(error)}\n`,
         );
       }
     }
+  };
+  const reportProgress = (delta: DrainCounts): DrainCounts => {
+    options.onProgress?.(delta);
+    return delta;
   };
 
   const postBatch = async (batch: JournalEntry[]): Promise<DrainCounts> => {
@@ -312,14 +341,14 @@ export async function drainFlushingPath(
         Date.now,
         options.deadLetterPersistence,
       );
-      recordProgress(batch);
+      recordProgress(entry.end);
       process.stderr.write(
         `[prim] quarantined rejected move ${quarantined.quarantineId.slice(0, 12)} (${reason})\n`,
       );
-      return { flushed: 0, quarantined: 1 };
+      return reportProgress({ flushed: 0, quarantined: 1 });
     }
-    recordProgress(batch);
-    return { flushed: batch.length, quarantined: 0 };
+    recordProgress(batch.at(-1)?.end);
+    return reportProgress({ flushed: batch.length, quarantined: 0 });
   };
 
   const input = createReadStream(flushingPath, { start: resumeAt });
@@ -327,6 +356,11 @@ export async function drainFlushingPath(
   let batch: JournalEntry[] = [];
   let batchBytes = 0;
   let counts: DrainCounts = { flushed: 0, quarantined: 0 };
+  const postPending = async (): Promise<void> => {
+    counts = addDrainCounts(counts, await postBatch(batch));
+    batch = [];
+    batchBytes = 0;
+  };
   try {
     for await (const { bytes: rawLine, end } of rawJournalLines(input, resumeAt)) {
       if (
@@ -349,22 +383,29 @@ export async function drainFlushingPath(
         process.stderr.write(
           `[prim] quarantined invalid journal line ${quarantined.quarantineId.slice(0, 12)} (invalid_move)\n`,
         );
-        counts.quarantined += 1;
-        // Already durable, so the next checkpoint may pass it. Trailing invalid
-        // lines need no checkpoint: the rotation is unlinked after them, and a
-        // replay from the last move's checkpoint re-quarantines them idempotently.
+        counts = addDrainCounts(counts, reportProgress({ flushed: 0, quarantined: 1 }));
+        // The record is durable, so a checkpoint may pass this line. With no
+        // move pending before it, pass it now, so a sweep that fails later
+        // does not re-quarantine a run of invalid lines every time; otherwise
+        // the checkpoint of the next acknowledged move passes it.
+        if (batch.length === 0) {
+          recordProgress(end);
+        }
         continue;
       }
-      if (batchIsFull(batch.length, batchBytes, rawLine.length, BATCH_SIZE, BATCH_MAX_BYTES)) {
-        counts = addDrainCounts(counts, await postBatch(batch));
-        batch = [];
-        batchBytes = 0;
+      if (exceedsBatchBytes(batch.length, batchBytes, rawLine.length, BATCH_MAX_BYTES)) {
+        await postPending();
       }
       batch.push({ move, end });
       batchBytes += rawLine.length;
+      // Post a full batch now rather than when the next move arrives: an
+      // invalid line whose quarantine fails in between would strand it unsent.
+      if (batch.length >= BATCH_SIZE) {
+        await postPending();
+      }
     }
     if (batch.length > 0) {
-      counts = addDrainCounts(counts, await postBatch(batch));
+      await postPending();
     }
   } finally {
     input.destroy();
@@ -385,6 +426,7 @@ async function drainPath(
   path: string,
   client: CliClient,
   binding: CurrentOrganizationBinding,
+  onProgress: DrainProgress,
 ): Promise<DrainCounts> {
   const tmpPath = `${path}.flushing.${String(Date.now())}.${String(process.pid)}`;
   try {
@@ -397,7 +439,28 @@ async function drainPath(
     throw err;
   }
 
-  return drainFlushingPath(tmpPath, client, binding);
+  return drainFlushingPath(tmpPath, client, binding, { onProgress });
+}
+
+/**
+ * Run one drain and return what it durably retired, even when it throws
+ * partway: every slice it reported is already acknowledged or quarantined, so
+ * health and FlushError count it instead of reading a sweep that delivered a
+ * thousand moves before failing as having delivered none.
+ */
+async function settleDrain(
+  drain: (onProgress: DrainProgress) => Promise<DrainCounts>,
+): Promise<{ counts: DrainCounts; failure?: { error: unknown } }> {
+  let progress: DrainCounts = { flushed: 0, quarantined: 0 };
+  try {
+    return {
+      counts: await drain((delta) => {
+        progress = addDrainCounts(progress, delta);
+      }),
+    };
+  } catch (error) {
+    return { counts: progress, failure: { error } };
+  }
 }
 
 /**
@@ -433,7 +496,8 @@ export function selectRecoverable(
  * and is re-POSTed under its original moveIds (the server dedups at
  * by_move_id, so lines delivered after the last checkpoint replay
  * harmlessly), then unlinked. A file whose POST fails is left for the next
- * sweep rather than aborting recovery of the rest.
+ * sweep rather than aborting recovery of the rest, and still counts the
+ * slices its drain reported retiring before it failed.
  */
 export type DrainSummary = DrainCounts & { errors: unknown[]; failedBuckets: Set<string> };
 
@@ -443,7 +507,7 @@ export async function recoverOrphans(
     now?: number;
     ownerPid?: number;
     isAlive?: (pid: number) => boolean;
-    drain: (path: string) => Promise<DrainCounts>;
+    drain: (path: string, onProgress: DrainProgress) => Promise<DrainCounts>;
   },
 ): Promise<DrainSummary> {
   const summary: DrainSummary = {
@@ -461,13 +525,12 @@ export async function recoverOrphans(
     if (summary.failedBuckets.has(file.bucket)) {
       continue;
     }
-    try {
-      const counts = await drain(file.path);
-      summary.flushed += counts.flushed;
-      summary.quarantined += counts.quarantined;
-    } catch (err) {
+    const { counts, failure } = await settleDrain((onProgress) => drain(file.path, onProgress));
+    summary.flushed += counts.flushed;
+    summary.quarantined += counts.quarantined;
+    if (failure) {
       // Leave this orphan on disk for a later sweep; keep recovering the rest.
-      summary.errors.push(err);
+      summary.errors.push(failure.error);
       summary.failedBuckets.add(file.bucket);
     }
   }
@@ -513,7 +576,7 @@ async function flushOnce(): Promise<
   const binding = inspection.binding;
   const recovered = await recoverOrphans(
     orphanCandidates.filter((file) => inspection.deliverableBuckets.has(file.bucket)),
-    { drain: (path) => drainFlushingPath(path, client, binding) },
+    { drain: (path, onProgress) => drainFlushingPath(path, client, binding, { onProgress }) },
   );
   let total = recovered.flushed;
   let quarantined = recovered.quarantined;
@@ -528,14 +591,15 @@ async function flushOnce(): Promise<
     if (recovered.failedBuckets.has(bucket)) {
       continue;
     }
-    try {
-      const counts = await drainPath(path, client, binding);
-      total += counts.flushed;
-      quarantined += counts.quarantined;
-    } catch (err) {
+    const { counts, failure } = await settleDrain((onProgress) =>
+      drainPath(path, client, binding, onProgress),
+    );
+    total += counts.flushed;
+    quarantined += counts.quarantined;
+    if (failure) {
       // One broken/disabled bucket must not prevent independent buckets from
       // draining. Every failed rotation remains on disk for the next attempt.
-      errors.push(err);
+      errors.push(failure.error);
     }
   }
   if (errors.length > 0) {
@@ -597,12 +661,24 @@ export function flush(): Promise<FlushResult> {
   return attempt;
 }
 
+/**
+ * Whether any journal or rotation still needs a drain. A stranded rotation
+ * counts even with no pending move — its checkpoint already covers every
+ * line, or it holds none — because only a drain retires it: resuming at its
+ * end, the drain posts nothing and unlinks the file.
+ */
+export function hasPendingDrainWork(stats: PendingJournalStats): boolean {
+  return stats.pendingCount > 0 || stats.sampled || stats.strandedFileCount > 0;
+}
+
 export function shouldFlushPending(
   stats: PendingJournalStats,
   now: number,
   thresholdMs: number = OPPORTUNISTIC_FLUSH_AFTER_MS,
 ): boolean {
-  if (stats.sampled) {
+  // Stranded rotations with nothing left to deliver carry no capture age to
+  // wait on, yet stay on disk until a drain retires them.
+  if (stats.sampled || (stats.strandedFileCount > 0 && stats.strandedCount === 0)) {
     return true;
   }
   return (

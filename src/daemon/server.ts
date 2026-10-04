@@ -30,8 +30,8 @@ import {
   refreshToken,
   resolveAuthCredential,
 } from "../client.js";
-import { FlushError, flush } from "../flusher.js";
-import { pendingJournalStats } from "../journal.js";
+import { FlushError, flush, hasPendingDrainWork } from "../flusher.js";
+import { type PendingJournalStats, pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import type { Teammate } from "../lib/presence.js";
@@ -242,12 +242,13 @@ function persistHealth(): void {
   }
 }
 
-function updatePendingHealth(): void {
+function updatePendingHealth(): PendingJournalStats {
   const pending = pendingJournalStats();
   daemonHealth.ingestion.pendingCount = pending.pendingCount;
   daemonHealth.ingestion.pendingSampled = pending.sampled;
   daemonHealth.ingestion.oldestPendingAt = pending.oldestPendingAt;
   daemonHealth.ingestion.strandedCount = pending.strandedCount;
+  return pending;
 }
 
 /**
@@ -508,8 +509,9 @@ function scheduleIngestion(delayMs: number): void {
 
 async function runIngestionLoop(): Promise<void> {
   synchronizeDaemonCredential();
+  let pending: PendingJournalStats;
   try {
-    updatePendingHealth();
+    pending = updatePendingHealth();
   } catch (err) {
     const failures = daemonHealth.ingestion.consecutiveFailures + 1;
     const delay = ingestionRetryDelayMs(failures);
@@ -521,7 +523,9 @@ async function runIngestionLoop(): Promise<void> {
     return;
   }
 
-  if (daemonHealth.ingestion.pendingCount === 0 && !daemonHealth.ingestion.pendingSampled) {
+  // A fully checkpointed rotation reports no pending move but is still work:
+  // only a drain retires it.
+  if (!hasPendingDrainWork(pending)) {
     // Another bounded flusher may have completed a previously-failed queue.
     // Once nothing remains, the resolved failure should not poison health.
     daemonHealth.ingestion.consecutiveFailures = 0;

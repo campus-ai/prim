@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { writeDrainCheckpoint } from "./drain-progress.js";
+import { rotationIdentity, writeDrainCheckpoint } from "./drain-progress.js";
 import {
   JOURNAL_DIR,
   JOURNAL_STATS_SAMPLE_BYTES,
@@ -29,6 +29,11 @@ function sampleMove(eventType: string, capturedAt = 1): Move {
 
 function lineBytes(...moves: Move[]): number {
   return moves.reduce((bytes, move) => bytes + Buffer.byteLength(`${JSON.stringify(move)}\n`), 0);
+}
+
+/** Checkpoint a rotation, as it is on disk now, at `offset`. */
+function checkpoint(path: string, offset: number): void {
+  writeDrainCheckpoint(path, { v: 2, offset, ...rotationIdentity(statSync(path)) });
 }
 
 describe("journal", () => {
@@ -157,11 +162,19 @@ describe("listFlushingInDir", () => {
     const delivered = sampleMove("PreToolUse", 1_000);
     writeFlushing(name, delivered, sampleMove("PostToolUse", 2_000), sampleMove("Stop", 3_000));
     const path = join(dir, name);
-    writeDrainCheckpoint(path, { v: 1, offset: lineBytes(delivered), size: statSync(path).size });
+    const size = statSync(path).size;
+    checkpoint(path, lineBytes(delivered));
 
     const files = listFlushingInDir(dir, "orgA");
     expect(files).toEqual([
-      expect.objectContaining({ path, lineCount: 2, oldestCapturedAt: 2_000, sampled: false }),
+      expect.objectContaining({
+        path,
+        lineCount: 2,
+        oldestCapturedAt: 2_000,
+        sampled: false,
+        sizeBytes: size,
+        pendingBytes: size - lineBytes(delivered),
+      }),
     ]);
   });
 
@@ -170,10 +183,16 @@ describe("listFlushingInDir", () => {
     writeFlushing(name, sampleMove("PreToolUse", 1_000));
     const path = join(dir, name);
     const size = statSync(path).size;
-    writeDrainCheckpoint(path, { v: 1, offset: size, size });
+    checkpoint(path, size);
 
     expect(listFlushingInDir(dir, "orgA")).toEqual([
-      expect.objectContaining({ lineCount: 0, oldestCapturedAt: undefined, sampled: false }),
+      expect.objectContaining({
+        lineCount: 0,
+        oldestCapturedAt: undefined,
+        sampled: false,
+        sizeBytes: size,
+        pendingBytes: 0,
+      }),
     ]);
   });
 
@@ -183,11 +202,7 @@ describe("listFlushingInDir", () => {
     );
     const path = join(dir, "journal.ndjson.flushing.1.11");
     writeFlushing("journal.ndjson.flushing.1.11", ...moves);
-    writeDrainCheckpoint(path, {
-      v: 1,
-      offset: lineBytes(...moves.slice(0, 1_000)),
-      size: statSync(path).size,
-    });
+    checkpoint(path, lineBytes(...moves.slice(0, 1_000)));
 
     const sample = sampleJournalFile(path, 1_024, { fromDrainCheckpoint: true });
     expect(sample.sampled).toBe(true);
@@ -230,13 +245,13 @@ describe("journal enumeration around drain checkpoints", () => {
       journal.appendMoveToPath(rotation, move);
     }
     progress.writeDrainCheckpoint(rotation, {
-      v: 1,
+      v: 2,
       offset: lineBytes(delivered),
-      size: statSync(rotation).size,
+      ...progress.rotationIdentity(statSync(rotation)),
     });
     // A bucket holding only an orphaned checkpoint is not a bucket or rotation.
     const orphan = join(dirname(journal.journalPath("org_b")), "journal.ndjson.flushing.1.2");
-    progress.writeDrainCheckpoint(orphan, { v: 1, offset: 0, size: 0 });
+    progress.writeDrainCheckpoint(orphan, { v: 2, offset: 0, size: 0, ino: 1, dev: 1 });
 
     expect(journal.listBuckets()).toEqual([{ bucket: "org_a", path: live }]);
     expect(journal.listFlushing().map((file) => file.path)).toEqual([rotation]);
