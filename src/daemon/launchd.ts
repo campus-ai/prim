@@ -212,6 +212,7 @@ function daemonControlPaths(options: RuntimePathOptions = {}) {
   return {
     launcher: join(configDir, `prim-daemon-launcher-v${LAUNCHER_SCHEMA_VERSION}`),
     disabledMarker: join(configDir, "daemon.disabled"),
+    driftHealMarker: join(configDir, "daemon-drift-heal.json"),
     lifecycleLockDir: join(configDir, "daemon.lifecycle.lock"),
     legacyDisabledMarker: legacy.disabledMarker,
     legacyLifecycleLockDir: legacy.lifecycleLockDir,
@@ -533,6 +534,7 @@ export function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
     );
   }
   assertRegularFile(logPath, "daemon log");
+  assertRegularFile(control.driftHealMarker, "daemon drift-heal marker");
   assertRegularFile(join(configDir, "daemon-health.json"), "daemon health snapshot");
   assertRegularFile(join(configDir, "client_instance_id"), "daemon client instance id");
 
@@ -635,6 +637,7 @@ export async function removeDaemonRuntime(
     control.launcher,
     control.disabledMarker,
     control.legacyDisabledMarker,
+    control.driftHealMarker,
     ...(service ? [service.plistPath] : []),
     logPath,
     join(configDir, "daemon-health.json"),
@@ -1179,6 +1182,23 @@ export function setDaemonExplicitlyDisabled(
     atomicWrite(paths.legacyDisabledMarker, content, RUNTIME_FILE_MODE);
   }
   atomicWrite(paths.disabledMarker, content, RUNTIME_FILE_MODE);
+}
+
+/**
+ * The runtime version and deployment the supervised launcher selects, read
+ * from its self-verifying header. A plain file read with no launchctl or
+ * socket probe, so every CLI startup can afford it.
+ */
+export function selectedDaemonLauncher(
+  options: RuntimePathOptions = {},
+): { runtimeVersion: string; apiUrl?: string } | null {
+  const config = readDaemonLauncher(daemonControlPaths(options).launcher);
+  return config && { runtimeVersion: config.runtimeVersion, apiUrl: config.apiUrl };
+}
+
+/** Rate-limit record for attended drift healing; uninstall removes it with the daemon. */
+export function daemonDriftHealMarkerPath(options: RuntimePathOptions = {}): string {
+  return daemonControlPaths(options).driftHealMarker;
 }
 
 /**

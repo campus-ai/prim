@@ -9,6 +9,12 @@ export type DaemonEnsureOptions = {
   primEntry?: string | null;
   nodeEntry?: string;
   spawnProcess?: SpawnProcess;
+  /**
+   * Follow the local ensure with the pinned registry revalidation. Defaults to
+   * the SessionStart behavior (macOS only). Attended drift healing opts out:
+   * the invoking CLI already holds the newer bytes locally.
+   */
+  latestBootstrap?: boolean;
 };
 
 /**
@@ -25,7 +31,7 @@ export function kickDaemonEnsure(options: DaemonEnsureOptions = {}): boolean {
 
   try {
     const args = [primEntry, "daemon", "ensure"];
-    if ((options.platform ?? process.platform) === "darwin") {
+    if (options.latestBootstrap ?? (options.platform ?? process.platform) === "darwin") {
       args.push("--latest-bootstrap");
     }
     const child = (options.spawnProcess ?? (spawn as SpawnProcess))(

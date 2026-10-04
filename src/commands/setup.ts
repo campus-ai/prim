@@ -31,7 +31,8 @@ import { gitToplevel } from "../lib/git.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
-// Marks every one of setup's child steps.
+// Marks every one of setup's child steps. Setup starts or stops the daemon
+// itself, so none of its steps starts an implicit daemon upgrade.
 export const SETUP_ORCHESTRATOR_ENV = "PRIM_SETUP_ORCHESTRATOR";
 // Marks setup's child steps only when setup starts the daemon. Setup then
 // checks the daemon's delivery health, so its children leave the journal

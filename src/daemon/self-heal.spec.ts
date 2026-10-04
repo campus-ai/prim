@@ -39,6 +39,24 @@ describe("kickDaemonEnsure", () => {
     );
   });
 
+  it("lets a caller opt out of the macOS registry revalidation", () => {
+    const spawnProcess = vi.fn(() => ({ unref: vi.fn() }));
+    expect(
+      kickDaemonEnsure({
+        primEntry: "/pkg/dist/index.js",
+        nodeEntry: "/usr/bin/node",
+        platform: "darwin",
+        spawnProcess,
+        latestBootstrap: false,
+      }),
+    ).toBe(true);
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "/usr/bin/node",
+      ["/pkg/dist/index.js", "daemon", "ensure"],
+      { detached: true, stdio: "ignore" },
+    );
+  });
+
   it("fails soft when the CLI entry cannot be resolved", () => {
     const spawnProcess = vi.fn(() => ({ unref: vi.fn() }));
     expect(kickDaemonEnsure({ primEntry: null, spawnProcess })).toBe(false);

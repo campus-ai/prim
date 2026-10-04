@@ -20,6 +20,7 @@ import {
   type LaunchctlResult,
   type LaunchctlRunner,
   bootoutMacDaemon,
+  daemonDriftHealMarkerPath,
   daemonExplicitlyDisabled,
   ensureMacDaemon,
   launchdPaths,
@@ -27,6 +28,7 @@ import {
   removeDaemonRuntime,
   runtimePaths,
   runtimeStatuslineCommand,
+  selectedDaemonLauncher,
   stageRuntime,
   withDaemonLifecycleLock,
 } from "./launchd.js";
@@ -507,6 +509,26 @@ describe("generated launchd contract", () => {
     expect(readFileSync(fake.paths.plistPath, "utf8")).toBe("known-good\n");
     expect(fake.lifecycleCommands()).toEqual([]);
   });
+  it("exposes the selected version and deployment only from a verified launcher", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+
+    await fake.ensure({
+      explicitlyStarted: true,
+      version: "2.0.0",
+      env: { ...fake.env, PRIM_API_URL: "https://api.test/" },
+    });
+    expect(selectedDaemonLauncher(paths)).toEqual({
+      runtimeVersion: "2.0.0",
+      apiUrl: "https://api.test",
+    });
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(selectedDaemonLauncher(paths)).toEqual({ runtimeVersion: "2.0.0" });
+
+    writeFileSync(fake.launcherPath, `${readFileSync(fake.launcherPath, "utf8")}# edited\n`);
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+  });
 });
 
 describe("launchd reconciliation", () => {
@@ -818,6 +840,8 @@ describe("removeDaemonRuntime", () => {
     mkdirSync(configDir, { recursive: true });
     const retained = join(configDir, "token");
     writeFileSync(retained, "credential\n");
+    const driftHealMarker = daemonDriftHealMarkerPath({ homeDir: fake.homeDir, env: fake.env });
+    writeFileSync(driftHealMarker, "{}\n");
 
     const result = await removeDaemonRuntime({
       homeDir: fake.homeDir,
@@ -828,6 +852,7 @@ describe("removeDaemonRuntime", () => {
 
     expect(result.changed).toBe(true);
     expect(existsSync(staged.paths.runtimeDir)).toBe(false);
+    expect(existsSync(driftHealMarker)).toBe(false);
     expect(readFileSync(retained, "utf8")).toBe("credential\n");
   });
 
