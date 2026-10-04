@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Move } from "./protocol/move.js";
 
@@ -144,5 +144,19 @@ describe("credential-bound journal draining", () => {
     expect(calls).toHaveLength(2);
     expect(calls.every((call) => call.token === "Bearer token-a")).toBe(true);
     expect(journal.listFlushing({ sampleBytes: 0 })).toHaveLength(1);
+  });
+
+  it("sweeps a checkpoint orphaned between a rotation's unlink and its own", async () => {
+    const fetchMock = vi.fn(() => Promise.reject(new Error("no request expected")));
+    vi.stubGlobal("fetch", fetchMock);
+    const journal = await import("./journal.js");
+    const progress = await import("./drain-progress.js");
+    const { flush } = await import("./flusher.js");
+    const retired = join(dirname(journal.journalPath("org_local")), "journal.ndjson.flushing.1.2");
+    progress.writeDrainCheckpoint(retired, { v: 1, offset: 10, size: 10 });
+
+    await expect(flush()).resolves.toEqual({ flushed: 0, quarantined: 0 });
+    expect(existsSync(progress.drainProgressPath(retired))).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

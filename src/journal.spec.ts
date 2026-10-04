@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { writeDrainCheckpoint } from "./drain-progress.js";
 import {
   JOURNAL_DIR,
   JOURNAL_STATS_SAMPLE_BYTES,
@@ -24,6 +25,10 @@ function sampleMove(eventType: string, capturedAt = 1): Move {
     env: { cwd: "/repo", cliVersion: "x", osPlatform: "darwin" },
     envelopeVersion: 1,
   };
+}
+
+function lineBytes(...moves: Move[]): number {
+  return moves.reduce((bytes, move) => bytes + Buffer.byteLength(`${JSON.stringify(move)}\n`), 0);
 }
 
 describe("journal", () => {
@@ -145,6 +150,108 @@ describe("listFlushingInDir", () => {
 
   it("returns [] for a missing directory", () => {
     expect(listFlushingInDir(join(dir, "absent"), "orgA")).toEqual([]);
+  });
+
+  it("samples a rotation from its drain checkpoint and never lists the checkpoint", () => {
+    const name = "journal.ndjson.flushing.1700000000000.4242";
+    const delivered = sampleMove("PreToolUse", 1_000);
+    writeFlushing(name, delivered, sampleMove("PostToolUse", 2_000), sampleMove("Stop", 3_000));
+    const path = join(dir, name);
+    writeDrainCheckpoint(path, { v: 1, offset: lineBytes(delivered), size: statSync(path).size });
+
+    const files = listFlushingInDir(dir, "orgA");
+    expect(files).toEqual([
+      expect.objectContaining({ path, lineCount: 2, oldestCapturedAt: 2_000, sampled: false }),
+    ]);
+  });
+
+  it("reports a fully checkpointed rotation as holding nothing undelivered", () => {
+    const name = "journal.ndjson.flushing.1700000000000.4242";
+    writeFlushing(name, sampleMove("PreToolUse", 1_000));
+    const path = join(dir, name);
+    const size = statSync(path).size;
+    writeDrainCheckpoint(path, { v: 1, offset: size, size });
+
+    expect(listFlushingInDir(dir, "orgA")).toEqual([
+      expect.objectContaining({ lineCount: 0, oldestCapturedAt: undefined, sampled: false }),
+    ]);
+  });
+
+  it("keeps the bounded-sample lower bound when sampling from a checkpoint", () => {
+    const moves = Array.from({ length: 2_000 }, (_, index) =>
+      sampleMove(`PostToolUse-${String(index)}`, index + 1),
+    );
+    const path = join(dir, "journal.ndjson.flushing.1.11");
+    writeFlushing("journal.ndjson.flushing.1.11", ...moves);
+    writeDrainCheckpoint(path, {
+      v: 1,
+      offset: lineBytes(...moves.slice(0, 1_000)),
+      size: statSync(path).size,
+    });
+
+    const sample = sampleJournalFile(path, 1_024, { fromDrainCheckpoint: true });
+    expect(sample.sampled).toBe(true);
+    expect(sample.sampledBytes).toBe(1_024);
+    expect(sample.lineCount).toBeGreaterThan(0);
+    expect(sample.lineCount).toBeLessThan(1_000);
+    expect(sample.oldestCapturedAt).toBe(1_001);
+    // Live journals and checkpoint-unaware callers still sample from byte 0.
+    expect(sampleJournalFile(path, 1_024).oldestCapturedAt).toBe(1);
+  });
+});
+
+describe("journal enumeration around drain checkpoints", () => {
+  const originalEnv = { ...process.env };
+  let configDir: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    configDir = mkdtempSync(join(tmpdir(), "prim-journal-progress-"));
+    process.env = {
+      ...originalEnv,
+      PRIM_API_URL: "https://api.example.test",
+      PRIM_CONFIG_DIR: configDir,
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it("reports pending stats past the delivered prefix and lists no checkpoint", async () => {
+    const journal = await import("./journal.js");
+    const progress = await import("./drain-progress.js");
+    journal.appendMove(sampleMove("Live", 9_000), "org_a");
+    const live = journal.journalPath("org_a");
+    const rotation = `${live}.flushing.1700000000000.4242`;
+    const delivered = sampleMove("Delivered", 1_000);
+    for (const move of [delivered, sampleMove("Pending", 5_000), sampleMove("Later", 7_000)]) {
+      journal.appendMoveToPath(rotation, move);
+    }
+    progress.writeDrainCheckpoint(rotation, {
+      v: 1,
+      offset: lineBytes(delivered),
+      size: statSync(rotation).size,
+    });
+    // A bucket holding only an orphaned checkpoint is not a bucket or rotation.
+    const orphan = join(dirname(journal.journalPath("org_b")), "journal.ndjson.flushing.1.2");
+    progress.writeDrainCheckpoint(orphan, { v: 1, offset: 0, size: 0 });
+
+    expect(journal.listBuckets()).toEqual([{ bucket: "org_a", path: live }]);
+    expect(journal.listFlushing().map((file) => file.path)).toEqual([rotation]);
+    expect(journal.pendingJournalStats()).toEqual({
+      pendingCount: 3,
+      oldestPendingAt: 5_000,
+      strandedCount: 2,
+      strandedFileCount: 1,
+      sampled: false,
+      strandedSampled: false,
+    });
+
+    journal.sweepOrphanedDrainProgress();
+    expect(existsSync(progress.drainProgressPath(orphan))).toBe(false);
+    expect(existsSync(progress.drainProgressPath(rotation))).toBe(true);
   });
 });
 
