@@ -22,6 +22,7 @@ import { journalNeedsFlush } from "../flusher.js";
 import { envSlug } from "../journal.js";
 import { binFile, packageVersion } from "./bin-path.js";
 import { processIsAlive } from "./process-liveness.js";
+import { unattendedEnv } from "./unattended.js";
 
 type SpawnedProcess = {
   once(event: "error", listener: (error: Error) => void): unknown;
@@ -123,7 +124,9 @@ export function startBackgroundFlush(options: BackgroundFlushOptions = {}): bool
       // Ignored stdio matters as much as detaching: a child holding inherited
       // pipes would keep a caller that captures them (spawnSync) waiting.
       // windowsHide keeps the detached child from opening a console window.
-      { detached: true, stdio: "ignore", windowsHide: true },
+      // The child is unattended even when its parent is not: `doctor` or
+      // `statusline` must not reach the daemon drift heal through its drain.
+      { detached: true, stdio: "ignore", windowsHide: true, env: unattendedEnv() },
     );
     // An asynchronous spawn failure (EAGAIN, EMFILE) is emitted as an event;
     // unhandled, it would crash the command this drain must never affect.

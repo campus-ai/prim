@@ -23,6 +23,7 @@ import {
 import { flush } from "../flusher.js";
 import { daemonOwnsDrain, startBackgroundFlush } from "./background-flush.js";
 import { processIsAlive } from "./process-liveness.js";
+import { UNATTENDED_ENV } from "./unattended.js";
 
 vi.mock("../flusher.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../flusher.js")>()),
@@ -55,7 +56,12 @@ describe("startBackgroundFlush", () => {
     expect(spawnProcess).toHaveBeenCalledWith(
       "/usr/bin/node",
       ["/pkg/dist/index.js", "moves", "flush"],
-      { detached: true, stdio: "ignore", windowsHide: true },
+      expect.objectContaining({
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: expect.objectContaining({ [UNATTENDED_ENV]: "1" }),
+      }),
     );
     expect(child.unref).toHaveBeenCalledOnce();
     // The invoking process never drains in-process, so it holds no lock,
