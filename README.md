@@ -238,8 +238,10 @@ installation.
 
 A supervised long-lived companion process that continuously drains captured
 Moves, accelerates decision-graph reads, and powers the "team: N online"
-presence count. `prim setup` requires it to become healthy unless the explicit
-`--no-daemon` opt-out is supplied; hooks still fail soft if it later degrades.
+presence count. `prim setup` requires it to be live on the current version with
+an authenticated, healthy heartbeat unless the explicit `--no-daemon` opt-out is
+supplied; Moves already queued before setup are reported as draining in the
+background rather than failing it. Hooks still fail soft if it later degrades.
 
 ```bash
 prim daemon start      # start (stop / restart / status)

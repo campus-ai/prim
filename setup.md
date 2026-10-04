@@ -67,7 +67,9 @@ fails, surface its actual error; never reinterpret that failure as requiring fre
 activation approval. `setup` is idempotent, so re-running is always safe. It exits
 0 on success and non-zero only if a **required** step failed. The daemon is required
 unless `--no-daemon` was supplied, so setup cannot report success while continuous
-delivery is down.
+delivery is down. Moves already queued before setup (for example, captured while
+auth had expired) are reported as draining in the background instead of failing
+it; delivery that is actively failing still makes setup incomplete.
 
 ### Auth — the one human touch
 
@@ -135,7 +137,7 @@ non-zero must NOT abort the run or retract the welcome), but run them so the use
 sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `cursor status` / `codex status` / `hermes status` to match your agent
-- `npx --yes @primitive.ai/prim@latest daemon status` — must report healthy unless setup used `--no-daemon`
+- `npx --yes @primitive.ai/prim@latest daemon status` — must report healthy unless setup used `--no-daemon`; while setup reported a backlog draining, it stays degraded with only `ingestion unhealthy` until the drain catches up
 - `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `cursor`/`codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude and Cursor, their native skill directories; for Codex and Hermes, the rules-file block)
 
 Add one line of setup specifics: where the skill landed (Claude's or Cursor's skill directory, or the agent's rules file), and

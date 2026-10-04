@@ -127,10 +127,14 @@ export function planSetupSteps(opts: {
   if (opts.daemon) {
     // Doctor must observe the final installed + enabled state. In particular,
     // setup cannot report success while a local core.hooksPath shadows Prim.
+    // A reinstall or re-auth can inherit Moves queued while capture was not
+    // delivering; they cannot have met the 30s SLA yet. --expect-backlog
+    // reports that backlog as draining, but only once the daemon is live,
+    // current, authenticated, and heartbeating; failing delivery still fails.
     steps.push({
       key: "health",
       label: "Capture health",
-      args: ["doctor"],
+      args: ["doctor", "--expect-backlog"],
       required: true,
     });
   }

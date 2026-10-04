@@ -7,6 +7,7 @@
  * (actionable, not broken), and the checks pass through verbatim for machine
  * consumers.
  */
+import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 import { stableHookCommand } from "../lib/bin-path.js";
 vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
@@ -28,6 +29,7 @@ import {
   classifyDoctor,
   classifyHermesHooks,
   classifyHookRuntime,
+  classifyJournal,
   classifyJournalOrganization,
   classifyManagedHook,
   classifyMovesStatus,
@@ -35,6 +37,7 @@ import {
   classifyRepositoryBinding,
   diagnoseRegisteredHookRuntime,
   refreshOwnedGlobalHooksForHealth,
+  registerDoctorCommands,
 } from "./doctor.js";
 import { refreshOwnedGlobalHooks } from "./hooks.js";
 
@@ -263,6 +266,196 @@ describe("daemon health diagnostics", () => {
         { service, expectedVersion: "1.2.3" },
       ).detail,
     ).toContain("malformed");
+  });
+});
+
+describe("setup's expected-backlog relaxation", () => {
+  const DAY_MS = 86_400_000;
+  const service = { loaded: true as const, pid: 42 };
+  const backlog = () => ({
+    pid: 42,
+    version: "1.2.3",
+    healthy: false,
+    needsReauth: false,
+    heartbeat: { healthy: true, consecutiveFailures: 0 },
+    ingestion: {
+      healthy: false,
+      consecutiveFailures: 0,
+      pendingCount: 1200,
+      pendingSampled: true,
+      oldestPendingAt: Date.now() - 52 * DAY_MS - 60_000,
+      strandedCount: 0,
+      lastAcknowledgedCount: 0,
+    },
+  });
+  const options = {
+    service,
+    expectedVersion: "1.2.3",
+    ingestionStatus: "enabled" as const,
+    backlogExpected: true,
+  };
+
+  it("reports a live, current, authenticated daemon that is merely behind as draining", () => {
+    expect(classifyDaemonHealth(backlog(), options)).toEqual({
+      name: "daemon",
+      status: "warn",
+      detail:
+        "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+    });
+  });
+
+  it("leaves standalone doctor failing the same backlog with its existing detail", () => {
+    expect(classifyDaemonHealth(backlog(), { ...options, backlogExpected: undefined })).toEqual({
+      name: "daemon",
+      status: "fail",
+      detail: "ingestion unhealthy · at least 1200 pending",
+    });
+  });
+
+  it("still fails ingestion that is failing rather than behind", () => {
+    const failing = backlog();
+    expect(
+      classifyDaemonHealth(
+        {
+          ...failing,
+          ingestion: { ...failing.ingestion, consecutiveFailures: 3, lastError: "HTTP 400" },
+        },
+        options,
+      ),
+    ).toEqual({
+      name: "daemon",
+      status: "fail",
+      detail: "ingestion unhealthy · at least 1200 pending — HTTP 400",
+    });
+  });
+
+  it("never relaxes terminal auth, heartbeat, version, or supervisor failures", () => {
+    expect(classifyDaemonHealth({ ...backlog(), needsReauth: true }, options)).toMatchObject({
+      status: "fail",
+      detail: "authentication ended — run `prim auth login`",
+    });
+    expect(
+      classifyDaemonHealth(
+        {
+          ...backlog(),
+          heartbeat: { healthy: false, consecutiveFailures: 2, lastError: "HTTP 503" },
+        },
+        options,
+      ),
+    ).toMatchObject({ status: "fail", detail: "heartbeat unhealthy — HTTP 503" });
+    expect(classifyDaemonHealth({ ...backlog(), version: "1.2.2" }, options)).toMatchObject({
+      status: "fail",
+      detail: expect.stringContaining("older"),
+    });
+    expect(
+      classifyDaemonHealth(backlog(), { ...options, service: { loaded: false } }),
+    ).toMatchObject({ status: "fail" });
+    expect(classifyDaemonHealth(null, options)).toMatchObject({ status: "fail" });
+  });
+
+  it("keeps every standalone journal verdict unchanged", () => {
+    const now = 1_800_000_000_000;
+    const stats = { strandedCount: 0, strandedFileCount: 0, strandedSampled: false };
+    expect(classifyJournal({ ...stats, pendingCount: 0, sampled: false }, now)).toEqual({
+      name: "journal",
+      status: "ok",
+      detail: "no pending moves",
+    });
+    expect(classifyJournal({ ...stats, pendingCount: 0, sampled: true }, now)).toEqual({
+      name: "journal",
+      status: "fail",
+      detail: "bounded journal sample could not prove the queue is empty",
+    });
+    expect(classifyJournal({ ...stats, pendingCount: 3, sampled: false }, now)).toEqual({
+      name: "journal",
+      status: "fail",
+      detail: "3 pending with no readable capture timestamp",
+    });
+    expect(
+      classifyJournal(
+        { ...stats, pendingCount: 1200, sampled: true, oldestPendingAt: now - 52 * DAY_MS },
+        now,
+      ),
+    ).toEqual({
+      name: "journal",
+      status: "fail",
+      detail: "at least 1200 pending, oldest observed 4492800s — 30s delivery SLA missed",
+    });
+    expect(
+      classifyJournal(
+        { ...stats, pendingCount: 4, sampled: true, oldestPendingAt: now - 1_000 },
+        now,
+      ),
+    ).toEqual({
+      name: "journal",
+      status: "fail",
+      detail: "at least 4 pending in bounded sample; 30s delivery SLA cannot be proven",
+    });
+    expect(
+      classifyJournal(
+        { ...stats, pendingCount: 4, sampled: false, oldestPendingAt: now - 1_000 },
+        now,
+      ),
+    ).toEqual({ name: "journal", status: "ok", detail: "4 pending, draining" });
+  });
+
+  it("reports backlog size and age as draining, but not an unreadable queue", () => {
+    const now = 1_800_000_000_000;
+    const stats = { strandedCount: 0, strandedFileCount: 0, strandedSampled: false };
+    const expected = { backlogExpected: true };
+    expect(
+      classifyJournal(
+        { ...stats, pendingCount: 1200, sampled: true, oldestPendingAt: now - 52 * DAY_MS },
+        now,
+        expected,
+      ),
+    ).toEqual({
+      name: "journal",
+      status: "warn",
+      detail: "at least 1200 pending moves (oldest 52d) — draining in the background",
+    });
+    expect(classifyJournal({ ...stats, pendingCount: 0, sampled: true }, now, expected)).toEqual({
+      name: "journal",
+      status: "warn",
+      detail: "an unknown number of pending moves — draining in the background",
+    });
+    expect(
+      classifyJournal({ ...stats, pendingCount: 3, sampled: false }, now, expected),
+    ).toMatchObject({ status: "fail", detail: "3 pending with no readable capture timestamp" });
+  });
+
+  it("lets setup's doctor pass a draining machine that standalone doctor fails", () => {
+    const now = Date.now();
+    const stats = {
+      pendingCount: 1200,
+      sampled: true,
+      oldestPendingAt: now - 52 * DAY_MS,
+      strandedCount: 0,
+      strandedFileCount: 0,
+      strandedSampled: false,
+    };
+    const otherChecks = [ok("auth"), warn("stranded"), ok("journal-org"), ok("connectivity")];
+    const standalone = classifyDoctor([
+      classifyDaemonHealth(backlog(), { ...options, backlogExpected: false }),
+      classifyJournal(stats, now),
+      ...otherChecks,
+    ]);
+    const setup = classifyDoctor([
+      classifyDaemonHealth(backlog(), options),
+      classifyJournal(stats, now, { backlogExpected: true }),
+      ...otherChecks,
+    ]);
+    expect(standalone).toMatchObject({ json: { status: "fail" }, exitCode: 1 });
+    expect(setup).toMatchObject({ json: { ok: true, status: "warn" }, exitCode: 0 });
+  });
+
+  it("exposes the relaxation only as a hidden flag", () => {
+    const program = new Command();
+    registerDoctorCommands(program);
+    const doctor = program.commands.find((command) => command.name() === "doctor");
+    const option = doctor?.options.find((candidate) => candidate.long === "--expect-backlog");
+    expect(option?.hidden).toBe(true);
+    expect(doctor?.helpInformation()).not.toContain("--expect-backlog");
   });
 });
 

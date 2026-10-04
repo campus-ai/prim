@@ -146,6 +146,14 @@ describe("planSetupSteps", () => {
     });
     expect(steps.at(-1)?.key).toBe("health");
   });
+
+  it("health runs doctor with the setup-only expected-backlog relaxation, still required", () => {
+    const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "user" });
+    expect(steps.find((s) => s.key === "health")).toMatchObject({
+      args: ["doctor", "--expect-backlog"],
+      required: true,
+    });
+  });
 });
 
 describe("planCleanupUninstalls", () => {
@@ -474,6 +482,68 @@ describe("registerSetupCommand", () => {
     expect(doctor).toBeGreaterThan(enable);
     expect(welcome).toBeGreaterThan(doctor);
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  describe("with a journal backlog queued before setup (PRI-68)", () => {
+    // Exit codes mirror the real subcommands on such a machine: `daemon start`
+    // succeeds once the daemon is live/authenticated/heartbeating, and doctor
+    // passes only in setup's expected-backlog mode (standalone it exits 1 on
+    // the missed 30s SLA). Their verdicts are pinned in daemon.start.spec.ts
+    // and doctor.spec.ts; this pins setup's wiring of them.
+    function backlogMachine(daemonStartCode: number, setupDoctorCode: number) {
+      const calls: string[][] = [];
+      const note = vi.fn();
+      const exit = vi.fn();
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) => {
+          calls.push(args);
+          if (args[0] === "auth" && args[1] === "status") {
+            return { code: 0, stdout: '{"status":"valid"}' };
+          }
+          if (args[0] === "daemon" && args[1] === "start") {
+            return { code: daemonStartCode, stdout: "" };
+          }
+          if (args[0] === "doctor") {
+            return { code: args.includes("--expect-backlog") ? setupDoctorCode : 1, stdout: "" };
+          }
+          return { code: 0, stdout: "" };
+        },
+        note,
+        exit,
+      });
+      return { calls, note, exit, program };
+    }
+
+    it("completes while the backlog drains in the background", async () => {
+      const { calls, note, exit, program } = backlogMachine(0, 0);
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project"], {
+        from: "user",
+      });
+
+      expect(calls).toContainEqual(["daemon", "start"]);
+      expect(calls).toContainEqual(["doctor", "--expect-backlog"]);
+      expect(note).toHaveBeenCalledWith(
+        expect.stringMatching(/^setup complete — .*daemon:ok.*health:ok/u),
+      );
+      expect(exit).toHaveBeenCalledWith(0);
+    });
+
+    it("still fails when the daemon cannot become ready (re-auth, version skew, heartbeat)", async () => {
+      // `daemon start` exits 2 for those causes, and doctor's daemon check
+      // fails them even with --expect-backlog.
+      const { note, exit, program } = backlogMachine(2, 1);
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project"], {
+        from: "user",
+      });
+
+      expect(note).toHaveBeenCalledWith(
+        expect.stringMatching(/setup incomplete \(failed: daemon, health\)/u),
+      );
+      expect(exit).toHaveBeenCalledWith(1);
+    });
   });
 
   it("--no-daemon activates only after every project cleanup during user-scope migration", async () => {

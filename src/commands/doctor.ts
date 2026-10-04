@@ -14,7 +14,7 @@
  */
 
 import { existsSync } from "node:fs";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import {
   type AuthCredential,
   HttpError,
@@ -33,7 +33,12 @@ import {
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
 import { type RetainedJournalBucket, inspectJournalDelivery } from "../journal-organization.js";
-import { listBuckets, listFlushing, pendingJournalStats } from "../journal.js";
+import {
+  type PendingJournalStats,
+  listBuckets,
+  listFlushing,
+  pendingJournalStats,
+} from "../journal.js";
 import {
   decisionIngestionStatus,
   isRepoActiveForCapture,
@@ -65,6 +70,7 @@ import {
   inspectHookRuntimeResolutions as cursorHookRuntimeResolutions,
   performStatus as cursorStatus,
 } from "./cursor-install.js";
+import { daemonDrainingSummary, formatPendingBacklog } from "./daemon.js";
 import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
@@ -97,6 +103,14 @@ export type DaemonDoctorSnapshot = {
   heartbeat?: DaemonHeartbeatHealth;
   ingestion?: DaemonIngestionHealth;
 };
+
+/**
+ * Setup-only relaxation (`prim doctor --expect-backlog`). Right after an
+ * install or re-auth, Moves captured while capture was not delivering are
+ * expected to still be queued; the daemon drains them in the background, so a
+ * missed delivery SLA is reported, not failed. Standalone doctor never sets it.
+ */
+export type DoctorOptions = { backlogExpected?: boolean };
 
 export type MovesStatus = {
   captureState: "enabled" | "disabled";
@@ -176,7 +190,7 @@ export function classifyDaemonHealth(
     service?: LaunchdService;
     ingestionStatus?: "enabled" | "disabled";
     expectedVersion?: string | null;
-  } = {},
+  } & DoctorOptions = {},
 ): Check {
   if (options.disabled) {
     return {
@@ -270,6 +284,18 @@ export function classifyDaemonHealth(
     };
   }
   if (!snapshot.ingestion?.healthy) {
+    // Every check above passed, so this daemon is live, owned, current, and
+    // authenticated, and it owns the drain. An expected backlog is reported;
+    // ingestion that is failing rather than merely behind still fails.
+    const draining = daemonDrainingSummary(snapshot.ingestion);
+    if (options.backlogExpected && draining && snapshot.ingestion?.consecutiveFailures === 0) {
+      const ingestionStatus = options.ingestionStatus ?? decisionIngestionStatus(process.cwd());
+      return {
+        name: "daemon",
+        status: "warn",
+        detail: `supervised and live${snapshot.version ? ` · v${snapshot.version}` : ""} · Decision ingestion ${ingestionStatus} · ${draining}`,
+      };
+    }
     const pending = snapshot.ingestion?.pendingCount ?? 0;
     const pendingLabel = snapshot.ingestion?.pendingSampled
       ? `at least ${String(pending)}`
@@ -291,7 +317,7 @@ export function classifyDaemonHealth(
   };
 }
 
-async function checkDaemon(): Promise<Check> {
+async function checkDaemon(options: DoctorOptions): Promise<Check> {
   let service: LaunchdService | undefined;
   if (process.platform === "darwin") {
     try {
@@ -314,47 +340,61 @@ async function checkDaemon(): Promise<Check> {
     disabled: daemonExplicitlyDisabled(),
     service,
     expectedVersion: packageVersion(),
+    backlogExpected: options.backlogExpected,
   });
 }
 
-function checkJournal(): Check {
-  const stats = pendingJournalStats();
+export function classifyJournal(
+  stats: PendingJournalStats,
+  now: number,
+  options: DoctorOptions = {},
+): Check {
   const pending = stats.pendingCount;
   const pendingLabel = stats.sampled ? `at least ${String(pending)}` : String(pending);
+  // Size and age are the backlog conditions an expected backlog may relax;
+  // the daemon check independently proves something is draining it.
+  const backlog = (detail: string): Check =>
+    options.backlogExpected
+      ? {
+          name: "journal",
+          status: "warn",
+          detail: `${formatPendingBacklog(
+            {
+              pendingCount: pending,
+              pendingSampled: stats.sampled,
+              oldestPendingAt: stats.oldestPendingAt,
+            },
+            now,
+          )} — draining in the background`,
+        }
+      : { name: "journal", status: "fail", detail };
   if (pending === 0) {
     if (stats.sampled) {
-      return {
-        name: "journal",
-        status: "fail",
-        detail: "bounded journal sample could not prove the queue is empty",
-      };
+      return backlog("bounded journal sample could not prove the queue is empty");
     }
     return { name: "journal", status: "ok", detail: "no pending moves" };
   }
   if (stats.oldestPendingAt === undefined) {
-    return {
-      name: "journal",
-      status: "fail",
-      detail: `${pendingLabel} pending with no readable capture timestamp`,
-    };
+    const detail = `${pendingLabel} pending with no readable capture timestamp`;
+    // Only a bounded sample can hide every timestamp; a fully read queue
+    // without one is unreadable, not merely behind, and stays a failure.
+    return stats.sampled ? backlog(detail) : { name: "journal", status: "fail", detail };
   }
-  const oldestMs = Date.now() - stats.oldestPendingAt;
+  const oldestMs = now - stats.oldestPendingAt;
   const oldestS = Math.round(oldestMs / MS_PER_SECOND);
   if (oldestMs > STALE_PENDING_MS) {
-    return {
-      name: "journal",
-      status: "fail",
-      detail: `${pendingLabel} pending, oldest observed ${String(oldestS)}s — 30s delivery SLA missed`,
-    };
+    return backlog(
+      `${pendingLabel} pending, oldest observed ${String(oldestS)}s — 30s delivery SLA missed`,
+    );
   }
   if (stats.sampled) {
-    return {
-      name: "journal",
-      status: "fail",
-      detail: `${pendingLabel} pending in bounded sample; 30s delivery SLA cannot be proven`,
-    };
+    return backlog(`${pendingLabel} pending in bounded sample; 30s delivery SLA cannot be proven`);
   }
   return { name: "journal", status: "ok", detail: `${String(pending)} pending, draining` };
+}
+
+function checkJournal(options: DoctorOptions): Check {
+  return classifyJournal(pendingJournalStats(), Date.now(), options);
 }
 
 function checkStranded(): Check {
@@ -924,13 +964,13 @@ export function refreshOwnedGlobalHooksForHealth(): void {
   }
 }
 
-async function collectChecks(): Promise<Check[]> {
+async function collectChecks(options: DoctorOptions): Promise<Check[]> {
   refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
   return [
     checkAuth(),
-    await checkDaemon(),
-    checkJournal(),
+    await checkDaemon(options),
+    checkJournal(options),
     checkStranded(),
     await checkJournalOrganization(),
     checkFeedbackHooks(),
@@ -948,8 +988,8 @@ function icon(status: CheckStatus): string {
   return status === "ok" ? "✓" : status === "warn" ? "⚠" : "✗";
 }
 
-async function runDoctor(): Promise<void> {
-  const checks = await collectChecks();
+async function runDoctor(options: DoctorOptions): Promise<void> {
+  const checks = await collectChecks(options);
   const { json, exitCode } = classifyDoctor(checks);
 
   const headline =
@@ -971,7 +1011,9 @@ export function registerDoctorCommands(program: Command): void {
     .description(
       "Check capture and feedback health end to end (auth, supervisor, delivery, server)",
     )
-    .action(async () => {
-      await runDoctor();
+    // Passed only by `prim setup`; see DoctorOptions.
+    .addOption(new Option("--expect-backlog").hideHelp())
+    .action(async (opts: { expectBacklog?: boolean }) => {
+      await runDoctor({ backlogExpected: opts.expectBacklog === true });
     });
 }
