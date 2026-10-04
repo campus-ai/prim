@@ -40,6 +40,7 @@ import {
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
+import { deliveryBacklogState, deliveryBacklogSummary } from "../lib/delivery-backlog.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
 import { processIsAlive } from "../lib/process-liveness.js";
@@ -70,10 +71,6 @@ const READY_POLL_MS = 100;
 const READY_PROBE_TIMEOUT_MS = 250;
 const READY_SNAPSHOT_TIMEOUT_MS = 30_000;
 const READY_SNAPSHOT_POLL_MS = 250;
-const MS_PER_SECOND = 1000;
-const MS_PER_MINUTE = 60 * MS_PER_SECOND;
-const MS_PER_HOUR = 60 * MS_PER_MINUTE;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
 const EXIT_OK = 0;
 const EXIT_NOT_RUNNING = 2;
 // Pidfile alive but the socket isn't answering yet — booting (or wedged),
@@ -82,63 +79,26 @@ const EXIT_BOOTING = 3;
 
 type DecisionIngestionStatus = ReturnType<typeof decisionIngestionStatus>;
 
-type PendingBacklog = Pick<
-  DaemonIngestionHealth,
-  "pendingCount" | "pendingSampled" | "oldestPendingAt"
->;
-
-/** Coarse age for an operator line: a weeks-old backlog reads "52d", not seconds. */
-function formatBacklogAge(ageMs: number): string {
-  if (ageMs >= MS_PER_DAY) return `${String(Math.floor(ageMs / MS_PER_DAY))}d`;
-  if (ageMs >= MS_PER_HOUR) return `${String(Math.floor(ageMs / MS_PER_HOUR))}h`;
-  if (ageMs >= MS_PER_MINUTE) return `${String(Math.floor(ageMs / MS_PER_MINUTE))}m`;
-  return `${String(Math.max(0, Math.floor(ageMs / MS_PER_SECOND)))}s`;
-}
+const VERIFIED_PREFIX = "[prim] ✓ ";
 
 /**
- * Describe a pending-Move backlog. A sampled count is a lower bound, so it
- * keeps the same "at least N" wording as the degraded reason and doctor; a
- * zero count from a sample or a failed scan is unknown rather than empty.
+ * Append Decision ingestion and, for a daemon behind its delivery SLA, the
+ * shared backlog clause. A ready daemon whose delivery the daemon has
+ * recorded as failing still started (start does not gate on delivery), but
+ * its line must not read as all-clear, so its verdict becomes a warning.
  */
-export function formatPendingBacklog(backlog: PendingBacklog, now: number = Date.now()): string {
-  const count = backlog.pendingCount;
-  const moves =
-    count > 0
-      ? `${backlog.pendingSampled ? "at least " : ""}${String(count)} pending move${count === 1 ? "" : "s"}`
-      : "an unknown number of pending moves";
-  const age =
-    backlog.oldestPendingAt === undefined
-      ? ""
-      : ` (oldest ${formatBacklogAge(now - backlog.oldestPendingAt)})`;
-  return `${moves}${age}`;
-}
-
-/**
- * The ready-but-behind line. The daemon owns the durable journal drain, so a
- * backlog — even weeks of Moves captured while auth was dead — is progress to
- * report once the daemon is ready, not a reason to fail start. The last error
- * is included only while delivery attempts are failing, not merely behind.
- */
-export function daemonDrainingSummary(
-  ingestion: DaemonIngestionHealth | undefined,
-  now: number = Date.now(),
-): string | undefined {
-  if (ingestion?.healthy !== false) return undefined;
-  const error =
-    ingestion.consecutiveFailures > 0 ? boundedHealthError(ingestion.lastError) : undefined;
-  return `draining ${formatPendingBacklog(ingestion, now)} in the background${
-    error ? ` · last ingestion error: ${error}` : ""
-  }`;
-}
-
 export function formatDaemonLifecycleMessage(
   message: string,
   decisionIngestion: DecisionIngestionStatus,
   snapshot?: Pick<StatusSnapshot, "ingestion"> | null,
   now: number = Date.now(),
 ): string {
-  const draining = daemonDrainingSummary(snapshot?.ingestion, now);
-  return `${message} · Decision ingestion ${decisionIngestion}${draining ? ` · ${draining}` : ""}`;
+  const backlog = deliveryBacklogSummary(snapshot?.ingestion, now);
+  const verdict =
+    deliveryBacklogState(snapshot?.ingestion) === "failing" && message.startsWith(VERIFIED_PREFIX)
+      ? `[prim] ⚠ ${message.slice(VERIFIED_PREFIX.length)}`
+      : message;
+  return `${verdict} · Decision ingestion ${decisionIngestion}${backlog ? ` · ${backlog}` : ""}`;
 }
 
 function formatCurrentDaemonLifecycleMessage(
@@ -274,8 +234,10 @@ export interface ReadySnapshotOptions {
  * Poll until the expected-version daemon is start-ready (see
  * daemonStartIsReady) or the deadline elapses; returns the last snapshot so a
  * failure can name its cause. needsReauth is polled rather than returned
- * early: setup logs in immediately before `daemon start`, and an already
- * running daemon only leaves its re-auth hold on its next token check.
+ * early: setup logs in immediately before `daemon start`, which finds an
+ * already running expected-version daemon and does not restart it. That
+ * daemon leaves its re-auth hold while serving one of these status reads and
+ * heartbeats at once, so the window only has to cover that first heartbeat.
  */
 export async function waitForReadySnapshot(
   expectedVersion: string,
@@ -330,18 +292,24 @@ export function daemonStartIsReady(
   return snapshot.heartbeat?.healthy === true && snapshot.ingestion?.healthy === false;
 }
 
-/** Additive JSON for a ready daemon that is still working through a backlog. */
-function daemonDrainingFields(snapshot: StatusSnapshot | null): Record<string, unknown> {
-  return snapshot?.ingestion?.healthy === false
-    ? { draining: true, ingestion: snapshot.ingestion }
-    : {};
+/**
+ * Additive JSON for a ready daemon behind its delivery SLA: `draining` while
+ * no delivery failure is recorded, `deliveryFailing` once one is. A daemon
+ * within its SLA adds nothing, so healthy JSON stays byte-identical.
+ */
+function daemonBacklogFields(snapshot: StatusSnapshot | null): Record<string, unknown> {
+  const state = deliveryBacklogState(snapshot?.ingestion);
+  if (!state) return {};
+  return state === "draining"
+    ? { draining: true, ingestion: snapshot?.ingestion }
+    : { draining: false, deliveryFailing: true, ingestion: snapshot?.ingestion };
 }
 
 export function daemonStartHealthFields(
   ready: boolean,
   snapshot: StatusSnapshot | null,
 ): Record<string, unknown> {
-  if (ready) return daemonDrainingFields(snapshot);
+  if (ready) return daemonBacklogFields(snapshot);
   return {
     state: "degraded",
     needsReauth: snapshot?.needsReauth === true,
@@ -380,7 +348,7 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
       );
       console.log(
         JSON.stringify(
-          { started: false, pid: existing.pid, ...daemonDrainingFields(snapshot) },
+          { started: false, pid: existing.pid, ...daemonBacklogFields(snapshot) },
           null,
           2,
         ),
@@ -447,17 +415,13 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
   if (live) {
     const after = readPidfile();
     // Readiness here is the socket alone; one best-effort snapshot only lets
-    // the line say when a pre-existing backlog is still draining.
+    // the line report a backlog that is still draining or failing.
     const snapshot = await requestStatusSnapshot();
     process.stderr.write(
       `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon started (pid=${after?.pid ?? "?"}, socket=${SOCK_PATH})`, snapshot)}\n`,
     );
     console.log(
-      JSON.stringify(
-        { started: true, pid: after?.pid, ...daemonDrainingFields(snapshot) },
-        null,
-        2,
-      ),
+      JSON.stringify({ started: true, pid: after?.pid, ...daemonBacklogFields(snapshot) }, null, 2),
     );
     return;
   }
@@ -590,6 +554,12 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
     process.stderr.write(
       `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon ${verb} under launchd (pid=${snapshot?.pid ?? servicePid ?? "?"})`, snapshot)}\n`,
     );
+  } else if (!(serviceReady && expectedVersion)) {
+    // No snapshot was polled: launchd itself never ran the desired daemon.
+    process.stderr.write(
+      `[prim] ✗ launchd did not converge on the desired daemon (${result.action}) (see ${LOG_PATH})\n`,
+    );
+    if (!process.exitCode) process.exitCode = EXIT_NOT_RUNNING;
   } else {
     const reason = daemonStartFailureReason(snapshot, expectedVersion);
     process.stderr.write(
@@ -607,8 +577,10 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
         loaded: result.service.loaded,
         responding: result.responding,
         // `healthy` keeps meaning "start succeeded" (always equal to `started`
-        // and the exit code) so existing consumers stay correct; a backlog
-        // still draining is reported additively via `draining` + `ingestion`.
+        // and the exit code) so existing consumers stay correct. It is not the
+        // daemon's own health: `daemon status --json` stays degraded while a
+        // backlog drains or delivery fails, which start reports additively via
+        // `draining`, `deliveryFailing`, and `ingestion`.
         healthy: ready,
         ...daemonStartHealthFields(ready, snapshot),
         version: snapshot?.version,
@@ -971,7 +943,7 @@ async function daemonEnsure(): Promise<CurrentDaemonEnsureResult> {
   }
   const result = await ensureMacDaemon();
   // Ensure never gated on health; one best-effort snapshot only lets the line
-  // say when a pre-existing backlog is still draining.
+  // report a backlog that is still draining or failing.
   const snapshot = result.state === "running" ? await requestStatusSnapshot() : null;
   if (result.state === "disabled") {
     process.stderr.write("[prim] daemon remains explicitly disabled\n");
@@ -990,7 +962,7 @@ async function daemonEnsure(): Promise<CurrentDaemonEnsureResult> {
         disabled: result.state === "disabled",
         supervised: true,
         action: result.action,
-        ...daemonDrainingFields(snapshot),
+        ...daemonBacklogFields(snapshot),
       },
       null,
       2,

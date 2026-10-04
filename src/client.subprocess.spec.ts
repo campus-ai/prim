@@ -145,11 +145,18 @@ async function eventuallyValue<T>(
   }
 }
 
-function runDaemonProcess(moduleUrl: string, home: string, apiUrl: string): RunningChild {
+function runDaemonProcess(
+  moduleUrl: string,
+  home: string,
+  apiUrl: string,
+  // The daemon's 60s token-check interval, compressed by default so tests do
+  // not wait on it. A test can stretch it to prove another path does the work.
+  tokenCheckIntervalMs = 20,
+): RunningChild {
   const source = `
     const nativeSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = (handler, delay, ...args) =>
-      nativeSetTimeout(handler, delay === 60000 ? 20 : delay, ...args);
+      nativeSetTimeout(handler, delay === 60000 ? ${String(tokenCheckIntervalMs)} : delay, ...args);
     await import(${JSON.stringify(moduleUrl)});
   `;
   const env = {
@@ -492,6 +499,92 @@ describe("daemon terminal-auth lifecycle", () => {
       expect(requestUrls).toContain("/api/cli/moves/ingest");
       expect(authorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
       expect(existsSync(pendingPath)).toBe(false);
+      expect(daemon.stderr()).toContain("re-authentication detected");
+    } finally {
+      if (daemon) {
+        daemon.kill();
+        await daemon.exited;
+      }
+      if (server.listening) await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+  it("leaves the hold on the first status read after a fresh login, then heartbeats promptly", async () => {
+    // `prim daemon start` right after setup's login finds the held daemon
+    // already running on the expected version, so nothing restarts it, and it
+    // waits only 30s for a healthy heartbeat. The token check that also resumes
+    // the hold runs every 60s; it is stretched to an hour here so only the
+    // status read can be what resumes it.
+    const home = mkdtempSync(join(tmpdir(), "prim-daemon-reauth-read-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    const socketPath = join(config, "sock");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "token"), "ended-access\n");
+    writeFileSync(join(config, "refresh_token"), "ended-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+    writeFileSync(
+      join(config, "refresh_terminal"),
+      `${createHash("sha256").update("ended-refresh").digest("hex")}\n`,
+    );
+
+    const heartbeatAuthorizations: Array<string | undefined> = [];
+    let networkCalls = 0;
+    const server = createServer((request, response) => {
+      networkCalls += 1;
+      request.resume();
+      if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
+        heartbeatAuthorizations.push(request.headers.authorization);
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({ accepted: true, lastHeartbeatAt: Date.now(), onlineCount: 1 }),
+        );
+        return;
+      }
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+    let daemon: RunningChild | undefined;
+
+    try {
+      const port = await listen(server);
+      await build({
+        entry: [join(process.cwd(), "src/daemon/server.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
+      daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`, 3_600_000);
+      await eventually(
+        () => existsSync(socketPath) && (statSync(socketPath).mode & 0o777) === 0o600,
+        () => `daemon socket was not secured: ${daemon?.stderr() ?? ""}`,
+      );
+      const held = await daemonRequest(socketPath, "status_snapshot");
+      expect(held.needsReauth).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(networkCalls).toBe(0);
+
+      writeFileSync(join(config, "refresh_token"), "fresh-refresh\n");
+      writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+      writeFileSync(join(config, "token"), "fresh-access\n");
+      unlinkSync(join(config, "refresh_terminal"));
+
+      const resumed = await daemonRequest(socketPath, "status_snapshot");
+      expect(resumed.needsReauth).toBe(false);
+      // The resumed heartbeat starts immediately, well inside start's window.
+      const heartbeating = await eventuallyValue(
+        () => daemonRequest(socketPath, "status_snapshot"),
+        (snapshot) => (snapshot.heartbeat as { healthy?: boolean } | undefined)?.healthy === true,
+        () => `daemon did not heartbeat after re-auth: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(heartbeating.needsReauth).toBe(false);
+      expect(heartbeatAuthorizations.length).toBeGreaterThan(0);
+      expect(heartbeatAuthorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
       expect(daemon.stderr()).toContain("re-authentication detected");
     } finally {
       if (daemon) {

@@ -240,8 +240,17 @@ A supervised long-lived companion process that continuously drains captured
 Moves, accelerates decision-graph reads, and powers the "team: N online"
 presence count. `prim setup` requires it to be live on the current version with
 an authenticated, healthy heartbeat unless the explicit `--no-daemon` opt-out is
-supplied; Moves already queued before setup are reported as draining in the
-background rather than failing it. Hooks still fail soft if it later degrades.
+supplied. Hooks still fail soft if it later degrades.
+
+`prim daemon start` (and `restart`/`ensure`) does not gate on delivery. While
+Moves are past the 30s delivery SLA it reports them as draining in the
+background if the daemon has recorded no delivery failure, and as delivery
+failing (a ⚠ warning, still exit 0) once it has; its JSON adds `draining`,
+`deliveryFailing`, and `ingestion` in those states. Start's JSON `healthy`
+means the start succeeded, so it can differ from `daemon status --json`, which
+stays degraded until the backlog drains. Setup's own health check reports any
+backlog the daemon is draining as a warning and fails on delivery failures the
+daemon has already recorded; standalone `prim doctor` still fails a missed SLA.
 
 ```bash
 prim daemon start      # start (stop / restart / status)
@@ -339,6 +348,10 @@ prim moves status         # Per-bucket pending stats for the local journal
 prim moves tail           # Pretty-print recent journal entries
 prim moves flush          # Drain the local journals to the server (also runs from hooks)
 ```
+
+Any other command except `uninstall` that finds Moves waiting over a minute (or
+cannot tell how long) hands them to a detached background `prim moves flush` and
+never waits for it.
 
 ### Skill
 

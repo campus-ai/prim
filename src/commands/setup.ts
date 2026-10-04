@@ -129,8 +129,9 @@ export function planSetupSteps(opts: {
     // setup cannot report success while a local core.hooksPath shadows Prim.
     // A reinstall or re-auth can inherit Moves queued while capture was not
     // delivering; they cannot have met the 30s SLA yet. --expect-backlog
-    // reports that backlog as draining, but only once the daemon is live,
-    // current, authenticated, and heartbeating; failing delivery still fails.
+    // reports any backlog as draining, but only once the daemon is live,
+    // current, authenticated, and heartbeating; delivery failures the daemon
+    // has already recorded still fail.
     steps.push({
       key: "health",
       label: "Capture health",

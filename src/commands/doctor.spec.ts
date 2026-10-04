@@ -20,12 +20,14 @@ import {
 } from "./claude-install.js";
 import {
   type Check,
+  type DeliveryProbe,
   type MovesStatus,
   classifyAuthCredential,
   classifyClaudeHooks,
   classifyCodexHooks,
   classifyCursorHooks,
   classifyDaemonHealth,
+  classifyDelivery,
   classifyDoctor,
   classifyHermesHooks,
   classifyHookRuntime,
@@ -447,6 +449,174 @@ describe("setup's expected-backlog relaxation", () => {
     ]);
     expect(standalone).toMatchObject({ json: { status: "fail" }, exitCode: 1 });
     expect(setup).toMatchObject({ json: { ok: true, status: "warn" }, exitCode: 0 });
+  });
+
+  describe("classifyDelivery", () => {
+    const NOW = 1_800_000_000_000;
+    const stats = (overrides: Partial<DeliveryProbe["stats"]> = {}) => ({
+      pendingCount: 1200,
+      sampled: true,
+      oldestPendingAt: NOW - 52 * DAY_MS,
+      strandedCount: 0,
+      strandedFileCount: 0,
+      strandedSampled: false,
+      ...overrides,
+    });
+    const probe = (overrides: Partial<DeliveryProbe> = {}): DeliveryProbe => ({
+      snapshot: backlog(),
+      service,
+      disabled: false,
+      expectedVersion: "1.2.3",
+      ingestionStatus: "enabled",
+      stats: stats(),
+      now: NOW,
+      ...overrides,
+    });
+
+    it("relaxes the journal only beside a daemon check that vouches for the drain", () => {
+      expect(classifyDelivery(probe(), { backlogExpected: true })).toEqual([
+        {
+          name: "daemon",
+          status: "warn",
+          detail:
+            "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+        },
+        {
+          name: "journal",
+          status: "warn",
+          detail: "at least 1200 pending moves (oldest 52d) — draining in the background",
+        },
+        { name: "stranded", status: "ok", detail: "none" },
+      ]);
+    });
+
+    it.each([
+      ["an unloaded launchd service", { service: { loaded: false as const } }],
+      ["an explicit stop", { disabled: true }],
+      ["an unavailable socket", { snapshot: null }],
+      ["an unqueryable launchd", { snapshot: null, launchdError: "launchctl exited 5" }],
+      [
+        "recorded delivery failures",
+        {
+          snapshot: {
+            ...backlog(),
+            ingestion: { ...backlog().ingestion, consecutiveFailures: 2, lastError: "HTTP 400" },
+          },
+        },
+      ],
+    ])("keeps the journal's own failure next to %s", (_label, overrides) => {
+      const [daemon, journal] = classifyDelivery(probe(overrides), { backlogExpected: true });
+
+      expect(daemon?.status).toBe("fail");
+      expect(journal).toEqual({
+        name: "journal",
+        status: "fail",
+        detail: "at least 1200 pending, oldest observed 4492800s — 30s delivery SLA missed",
+      });
+    });
+
+    it("reports the daemon's backlog from the same live scan as the journal check", () => {
+      // The daemon refreshes its own count only around its sweeps; one doctor
+      // run must not show two different backlogs.
+      const live = stats({ pendingCount: 40, sampled: false, oldestPendingAt: NOW - 3_600_000 });
+      const [daemon, journal] = classifyDelivery(probe({ stats: live }), {
+        backlogExpected: true,
+      });
+
+      expect(daemon?.detail).toContain("draining 40 pending moves (oldest 1h) in the background");
+      expect(journal?.detail).toBe("40 pending moves (oldest 1h) — draining in the background");
+      // Standalone doctor's failing daemon line reads the same scan too.
+      expect(classifyDelivery(probe({ stats: live }))[0]).toMatchObject({
+        status: "fail",
+        detail: "ingestion unhealthy · 40 pending",
+      });
+    });
+
+    it("says the backlog drained when the live scan is empty before the daemon's next sweep", () => {
+      const [daemon, journal] = classifyDelivery(
+        probe({ stats: stats({ pendingCount: 0, sampled: false, oldestPendingAt: undefined }) }),
+        { backlogExpected: true },
+      );
+
+      expect(daemon).toMatchObject({
+        status: "warn",
+        detail: expect.stringContaining(
+          "backlog drained; daemon health refreshes on its next sweep",
+        ),
+      });
+      expect(journal).toEqual({ name: "journal", status: "ok", detail: "no pending moves" });
+    });
+
+    it("leaves standalone doctor failing both checks", () => {
+      const [daemon, journal] = classifyDelivery(probe());
+
+      expect(daemon).toMatchObject({
+        status: "fail",
+        detail: "ingestion unhealthy · at least 1200 pending",
+      });
+      expect(journal?.status).toBe("fail");
+    });
+  });
+
+  it("wires --expect-backlog from the command line through to the delivery checks", async () => {
+    const NOW = Date.now();
+    const draining: DeliveryProbe = {
+      snapshot: backlog(),
+      service,
+      disabled: false,
+      expectedVersion: "1.2.3",
+      ingestionStatus: "enabled",
+      stats: {
+        pendingCount: 1200,
+        sampled: true,
+        oldestPendingAt: NOW - 52 * DAY_MS,
+        strandedCount: 0,
+        strandedFileCount: 0,
+        strandedSampled: false,
+      },
+      now: NOW,
+    };
+    async function doctor(argv: string[]) {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      process.exitCode = undefined;
+      try {
+        const program = new Command();
+        registerDoctorCommands(program, {
+          probes: {
+            delivery: async () => draining,
+            independent: async () => ({ before: [ok("auth")], after: [ok("connectivity")] }),
+          },
+        });
+        await program.parseAsync(argv, { from: "user" });
+        return {
+          json: JSON.parse(String(stdout.mock.calls.at(-1)?.[0])) as {
+            status: string;
+            checks: Check[];
+          },
+          exitCode: process.exitCode,
+        };
+      } finally {
+        stderr.mockRestore();
+        stdout.mockRestore();
+        process.exitCode = undefined;
+      }
+    }
+
+    const setup = await doctor(["doctor", "--expect-backlog"]);
+    const standalone = await doctor(["doctor"]);
+
+    expect(setup.json.status).toBe("warn");
+    expect(setup.exitCode).toBeUndefined();
+    expect(setup.json.checks.map((check) => [check.name, check.status])).toEqual([
+      ["auth", "ok"],
+      ["daemon", "warn"],
+      ["journal", "warn"],
+      ["stranded", "ok"],
+      ["connectivity", "ok"],
+    ]);
+    expect(standalone.json.status).toBe("fail");
+    expect(standalone.exitCode).toBe(1);
   });
 
   it("exposes the relaxation only as a hidden flag", () => {

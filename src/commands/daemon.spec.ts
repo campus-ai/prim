@@ -15,13 +15,11 @@ import {
   classifyLaunchdStatus,
   classifyStatus,
   daemonDegradedReason,
-  daemonDrainingSummary,
   daemonStartFailureReason,
   daemonStartHealthFields,
   daemonStartIsReady,
   formatDaemonLifecycleMessage,
   formatDaemonSnapshotMessage,
-  formatPendingBacklog,
   openDaemonLog,
   waitForReadySnapshot,
 } from "./daemon.js";
@@ -235,7 +233,7 @@ describe("daemonStartIsReady", () => {
     expect(daemonStartIsReady(true, { healthy: true, version: "1.2.3" }, undefined)).toBe(false);
   });
 
-  it("is ready while a large, sampled, or failing backlog is still draining", () => {
+  it("does not gate on delivery: ready while a backlog drains or its delivery fails", () => {
     expect(daemonStartIsReady(true, drainingSnapshot, "1.2.3")).toBe(true);
     expect(
       daemonStartIsReady(
@@ -347,6 +345,15 @@ describe("daemonStartHealthFields", () => {
     });
   });
 
+  it("reports recorded delivery failures distinctly from draining", () => {
+    const failing = { ...backlogIngestion, consecutiveFailures: 3, lastError: "HTTP 400" };
+    expect(daemonStartHealthFields(true, { ...drainingSnapshot, ingestion: failing })).toEqual({
+      draining: false,
+      deliveryFailing: true,
+      ingestion: failing,
+    });
+  });
+
   it("adds the complete degraded snapshot fields to unhealthy start JSON", () => {
     const heartbeat = { healthy: false, consecutiveFailures: 1, lastError: "HTTP 401" };
     const ingestion = {
@@ -441,57 +448,6 @@ describe("daemonStartFailureReason", () => {
       ),
     ).toBe("heartbeat unhealthy: HTTP 503");
     expect(daemonStartFailureReason(null, "1.2.3")).toBeUndefined();
-  });
-});
-
-describe("daemon draining summary", () => {
-  it("renders a sampled backlog as a lower bound with a coarse age", () => {
-    expect(daemonDrainingSummary(backlogIngestion, NOW)).toBe(
-      "draining at least 1200 pending moves (oldest 52d) in the background",
-    );
-  });
-
-  it("includes the bounded last error only while delivery attempts are failing", () => {
-    expect(
-      daemonDrainingSummary(
-        { ...backlogIngestion, consecutiveFailures: 3, lastError: "HTTP 504\n  gateway timeout" },
-        NOW,
-      ),
-    ).toBe(
-      "draining at least 1200 pending moves (oldest 52d) in the background · last ingestion error: HTTP 504 gateway timeout",
-    );
-    expect(daemonDrainingSummary({ ...backlogIngestion, lastError: "stale, resolved" }, NOW)).toBe(
-      "draining at least 1200 pending moves (oldest 52d) in the background",
-    );
-  });
-
-  it("is absent for healthy or missing ingestion", () => {
-    expect(daemonDrainingSummary(healthyIngestion, NOW)).toBeUndefined();
-    expect(daemonDrainingSummary(undefined, NOW)).toBeUndefined();
-  });
-
-  it("formats exact, singular, unknown, and sub-day backlogs", () => {
-    expect(
-      formatPendingBacklog(
-        { pendingCount: 1, pendingSampled: false, oldestPendingAt: NOW - 3 * 3_600_000 },
-        NOW,
-      ),
-    ).toBe("1 pending move (oldest 3h)");
-    expect(
-      formatPendingBacklog(
-        { pendingCount: 12, pendingSampled: false, oldestPendingAt: NOW - 125_000 },
-        NOW,
-      ),
-    ).toBe("12 pending moves (oldest 2m)");
-    expect(
-      formatPendingBacklog(
-        { pendingCount: 2, pendingSampled: false, oldestPendingAt: NOW + 5 },
-        NOW,
-      ),
-    ).toBe("2 pending moves (oldest 0s)");
-    expect(formatPendingBacklog({ pendingCount: 0, pendingSampled: true }, NOW)).toBe(
-      "an unknown number of pending moves",
-    );
   });
 });
 
@@ -593,6 +549,33 @@ describe("formatDaemonLifecycleMessage", () => {
       ),
     ).toBe(
       "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+    );
+  });
+
+  it("warns, and never says draining, while the daemon records delivery failures", () => {
+    const failing = {
+      ingestion: { ...backlogIngestion, consecutiveFailures: 3, lastError: "HTTP 504\n  gateway" },
+    };
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] ✓ daemon started under launchd (pid=4242)",
+        "enabled",
+        failing,
+        NOW,
+      ),
+    ).toBe(
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest 52d) in the background",
+    );
+    // A line with no verdict icon keeps its text; only the clause changes.
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] daemon already running (pid=4242)",
+        "enabled",
+        failing,
+        NOW,
+      ),
+    ).toBe(
+      "[prim] daemon already running (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest 52d) in the background",
     );
   });
 });

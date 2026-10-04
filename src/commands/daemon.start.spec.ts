@@ -172,10 +172,14 @@ describe("macOS daemon start readiness", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("adds the bounded last error when draining delivery attempts are failing", async () => {
-    mockDaemonRequest.mockResolvedValue(
-      backlogSnapshot({ consecutiveFailures: 4, lastError: "HTTP 504 from /api/cli/moves" }),
-    );
+  it("starts without gating on delivery, but labels recorded failures as failing", async () => {
+    // Start's readiness is the heartbeat (auth + connectivity); delivery is
+    // reported, not gated, so a failing drain still starts, with a warning.
+    const failing = backlogSnapshot({
+      consecutiveFailures: 4,
+      lastError: "HTTP 504 from /api/cli/moves",
+    });
+    mockDaemonRequest.mockResolvedValue(failing);
 
     const { stderr, json } = await run(["daemon", "restart"]);
 
@@ -183,10 +187,24 @@ describe("macOS daemon start readiness", () => {
       explicitlyStarted: true,
       forceRestart: true,
     });
-    expect(stderr).toContain(
-      "draining at least 1200 pending moves (oldest 52d) in the background · last ingestion error: HTTP 504 from /api/cli/moves",
+    expect(stderr).toBe(
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (4 consecutive failures): HTTP 504 from /api/cli/moves · retrying at least 1200 pending moves (oldest 52d) in the background\n",
     );
-    expect(json).toMatchObject({ started: true, healthy: true, draining: true });
+    expect(stderr).not.toContain("draining");
+    expect(json).toEqual({
+      started: true,
+      supervised: true,
+      action: "bootstrap",
+      pid: 4242,
+      loaded: true,
+      responding: true,
+      healthy: true,
+      draining: false,
+      deliveryFailing: true,
+      ingestion: failing.ingestion,
+      version: "1.2.3",
+      expectedVersion: "1.2.3",
+    });
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -219,9 +237,12 @@ describe("macOS daemon start readiness", () => {
       state: "unhealthy",
     } as Awaited<ReturnType<typeof ensureMacDaemon>>);
 
-    const { json } = await run(["daemon", "start"]);
+    const { stderr, json } = await run(["daemon", "start"]);
 
     expect(mockDaemonRequest).not.toHaveBeenCalled();
+    // Nothing was polled, so the line must not blame a heartbeat or version.
+    expect(stderr).toContain("[prim] ✗ launchd did not converge on the desired daemon (bootstrap)");
+    expect(stderr).not.toContain("heartbeat");
     expect(json).toMatchObject({ started: false, healthy: false, state: "degraded" });
     expect(process.exitCode).toBe(EXIT_NOT_RUNNING);
   });
@@ -243,6 +264,28 @@ describe("macOS daemon start readiness", () => {
       action: "none",
       draining: true,
       ingestion: draining.ingestion,
+    });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("reports an ensured daemon whose delivery is failing as failing, not draining", async () => {
+    const failing = backlogSnapshot({ consecutiveFailures: 2, lastError: "HTTP 400" });
+    mockEnsureMacDaemon.mockResolvedValue(runningResult("none"));
+    mockDaemonRequest.mockResolvedValue(failing);
+
+    const { stderr, json } = await run(["daemon", "ensure"]);
+
+    expect(stderr).toBe(
+      "[prim] ⚠ daemon ensured under launchd (none) · Decision ingestion enabled · delivery failing (2 consecutive failures): HTTP 400 · retrying at least 1200 pending moves (oldest 52d) in the background\n",
+    );
+    expect(json).toEqual({
+      ensured: true,
+      disabled: false,
+      supervised: true,
+      action: "none",
+      draining: false,
+      deliveryFailing: true,
+      ingestion: failing.ingestion,
     });
     expect(process.exitCode).toBeUndefined();
   });

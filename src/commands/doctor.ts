@@ -47,6 +47,13 @@ import {
 } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { type HookCommandResolution, packageVersion } from "../lib/bin-path.js";
+import {
+  MS_PER_SECOND,
+  type PendingBacklog,
+  deliveryBacklogState,
+  deliveryBacklogSummary,
+  formatPendingBacklog,
+} from "../lib/delivery-backlog.js";
 import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ManagedHookInspection,
@@ -70,7 +77,6 @@ import {
   inspectHookRuntimeResolutions as cursorHookRuntimeResolutions,
   performStatus as cursorStatus,
 } from "./cursor-install.js";
-import { daemonDrainingSummary, formatPendingBacklog } from "./daemon.js";
 import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
@@ -79,7 +85,6 @@ import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
-const MS_PER_SECOND = 1000;
 // User-facing durability contract: a captured Move should be durably ingested
 // within 30 seconds. The daemon uses the same threshold in its health state.
 const STALE_PENDING_MS = 30_000;
@@ -105,10 +110,15 @@ export type DaemonDoctorSnapshot = {
 };
 
 /**
- * Setup-only relaxation (`prim doctor --expect-backlog`). Right after an
- * install or re-auth, Moves captured while capture was not delivering are
- * expected to still be queued; the daemon drains them in the background, so a
- * missed delivery SLA is reported, not failed. Standalone doctor never sets it.
+ * Setup-only relaxation (`prim doctor --expect-backlog`). A reinstall or
+ * re-auth can inherit Moves that already missed the 30s delivery SLA, and only
+ * the daemon setup just started can drain them. When the daemon passes every
+ * other daemon check (supervised, owned, current, authenticated, heartbeating)
+ * and has recorded no delivery failure, its missed SLA and the journal backlog
+ * are warnings instead of failures. Any such backlog qualifies, however it
+ * arose. A delivery failure the daemon has already recorded still fails; one
+ * it has not recorded yet (a sweep still in flight, or one that bowed out to a
+ * concurrent drain) is not visible here. Standalone doctor never sets it.
  */
 export type DoctorOptions = { backlogExpected?: boolean };
 
@@ -190,6 +200,13 @@ export function classifyDaemonHealth(
     service?: LaunchdService;
     ingestionStatus?: "enabled" | "disabled";
     expectedVersion?: string | null;
+    /**
+     * A live journal scan. The daemon refreshes its own pending count and age
+     * only around its sweeps, so doctor reports the backlog from the same
+     * scan its journal check reads.
+     */
+    backlog?: PendingBacklog;
+    now?: number;
   } & DoctorOptions = {},
 ): Check {
   if (options.disabled) {
@@ -286,20 +303,27 @@ export function classifyDaemonHealth(
   if (!snapshot.ingestion?.healthy) {
     // Every check above passed, so this daemon is live, owned, current, and
     // authenticated, and it owns the drain. An expected backlog is reported;
-    // ingestion that is failing rather than merely behind still fails.
-    const draining = daemonDrainingSummary(snapshot.ingestion);
-    if (options.backlogExpected && draining && snapshot.ingestion?.consecutiveFailures === 0) {
+    // a delivery failure the daemon has recorded still fails.
+    if (options.backlogExpected && deliveryBacklogState(snapshot.ingestion) === "draining") {
       const ingestionStatus = options.ingestionStatus ?? decisionIngestionStatus(process.cwd());
+      const live = options.backlog;
+      // The live scan can find the queue empty before the daemon's next sweep
+      // refreshes its own count; that backlog is drained, not "unknown".
+      const progress =
+        live && live.pendingCount === 0 && live.pendingSampled !== true
+          ? "backlog drained; daemon health refreshes on its next sweep"
+          : deliveryBacklogSummary(snapshot.ingestion, options.now, live);
       return {
         name: "daemon",
         status: "warn",
-        detail: `supervised and live${snapshot.version ? ` · v${snapshot.version}` : ""} · Decision ingestion ${ingestionStatus} · ${draining}`,
+        detail: `supervised and live${snapshot.version ? ` · v${snapshot.version}` : ""} · Decision ingestion ${ingestionStatus} · ${progress}`,
       };
     }
-    const pending = snapshot.ingestion?.pendingCount ?? 0;
-    const pendingLabel = snapshot.ingestion?.pendingSampled
-      ? `at least ${String(pending)}`
-      : String(pending);
+    // Same scan as the journal check when one is supplied, so one doctor run
+    // never shows two different pending counts.
+    const counts = options.backlog ?? snapshot.ingestion;
+    const pending = counts?.pendingCount ?? 0;
+    const pendingLabel = counts?.pendingSampled ? `at least ${String(pending)}` : String(pending);
     return {
       name: "daemon",
       status: "fail",
@@ -317,17 +341,37 @@ export function classifyDaemonHealth(
   };
 }
 
-async function checkDaemon(options: DoctorOptions): Promise<Check> {
+/** The live inputs to the daemon, journal, and stranded checks. */
+export type DeliveryProbe = {
+  snapshot: DaemonDoctorSnapshot | null;
+  /** Set when launchd could not be queried; then nothing else was probed. */
+  launchdError?: string;
+  service?: LaunchdService;
+  disabled: boolean;
+  expectedVersion: string | null;
+  ingestionStatus?: "enabled" | "disabled";
+  /** One journal scan per doctor run, shared by every check that reports it. */
+  stats: PendingJournalStats;
+  now: number;
+};
+
+async function probeDelivery(): Promise<DeliveryProbe> {
+  const stats = pendingJournalStats();
+  const now = Date.now();
+  const disabled = daemonExplicitlyDisabled();
+  const expectedVersion = packageVersion();
   let service: LaunchdService | undefined;
   if (process.platform === "darwin") {
     try {
       service = getLaunchdService();
     } catch (error) {
-      const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
       return {
-        name: "daemon",
-        status: "fail",
-        detail: `launchd status unavailable${detail ? `: ${detail}` : ""}`,
+        snapshot: null,
+        launchdError: error instanceof Error ? error.message : String(error),
+        disabled,
+        expectedVersion,
+        stats,
+        now,
       };
     }
   }
@@ -336,12 +380,49 @@ async function checkDaemon(options: DoctorOptions): Promise<Check> {
     { callerEnv: getSiteUrl() },
     { timeoutMs: DAEMON_PROBE_TIMEOUT_MS },
   );
-  return classifyDaemonHealth(snapshot, {
-    disabled: daemonExplicitlyDisabled(),
-    service,
-    expectedVersion: packageVersion(),
-    backlogExpected: options.backlogExpected,
+  return { snapshot, service, disabled, expectedVersion, stats, now };
+}
+
+/**
+ * Whether a daemon check vouches for a background drain: it passed outright,
+ * or it is setup's expected-backlog warning. classifyDaemonHealth fails every
+ * other state, and then nothing is known to be draining the journal.
+ */
+function daemonCheckVouchesForDrain(check: Check): boolean {
+  return check.name === "daemon" && check.status !== "fail";
+}
+
+/** The daemon, journal, and stranded checks, in display order. */
+export function classifyDelivery(probe: DeliveryProbe, options: DoctorOptions = {}): Check[] {
+  const { stats, now } = probe;
+  const launchdDetail =
+    probe.launchdError === undefined ? undefined : boundedHealthError(probe.launchdError);
+  const daemon: Check =
+    probe.launchdError === undefined
+      ? classifyDaemonHealth(probe.snapshot, {
+          disabled: probe.disabled,
+          service: probe.service,
+          ingestionStatus: probe.ingestionStatus,
+          expectedVersion: probe.expectedVersion,
+          backlogExpected: options.backlogExpected,
+          backlog: {
+            pendingCount: stats.pendingCount,
+            pendingSampled: stats.sampled,
+            oldestPendingAt: stats.oldestPendingAt,
+          },
+          now,
+        })
+      : {
+          name: "daemon",
+          status: "fail",
+          detail: `launchd status unavailable${launchdDetail ? `: ${launchdDetail}` : ""}`,
+        };
+  // The journal backlog may be relaxed only while a vouched-for daemon owns
+  // its drain; next to a failed daemon check it is an undelivered queue.
+  const journal = classifyJournal(stats, now, {
+    backlogExpected: options.backlogExpected === true && daemonCheckVouchesForDrain(daemon),
   });
+  return [daemon, journal, classifyStranded(stats)];
 }
 
 export function classifyJournal(
@@ -393,12 +474,7 @@ export function classifyJournal(
   return { name: "journal", status: "ok", detail: `${String(pending)} pending, draining` };
 }
 
-function checkJournal(options: DoctorOptions): Check {
-  return classifyJournal(pendingJournalStats(), Date.now(), options);
-}
-
-function checkStranded(): Check {
-  const stats = pendingJournalStats();
+export function classifyStranded(stats: PendingJournalStats): Check {
   if (stats.strandedFileCount === 0 && !stats.strandedSampled) {
     return { name: "stranded", status: "ok", detail: "none" };
   }
@@ -964,32 +1040,50 @@ export function refreshOwnedGlobalHooksForHealth(): void {
   }
 }
 
-async function collectChecks(options: DoctorOptions): Promise<Check[]> {
+/**
+ * The probes behind doctor's checks. Only the delivery checks depend on
+ * DoctorOptions; the rest are grouped around them in display order.
+ */
+export type DoctorProbes = {
+  delivery: () => Promise<DeliveryProbe>;
+  independent: () => Promise<{ before: Check[]; after: Check[] }>;
+};
+
+async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
   refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
-  return [
-    checkAuth(),
-    await checkDaemon(options),
-    checkJournal(options),
-    checkStranded(),
-    await checkJournalOrganization(),
-    checkFeedbackHooks(),
-    ...checkAgentHooks(),
-    checkHookRuntime(),
-    await checkRepositoryBinding(),
-    checkManagedHook("post-commit", inspectEffectivePostCommitHook),
-    checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
-    ...backend,
-    await checkFeedbackCapability(),
-  ];
+  return {
+    before: [checkAuth()],
+    after: [
+      await checkJournalOrganization(),
+      checkFeedbackHooks(),
+      ...checkAgentHooks(),
+      checkHookRuntime(),
+      await checkRepositoryBinding(),
+      checkManagedHook("post-commit", inspectEffectivePostCommitHook),
+      checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
+      ...backend,
+      await checkFeedbackCapability(),
+    ],
+  };
+}
+
+const DEFAULT_DOCTOR_PROBES: DoctorProbes = {
+  delivery: probeDelivery,
+  independent: independentChecks,
+};
+
+async function collectChecks(options: DoctorOptions, probes: DoctorProbes): Promise<Check[]> {
+  const { before, after } = await probes.independent();
+  return [...before, ...classifyDelivery(await probes.delivery(), options), ...after];
 }
 
 function icon(status: CheckStatus): string {
   return status === "ok" ? "✓" : status === "warn" ? "⚠" : "✗";
 }
 
-async function runDoctor(options: DoctorOptions): Promise<void> {
-  const checks = await collectChecks(options);
+async function runDoctor(options: DoctorOptions, probes: DoctorProbes): Promise<void> {
+  const checks = await collectChecks(options, probes);
   const { json, exitCode } = classifyDoctor(checks);
 
   const headline =
@@ -1005,7 +1099,10 @@ async function runDoctor(options: DoctorOptions): Promise<void> {
   }
 }
 
-export function registerDoctorCommands(program: Command): void {
+export function registerDoctorCommands(
+  program: Command,
+  dependencies: { probes?: DoctorProbes } = {},
+): void {
   program
     .command("doctor")
     .description(
@@ -1014,6 +1111,9 @@ export function registerDoctorCommands(program: Command): void {
     // Passed only by `prim setup`; see DoctorOptions.
     .addOption(new Option("--expect-backlog").hideHelp())
     .action(async (opts: { expectBacklog?: boolean }) => {
-      await runDoctor({ backlogExpected: opts.expectBacklog === true });
+      await runDoctor(
+        { backlogExpected: opts.expectBacklog === true },
+        dependencies.probes ?? DEFAULT_DOCTOR_PROBES,
+      );
     });
 }

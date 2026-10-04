@@ -1,3 +1,4 @@
+import { deliveryBacklogState } from "./delivery-backlog.js";
 import { type Teammate, formatTeammates, formatTeammatesWithArea } from "./presence.js";
 
 export type DecisionIngestionStatus = "enabled" | "disabled";
@@ -24,7 +25,12 @@ export interface StatusSnapshot {
   principalMismatch?: boolean;
   healthy?: boolean;
   heartbeat?: { healthy?: boolean };
-  ingestion?: { healthy?: boolean; pendingCount?: number; pendingSampled?: boolean };
+  ingestion?: {
+    healthy?: boolean;
+    consecutiveFailures?: number;
+    pendingCount?: number;
+    pendingSampled?: boolean;
+  };
   needsReauth?: boolean;
 }
 
@@ -86,7 +92,15 @@ export function formatStatusline(
     if (snapshot.ingestion?.healthy === false) {
       const pending = snapshot.ingestion.pendingCount;
       const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
-      return `primitive ${version} (daemon: degraded · delivery: stalled${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""}${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
+      // The state `daemon start` reports as draining: heartbeating, behind its
+      // SLA, and no delivery failure recorded. Recorded failures, or a backlog
+      // without a healthy heartbeat, still read as stalled.
+      const delivery =
+        deliveryBacklogState(snapshot.ingestion) === "draining" &&
+        snapshot.heartbeat?.healthy === true
+          ? "draining"
+          : "stalled";
+      return `primitive ${version} (daemon: degraded · delivery: ${delivery}${typeof pending === "number" ? ` · ${qualifier}${String(pending)} pending` : ""}${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;
     }
     if (snapshot.heartbeat?.healthy === false) {
       return `primitive ${version} (daemon: degraded · presence: unavailable${repositorySuffix}${ingestionSuffix(ingestionStatus)})`;

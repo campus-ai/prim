@@ -3,7 +3,7 @@ import { UNINSTALL_ORCHESTRATOR_ENV } from "../commands/uninstall.js";
 import { runStartupBackgroundWork } from "./startup-background.js";
 
 function work() {
-  return { notify: vi.fn(), flush: vi.fn(async () => {}) };
+  return { notify: vi.fn(), flush: vi.fn() };
 }
 
 describe("runStartupBackgroundWork", () => {
@@ -36,4 +36,17 @@ describe("runStartupBackgroundWork", () => {
     expect(background.notify).toHaveBeenCalledOnce();
     expect(background.flush).not.toHaveBeenCalled();
   });
+
+  it.each([["claude", "preauth"], ["daemon", "start"], ["doctor"], ["moves", "status"]])(
+    "hands %s's opportunistic drain off synchronously, never awaiting it",
+    (...argv) => {
+      const background = work();
+
+      // Returning nothing (not a promise) is the contract: the command must not
+      // be able to wait on, or be kept alive by, the drain.
+      expect(runStartupBackgroundWork(argv, {}, background)).toBeUndefined();
+      expect(background.flush).toHaveBeenCalledOnce();
+      expect(background.flush).toHaveBeenCalledWith();
+    },
+  );
 });

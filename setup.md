@@ -66,10 +66,12 @@ around it); do not skip it and do not ask the user to run it. If enable or healt
 fails, surface its actual error; never reinterpret that failure as requiring fresh
 activation approval. `setup` is idempotent, so re-running is always safe. It exits
 0 on success and non-zero only if a **required** step failed. The daemon is required
-unless `--no-daemon` was supplied, so setup cannot report success while continuous
-delivery is down. Moves already queued before setup (for example, captured while
-auth had expired) are reported as draining in the background instead of failing
-it; delivery that is actively failing still makes setup incomplete.
+unless `--no-daemon` was supplied, so setup cannot report success while the daemon
+that delivers continuously is down. A delivery backlog the daemon is draining (any
+Moves past the 30s delivery SLA, for example ones captured while auth had expired)
+is reported as draining in the background instead of failing setup. Setup fails on
+delivery failures the daemon has already recorded; a failure it has not recorded
+yet is not visible to setup.
 
 ### Auth — the one human touch
 

@@ -696,17 +696,17 @@ export function shouldFlushPending(
   );
 }
 
-export async function flushIfNeeded(): Promise<void> {
+/**
+ * Whether an opportunistic drain should take the journal now. capturedAt
+ * measures how long a Move has actually waited. Journal mtime measures only
+ * the latest append and can postpone a continuously-written queue forever.
+ * Missing timestamps are flushed defensively rather than stranded; a scan that
+ * fails reports nothing to drain, since this check must never break a command.
+ */
+export function journalNeedsFlush(now: number = Date.now()): boolean {
   try {
-    const stats = pendingJournalStats();
-    // capturedAt measures how long a Move has actually waited. Journal mtime
-    // measures only the latest append and can postpone a continuously-written
-    // queue forever. Missing timestamps are flushed defensively rather than
-    // stranded.
-    if (shouldFlushPending(stats, Date.now())) {
-      await flush();
-    }
+    return shouldFlushPending(pendingJournalStats(), now);
   } catch {
-    // Opportunistic flush must never break a CLI command.
+    return false;
   }
 }

@@ -44,14 +44,14 @@ import { registerSkillCommands } from "./commands/skill.js";
 import { registerStatuslineCommands } from "./commands/statusline.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 import { registerWelcomeCommand } from "./commands/welcome.js";
-import { flushIfNeeded } from "./flusher.js";
+import { startBackgroundFlush } from "./lib/background-flush.js";
 import { runStartupBackgroundWork } from "./lib/startup-background.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf-8"));
 runStartupBackgroundWork(process.argv.slice(2), process.env, {
   notify: () => updateNotifier({ pkg }).notify(),
-  flush: () => flushIfNeeded(),
+  flush: () => startBackgroundFlush(),
 });
 
 const program = new Command();

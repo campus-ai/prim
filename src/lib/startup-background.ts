@@ -12,7 +12,7 @@ function commandArguments(argv: readonly string[]): readonly string[] {
 export function runStartupBackgroundWork(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
-  work: { notify: () => void; flush: () => Promise<void> },
+  work: { notify: () => void; flush: () => void },
 ): void {
   const [command, subcommand] = commandArguments(argv);
   const uninstall = command === "uninstall" || env[UNINSTALL_ORCHESTRATOR_ENV] === "1";
@@ -23,6 +23,7 @@ export function runStartupBackgroundWork(
 
   work.notify();
   // The explicit command drains directly; a concurrent opportunistic drain
-  // would be redundant. All other drains remain best-effort and non-blocking.
-  if (command !== "moves" || subcommand !== "flush") work.flush().catch(() => {});
+  // would be redundant. Every other command only hands an overdue journal to a
+  // detached drain, so the drain can never keep the command itself alive.
+  if (command !== "moves" || subcommand !== "flush") work.flush();
 }

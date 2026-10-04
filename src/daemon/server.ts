@@ -289,7 +289,7 @@ function enterReauthHold(): void {
 /**
  * Resume the loops once a fresh `prim auth login` has rotated in a new refresh
  * token (isSessionEnded() reverts to false on its own). Clears the failure
- * counters so backoff restarts clean.
+ * counters so backoff restarts clean, and starts the first heartbeat at once.
  */
 function exitReauthHold(): void {
   if (!reauthHold) {
@@ -301,6 +301,10 @@ function exitReauthHold(): void {
   daemonHealth.ingestion.consecutiveFailures = 0;
   daemonHealth.heartbeat.lastError = undefined;
   daemonHealth.ingestion.lastError = undefined;
+  // A success from before the hold proves nothing about the new login. With
+  // the failure count reset it would still read healthy for up to 90s, so
+  // heartbeat health waits for the resumed heartbeat below instead.
+  daemonHealth.heartbeat.lastSuccessAt = undefined;
   persistHealth();
   process.stderr.write(
     "[prim-daemon] re-authentication detected — resuming heartbeat + ingestion + Decision cache\n",
@@ -308,6 +312,19 @@ function exitReauthHold(): void {
   void sendHeartbeat();
   void runIngestionLoop();
   void runDecisionDigestLoop();
+}
+
+/**
+ * Leave the re-auth hold once a fresh login is visible. The token-check loop
+ * polls this every 60s, and status reads check it too: `prim daemon start`
+ * right after setup's login finds this daemon already running on the expected
+ * version, so nothing restarts it, and it waits only 30s for a healthy
+ * heartbeat. The check reads only local credential files.
+ */
+function resumeIfReauthenticated(): void {
+  if (reauthHold && !isSessionEnded() && resolveAuthCredential()) {
+    exitReauthHold();
+  }
 }
 
 async function takeOwnership(): Promise<void> {
@@ -637,6 +654,7 @@ function handleStatusSnapshot(
   caller?: DaemonRequestEnvelope["caller"],
   enforcePrincipal = false,
 ): StatusSnapshot {
+  resumeIfReauthenticated();
   const daemonPrincipal = synchronizeDaemonCredential();
   const wasHealthy = daemonHealth.healthy;
   const heartbeatWasHealthy = daemonHealth.heartbeat.healthy;
@@ -1002,9 +1020,7 @@ async function runTokenCheckLoop(): Promise<void> {
     // Held for re-auth: don't refresh a dead token. Watch for a fresh login —
     // isSessionEnded() flips false once the refresh token rotates — and resume
     // the halted loops when it does.
-    if (!isSessionEnded() && resolveAuthCredential()) {
-      exitReauthHold();
-    }
+    resumeIfReauthenticated();
   } else {
     await ensureTokenFresh();
     synchronizeDaemonCredential();
