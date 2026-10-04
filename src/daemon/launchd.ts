@@ -15,13 +15,16 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { binFile, stableHookCommand } from "../lib/bin-path.js";
+import { readBoundedRegularFile } from "../lib/bounded-file.js";
 import { withFileLock } from "../lib/file-lock.js";
+import { stableNodePath } from "../lib/hook-runtime.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { processIsAlive } from "../lib/process-liveness.js";
 import { compareSemver } from "../lib/semver.js";
@@ -45,6 +48,9 @@ const SERVICE_NOT_FOUND = 113;
 const TRANSITION_IN_PROGRESS = 5;
 const OUTPUT_LIMIT = 4_096;
 const DAEMON_DISABLED_CONTENT = "disabled by `prim daemon stop`\n";
+// Both are generated, single-screen files; anything larger is not Prim's.
+const LAUNCHER_MAX_BYTES = 64 * 1024;
+const PLIST_MAX_BYTES = 64 * 1024;
 
 export interface RuntimePathOptions {
   env?: NodeJS.ProcessEnv;
@@ -364,7 +370,10 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
   if (!daemonSource || !existsSync(daemonSource)) {
     throw new Error("cannot stage runtime: prim-daemon-server bundle is unavailable");
   }
-  const nodePath = resolve(options.nodePath ?? process.execPath);
+  // A version-stable PATH alias of the running node, as the hook runtime pins
+  // (stableNodePath): a versioned real path such as Homebrew's Cellar is
+  // deleted by an upgrade, leaving a launcher whose `exec` can never succeed.
+  const nodePath = resolve(options.nodePath ?? stableNodePath());
   const version = options.version ?? findPackageVersion(daemonSource);
   const desired: RuntimeManifest = {
     schemaVersion: RUNTIME_SCHEMA_VERSION,
@@ -540,13 +549,7 @@ export function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
 
   if (service && lstatIfPresent(service.plistPath)) {
     assertRegularFile(service.plistPath, "launchd property list");
-    const expected = generateLaunchAgentPlist({
-      launcherPath: control.launcher,
-      logPath,
-      workingDirectory: options.homeDir ?? homedir(),
-      label: options.label,
-    });
-    if (readFileSync(service.plistPath, "utf8") !== expected) {
+    if (readFileSync(service.plistPath, "utf8") !== ownedLaunchAgentPlist(options, logPath)) {
       throw new Error(
         `refusing to remove unrecognized launchd property list at ${service.plistPath}`,
       );
@@ -685,9 +688,32 @@ ${config.configDir ? `export PRIM_CONFIG_DIR=${shellQuote(config.configDir)}\n` 
   };
 }
 
+/** The LaunchAgent this config root's ensure writes, byte for byte. */
+function ownedLaunchAgentPlist(options: LaunchdPathOptions, logPath: string): string {
+  return generateLaunchAgentPlist({
+    launcherPath: daemonControlPaths(options).launcher,
+    logPath,
+    workingDirectory: options.homeDir ?? homedir(),
+    label: options.label,
+  });
+}
+
 function readDaemonLauncher(path: string): DaemonLauncherConfig | null {
+  return readDaemonLauncherFile(path)?.config ?? null;
+}
+
+/**
+ * Parse a self-verifying launcher. Every startup can reach this through the
+ * drift heal, so the read never follows a symlink, blocks on a FIFO, or
+ * reads an unbounded file; such a path holds no launcher.
+ */
+function readDaemonLauncherFile(
+  path: string,
+): { config: DaemonLauncherConfig; ownerUid: number } | null {
   try {
-    const content = readFileSync(path, "utf8");
+    const file = readBoundedRegularFile(path, LAUNCHER_MAX_BYTES);
+    if (!file) return null;
+    const content = file.text;
     const encoded = /^# prim-daemon-launcher: ([A-Za-z0-9_-]+)$/mu.exec(content)?.[1];
     if (!encoded) return null;
     const value = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Record<
@@ -714,7 +740,9 @@ function readDaemonLauncher(path: string): DaemonLauncherConfig | null {
       ...(typeof value.configDir === "string" ? { configDir: value.configDir } : {}),
     };
     const expected = generateDaemonLauncher(config);
-    return expected.revision === value.revision && expected.content === content ? config : null;
+    return expected.revision === value.revision && expected.content === content
+      ? { config, ownerUid: file.ownerUid }
+      : null;
   } catch {
     return null;
   }
@@ -1184,16 +1212,60 @@ export function setDaemonExplicitlyDisabled(
   atomicWrite(paths.disabledMarker, content, RUNTIME_FILE_MODE);
 }
 
+export interface SelectedDaemonLauncher {
+  runtimeVersion: string;
+  apiUrl?: string;
+  /** Owner of the launcher file; another account's launcher is not ours to replace. */
+  ownerUid: number;
+  /**
+   * Whether the node and daemon files it execs still exist. A Node upgrade or
+   * cleanup can delete a pinned node, after which launchd cannot run it.
+   */
+  runnable: boolean;
+}
+
+function launcherRunnable(config: DaemonLauncherConfig): boolean {
+  try {
+    accessSync(config.nodePath, constants.X_OK);
+    return statSync(config.daemonPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The runtime version and deployment the supervised launcher selects, read
- * from its self-verifying header. A plain file read with no launchctl or
- * socket probe, so every CLI startup can afford it.
+ * The runtime the supervised launcher selects, read from its self-verifying
+ * header. Bounded file reads and two stats, no launchctl or socket probe, so
+ * every CLI startup can afford it.
  */
 export function selectedDaemonLauncher(
   options: RuntimePathOptions = {},
-): { runtimeVersion: string; apiUrl?: string } | null {
-  const config = readDaemonLauncher(daemonControlPaths(options).launcher);
-  return config && { runtimeVersion: config.runtimeVersion, apiUrl: config.apiUrl };
+): SelectedDaemonLauncher | null {
+  const file = readDaemonLauncherFile(daemonControlPaths(options).launcher);
+  if (!file) return null;
+  const { config, ownerUid } = file;
+  return {
+    runtimeVersion: config.runtimeVersion,
+    ...(config.apiUrl ? { apiUrl: config.apiUrl } : {}),
+    ownerUid,
+    runnable: launcherRunnable(config),
+  };
+}
+
+/**
+ * Whether the per-user LaunchAgent is the one this config root's ensure
+ * writes, so launchd runs this root's launcher. The plist path is per user
+ * but the launcher is per config root: a command under another
+ * PRIM_CONFIG_DIR reads that root's launcher while launchd runs another one.
+ */
+export function launchAgentRunsConfigRoot(options: LaunchdPathOptions = {}): boolean {
+  try {
+    const service = launchdPaths(options);
+    const plist = readBoundedRegularFile(service.plistPath, PLIST_MAX_BYTES);
+    return plist?.text === ownedLaunchAgentPlist(options, service.logPath);
+  } catch {
+    return false;
+  }
 }
 
 /** Rate-limit record for attended drift healing; uninstall removes it with the daemon. */

@@ -25,6 +25,7 @@ import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
+import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
   type RewritePair,
@@ -190,9 +191,11 @@ function resolveCliVersion(): string {
 
 function spawnBackgroundFlush(): void {
   const entry = join(here, "..", "index.js");
+  // Marked unattended: a hook drain must not act as a person running prim.
   spawn(process.execPath, [entry, "moves", "flush"], {
     detached: true,
     stdio: "ignore",
+    env: unattendedEnv(),
   }).unref();
 }
 

@@ -5,32 +5,45 @@
  * setup` run `daemon ensure`, and SessionStart deliberately ensures the
  * version of its pinned hook runtime. A user who runs a newer CLI therefore
  * keeps an older daemon indefinitely, while `daemon status` and `doctor` only
- * report the drift. Any attended invocation of a newer CLI instead hands the
- * upgrade to a detached `daemon ensure` (the same idempotent, lock-serialized
- * path SessionStart uses) without delaying or altering the command itself.
+ * report the drift. An allowlisted, attended invocation of a newer CLI (see
+ * startup-background.ts) instead hands the upgrade to a detached `daemon
+ * ensure` (the same idempotent, lock-serialized path SessionStart uses)
+ * without delaying or altering the command itself.
+ *
+ * The same CLI also repairs a launcher at its own version that can no longer
+ * run. A launcher newer than the hook runtime (for example, one a heal
+ * installed) is retained by SessionStart's ensure, which refuses to downgrade
+ * it even after its pinned node has been deleted. An ensure at the
+ * launcher's own version restages it instead.
  */
-import { lstatSync, readFileSync } from "node:fs";
 import { getSiteUrlForEnvironment } from "../client.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { binFile, packageVersion } from "../lib/bin-path.js";
+import { binFile, packageRoot, packageVersion } from "../lib/bin-path.js";
+import { readBoundedRegularFile } from "../lib/bounded-file.js";
 import { compareSemver } from "../lib/semver.js";
 import { apiUrlsMatch } from "./env-binding.js";
 import {
+  type SelectedDaemonLauncher,
   daemonDriftHealMarkerPath,
   daemonExplicitlyDisabled,
+  launchAgentRunsConfigRoot,
   selectedDaemonLauncher,
 } from "./launchd.js";
 import { type DaemonEnsureOptions, kickDaemonEnsure } from "./self-heal.js";
 
 const ATTEMPT_MARKER_MODE = 0o600;
 const ATTEMPT_MARKER_MAX_BYTES = 1_024;
-// A failing ensure (launchctl refusal, corrupt incumbent, vanished bundle)
-// leaves the launcher older, so without this window every later command would
-// respawn the same failing child. Keying the window on the target version
+const PATH_SEPARATORS = /[\\/]/u;
+// Exactly "0" turns the heal off, like PRIM_BIN_CACHE=0 for the bin cache.
+export const DAEMON_DRIFT_HEAL_ENV = "PRIM_DAEMON_DRIFT_HEAL";
+// An ensure that fails before it rewrites the launcher (the runtime cannot be
+// staged, the lifecycle lock is held, the package vanished from an npx cache)
+// leaves the launcher as it was, so without this window every later command
+// would respawn the same failing child. Ensure rewrites the launcher before it
+// calls launchctl, so a launchctl refusal leaves the launcher current and the
+// version check alone stops retrying. Keying the window on the target version
 // still lets a newer CLI try at once.
 export const DAEMON_DRIFT_HEAL_RETRY_MS = 60 * 60 * 1_000;
-
-type SelectedLauncher = { runtimeVersion: string; apiUrl?: string };
 
 type DriftHealAttempt = { attemptedAt: number; fromVersion: string; toVersion: string };
 
@@ -39,17 +52,23 @@ export type DaemonDriftHealOptions = Omit<DaemonEnsureOptions, "latestBootstrap"
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   cliVersion?: string | null;
+  /** Root of the running package; a checkout outside node_modules never heals. */
+  packageRoot?: string | null;
+  /** Effective uid of this process. */
+  euid?: number;
   nowMs?: () => number;
-  selectedLauncher?: () => SelectedLauncher | null;
+  selectedLauncher?: () => SelectedDaemonLauncher | null;
+  /** Whether the per-user LaunchAgent runs the launcher this config root selects. */
+  launchAgentRunsConfigRoot?: () => boolean;
 };
 
 function readAttempt(path: string): DriftHealAttempt | null {
+  // Startup must never block on a FIFO or read an unbounded file here. An
+  // unusable record counts as absent and is atomically replaced below.
+  const file = readBoundedRegularFile(path, ATTEMPT_MARKER_MAX_BYTES);
+  if (!file) return null;
   try {
-    const metadata = lstatSync(path);
-    // Startup must never block on a FIFO or read an unbounded file here. An
-    // unusable record counts as absent and is atomically replaced below.
-    if (!metadata.isFile() || metadata.size > ATTEMPT_MARKER_MAX_BYTES) return null;
-    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const value = JSON.parse(file.text) as unknown;
     if (typeof value !== "object" || value === null) return null;
     const attempt = value as Partial<DriftHealAttempt>;
     return typeof attempt.attemptedAt === "number" &&
@@ -63,23 +82,44 @@ function readAttempt(path: string): DriftHealAttempt | null {
   }
 }
 
+/** A published install lives under node_modules (global, npx cache, or project). */
+function isInstalledPackage(root: string | null): boolean {
+  return root?.split(PATH_SEPARATORS).includes("node_modules") === true;
+}
+
+/**
+ * Strictly older, or the same version but no longer runnable. Equal and
+ * runnable needs nothing, and ensure itself retains a newer or incomparable
+ * runtime rather than downgrading it, so neither is ever healed from here.
+ */
+function needsHeal(launcher: SelectedDaemonLauncher, toVersion: string): boolean {
+  const order = compareSemver(launcher.runtimeVersion, toVersion);
+  return order === -1 || (order === 0 && !launcher.runnable);
+}
+
 function startDriftHeal(options: DaemonDriftHealOptions): boolean {
   // Only launchd supervision records a selected runtime. Elsewhere `daemon
   // ensure` merely starts a missing detached process and never replaces a live
   // one, so there is no drift it could repair.
   if ((options.platform ?? process.platform) !== "darwin") return false;
   const env = options.env ?? process.env;
+  if (env[DAEMON_DRIFT_HEAL_ENV] === "0") return false;
+  // A git checkout or `node dist/index.js` in a worktree is a development
+  // build: it must never replace the daemon a real install supervises.
+  const root = options.packageRoot === undefined ? packageRoot() : options.packageRoot;
+  if (!isInstalledPackage(root)) return false;
+  // Under sudo HOME can still name the user's tree, and a root-run ensure
+  // would leave root-owned launcher, plist, and runtime files in it.
+  const euid = options.euid ?? process.geteuid?.();
+  if (euid === undefined || euid === 0) return false;
   const paths = { env, homeDir: options.homeDir };
   // The child ensure honors an explicit stop too; checking first avoids a
   // pointless spawn on every command while the daemon is opted out.
   if (daemonExplicitlyDisabled(paths)) return false;
   const launcher = (options.selectedLauncher ?? (() => selectedDaemonLauncher(paths)))();
+  if (!launcher || launcher.ownerUid !== euid) return false;
   const toVersion = options.cliVersion === undefined ? packageVersion() : options.cliVersion;
-  // Strictly older only. Equal needs nothing, and ensure itself retains a
-  // newer or incomparable runtime rather than downgrading it.
-  if (!launcher || !toVersion || compareSemver(launcher.runtimeVersion, toVersion) !== -1) {
-    return false;
-  }
+  if (!(toVersion && needsHeal(launcher, toVersion))) return false;
   // Heal the version and nothing else. Ensure derives the daemon's deployment
   // from the inherited PRIM_API_URL, so a one-off command aimed at another
   // deployment must not silently retarget the daemon.
@@ -91,6 +131,11 @@ function startDriftHeal(options: DaemonDriftHealOptions): boolean {
   ) {
     return false;
   }
+  // Nor its config root: launchd runs one per-user LaunchAgent, and an ensure
+  // from another root would repoint it at that root's launcher.
+  const runsConfigRoot =
+    options.launchAgentRunsConfigRoot ?? (() => launchAgentRunsConfigRoot(paths));
+  if (!runsConfigRoot()) return false;
   // binFile and packageVersion resolve the same package root, so the child
   // ensures exactly toVersion, even from an npx cache.
   const primEntry = options.primEntry === undefined ? binFile("prim") : options.primEntry;
@@ -127,8 +172,9 @@ function startDriftHeal(options: DaemonDriftHealOptions): boolean {
 
 /**
  * Start a detached `daemon ensure` when the supervised launcher selects a
- * runtime strictly older than this CLI. Never throws, prints, or waits;
- * returns whether a child was started.
+ * runtime strictly older than this CLI, or one at this CLI's version that can
+ * no longer run. Never throws, prints, or waits; returns whether a child was
+ * started.
  */
 export function healDaemonDrift(options: DaemonDriftHealOptions = {}): boolean {
   try {

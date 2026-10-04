@@ -260,6 +260,17 @@ recorded without progress; standalone `prim doctor` still fails a missed SLA.
 prim daemon start      # start (stop / restart / status)
 ```
 
+Ordinary commands may upgrade an older daemon in the background. When an
+installed CLI runs an attended, allowlisted command (for example `auth`,
+`decisions`, `moves`, `skill`, or an agent's `install`/`status`) on macOS and
+finds the launchd daemon on an older version, or on its own version but unable
+to run (say, after a Node upgrade deleted the binary it pinned), it starts a
+detached `prim daemon ensure`, at most once an hour per target version. It
+never downgrades, never repoints the daemon at another deployment or config
+root, and never runs from hooks or their background drains, `daemon`,
+`doctor`, `setup`, removal commands, a development checkout, or as root. Set
+`PRIM_DAEMON_DRIFT_HEAL=0` to turn it off.
+
 ### Decisions
 
 Read and respond to the decision graph.

@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type EnsureMacDaemonOptions,
   type LaunchctlResult,
@@ -23,6 +23,7 @@ import {
   daemonDriftHealMarkerPath,
   daemonExplicitlyDisabled,
   ensureMacDaemon,
+  launchAgentRunsConfigRoot,
   launchdPaths,
   parseLaunchdService,
   removeDaemonRuntime,
@@ -310,6 +311,22 @@ describe("runtime staging", () => {
     expect(repinned.manifest.daemonSha256).toBe(sha256("same-version-new-bytes\n"));
   });
 
+  it("pins a version-stable PATH alias of the running node, not its versioned real path", () => {
+    // A launcher pinned to Homebrew's versioned Cellar path cannot exec once an
+    // upgrade deletes it; the PATH alias follows upgrades (as hook runtimes do).
+    const fake = new FakeLaunchd();
+    const bin = join(fake.root, "bin");
+    mkdirSync(bin);
+    symlinkSync(process.execPath, join(bin, "node"));
+    vi.stubEnv("PATH", bin);
+    try {
+      const staged = stageRuntime(fake.options({ version: "1.2.3", nodePath: undefined }));
+      expect(staged.manifest.nodePath).toBe(join(bin, "node"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("restages an otherwise-current schema-v2 runtime as schema v3", () => {
     const fake = new FakeLaunchd();
     const options = fake.options({ version: "1.2.3" });
@@ -519,15 +536,63 @@ describe("generated launchd contract", () => {
       version: "2.0.0",
       env: { ...fake.env, PRIM_API_URL: "https://api.test/" },
     });
+    const owner = statSync(fake.launcherPath).uid;
     expect(selectedDaemonLauncher(paths)).toEqual({
       runtimeVersion: "2.0.0",
       apiUrl: "https://api.test",
+      ownerUid: owner,
+      runnable: true,
     });
     await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
-    expect(selectedDaemonLauncher(paths)).toEqual({ runtimeVersion: "2.0.0" });
+    expect(selectedDaemonLauncher(paths)).toEqual({
+      runtimeVersion: "2.0.0",
+      ownerUid: owner,
+      runnable: true,
+    });
 
     writeFileSync(fake.launcherPath, `${readFileSync(fake.launcherPath, "utf8")}# edited\n`);
     expect(selectedDaemonLauncher(paths)).toBeNull();
+  });
+
+  it("reports a launcher whose node or daemon file is gone as not runnable", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(selectedDaemonLauncher(paths)?.runnable).toBe(true);
+
+    // A Node upgrade or cleanup deleting the pinned binary.
+    rmSync(fake.nodePath);
+    expect(selectedDaemonLauncher(paths)).toMatchObject({
+      runtimeVersion: "2.0.0",
+      runnable: false,
+    });
+  });
+
+  it("never follows a symlinked launcher", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    const real = `${fake.launcherPath}.real`;
+    writeFileSync(real, readFileSync(fake.launcherPath, "utf8"), { mode: 0o700 });
+    rmSync(fake.launcherPath);
+    symlinkSync(real, fake.launcherPath);
+
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+  });
+
+  it("knows whether the per-user LaunchAgent runs this config root's launcher", async () => {
+    const fake = new FakeLaunchd();
+    const own = { homeDir: fake.homeDir, env: fake.env, uid: UID, label: fake.label };
+    const other = { ...own, env: { ...fake.env, PRIM_CONFIG_DIR: join(fake.root, "other") } };
+    expect(launchAgentRunsConfigRoot(own)).toBe(false);
+
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(launchAgentRunsConfigRoot(own)).toBe(true);
+    // The plist is per user; another root's launcher is not what launchd runs.
+    expect(launchAgentRunsConfigRoot(other)).toBe(false);
+
+    writeFileSync(fake.paths.plistPath, `${readFileSync(fake.paths.plistPath, "utf8")}<!-- -->\n`);
+    expect(launchAgentRunsConfigRoot(own)).toBe(false);
   });
 });
 
