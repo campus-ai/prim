@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Move } from "./protocol/move.js";
 
@@ -10,6 +10,14 @@ function response(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+const workosBinding = {
+  authenticated: true,
+  organizationBindingVersion: 1,
+  captureAuthorityKind: "workos",
+  organizationId: "org_local",
+  workosOrganizationId: "org_workos",
+};
 
 function move(id: string): Move {
   return {
@@ -144,5 +152,101 @@ describe("credential-bound journal draining", () => {
     expect(calls).toHaveLength(2);
     expect(calls.every((call) => call.token === "Bearer token-a")).toBe(true);
     expect(journal.listFlushing({ sampleBytes: 0 })).toHaveLength(1);
+  });
+
+  it("sweeps a checkpoint orphaned between a rotation's unlink and its own", async () => {
+    const fetchMock = vi.fn(() => Promise.reject(new Error("no request expected")));
+    vi.stubGlobal("fetch", fetchMock);
+    const journal = await import("./journal.js");
+    const progress = await import("./drain-progress.js");
+    const { flush } = await import("./flusher.js");
+    const retired = join(dirname(journal.journalPath("org_local")), "journal.ndjson.flushing.1.2");
+    progress.writeDrainCheckpoint(retired, { v: 2, offset: 10, size: 10, ino: 1, dev: 1 });
+
+    await expect(flush()).resolves.toEqual({ flushed: 0, quarantined: 0 });
+    expect(existsSync(progress.drainProgressPath(retired))).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retires a fully checkpointed rotation that reports no pending move", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.endsWith("/api/cli/auth/status")) {
+          return Promise.resolve(response(workosBinding));
+        }
+        return Promise.reject(new Error("no ingest expected"));
+      }),
+    );
+    const journal = await import("./journal.js");
+    const progress = await import("./drain-progress.js");
+    const { flush, hasPendingDrainWork, shouldFlushPending } = await import("./flusher.js");
+    // A drain that died after acknowledging every line but before the unlink;
+    // this process's pid makes the rotation adoptable.
+    const rotation = `${journal.journalPath("org_local")}.flushing.1.${String(process.pid)}`;
+    journal.appendMoveToPath(rotation, move("delivered-a"));
+    journal.appendMoveToPath(rotation, move("delivered-b"));
+    const stat = statSync(rotation);
+    progress.writeDrainCheckpoint(rotation, {
+      v: 2,
+      offset: stat.size,
+      ...progress.rotationIdentity(stat),
+    });
+
+    const before = journal.pendingJournalStats();
+    expect(before).toMatchObject({ pendingCount: 0, strandedCount: 0, strandedFileCount: 1 });
+    // The daemon's and the opportunistic flusher's gates both see work.
+    expect(hasPendingDrainWork(before)).toBe(true);
+    expect(shouldFlushPending(before, Date.now())).toBe(true);
+
+    await expect(flush()).resolves.toEqual({ flushed: 0, quarantined: 0 });
+    expect(existsSync(rotation)).toBe(false);
+    expect(existsSync(progress.drainProgressPath(rotation))).toBe(false);
+    expect(urls.every((url) => url.endsWith("/api/cli/auth/status"))).toBe(true);
+    expect(hasPendingDrainWork(journal.pendingJournalStats())).toBe(false);
+  });
+
+  it("credits a sweep that fails partway and resumes it at the checkpoint", async () => {
+    const batchSizes: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith("/api/cli/auth/status")) {
+          return Promise.resolve(response(workosBinding));
+        }
+        const { batch } = JSON.parse(String(init?.body)) as { batch: unknown[] };
+        batchSizes.push(batch.length);
+        if (batchSizes.length === 2) {
+          return Promise.resolve(response({ error: "temporarily unavailable" }, 503));
+        }
+        return Promise.resolve(
+          response({
+            disposition: "persisted",
+            acknowledged: batch.length,
+            accepted: batch.length,
+          }),
+        );
+      }),
+    );
+    const journal = await import("./journal.js");
+    const { HttpError } = await import("./client.js");
+    const { FlushError, flush } = await import("./flusher.js");
+    for (let index = 0; index < 501; index += 1) {
+      journal.appendMove(move(`partial-${String(index)}`), "org_local");
+    }
+
+    const failure = await flush().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(FlushError);
+    // The first batch was acknowledged and checkpointed before the 503.
+    expect(failure).toMatchObject({ flushed: 500, quarantined: 0 });
+    expect((failure as Error).cause).toBeInstanceOf(HttpError);
+    expect((failure as Error).cause).toMatchObject({ status: 503 });
+
+    await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
+    expect(batchSizes).toEqual([500, 1, 1]);
+    expect(journal.listFlushing({ sampleBytes: 0 })).toEqual([]);
   });
 });

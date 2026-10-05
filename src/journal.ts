@@ -38,6 +38,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { getSiteUrl } from "./client.js";
+import {
+  drainResumeOffset,
+  rotationIdentity,
+  sweepOrphanedDrainCheckpoints,
+} from "./drain-progress.js";
 import { primConfigDirectory } from "./lib/paths.js";
 import type { Move } from "./protocol/move.js";
 
@@ -177,6 +182,8 @@ export type FlushingFile = {
   // a file a live drain still owns.
   pid: number | undefined;
   sizeBytes: number;
+  /** Bytes past the rotation's drain checkpoint: what is not yet delivered. */
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;
@@ -198,6 +205,8 @@ function oldestCapturedAt(moves: Move[]): number | undefined {
 
 export type JournalFileSample = {
   sizeBytes: number;
+  /** sizeBytes less any bytes a drain checkpoint marks as already delivered. */
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;
@@ -205,26 +214,34 @@ export type JournalFileSample = {
   sampledBytes: number;
 };
 
-/** Read only a fixed prefix; sampled line counts are explicit lower bounds. */
+/**
+ * Read only a fixed prefix; sampled line counts are explicit lower bounds. A
+ * rotation sampled `fromDrainCheckpoint` starts at its drain checkpoint, so the
+ * sample describes only moves that are not yet durably delivered.
+ */
 export function sampleJournalFile(
   path: string,
   maxBytes: number = JOURNAL_STATS_SAMPLE_BYTES,
+  options: { fromDrainCheckpoint?: boolean } = {},
 ): JournalFileSample {
   const fd = openSync(path, "r");
   try {
     const initial = fstatSync(fd);
-    const target = Math.min(initial.size, Math.max(0, maxBytes));
+    const start = options.fromDrainCheckpoint
+      ? drainResumeOffset(path, rotationIdentity(initial))
+      : 0;
+    const target = Math.min(initial.size - start, Math.max(0, maxBytes));
     const buffer = Buffer.allocUnsafe(target);
     let sampledBytes = 0;
     while (sampledBytes < target) {
-      const count = readSync(fd, buffer, sampledBytes, target - sampledBytes, sampledBytes);
+      const count = readSync(fd, buffer, sampledBytes, target - sampledBytes, start + sampledBytes);
       if (count === 0) {
         break;
       }
       sampledBytes += count;
     }
     const stat = fstatSync(fd);
-    const sampled = stat.size > sampledBytes;
+    const sampled = stat.size - start > sampledBytes;
     let content = buffer.subarray(0, sampledBytes).toString("utf-8");
     if (sampled) {
       // The prefix may end inside a UTF-8 sequence or JSON record. Only parse
@@ -236,6 +253,7 @@ export function sampleJournalFile(
     const moves = parseMoves(content);
     return {
       sizeBytes: stat.size,
+      pendingBytes: Math.max(0, stat.size - start),
       mtimeMs: stat.mtimeMs,
       lineCount: sampled && stat.size > 0 ? Math.max(1, lines.length) : lines.length,
       oldestCapturedAt: oldestCapturedAt(moves),
@@ -263,7 +281,9 @@ function parseFlushingPid(name: string): number | undefined {
  * it unit-tests without the real config tree. A `.flushing` file is left
  * behind whenever a drain dies between the journal→`.flushing` rename and the
  * unlink-on-success; nothing else enumerates them, so both `prim moves status`
- * and the recovery sweep read this.
+ * and the recovery sweep read this. Each rotation is sampled from its drain
+ * checkpoint, so its counts and age cover only moves still undelivered. The
+ * checkpoints themselves live in a subdirectory and are never listed here.
  */
 export function listFlushingInDir(
   dir: string,
@@ -287,7 +307,7 @@ export function listFlushingInDir(
       const path = join(dir, entry.name);
       let sample: JournalFileSample;
       try {
-        sample = sampleJournalFile(path, remainingBytes);
+        sample = sampleJournalFile(path, remainingBytes, { fromDrainCheckpoint: true });
       } catch (err) {
         // A concurrent drain may unlink the rotation between readdir and stat.
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -348,10 +368,29 @@ export function listFlushing(
   return out;
 }
 
+/**
+ * Drop drain checkpoints whose rotation is gone, for the CURRENT deployment's
+ * buckets — the env scope listFlushing recovers. Every bucket directory is
+ * visited, not only those with pending work, because a drain that died between
+ * retiring its rotation and its checkpoint may have left nothing else behind.
+ */
+export function sweepOrphanedDrainProgress(): void {
+  const envDir = currentEnvDir();
+  if (!existsSync(envDir)) {
+    return;
+  }
+  for (const entry of readdirSync(envDir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      sweepOrphanedDrainCheckpoints(join(envDir, entry.name));
+    }
+  }
+}
+
 export type BucketStats = {
   bucket: string;
   path: string;
   sizeBytes: number;
+  pendingBytes: number;
   mtimeMs: number;
   lineCount: number;
   oldestCapturedAt?: number;

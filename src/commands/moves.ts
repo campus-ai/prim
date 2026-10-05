@@ -83,8 +83,10 @@ export function registerMovesCommands(program: Command): void {
         );
       }
       if (stranded.length > 0) {
+        // A rotation is sampled past its drain checkpoint, so its moves and
+        // bytes count only what is still undelivered, not the whole file.
         const moveCount = stranded.reduce((n, f) => n + f.lineCount, 0);
-        const byteCount = stranded.reduce((n, f) => n + f.sizeBytes, 0);
+        const byteCount = stranded.reduce((n, f) => n + f.pendingBytes, 0);
         const sampled = stranded.some((file) => file.sampled);
         const qualifier = sampled ? "at least " : "";
         console.log(
@@ -95,7 +97,7 @@ export function registerMovesCommands(program: Command): void {
           const owner = f.pid === undefined ? "no pid" : `pid ${String(f.pid)}`;
           const count = `${String(f.lineCount)}${f.sampled ? "+" : ""}`;
           console.log(
-            `  ${f.bucket.padEnd(BUCKET_COL_WIDTH)} ${count.padStart(5)} stranded, ${String(f.sizeBytes).padStart(8)} bytes, ${String(ageS)}s ago (${owner})`,
+            `  ${f.bucket.padEnd(BUCKET_COL_WIDTH)} ${count.padStart(5)} stranded, ${String(f.pendingBytes).padStart(8)} bytes, ${String(ageS)}s ago (${owner})`,
           );
         }
       }
