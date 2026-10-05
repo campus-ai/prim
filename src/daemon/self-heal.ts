@@ -1,7 +1,11 @@
 import { type SpawnOptions, spawn } from "node:child_process";
 import { binFile } from "../lib/bin-path.js";
+import { unattendedEnv } from "../lib/unattended.js";
 
-type SpawnedProcess = { unref(): void };
+type SpawnedProcess = {
+  once(event: "error", listener: (error: Error) => void): unknown;
+  unref(): void;
+};
 type SpawnProcess = (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
 
 export type DaemonEnsureOptions = {
@@ -9,6 +13,12 @@ export type DaemonEnsureOptions = {
   primEntry?: string | null;
   nodeEntry?: string;
   spawnProcess?: SpawnProcess;
+  /**
+   * Follow the local ensure with the pinned registry revalidation. Defaults to
+   * the SessionStart behavior (macOS only). Attended drift healing opts out:
+   * the invoking CLI already holds the newer bytes locally.
+   */
+  latestBootstrap?: boolean;
 };
 
 /**
@@ -25,14 +35,19 @@ export function kickDaemonEnsure(options: DaemonEnsureOptions = {}): boolean {
 
   try {
     const args = [primEntry, "daemon", "ensure"];
-    if ((options.platform ?? process.platform) === "darwin") {
+    if (options.latestBootstrap ?? (options.platform ?? process.platform) === "darwin") {
       args.push("--latest-bootstrap");
     }
     const child = (options.spawnProcess ?? (spawn as SpawnProcess))(
       options.nodeEntry ?? process.execPath,
       args,
-      { detached: true, stdio: "ignore" },
+      // Unattended: neither SessionStart's repair nor a drift heal is a person
+      // running prim, so the child (and its descendants) never heal in turn.
+      { detached: true, stdio: "ignore", env: unattendedEnv() },
     );
+    // An asynchronous spawn failure (EAGAIN, EMFILE) is emitted as an event;
+    // unhandled, it would crash the hook or command that asked for the repair.
+    child.once("error", () => {});
     child.unref();
     return true;
   } catch {

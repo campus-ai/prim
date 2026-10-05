@@ -31,7 +31,13 @@ import { gitToplevel } from "../lib/git.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
-// Marks every one of setup's child steps.
+// Marks every one of setup's child steps. Setup starts or stops the daemon
+// itself, so none of its steps starts an implicit daemon upgrade. That is all
+// it guarantees. A separate attended command run while setup is in progress
+// can still start a heal, such as the `auth status --json` poll setup.md
+// suggests during a background setup. Such a heal is harmless: its ensure
+// serializes with setup's daemon step on the lifecycle lock, honors a stop,
+// and targets the same version when both run from the same package.
 export const SETUP_ORCHESTRATOR_ENV = "PRIM_SETUP_ORCHESTRATOR";
 // Marks setup's child steps only when setup starts the daemon. Setup then
 // checks the daemon's delivery health, so its children leave the journal

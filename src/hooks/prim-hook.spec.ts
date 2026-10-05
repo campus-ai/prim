@@ -19,8 +19,11 @@ const mocks = vi.hoisted(() => ({
   resolveRepositoryContext: vi.fn(),
   scrubFromCwd: vi.fn(),
   shouldFlushAfter: vi.fn(),
+  spawn: vi.fn(),
   toMove: vi.fn(),
 }));
+
+vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -145,6 +148,49 @@ describe("prim-hook debug output", () => {
     await runWithReadFailure("\u001b\u0007\u202e\u200b\u2066", true);
 
     expect(stderrWrites).toEqual(["[prim-hook] capture failed\n"]);
+  });
+});
+
+describe("prim-hook background drain", () => {
+  it("starts the session-terminal drain as an unattended child", async () => {
+    mockStdin({
+      payload: JSON.stringify({
+        hook_event_name: "PostToolUse",
+        session_id: "session-1",
+        tool_name: "Edit",
+        tool_input: { file_path: "src/a.ts" },
+        cwd: "/repo",
+      }),
+    });
+    const unref = vi.fn();
+    mocks.spawn.mockReturnValue({ unref });
+    mocks.readFileSync.mockReturnValue('{"version":"1.2.3"}');
+    mocks.parseAgent.mockReturnValue("claude_code");
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+    mocks.repoSyncId.mockReturnValue("repoSync123");
+    mocks.resolveRepositoryContext.mockReturnValue(null);
+    mocks.currentBranch.mockReturnValue("main");
+    mocks.getOrCreateWorkspaceId.mockReturnValue({ status: "not_git" });
+    mocks.cachedCollectScopeAdmits.mockReturnValue(true);
+    mocks.toMove.mockReturnValue({ sessionId: "session-1", eventType: "PostToolUse" });
+    mocks.scrubFromCwd.mockImplementation(async (payload: unknown) => payload);
+    mocks.resolveOrg.mockReturnValue({ orgId: "org-1" });
+    mocks.shouldFlushAfter.mockReturnValue(true);
+
+    await import("./prim-hook.js");
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+
+    // A hook drain must never act as a person running prim (no daemon heal).
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      process.execPath,
+      [expect.stringMatching(/index\.js$/u), "moves", "flush"],
+      {
+        detached: true,
+        stdio: "ignore",
+        env: expect.objectContaining({ PRIM_UNATTENDED: "1" }),
+      },
+    );
+    expect(unref).toHaveBeenCalledOnce();
   });
 });
 

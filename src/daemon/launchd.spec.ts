@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -7,6 +7,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -14,19 +16,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type EnsureMacDaemonOptions,
   type LaunchctlResult,
   type LaunchctlRunner,
   bootoutMacDaemon,
+  daemonDriftHealClaimPath,
+  daemonDriftHealMarkerPath,
   daemonExplicitlyDisabled,
   ensureMacDaemon,
+  launchAgentRunsConfigRoot,
   launchdPaths,
   parseLaunchdService,
   removeDaemonRuntime,
   runtimePaths,
   runtimeStatuslineCommand,
+  selectedDaemonLauncher,
   stageRuntime,
   withDaemonLifecycleLock,
 } from "./launchd.js";
@@ -308,6 +314,22 @@ describe("runtime staging", () => {
     expect(repinned.manifest.daemonSha256).toBe(sha256("same-version-new-bytes\n"));
   });
 
+  it("pins a version-stable PATH alias of the running node, not its versioned real path", () => {
+    // A launcher pinned to Homebrew's versioned Cellar path cannot exec once an
+    // upgrade deletes it; the PATH alias follows upgrades (as hook runtimes do).
+    const fake = new FakeLaunchd();
+    const bin = join(fake.root, "bin");
+    mkdirSync(bin);
+    symlinkSync(process.execPath, join(bin, "node"));
+    vi.stubEnv("PATH", bin);
+    try {
+      const staged = stageRuntime(fake.options({ version: "1.2.3", nodePath: undefined }));
+      expect(staged.manifest.nodePath).toBe(join(bin, "node"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("restages an otherwise-current schema-v2 runtime as schema v3", () => {
     const fake = new FakeLaunchd();
     const options = fake.options({ version: "1.2.3" });
@@ -507,6 +529,109 @@ describe("generated launchd contract", () => {
     expect(readFileSync(fake.paths.plistPath, "utf8")).toBe("known-good\n");
     expect(fake.lifecycleCommands()).toEqual([]);
   });
+  it("exposes the selected version and deployment only from a verified launcher", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+
+    await fake.ensure({
+      explicitlyStarted: true,
+      version: "2.0.0",
+      env: { ...fake.env, PRIM_API_URL: "https://api.test/" },
+    });
+    const owner = statSync(fake.launcherPath).uid;
+    expect(selectedDaemonLauncher(paths)).toEqual({
+      runtimeVersion: "2.0.0",
+      apiUrl: "https://api.test",
+      ownerUid: owner,
+      runnable: true,
+    });
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(selectedDaemonLauncher(paths)).toEqual({
+      runtimeVersion: "2.0.0",
+      ownerUid: owner,
+      runnable: true,
+    });
+
+    writeFileSync(fake.launcherPath, `${readFileSync(fake.launcherPath, "utf8")}# edited\n`);
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+  });
+
+  it("reports a launcher whose node or daemon file is gone as not runnable", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(selectedDaemonLauncher(paths)?.runnable).toBe(true);
+
+    // A Node upgrade or cleanup deleting the pinned binary.
+    rmSync(fake.nodePath);
+    expect(selectedDaemonLauncher(paths)).toMatchObject({
+      runtimeVersion: "2.0.0",
+      runnable: false,
+    });
+  });
+
+  it("never follows a symlinked launcher", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env };
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    const real = `${fake.launcherPath}.real`;
+    writeFileSync(real, readFileSync(fake.launcherPath, "utf8"), { mode: 0o700 });
+    rmSync(fake.launcherPath);
+    symlinkSync(real, fake.launcherPath);
+
+    expect(selectedDaemonLauncher(paths)).toBeNull();
+  });
+
+  it("knows whether the per-user LaunchAgent runs this config root's launcher", async () => {
+    const fake = new FakeLaunchd();
+    const own = { homeDir: fake.homeDir, env: fake.env, uid: UID, label: fake.label };
+    const other = { ...own, env: { ...fake.env, PRIM_CONFIG_DIR: join(fake.root, "other") } };
+    expect(launchAgentRunsConfigRoot(own)).toBe(false);
+
+    await fake.ensure({ explicitlyStarted: true, version: "2.0.0" });
+    expect(launchAgentRunsConfigRoot(own)).toBe(true);
+    // The plist is per user; another root's launcher is not what launchd runs.
+    expect(launchAgentRunsConfigRoot(other)).toBe(false);
+
+    // Only the label and program identify the agent, so a later CLI's template
+    // (here re-indented, with plutil's raw apostrophe and an added key) still
+    // names this root's launcher and an older daemon can still be healed.
+    const plist = readFileSync(fake.paths.plistPath, "utf8");
+    expect(plist).toContain("O&apos;Brien &amp; More");
+    const rewrite = (content: string) => {
+      writeFileSync(fake.paths.plistPath, content);
+      return launchAgentRunsConfigRoot(own);
+    };
+    expect(
+      rewrite(
+        plist
+          .replaceAll("&apos;", "'")
+          .replace(
+            "<key>RunAtLoad</key>",
+            "<key>LowPriorityIO</key>\n  <true/>\n  <key>RunAtLoad</key>",
+          )
+          .replaceAll("\n  ", "\n\t"),
+      ),
+    ).toBe(true);
+    // Another program, another label, an ambiguous duplicate, or a stray
+    // entity is not this root's agent.
+    expect(rewrite(plist.replace(/(<array>\s*<string>)[^<]*/u, "$1/elsewhere/launcher"))).toBe(
+      false,
+    );
+    expect(rewrite(plist.replace(`<string>${fake.label}</string>`, "<string>other</string>"))).toBe(
+      false,
+    );
+    expect(
+      rewrite(
+        plist.replace(
+          "<key>KeepAlive</key>",
+          `<key>Label</key>\n  <string>${fake.label}</string>\n  <key>KeepAlive</key>`,
+        ),
+      ),
+    ).toBe(false);
+    expect(rewrite(plist.replace("&amp;", "&#38;"))).toBe(false);
+  });
 });
 
 describe("launchd reconciliation", () => {
@@ -537,6 +662,107 @@ describe("launchd reconciliation", () => {
     const changed = await fake.ensure(change);
     expect(changed.action).toBe("kickstart");
     expect(fake.lifecycleCommands()).toEqual(["kickstart"]);
+  });
+  it("keeps one daemon across PATH contexts that name the same node differently", async () => {
+    // A terminal with the alias's directory on PATH pins the alias; an app
+    // launched from the Dock (launchd's default PATH) finds only node's real
+    // path. Alternating between them must neither restage nor restart.
+    const fake = new FakeLaunchd();
+    const bin = join(fake.root, "bin");
+    const empty = join(fake.root, "empty");
+    mkdirSync(bin);
+    mkdirSync(empty);
+    const alias = join(bin, "node");
+    symlinkSync(process.execPath, alias);
+    const releasesDir = runtimePaths(fake.options()).releasesDir;
+    try {
+      vi.stubEnv("PATH", bin);
+      expect(await fake.ensure({ explicitlyStarted: true, nodePath: undefined })).toMatchObject({
+        state: "running",
+        runtimeChanged: true,
+      });
+      expect(readLauncher(fake.launcherPath).nodePath).toBe(alias);
+      fake.clearCommands();
+
+      for (const path of [empty, bin, empty, bin]) {
+        vi.stubEnv("PATH", path);
+        expect(await fake.ensure({ nodePath: undefined })).toMatchObject({
+          state: "running",
+          action: "none",
+          runtimeChanged: false,
+        });
+        expect(readLauncher(fake.launcherPath).nodePath).toBe(alias);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(fake.lifecycleCommands()).toEqual([]);
+    expect(readdirSync(releasesDir)).toHaveLength(1);
+  });
+  it("moves a daemon pinned to node's real path to its alias once, never back", async () => {
+    const fake = new FakeLaunchd();
+    const cellar = join(fake.root, "Cellar", "node", "22.0.0", "bin", "node");
+    mkdirSync(dirname(cellar), { recursive: true });
+    writeFileSync(cellar, "#!/bin/sh\n", { mode: 0o700 });
+    const real = realpathSync(cellar);
+    const alias = join(fake.root, "bin", "node");
+    mkdirSync(dirname(alias));
+    symlinkSync(cellar, alias);
+    const releasesDir = runtimePaths(fake.options()).releasesDir;
+    await fake.ensure({ explicitlyStarted: true, nodePath: real });
+    fake.clearCommands();
+
+    // The alias survives a Node upgrade that deletes the real path, so it wins
+    // once; the real path never takes the launcher back.
+    expect(await fake.ensure({ nodePath: alias })).toMatchObject({
+      action: "kickstart",
+      runtimeChanged: true,
+    });
+    fake.clearCommands();
+    for (const nodePath of [real, alias, real]) {
+      expect(await fake.ensure({ nodePath })).toMatchObject({
+        action: "none",
+        runtimeChanged: false,
+      });
+      expect(readLauncher(fake.launcherPath).nodePath).toBe(alias);
+    }
+    expect(fake.lifecycleCommands()).toEqual([]);
+    expect(readdirSync(releasesDir)).toHaveLength(2);
+  });
+  it("restages a recorded node path that no longer resolves", async () => {
+    // A Node upgrade deletes the versioned real path and repoints the alias.
+    const fake = new FakeLaunchd();
+    const install = (version: string) => {
+      const path = join(fake.root, "Cellar", "node", version, "bin", "node");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "#!/bin/sh\n", { mode: 0o700 });
+      return realpathSync(path);
+    };
+    const old = install("22.0.0");
+    const alias = join(fake.root, "bin", "node");
+    mkdirSync(dirname(alias));
+    symlinkSync(old, alias);
+    await fake.ensure({ explicitlyStarted: true, nodePath: old });
+    fake.clearCommands();
+
+    rmSync(join(fake.root, "Cellar", "node", "22.0.0"), { recursive: true });
+    const upgraded = install("23.0.0");
+    rmSync(alias);
+    symlinkSync(upgraded, alias);
+
+    expect(await fake.ensure({ nodePath: upgraded })).toMatchObject({
+      action: "kickstart",
+      runtimeChanged: true,
+    });
+    expect(readLauncher(fake.launcherPath).nodePath).toBe(upgraded);
+    // A recorded alias that still resolves to the running node is kept.
+    await fake.ensure({ nodePath: alias });
+    fake.clearCommands();
+    expect(await fake.ensure({ nodePath: upgraded })).toMatchObject({
+      action: "none",
+      runtimeChanged: false,
+    });
+    expect(readLauncher(fake.launcherPath).nodePath).toBe(alias);
   });
   it("fences automatic downgrade, rejects a corrupt incumbent, and permits explicit downgrade", async () => {
     const fake = new FakeLaunchd();
@@ -818,6 +1044,16 @@ describe("removeDaemonRuntime", () => {
     mkdirSync(configDir, { recursive: true });
     const retained = join(configDir, "token");
     writeFileSync(retained, "credential\n");
+    const driftHealMarker = daemonDriftHealMarkerPath({ homeDir: fake.homeDir, env: fake.env });
+    writeFileSync(driftHealMarker, "{}\n");
+    // What a crash mid-heal leaves: an atomic write's temporary and a claim.
+    const temporary = `${driftHealMarker}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, "{}\n");
+    const claim = daemonDriftHealClaimPath({ homeDir: fake.homeDir, env: fake.env });
+    mkdirSync(claim);
+    writeFileSync(join(claim, "owner.json"), "{}\n");
+    const lookalike = `${driftHealMarker}.backup`;
+    writeFileSync(lookalike, "keep me\n");
 
     const result = await removeDaemonRuntime({
       homeDir: fake.homeDir,
@@ -828,7 +1064,30 @@ describe("removeDaemonRuntime", () => {
 
     expect(result.changed).toBe(true);
     expect(existsSync(staged.paths.runtimeDir)).toBe(false);
+    expect([driftHealMarker, temporary, claim].filter((path) => existsSync(path))).toEqual([]);
+    expect(readFileSync(lookalike, "utf8")).toBe("keep me\n");
     expect(readFileSync(retained, "utf8")).toBe("credential\n");
+  });
+
+  it("removes leftover drift-heal files alone, but not an unrecognized claim", async () => {
+    const fake = new FakeLaunchd();
+    const paths = { homeDir: fake.homeDir, env: fake.env, uid: fake.uid, label: fake.label };
+    const configDir = join(fake.homeDir, ".config", "prim");
+    mkdirSync(configDir, { recursive: true });
+    const temporary = `${daemonDriftHealMarkerPath(paths)}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, "{}\n");
+
+    expect(await removeDaemonRuntime(paths)).toMatchObject({ changed: true });
+    expect(existsSync(temporary)).toBe(false);
+
+    const claim = daemonDriftHealClaimPath(paths);
+    mkdirSync(claim);
+    writeFileSync(join(claim, "owner.json"), "{}\n");
+    writeFileSync(join(claim, "foreign.txt"), "keep me\n");
+    await expect(removeDaemonRuntime(paths)).rejects.toThrow(
+      "unrecognized daemon drift-heal claim",
+    );
+    expect(readFileSync(join(claim, "foreign.txt"), "utf8")).toBe("keep me\n");
   });
 
   it("retains daemon runtime bytes when ownership is ambiguous", async () => {

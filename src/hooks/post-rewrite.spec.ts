@@ -252,6 +252,12 @@ describe("runPostRewrite", () => {
       "org123",
     );
     expect(spawn).toHaveBeenCalledOnce();
+    // The hook drain is unattended, so it can never act as a person running prim.
+    expect(vi.mocked(spawn).mock.calls[0]?.[2]).toMatchObject({
+      detached: true,
+      stdio: "ignore",
+      env: expect.objectContaining({ PRIM_UNATTENDED: "1" }),
+    });
     expect(existsSync(path)).toBe(false);
   });
 

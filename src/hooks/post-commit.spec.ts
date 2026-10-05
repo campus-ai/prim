@@ -162,6 +162,13 @@ describe("runPostCommit", () => {
     expect(mockedResolveOrg).toHaveBeenCalledWith({ sessionId: "", cwd: "/repo" });
     expect(mockedAppendMove).toHaveBeenCalledWith(move, "org-1");
     expect(mockedSpawn).toHaveBeenCalledOnce();
+    // The hook drain is unattended, so it can never act as a person running prim.
+    expect(mockedSpawn.mock.calls[0]?.[1]).toEqual([expect.any(String), "moves", "flush"]);
+    expect(mockedSpawn.mock.calls[0]?.[2]).toMatchObject({
+      detached: true,
+      stdio: "ignore",
+      env: expect.objectContaining({ PRIM_UNATTENDED: "1" }),
+    });
     expect(unref).toHaveBeenCalledOnce();
     for (const call of mockedExecFileSync.mock.calls) {
       expect(call[2]).toEqual(expect.objectContaining({ timeout: 1_000 }));
