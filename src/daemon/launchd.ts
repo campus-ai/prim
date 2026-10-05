@@ -51,6 +51,11 @@ const DAEMON_DISABLED_CONTENT = "disabled by `prim daemon stop`\n";
 // Both are generated, single-screen files; anything larger is not Prim's.
 const LAUNCHER_MAX_BYTES = 64 * 1024;
 const PLIST_MAX_BYTES = 64 * 1024;
+const DRIFT_HEAL_MARKER = "daemon-drift-heal.json";
+// atomicWriteFile's temporary beside the marker, left behind by a crash.
+const DRIFT_HEAL_MARKER_TEMPORARY_RE =
+  /^daemon-drift-heal\.json\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/u;
+const DRIFT_HEAL_CLAIM_OWNER = "owner.json";
 
 export interface RuntimePathOptions {
   env?: NodeJS.ProcessEnv;
@@ -218,7 +223,8 @@ function daemonControlPaths(options: RuntimePathOptions = {}) {
   return {
     launcher: join(configDir, `prim-daemon-launcher-v${LAUNCHER_SCHEMA_VERSION}`),
     disabledMarker: join(configDir, "daemon.disabled"),
-    driftHealMarker: join(configDir, "daemon-drift-heal.json"),
+    driftHealMarker: join(configDir, DRIFT_HEAL_MARKER),
+    driftHealClaim: join(configDir, "daemon-drift-heal.lock"),
     lifecycleLockDir: join(configDir, "daemon.lifecycle.lock"),
     legacyDisabledMarker: legacy.disabledMarker,
     legacyLifecycleLockDir: legacy.lifecycleLockDir,
@@ -321,6 +327,28 @@ function readOwnedRuntimeManifest(releaseDir: string): RuntimeManifest | null {
   }
 }
 
+/**
+ * Whether the staged runtime's recorded node path can stand in for `desired`,
+ * the path staging would pin now. Which name stableNodePath returns depends on
+ * the caller's PATH: a terminal with Homebrew's `/opt/homebrew/bin` on it gets
+ * that alias, while an app launched from the Dock gets the Cellar real path.
+ * Both name one executable, so neither may restage the runtime: the node path
+ * feeds the launcher revision, and a flip would restart the daemon on every
+ * SessionStart that alternates between them. A recorded alias is kept; a
+ * recorded real path yields once to the alias, which survives a Node upgrade.
+ * A recorded path that no longer resolves (an upgrade deleted it) never stands.
+ */
+function sameNode(recorded: string, desired: string): boolean {
+  if (recorded === desired) return true;
+  try {
+    const target = realpathSync(desired);
+    // `recorded !== target`: a recorded real path is replaced by the alias.
+    return recorded !== target && realpathSync(recorded) === target;
+  } catch {
+    return false;
+  }
+}
+
 function sameRuntime(
   current: RuntimeManifest | null,
   desired: RuntimeManifest,
@@ -329,7 +357,7 @@ function sameRuntime(
   if (
     !current ||
     current.version !== desired.version ||
-    current.nodePath !== desired.nodePath ||
+    !sameNode(current.nodePath, desired.nodePath) ||
     current.daemonSha256 !== desired.daemonSha256
   ) {
     return false;
@@ -373,6 +401,7 @@ export function stageRuntime(options: StageRuntimeOptions = {}): StageRuntimeRes
   // A version-stable PATH alias of the running node, as the hook runtime pins
   // (stableNodePath): a versioned real path such as Homebrew's Cellar is
   // deleted by an upgrade, leaving a launcher whose `exec` can never succeed.
+  // sameRuntime keeps an already-staged equivalent node path (see sameNode).
   const nodePath = resolve(options.nodePath ?? stableNodePath());
   const version = options.version ?? findPackageVersion(daemonSource);
   const desired: RuntimeManifest = {
@@ -502,6 +531,29 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
+/** Marker temporaries an interrupted atomic write left in the config root. */
+function driftHealMarkerTemporaries(configDir: string): string[] {
+  try {
+    return readdirSync(configDir)
+      .filter((entry) => DRIFT_HEAL_MARKER_TEMPORARY_RE.test(entry))
+      .map((entry) => join(configDir, entry));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
+  }
+}
+
+/** The drift-heal claim is a file lock: a directory holding only its owner record. */
+function assertDriftHealClaim(path: string): void {
+  const claim = lstatIfPresent(path);
+  if (!claim) return;
+  if (!claim.isDirectory() || readdirSync(path).some((entry) => entry !== DRIFT_HEAL_CLAIM_OWNER)) {
+    throw new Error(`refusing to remove unrecognized daemon drift-heal claim at ${path}`);
+  }
+  assertRegularFile(join(path, DRIFT_HEAL_CLAIM_OWNER), "daemon drift-heal claim owner");
+}
+
 function assertExactFile(path: string, expected: string, label: string): void {
   if (!lstatIfPresent(path)) return;
   assertRegularFile(path, label);
@@ -544,6 +596,10 @@ export function assertOwnedDaemonRuntime(options: LaunchdPathOptions): void {
   }
   assertRegularFile(logPath, "daemon log");
   assertRegularFile(control.driftHealMarker, "daemon drift-heal marker");
+  for (const temporary of driftHealMarkerTemporaries(configDir)) {
+    assertRegularFile(temporary, "daemon drift-heal marker temporary");
+  }
+  assertDriftHealClaim(control.driftHealClaim);
   assertRegularFile(join(configDir, "daemon-health.json"), "daemon health snapshot");
   assertRegularFile(join(configDir, "client_instance_id"), "daemon client instance id");
 
@@ -641,6 +697,8 @@ export async function removeDaemonRuntime(
     control.disabledMarker,
     control.legacyDisabledMarker,
     control.driftHealMarker,
+    ...driftHealMarkerTemporaries(configDir),
+    control.driftHealClaim,
     ...(service ? [service.plistPath] : []),
     logPath,
     join(configDir, "daemon-health.json"),
@@ -653,7 +711,8 @@ export async function removeDaemonRuntime(
   return withDaemonLifecycleLock(async () => {
     assertOwnedDaemonRuntime(options);
     for (const path of ownedArtifacts.filter((candidate) => candidate !== runtime.runtimeDir)) {
-      rmSync(path, { force: true });
+      // Only the claim is a directory, and the assertion above verified it.
+      rmSync(path, { force: true, recursive: path === control.driftHealClaim });
     }
     if (lstatIfPresent(runtime.runtimeDir)) {
       const quarantined = `${runtime.runtimeDir}.uninstall-${String(process.pid)}-${randomBytes(8).toString("hex")}`;
@@ -1252,17 +1311,61 @@ export function selectedDaemonLauncher(
   };
 }
 
+const XML_ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+};
+const XML_ENTITY_RE = /&(?:amp|lt|gt|quot|apos);/gu;
+const PLIST_LABEL_KEY = "<key>Label</key>";
+const PLIST_PROGRAM_KEY = "<key>ProgramArguments</key>";
+const PLIST_LABEL_RE = /<key>Label<\/key>\s*<string>([^<]*)<\/string>/u;
+const PLIST_PROGRAM_RE = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/u;
+
+/** Decode the entities xmlEscape and plutil write; any other `&` is malformed. */
+function xmlUnescape(value: string): string | undefined {
+  if (value.replace(XML_ENTITY_RE, "").includes("&")) return undefined;
+  return value.replace(XML_ENTITY_RE, (entity) => XML_ENTITIES[entity] ?? entity);
+}
+
 /**
- * Whether the per-user LaunchAgent is the one this config root's ensure
- * writes, so launchd runs this root's launcher. The plist path is per user
- * but the launcher is per config root: a command under another
- * PRIM_CONFIG_DIR reads that root's launcher while launchd runs another one.
+ * The Label and first ProgramArguments string of an XML LaunchAgent, or
+ * undefined unless each key appears exactly once. Only these identify which
+ * launcher launchd runs, so the rest of the template can change freely.
+ */
+function launchAgentProgram(plist: string): { label: string; program: string } | undefined {
+  if (plist.split(PLIST_LABEL_KEY).length !== 2 || plist.split(PLIST_PROGRAM_KEY).length !== 2) {
+    return undefined;
+  }
+  const label = PLIST_LABEL_RE.exec(plist)?.[1];
+  const program = PLIST_PROGRAM_RE.exec(plist)?.[1];
+  if (label === undefined || program === undefined) return undefined;
+  const decodedLabel = xmlUnescape(label);
+  const decodedProgram = xmlUnescape(program);
+  return decodedLabel === undefined || decodedProgram === undefined
+    ? undefined
+    : { label: decodedLabel, program: decodedProgram };
+}
+
+/**
+ * Whether the per-user LaunchAgent runs this config root's launcher. The
+ * plist path is per user but the launcher is per config root: a command under
+ * another PRIM_CONFIG_DIR reads that root's launcher while launchd runs
+ * another one. Only the label and program are compared, not the whole file,
+ * so a later change to generateLaunchAgentPlist does not quietly stop older
+ * daemons from healing.
  */
 export function launchAgentRunsConfigRoot(options: LaunchdPathOptions = {}): boolean {
   try {
     const service = launchdPaths(options);
     const plist = readBoundedRegularFile(service.plistPath, PLIST_MAX_BYTES);
-    return plist?.text === ownedLaunchAgentPlist(options, service.logPath);
+    const agent = plist ? launchAgentProgram(plist.text) : undefined;
+    return (
+      agent?.label === (options.label ?? LAUNCHD_LABEL) &&
+      agent.program === daemonControlPaths(options).launcher
+    );
   } catch {
     return false;
   }
@@ -1271,6 +1374,11 @@ export function launchAgentRunsConfigRoot(options: LaunchdPathOptions = {}): boo
 /** Rate-limit record for attended drift healing; uninstall removes it with the daemon. */
 export function daemonDriftHealMarkerPath(options: RuntimePathOptions = {}): string {
   return daemonControlPaths(options).driftHealMarker;
+}
+
+/** File lock that makes reading and renewing the rate-limit record one step. */
+export function daemonDriftHealClaimPath(options: RuntimePathOptions = {}): string {
+  return daemonControlPaths(options).driftHealClaim;
 }
 
 /**

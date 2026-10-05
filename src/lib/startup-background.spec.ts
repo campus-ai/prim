@@ -201,8 +201,9 @@ describe("mayHealDaemon", () => {
     // A group without a subcommand only prints its help.
     ["decisions"],
     ["auth"],
-    // Removing Primitive is no time to upgrade it.
+    // Removing Primitive, or signing out of it, is no time to upgrade it.
     ["uninstall"],
+    ["auth", "clear"],
     ["disable"],
     ["claude", "uninstall"],
     ["hooks", "uninstall"],

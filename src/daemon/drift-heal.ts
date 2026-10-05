@@ -20,10 +20,12 @@ import { getSiteUrlForEnvironment } from "../client.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
 import { binFile, packageRoot, packageVersion } from "../lib/bin-path.js";
 import { readBoundedRegularFile } from "../lib/bounded-file.js";
+import { withFileLockSync } from "../lib/file-lock.js";
 import { compareSemver } from "../lib/semver.js";
 import { apiUrlsMatch } from "./env-binding.js";
 import {
   type SelectedDaemonLauncher,
+  daemonDriftHealClaimPath,
   daemonDriftHealMarkerPath,
   daemonExplicitlyDisabled,
   launchAgentRunsConfigRoot,
@@ -41,8 +43,10 @@ export const DAEMON_DRIFT_HEAL_ENV = "PRIM_DAEMON_DRIFT_HEAL";
 // leaves the launcher as it was, so without this window every later command
 // would respawn the same failing child. Ensure rewrites the launcher before it
 // calls launchctl, so a launchctl refusal leaves the launcher current and the
-// version check alone stops retrying. Keying the window on the target version
-// still lets a newer CLI try at once.
+// version check alone stops retrying. Any attempt holds the window, whatever
+// version it targeted: two installed CLIs at different versions (a global
+// install and an npx cache) would otherwise alternate past it while ensure
+// keeps failing. A newer CLI therefore waits out at most this window.
 export const DAEMON_DRIFT_HEAL_RETRY_MS = 60 * 60 * 1_000;
 
 type DriftHealAttempt = { attemptedAt: number; fromVersion: string; toVersion: string };
@@ -80,6 +84,24 @@ function readAttempt(path: string): DriftHealAttempt | null {
   } catch {
     return null;
   }
+}
+
+/** Never wait for another command's claim; withFileLockSync sleeps only to wait. */
+function claimHeld(): never {
+  throw new Error("another command holds the daemon drift-heal claim");
+}
+
+/**
+ * Record `attempt` unless any attempt, for any target version, falls within
+ * the retry window. Runs under the claim. A future timestamp (the clock moved
+ * backwards) counts as stale and is re-anchored.
+ */
+function claimAttempt(markerPath: string, attempt: DriftHealAttempt): boolean {
+  const previous = readAttempt(markerPath);
+  const elapsed = previous ? attempt.attemptedAt - previous.attemptedAt : Number.POSITIVE_INFINITY;
+  if (elapsed >= 0 && elapsed < DAEMON_DRIFT_HEAL_RETRY_MS) return false;
+  atomicWriteFile(markerPath, `${JSON.stringify(attempt)}\n`, { mode: ATTEMPT_MARKER_MODE });
+  return true;
 }
 
 /** A published install lives under node_modules (global, npx cache, or project). */
@@ -141,25 +163,23 @@ function startDriftHeal(options: DaemonDriftHealOptions): boolean {
   const primEntry = options.primEntry === undefined ? binFile("prim") : options.primEntry;
   if (!primEntry) return false;
 
-  const markerPath = daemonDriftHealMarkerPath(paths);
-  const now = (options.nowMs ?? Date.now)();
-  const previous = readAttempt(markerPath);
-  // A future timestamp (the clock moved backwards) counts as stale; the record
-  // written below re-anchors it.
-  const elapsed = previous ? now - previous.attemptedAt : Number.POSITIVE_INFINITY;
-  if (previous?.toVersion === toVersion && elapsed >= 0 && elapsed < DAEMON_DRIFT_HEAL_RETRY_MS) {
-    return false;
-  }
-  // Record before spawning: an attempt that cannot be recorded cannot be rate
-  // limited, so a failed write throws and nothing starts. Two concurrent first
-  // commands may both get here; ensure's lifecycle lock serializes them and the
-  // second finds the upgrade already applied.
   const attempt: DriftHealAttempt = {
-    attemptedAt: now,
+    attemptedAt: (options.nowMs ?? Date.now)(),
     fromVersion: launcher.runtimeVersion,
     toVersion,
   };
-  atomicWriteFile(markerPath, `${JSON.stringify(attempt)}\n`, { mode: ATTEMPT_MARKER_MODE });
+  // Commands that start together (an agent running several at once) would
+  // otherwise all find the window open and each spawn a child. The claim makes
+  // checking and renewing the record one step, and it is never waited on: a
+  // held claim means another command is deciding now, so this one starts
+  // nothing. A claim or record that cannot be written throws, and nothing
+  // starts either, because an unrecorded attempt cannot be rate limited.
+  const claimed = withFileLockSync(
+    daemonDriftHealClaimPath(paths),
+    () => claimAttempt(daemonDriftHealMarkerPath(paths), attempt),
+    { timeoutMs: 0, sleep: claimHeld },
+  );
+  if (!claimed) return false;
   // The local ensure is the whole upgrade: this CLI already holds the newer
   // daemon bytes, so the SessionStart registry revalidation would be redundant.
   return kickDaemonEnsure({

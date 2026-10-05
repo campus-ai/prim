@@ -14,13 +14,14 @@ const HELP_OPTIONS = new Set(["-h", "--help"]);
 // runs), `doctor` (must not change what it diagnoses), `setup` (starts or
 // stops the daemon itself), `statusline` (an editor render loop), `help`, and
 // every removal (`uninstall`, `disable`, each integration's `uninstall`, `hooks
-// uninstall`, `skill uninstall`): taking Primitive out is no time to upgrade it.
+// uninstall`, `skill uninstall`, and signing out with `auth clear`): taking
+// Primitive out is no time to upgrade it.
 export const DAEMON_HEAL_COMMANDS: ReadonlyMap<string, ReadonlySet<string> | "any"> = new Map<
   string,
   ReadonlySet<string> | "any"
 >([
   // Credentials; `auth login` is how a person returns to a daemon held for re-auth.
-  ["auth", new Set(["api-keys", "clear", "login", "set-token", "status"])],
+  ["auth", new Set(["api-keys", "login", "set-token", "status"])],
   // Reading and curating the decision graph: the everyday attended surface.
   [
     "decisions",

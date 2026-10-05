@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -54,6 +54,7 @@ function harness(launcher: Partial<SelectedDaemonLauncher> | null = {}) {
   const { spawnProcess, unref } = fakeSpawn();
   const state = { clock: 1_000_000 };
   const marker = join(configDir, "daemon-drift-heal.json");
+  const claim = join(configDir, "daemon-drift-heal.lock");
   const env = { PRIM_CONFIG_DIR: configDir, XDG_DATA_HOME: dataHome };
   const selected = launcher && {
     runtimeVersion: OLDER,
@@ -76,7 +77,7 @@ function harness(launcher: Partial<SelectedDaemonLauncher> | null = {}) {
     spawnProcess,
     ...overrides,
   });
-  return { configDir, dataHome, env, marker, options, spawnProcess, state, unref };
+  return { claim, configDir, dataHome, env, marker, options, spawnProcess, state, unref };
 }
 
 describe("healDaemonDrift", () => {
@@ -98,6 +99,7 @@ describe("healDaemonDrift", () => {
       toVersion: CLI,
     });
     expect(statSync(h.marker).mode & 0o777).toBe(0o600);
+    expect(existsSync(h.claim)).toBe(false);
   });
 
   it.each([
@@ -219,20 +221,46 @@ describe("healDaemonDrift", () => {
     expect(existsSync(h.marker)).toBe(false);
   });
 
-  it("rate-limits one target version per hour but never holds back a newer one", () => {
+  it("rate-limits any attempt for an hour, whatever version it targets", () => {
     const h = harness();
+    const NEWER = "0.1.0-alpha.93";
     expect(DAEMON_DRIFT_HEAL_RETRY_MS).toBe(60 * MINUTE_MS);
 
     expect(healDaemonDrift(h.options())).toBe(true);
+    // Two installed CLIs (say a global install and an npx cache) must not
+    // alternate past the window while each ensure fails before it rewrites
+    // the launcher.
     h.state.clock += DAEMON_DRIFT_HEAL_RETRY_MS - MINUTE_MS;
+    expect(healDaemonDrift(h.options({ cliVersion: NEWER }))).toBe(false);
     expect(healDaemonDrift(h.options())).toBe(false);
     expect(h.spawnProcess).toHaveBeenCalledTimes(1);
 
     h.state.clock += MINUTE_MS;
-    expect(healDaemonDrift(h.options())).toBe(true);
-    expect(healDaemonDrift(h.options({ cliVersion: "0.1.0-alpha.93" }))).toBe(true);
-    expect(healDaemonDrift(h.options({ cliVersion: "0.1.0-alpha.93" }))).toBe(false);
-    expect(h.spawnProcess).toHaveBeenCalledTimes(3);
+    expect(healDaemonDrift(h.options({ cliVersion: NEWER }))).toBe(true);
+    expect(healDaemonDrift(h.options())).toBe(false);
+    expect(JSON.parse(readFileSync(h.marker, "utf8"))).toMatchObject({ toVersion: NEWER });
+    expect(h.spawnProcess).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts nothing while another command holds the claim, and never waits for it", () => {
+    const h = harness();
+    const owner = join(h.claim, "owner.json");
+    mkdirSync(h.claim);
+    writeFileSync(owner, JSON.stringify({ pid: process.pid, nonce: "held", createdAt: 0 }));
+
+    const startedAt = Date.now();
+    expect(healDaemonDrift(h.options())).toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(h.spawnProcess).not.toHaveBeenCalled();
+    expect(existsSync(h.marker)).toBe(false);
+    expect(readFileSync(owner, "utf8")).toContain("held");
+
+    // A claim whose owner died mid-claim is recovered rather than permanent.
+    const { pid } = spawnSync(process.execPath, ["--eval", ""]);
+    writeFileSync(owner, JSON.stringify({ pid, nonce: "dead", createdAt: 0 }));
+    expect([healDaemonDrift(h.options()), healDaemonDrift(h.options())]).toContain(true);
+    expect(h.spawnProcess).toHaveBeenCalledOnce();
+    expect(existsSync(h.claim)).toBe(false);
   });
 
   it("treats a malformed or future record as stale and re-anchors it", () => {
@@ -432,10 +460,11 @@ describe("healDaemonDrift against the files launchd runs", () => {
   });
 });
 
-describe("healDaemonDrift with blocking file types", () => {
+describe("healDaemonDrift in separate processes", () => {
   // Without the regular-file guards a FIFO blocks the reading thread forever,
-  // which no in-process test timeout can interrupt. These run the heal in a
-  // child process that is killed if it does not answer promptly.
+  // which no in-process test timeout can interrupt, and concurrent commands
+  // are separate processes. These run the heal in child processes that are
+  // killed if they do not answer promptly.
   let bundleDir: string;
 
   beforeAll(async () => {
@@ -496,6 +525,92 @@ describe("healDaemonDrift with blocking file types", () => {
       });
     });
   }
+
+  /**
+   * Run `count` heals at once against one config root. Each child signals
+   * readiness and then spins until the parent releases them together, so their
+   * checks of the rate-limit record overlap.
+   */
+  async function raceHealInChildren(root: string, count: number): Promise<number[]> {
+    const configDir = join(root, "config");
+    mkdirSync(configDir, { mode: 0o700 });
+    const go = join(root, "go");
+    const moduleUrl = pathToFileURL(join(bundleDir, "drift-heal.js")).href;
+    const options = {
+      platform: "darwin",
+      env: { PRIM_CONFIG_DIR: configDir, XDG_DATA_HOME: join(root, "data") },
+      homeDir: join(root, "home"),
+      cliVersion: CLI,
+      packageRoot: INSTALLED_ROOT,
+      euid: EUID,
+      primEntry: "/pkg/dist/index.js",
+      nodeEntry: "/usr/bin/node",
+    };
+    const launcher = { runtimeVersion: OLDER, ownerUid: EUID, runnable: true };
+    const source = `
+      const { existsSync } = await import("node:fs");
+      const { healDaemonDrift } = await import(${JSON.stringify(moduleUrl)});
+      let spawned = 0;
+      const options = {
+        ...${JSON.stringify(options)},
+        selectedLauncher: () => (${JSON.stringify(launcher)}),
+        launchAgentRunsConfigRoot: () => true,
+        spawnProcess: () => { spawned += 1; return { once() {}, unref() {} }; },
+      };
+      process.stdout.write("ready\\n");
+      while (!existsSync(${JSON.stringify(go)})) {}
+      healDaemonDrift(options);
+      process.stdout.write(JSON.stringify({ spawned }));
+    `;
+    let ready = 0;
+    let releaseAll: () => void = () => undefined;
+    const allReady = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const results = Array.from(
+      { length: count },
+      () =>
+        new Promise<number>((resolve, reject) => {
+          const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let stdout = "";
+          let signaled = false;
+          child.stdout.on("data", (chunk) => {
+            stdout += String(chunk);
+            if (!signaled && stdout.startsWith("ready\n")) {
+              signaled = true;
+              ready += 1;
+              if (ready === count) releaseAll();
+            }
+          });
+          const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+          child.once("error", reject);
+          child.once("exit", () => {
+            clearTimeout(timer);
+            try {
+              const result = JSON.parse(stdout.slice("ready\n".length)) as { spawned: number };
+              resolve(result.spawned);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }),
+    );
+    await allReady;
+    writeFileSync(go, "");
+    return Promise.all(results);
+  }
+
+  it("starts one heal when several commands start together", async () => {
+    const root = temporaryRoot("prim-drift-heal-race-");
+
+    const spawned = await raceHealInChildren(root, 8);
+
+    expect(spawned.reduce((total, count) => total + count, 0)).toBe(1);
+    expect(existsSync(join(root, "config", "daemon-drift-heal.json"))).toBe(true);
+    expect(existsSync(join(root, "config", "daemon-drift-heal.lock"))).toBe(false);
+  }, 30_000);
 
   it("treats a FIFO at the launcher path as no launcher, without blocking", async () => {
     const root = temporaryRoot("prim-drift-heal-fifo-launcher-");
