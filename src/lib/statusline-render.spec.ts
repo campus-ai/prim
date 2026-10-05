@@ -223,7 +223,13 @@ describe("formatStatusline I/O boundary", () => {
           sessionId: "session",
           healthy: false,
           heartbeat,
-          ingestion: { healthy: false, pendingCount: 1200, pendingSampled: true, ...ingestion },
+          ingestion: {
+            healthy: false,
+            pendingCount: 1200,
+            pendingSampled: true,
+            lastRetainedBucketCount: 0,
+            ...ingestion,
+          },
         },
         () => "enabled",
       );
@@ -242,9 +248,17 @@ describe("formatStatusline I/O boundary", () => {
     expect(behind({ consecutiveFailures: 0, lastRetainedBucketCount: 1 })).toContain(
       "delivery: stalled",
     );
-    // A failed sweep that acknowledged Moves first is still advancing.
-    expect(behind({ consecutiveFailures: 2, lastAcknowledgedCount: 500 })).toContain(
+    // An older daemon that omits the held-back count cannot show it has none.
+    expect(behind({ consecutiveFailures: 0, lastRetainedBucketCount: undefined })).toContain(
+      "delivery: stalled",
+    );
+    // A failed drain that acknowledged Moves first is still advancing; another
+    // bucket's delivery in the same sweep is not that failure's progress.
+    expect(behind({ consecutiveFailures: 2, lastFailedDrainAcknowledgedCount: 500 })).toContain(
       "delivery: draining",
+    );
+    expect(behind({ consecutiveFailures: 2, lastAcknowledgedCount: 500 })).toContain(
+      "delivery: stalled",
     );
   });
 });

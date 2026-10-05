@@ -1,22 +1,25 @@
 /**
  * Opportunistic journal drain for ordinary CLI invocations.
  *
- * Every command except uninstall, setup, and `moves flush` itself offers to
- * drain an overdue journal. Draining in-process kept the command alive until
- * the whole sweep finished, because index.ts ends in `program.parse()` and
- * most commands return instead of exiting. Behind a large backlog (PRI-68)
- * each step `prim setup` runs through spawnSync therefore waited on a full
- * drain. The drain is instead handed to the same detached `prim moves flush`
- * the Stop and post-commit hooks spawn. The cross-process flush lock already
- * serializes it with the daemon and every other drain, so a redundant child
- * simply bows out. No child starts at all while a healthy daemon already owns
- * the drain: a bowed-out daemon sweep records nothing, so a child holding the
- * lock would only hide the daemon's own delivery record.
+ * Every command except uninstall, a setup that starts the daemon (and its
+ * steps), and `moves flush` itself offers to drain an overdue journal.
+ * Draining in-process kept the command alive until the whole sweep finished,
+ * because index.ts ends in `program.parse()` and most commands return instead
+ * of exiting. Behind a large backlog (PRI-68) each step `prim setup` runs
+ * through spawnSync therefore waited on a full drain. The drain is instead
+ * handed to the same detached `prim moves flush` the Stop and post-commit
+ * hooks spawn. The cross-process flush lock already serializes it with the
+ * daemon and every other drain, so a redundant child simply bows out. No
+ * child starts at all while a healthy daemon already owns the drain: a
+ * bowed-out daemon sweep records nothing, so a child holding the lock would
+ * only hide the daemon's own delivery record.
  */
 import { type SpawnOptions, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { getSiteUrl } from "../client.js";
 import { DAEMON_HEALTH_PATH, HEARTBEAT_FRESH_MS } from "../daemon/health.js";
 import { journalNeedsFlush } from "../flusher.js";
+import { envSlug } from "../journal.js";
 import { binFile, packageVersion } from "./bin-path.js";
 import { processIsAlive } from "./process-liveness.js";
 
@@ -38,6 +41,8 @@ export type DaemonDrainOwnerOptions = {
   healthPath?: string;
   now?: number;
   expectedVersion?: string | null;
+  /** This CLI's API base URL; defaults to getSiteUrl(). */
+  siteUrl?: string;
   isAlive?: (pid: number) => boolean;
 };
 
@@ -49,12 +54,18 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 /**
  * Whether the daemon's persisted health shows it owns the drain: its process
- * is alive, it runs this CLI's version, its heartbeat succeeded recently with
- * no failure since, it is not held for re-auth, and it has recorded no
- * ingestion failure. Freshness is recomputed from the recorded timestamps
- * rather than trusted from the stored booleans, so a wedged or dead daemon
- * ages out. Any read, parse, or shape problem answers false: the caller then
- * starts its drain as before.
+ * is alive, it runs this CLI's version, it delivers to this CLI's deployment,
+ * its heartbeat succeeded recently with no failure since, it is not held for
+ * re-auth, and it has recorded no ingestion failure. The health file is one
+ * per config directory, but journals are partitioned by deployment and the
+ * daemon drains only its own partition, so a CLI pointed at another
+ * deployment (PRIM_API_URL) must drain for itself; the two compare by that
+ * partition. Freshness is recomputed from the recorded timestamps rather than
+ * trusted from the stored booleans, so a wedged or dead daemon ages out, and
+ * a heartbeat stamped after `now` (the clock stepped back) is not fresh. Any
+ * read, parse, or shape problem, including a daemon that predates the
+ * recorded deployment, answers false: the caller then starts its drain as
+ * before.
  */
 export function daemonOwnsDrain(options: DaemonDrainOwnerOptions = {}): boolean {
   try {
@@ -68,6 +79,13 @@ export function daemonOwnsDrain(options: DaemonDrainOwnerOptions = {}): boolean 
     const ingestion = record(health?.ingestion);
     if (!(health && heartbeat && ingestion)) return false;
     if (health.schemaVersion !== 1 || health.version !== expectedVersion) return false;
+    const daemonSiteUrl = health.siteUrl;
+    if (
+      typeof daemonSiteUrl !== "string" ||
+      envSlug(daemonSiteUrl) !== envSlug(options.siteUrl ?? getSiteUrl())
+    ) {
+      return false;
+    }
     if (health.needsReauth === true) return false;
     const pid = health.pid;
     if (typeof pid !== "number" || !(options.isAlive ?? processIsAlive)(pid)) return false;
@@ -76,6 +94,7 @@ export function daemonOwnsDrain(options: DaemonDrainOwnerOptions = {}): boolean 
     return (
       heartbeat.consecutiveFailures === 0 &&
       typeof lastSuccessAt === "number" &&
+      lastSuccessAt <= now &&
       now - lastSuccessAt < HEARTBEAT_FRESH_MS &&
       ingestion.consecutiveFailures === 0
     );

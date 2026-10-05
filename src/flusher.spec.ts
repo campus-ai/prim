@@ -1573,7 +1573,8 @@ describe("selectRecoverable", () => {
       },
     );
 
-    expect(result).toMatchObject({ flushed: 503, quarantined: 1 });
+    // Only the failed drain's own slices count as that failure's progress.
+    expect(result).toMatchObject({ flushed: 503, quarantined: 1, failedDrainFlushed: 500 });
     // The drain's own error is kept, not replaced.
     expect(result.errors).toEqual([offline]);
     expect(result.failedBuckets).toEqual(new Set(["orgA"]));

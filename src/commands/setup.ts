@@ -31,24 +31,35 @@ import { gitToplevel } from "../lib/git.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
-// Marks setup's child steps. Setup starts the daemon itself and then checks
-// its delivery health, so its children leave the journal drain to the daemon
-// rather than each starting a background drain that would hold the drain
-// lock while the daemon's own sweeps, and the failures they record, bow out.
+// Marks every one of setup's child steps.
 export const SETUP_ORCHESTRATOR_ENV = "PRIM_SETUP_ORCHESTRATOR";
+// Marks setup's child steps only when setup starts the daemon. Setup then
+// checks the daemon's delivery health, so its children leave the journal
+// drain to the daemon rather than each starting a background drain that would
+// hold the drain lock while the daemon's own sweeps, and the failures they
+// record, bow out. Under --no-daemon no daemon drains, so the steps still
+// drain for themselves.
+export const SETUP_DAEMON_DRAINS_ENV = "PRIM_SETUP_DAEMON_DRAINS";
 
 /**
  * How setup runs one step. Capturing a step means we only want its machine
  * STDOUT (JSON) — a status/auth probe. Its human STDERR is silenced so
  * status-line noise ("gate ✓ · capture ✗ …") doesn't interleave into the
- * setup trail. Every step carries SETUP_ORCHESTRATOR_ENV.
+ * setup trail. Every step carries SETUP_ORCHESTRATOR_ENV, and
+ * SETUP_DAEMON_DRAINS_ENV exactly when setup starts the daemon.
  */
 export function setupStepSpawnOptions(
   capture: boolean,
   env: NodeJS.ProcessEnv = process.env,
+  options: { startsDaemon?: boolean } = {},
 ): SpawnSyncOptionsWithStringEncoding {
   return {
-    env: { ...env, [SETUP_ORCHESTRATOR_ENV]: "1" },
+    env: {
+      ...env,
+      [SETUP_ORCHESTRATOR_ENV]: "1",
+      // Unset rather than inherited when this setup starts no daemon.
+      [SETUP_DAEMON_DRAINS_ENV]: options.startsDaemon === true ? "1" : undefined,
+    },
     stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
     encoding: "utf-8",
   };
@@ -361,7 +372,11 @@ export function registerSetupCommand(
       const run =
         dependencies.run ??
         ((args: string[], capture = false): { code: number; stdout: string } => {
-          const r = spawnSync(process.execPath, [self, ...args], setupStepSpawnOptions(capture));
+          const r = spawnSync(
+            process.execPath,
+            [self, ...args],
+            setupStepSpawnOptions(capture, process.env, { startsDaemon: opts.daemon }),
+          );
           return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
         });
 

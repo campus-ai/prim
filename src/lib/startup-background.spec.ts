@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SETUP_ORCHESTRATOR_ENV } from "../commands/setup.js";
+import { SETUP_DAEMON_DRAINS_ENV, SETUP_ORCHESTRATOR_ENV } from "../commands/setup.js";
 import { UNINSTALL_ORCHESTRATOR_ENV } from "../commands/uninstall.js";
 import { runStartupBackgroundWork } from "./startup-background.js";
 
@@ -38,18 +38,24 @@ describe("runStartupBackgroundWork", () => {
     expect(background.flush).not.toHaveBeenCalled();
   });
 
+  const daemonSetupStep = { [SETUP_ORCHESTRATOR_ENV]: "1", [SETUP_DAEMON_DRAINS_ENV]: "1" };
+
   it.each([
     {
-      label: "setup's child steps",
+      label: "the steps of a setup that starts the daemon",
       argv: ["doctor", "--expect-backlog"],
-      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+      env: daemonSetupStep,
     },
     {
-      label: "setup's child steps",
+      label: "the steps of a setup that starts the daemon",
       argv: ["daemon", "start"],
-      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+      env: daemonSetupStep,
     },
-    { label: "setup itself", argv: ["--yes", "setup", "--agent", "codex"], env: {} },
+    {
+      label: "a setup that starts the daemon",
+      argv: ["--yes", "setup", "--agent", "codex"],
+      env: {},
+    },
   ])("leaves the drain to the daemon for $label ($argv)", ({ argv, env }) => {
     // A background drain holding the lock would make the daemon's sweeps bow
     // out unrecorded, so setup's doctor could never see a delivery failure.
@@ -59,6 +65,31 @@ describe("runStartupBackgroundWork", () => {
 
     expect(background.notify).toHaveBeenCalledOnce();
     expect(background.flush).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "the steps of a --no-daemon setup",
+      argv: ["daemon", "stop"],
+      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+    },
+    {
+      label: "the steps of a --no-daemon setup",
+      argv: ["hooks", "install"],
+      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+    },
+    {
+      label: "a --no-daemon setup",
+      argv: ["--yes", "setup", "--agent", "codex", "--no-daemon"],
+      env: {},
+    },
+  ])("still drains for $label ($argv), since no daemon will", ({ argv, env }) => {
+    const background = work();
+
+    runStartupBackgroundWork(argv, env, background);
+
+    expect(background.notify).toHaveBeenCalledOnce();
+    expect(background.flush).toHaveBeenCalledOnce();
   });
 
   it.each([["claude", "preauth"], ["daemon", "start"], ["doctor"], ["moves", "status"]])(

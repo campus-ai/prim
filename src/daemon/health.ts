@@ -32,15 +32,26 @@ export interface DaemonIngestionHealth {
   pendingSampled: boolean;
   oldestPendingAt?: number;
   strandedCount: number;
+  /** Moves the last completed sweep acknowledged, across all its drains. */
   lastAcknowledgedCount: number;
   /**
-   * Organization buckets the last completed sweep held back instead of
-   * sending (unbound, another organization, identity unavailable, ...), and
-   * their `reason:count` summary. Such a sweep can succeed while those Moves
-   * never deliver, so delivery state must not read it as draining. Absent
-   * until a sweep completes, and from daemons that predate the field.
+   * Of lastAcknowledgedCount, the Moves acknowledged by the drains that then
+   * failed, before they failed (FlushError.failedDrainFlushed). Delivery
+   * state credits a failed sweep as draining only on this count, never on
+   * another bucket's delivery. Zero after a successful sweep, a failure
+   * outside a drain, and a credential change.
    */
-  lastRetainedBucketCount?: number;
+  lastFailedDrainAcknowledgedCount: number;
+  /**
+   * Journal buckets the last completed sweep held back instead of sending
+   * (unbound, another organization, identity unavailable, ...), and their
+   * `reason:count` summary. Such a sweep can succeed while those Moves never
+   * deliver, so delivery state must not read it as draining. Zero until a
+   * sweep holds a bucket back, and reset by a credential change. Daemons
+   * that predate the field omit it, and delivery state reads that as
+   * unknown, never as draining.
+   */
+  lastRetainedBucketCount: number;
   lastRetainedReasons?: string;
   nextRetryAt?: number;
 }
@@ -49,6 +60,13 @@ export interface DaemonHealthState {
   schemaVersion: 1;
   version: string;
   pid: number;
+  /**
+   * The API base URL this daemon delivers to. Journals are partitioned by
+   * deployment and the daemon drains only its own partition, so a CLI
+   * targeting another deployment cannot leave its drain to this daemon.
+   * Absent from daemons that predate the field.
+   */
+  siteUrl?: string;
   startedAt: number;
   updatedAt: number;
   healthy: boolean;
@@ -65,11 +83,13 @@ export function createDaemonHealthState(
   version: string,
   pid: number,
   startedAt: number,
+  siteUrl?: string,
 ): DaemonHealthState {
   return {
     schemaVersion: 1,
     version,
     pid,
+    siteUrl,
     startedAt,
     updatedAt: startedAt,
     healthy: false,
@@ -81,6 +101,8 @@ export function createDaemonHealthState(
       pendingSampled: false,
       strandedCount: 0,
       lastAcknowledgedCount: 0,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastRetainedBucketCount: 0,
     },
   };
 }

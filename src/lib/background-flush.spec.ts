@@ -145,6 +145,7 @@ describe("daemonOwnsDrain", () => {
   const NOW = 1_800_000_000_000;
   const VERSION = "1.2.3";
   const DAEMON_PID = 4242;
+  const SITE_URL = "https://api.example.test";
 
   // The exact file the daemon persists, built and written by its own code.
   function withHealth(
@@ -153,7 +154,7 @@ describe("daemonOwnsDrain", () => {
   ): void {
     const root = mkdtempSync(join(tmpdir(), "prim-daemon-owner-"));
     try {
-      const state = createDaemonHealthState(VERSION, DAEMON_PID, NOW - 60_000);
+      const state = createDaemonHealthState(VERSION, DAEMON_PID, NOW - 60_000, SITE_URL);
       state.heartbeat.lastSuccessAt = NOW - 5_000;
       state.ingestion.healthy = false;
       state.ingestion.pendingCount = 1200;
@@ -172,6 +173,7 @@ describe("daemonOwnsDrain", () => {
       healthPath,
       now: NOW,
       expectedVersion: VERSION,
+      siteUrl: SITE_URL,
       isAlive: (pid) => pid === DAEMON_PID,
       ...overrides,
     });
@@ -210,6 +212,26 @@ describe("daemonOwnsDrain", () => {
       },
     ],
     [
+      // A clock stepped backwards makes an old heartbeat look recent.
+      "a heartbeat stamped after now",
+      (state) => {
+        state.heartbeat.lastSuccessAt = NOW + 1_000;
+      },
+    ],
+    [
+      // Its journal partition is another deployment's, not this CLI's.
+      "a daemon delivering to another deployment",
+      (state) => {
+        state.siteUrl = "https://staging.example.test";
+      },
+    ],
+    [
+      "a daemon that predates the recorded deployment",
+      (state) => {
+        state.siteUrl = undefined;
+      },
+    ],
+    [
       "a re-auth hold",
       (state) => {
         state.needsReauth = true;
@@ -229,6 +251,19 @@ describe("daemonOwnsDrain", () => {
     ],
   ])("is false for %s", (_label, mutate) => {
     withHealth(mutate, (path) => expect(owns(path)).toBe(false));
+  });
+
+  it("matches the deployment by its journal partition", () => {
+    withHealth(
+      (state) => {
+        state.siteUrl = `${SITE_URL}/`;
+      },
+      (path) => {
+        expect(owns(path)).toBe(true);
+        expect(owns(path, { siteUrl: "https://API.example.test" })).toBe(true);
+        expect(owns(path, { siteUrl: "https://api.example.test.other" })).toBe(false);
+      },
+    );
   });
 
   it("fails open when the health file or this CLI's version cannot be read", () => {

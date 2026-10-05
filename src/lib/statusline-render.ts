@@ -28,7 +28,7 @@ export interface StatusSnapshot {
   ingestion?: {
     healthy?: boolean;
     consecutiveFailures?: number;
-    lastAcknowledgedCount?: number;
+    lastFailedDrainAcknowledgedCount?: number;
     lastRetainedBucketCount?: number;
     pendingCount?: number;
     pendingSampled?: boolean;

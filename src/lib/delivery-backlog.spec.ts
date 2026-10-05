@@ -14,6 +14,8 @@ const healthyIngestion = {
   pendingSampled: false,
   strandedCount: 0,
   lastAcknowledgedCount: 0,
+  lastFailedDrainAcknowledgedCount: 0,
+  lastRetainedBucketCount: 0,
 };
 // The PRI-68 shape: weeks of Moves queued while auth was dead, so the daemon's
 // own ingestion health is red the moment it comes back.
@@ -37,24 +39,48 @@ describe("deliveryBacklogState", () => {
     expect(deliveryBacklogState({ ...backlogIngestion, consecutiveFailures: 1 })).toBe("failing");
   });
 
-  it("drains when the failed sweep acknowledged Moves before it failed", () => {
+  it("drains when the failed drains acknowledged Moves before they failed", () => {
     expect(
       deliveryBacklogState({
         ...backlogIngestion,
         consecutiveFailures: 2,
-        lastAcknowledgedCount: 500,
+        lastFailedDrainAcknowledgedCount: 500,
       }),
     ).toBe("draining");
     // Progress is only credited next to a well-formed failure count.
-    expect(deliveryBacklogState({ healthy: false, lastAcknowledgedCount: 500 })).toBe("failing");
+    expect(
+      deliveryBacklogState({
+        healthy: false,
+        lastFailedDrainAcknowledgedCount: 500,
+        lastRetainedBucketCount: 0,
+      }),
+    ).toBe("failing");
+  });
+
+  it("fails when only another bucket delivered in the failed sweep", () => {
+    // The sweep total counts every drain, so a sibling bucket that keeps
+    // delivering must not stand in for progress in the bucket that fails.
+    const siblingDelivered = {
+      ...backlogIngestion,
+      consecutiveFailures: 2,
+      lastAcknowledgedCount: 500,
+      lastFailedDrainAcknowledgedCount: 0,
+    };
+    expect(deliveryBacklogState(siblingDelivered)).toBe("failing");
   });
 
   it("is retained, never draining, while the last sweep held buckets back", () => {
     const retained = { ...backlogIngestion, lastRetainedBucketCount: 1 };
     expect(deliveryBacklogState(retained)).toBe("retained");
-    expect(deliveryBacklogState({ ...retained, lastAcknowledgedCount: 500 })).toBe("retained");
+    expect(deliveryBacklogState({ ...retained, lastFailedDrainAcknowledgedCount: 500 })).toBe(
+      "retained",
+    );
     expect(
-      deliveryBacklogState({ ...retained, consecutiveFailures: 1, lastAcknowledgedCount: 500 }),
+      deliveryBacklogState({
+        ...retained,
+        consecutiveFailures: 1,
+        lastFailedDrainAcknowledgedCount: 500,
+      }),
     ).toBe("retained");
     // A failure without progress names the failure instead.
     expect(deliveryBacklogState({ ...retained, consecutiveFailures: 1 })).toBe("failing");
@@ -64,6 +90,20 @@ describe("deliveryBacklogState", () => {
   it("reads a missing or malformed failure count as failing, never as progress", () => {
     expect(deliveryBacklogState({ healthy: false })).toBe("failing");
     expect(deliveryBacklogState({ healthy: false, consecutiveFailures: Number.NaN })).toBe(
+      "failing",
+    );
+  });
+
+  it("reads a missing or malformed held-back count as failing, never as draining", () => {
+    // A daemon that predates the field omits it: unknown, not zero.
+    expect(deliveryBacklogState({ healthy: false, consecutiveFailures: 0 })).toBe("failing");
+    expect(deliveryBacklogState({ ...backlogIngestion, lastRetainedBucketCount: undefined })).toBe(
+      "failing",
+    );
+    expect(deliveryBacklogState({ ...backlogIngestion, lastRetainedBucketCount: -1 })).toBe(
+      "failing",
+    );
+    expect(deliveryBacklogState({ ...backlogIngestion, lastRetainedBucketCount: 0.5 })).toBe(
       "failing",
     );
   });
@@ -93,7 +133,7 @@ describe("deliveryBacklogSummary", () => {
         NOW,
       ),
     ).toBe(
-      "delivery held back: 2 organization buckets retained (organization_mismatch:1, unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`",
+      "delivery held back: 2 journal buckets retained (organization_mismatch:1, unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`",
     );
     expect(
       deliveryBacklogSummary(
@@ -101,7 +141,7 @@ describe("deliveryBacklogSummary", () => {
         NOW,
       ),
     ).toBe(
-      "delivery held back: 1 organization bucket retained · holding 1200 pending moves (oldest 52d) — run `prim doctor`",
+      "delivery held back: 1 journal bucket retained · holding 1200 pending moves (oldest 52d) — run `prim doctor`",
     );
   });
 

@@ -147,6 +147,8 @@ describe("daemon health diagnostics", () => {
       pendingSampled: false,
       strandedCount: 0,
       lastAcknowledgedCount: 0,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastRetainedBucketCount: 0,
     },
   };
 
@@ -177,6 +179,8 @@ describe("daemon health diagnostics", () => {
         pendingSampled: false,
         strandedCount: 0,
         lastAcknowledgedCount: 0,
+        lastFailedDrainAcknowledgedCount: 0,
+        lastRetainedBucketCount: 0,
         lastError: "acknowledgement mismatch",
       },
     });
@@ -197,6 +201,8 @@ describe("daemon health diagnostics", () => {
             pendingSampled: false,
             strandedCount: 0,
             lastAcknowledgedCount: 0,
+            lastFailedDrainAcknowledgedCount: 0,
+            lastRetainedBucketCount: 0,
           },
         },
         { service: { loaded: false } },
@@ -228,6 +234,8 @@ describe("daemon health diagnostics", () => {
           pendingSampled: false,
           strandedCount: 0,
           lastAcknowledgedCount: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+          lastRetainedBucketCount: 0,
         },
       },
       { service: { loaded: true, pid: 42 } },
@@ -288,6 +296,8 @@ describe("setup's expected-backlog relaxation", () => {
       oldestPendingAt: Date.now() - 52 * DAY_MS - 60_000,
       strandedCount: 0,
       lastAcknowledgedCount: 0,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastRetainedBucketCount: 0,
     },
   });
   const options = {

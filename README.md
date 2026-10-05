@@ -244,8 +244,9 @@ supplied. Hooks still fail soft if it later degrades.
 
 `prim daemon start` (and `restart`/`ensure`) does not gate on delivery. While
 Moves are past the 30s delivery SLA it reports them as draining in the
-background when the daemon's last sweep recorded no failure, or acknowledged
-Moves before it failed. Organization buckets the daemon holds back (unbound,
+background when the daemon's last sweep recorded no failure, or when the drains
+that failed acknowledged Moves before failing; another bucket delivering in the
+same sweep does not count. Journal buckets the daemon holds back (unbound,
 another organization, identity unavailable) read as delivery held back, and a
 failure with no progress reads as delivery failing; both are a ⚠ warning,
 still exit 0. Its JSON adds `draining`, `deliveryRetained`, `deliveryFailing`,
@@ -352,11 +353,11 @@ prim moves tail           # Pretty-print recent journal entries
 prim moves flush          # Drain the local journals to the server (also runs from hooks)
 ```
 
-Any other command except `uninstall` and `setup` (or one of setup's own steps)
-that finds Moves waiting over a minute (or cannot tell how long) hands them to a
-detached background `prim moves flush` and never waits for it. It starts none
-while a live daemon on the same version, with a healthy heartbeat and no
-recorded ingestion failure, already owns the drain.
+Any other command except `uninstall` and a `setup` that starts the daemon (or
+one of its steps) that finds Moves waiting over a minute (or cannot tell how
+long) hands them to a detached background `prim moves flush` and never waits for
+it. It starts none while a live daemon on the same version and deployment, with
+a healthy heartbeat and no recorded ingestion failure, already owns the drain.
 
 ### Skill
 

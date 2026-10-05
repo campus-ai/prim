@@ -38,6 +38,8 @@ const healthyIngestion = {
   pendingSampled: false,
   strandedCount: 0,
   lastAcknowledgedCount: 0,
+  lastFailedDrainAcknowledgedCount: 0,
+  lastRetainedBucketCount: 0,
 };
 // The PRI-68 shape: weeks of Moves queued while auth was dead, so the daemon's
 // own ingestion health is red the moment it comes back.
@@ -363,6 +365,8 @@ describe("daemonStartHealthFields", () => {
       pendingSampled: false,
       strandedCount: 0,
       lastAcknowledgedCount: 0,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastRetainedBucketCount: 0,
     };
     expect(
       daemonStartHealthFields(false, {
@@ -394,6 +398,8 @@ describe("daemonDegradedReason", () => {
           pendingSampled: false,
           strandedCount: 0,
           lastAcknowledgedCount: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+          lastRetainedBucketCount: 0,
           lastError: "poison queue",
         },
       }),
@@ -411,6 +417,8 @@ describe("daemonDegradedReason", () => {
         pendingSampled: true,
         strandedCount: 0,
         lastAcknowledgedCount: 0,
+        lastFailedDrainAcknowledgedCount: 0,
+        lastRetainedBucketCount: 0,
         lastError: `bad\u001b[2J${"x".repeat(400)}`,
       },
     });

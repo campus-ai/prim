@@ -84,7 +84,7 @@ const VERIFIED_PREFIX = "[prim] ✓ ";
 /**
  * Append Decision ingestion and, for a daemon behind its delivery SLA, the
  * shared backlog clause. A ready daemon whose delivery is failing, or that
- * holds organization buckets back, still started (start does not gate on
+ * holds journal buckets back, still started (start does not gate on
  * delivery), but its line must not read as all-clear, so its verdict becomes
  * a warning.
  */
@@ -296,7 +296,7 @@ export function daemonStartIsReady(
 
 /**
  * Additive JSON for a ready daemon behind its delivery SLA, one flag per
- * delivery state: `draining`, `deliveryRetained` while it holds organization
+ * delivery state: `draining`, `deliveryRetained` while it holds journal
  * buckets back, or `deliveryFailing`. A daemon within its SLA adds nothing,
  * so healthy JSON stays byte-identical.
  */

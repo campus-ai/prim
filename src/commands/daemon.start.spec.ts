@@ -43,6 +43,8 @@ const healthyIngestion = {
   pendingSampled: false,
   strandedCount: 0,
   lastAcknowledgedCount: 0,
+  lastFailedDrainAcknowledgedCount: 0,
+  lastRetainedBucketCount: 0,
 };
 
 function snapshot(overrides: Record<string, unknown> = {}) {
@@ -222,7 +224,7 @@ describe("macOS daemon start readiness", () => {
     const { stderr, json } = await run(["daemon", "start"]);
 
     expect(stderr).toBe(
-      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery held back: 1 organization bucket retained (unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`\n",
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery held back: 1 journal bucket retained (unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`\n",
     );
     expect(stderr).not.toContain("draining");
     expect(json).toEqual({
@@ -242,10 +244,11 @@ describe("macOS daemon start readiness", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("reports draining when the last sweep acknowledged Moves before it failed", async () => {
+  it("reports draining when the failed drain acknowledged Moves before it failed", async () => {
     const advancing = backlogSnapshot({
       consecutiveFailures: 1,
       lastAcknowledgedCount: 500,
+      lastFailedDrainAcknowledgedCount: 500,
       lastError: "HTTP 503",
     });
     mockDaemonRequest.mockResolvedValue(advancing);
@@ -257,6 +260,25 @@ describe("macOS daemon start readiness", () => {
     );
     expect(json).toMatchObject({ started: true, draining: true });
     expect(json).not.toHaveProperty("deliveryFailing");
+  });
+
+  it("warns that delivery is failing when only another bucket delivered before the failure", async () => {
+    // The sweep total counts every bucket; the drain that failed delivered
+    // nothing, so this failure is not advancing.
+    const stuck = backlogSnapshot({
+      consecutiveFailures: 2,
+      lastAcknowledgedCount: 500,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastError: "HTTP 500",
+    });
+    mockDaemonRequest.mockResolvedValue(stuck);
+
+    const { stderr, json } = await run(["daemon", "start"]);
+
+    expect(stderr).toBe(
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (2 consecutive failures): HTTP 500 · retrying at least 1200 pending moves (oldest ≥ 52d) in the background\n",
+    );
+    expect(json).toMatchObject({ started: true, draining: false, deliveryFailing: true });
   });
 
   it.each([

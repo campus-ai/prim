@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 import {
+  SETUP_DAEMON_DRAINS_ENV,
   SETUP_ORCHESTRATOR_ENV,
   detectAgent,
   parseSetupAuthStatus,
@@ -166,39 +167,61 @@ describe("planSetupSteps", () => {
 
 describe("setup step processes", () => {
   it("marks every step, captured or not, as setup's own child", () => {
-    // The marker keeps each step from starting its own background journal
-    // drain, so the daemon setup starts is the only drainer during setup.
-    expect(setupStepSpawnOptions(true, { PATH: "/bin" })).toEqual({
-      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1" },
+    expect(setupStepSpawnOptions(true, { PATH: "/bin" })).toStrictEqual({
+      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1", [SETUP_DAEMON_DRAINS_ENV]: undefined },
       stdio: ["inherit", "pipe", "ignore"],
       encoding: "utf-8",
     });
-    expect(setupStepSpawnOptions(false, { PATH: "/bin" })).toEqual({
-      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1" },
+    expect(setupStepSpawnOptions(false, { PATH: "/bin" })).toStrictEqual({
+      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1", [SETUP_DAEMON_DRAINS_ENV]: undefined },
       stdio: "inherit",
       encoding: "utf-8",
     });
   });
 
-  it("spawns every real step with the setup marker", async () => {
-    const spawned = vi.mocked(spawnSync);
-    spawned.mockImplementation(((_command: string, args: readonly string[]) => ({
-      status: 0,
-      stdout: args.includes("status") ? '{"status":"valid"}' : "",
-    })) as unknown as typeof spawnSync);
-    const program = new Command();
-    registerSetupCommand(program, { note: vi.fn(), exit: vi.fn() });
-
-    await program.parseAsync(["setup", "--agent", "codex", "--scope", "project", "--no-daemon"], {
-      from: "user",
+  it("marks the steps as leaving the drain to the daemon only when setup starts it", () => {
+    // That marker keeps each step from starting its own background journal
+    // drain, so the daemon setup starts is the only drainer during setup.
+    expect(setupStepSpawnOptions(true, { PATH: "/bin" }, { startsDaemon: true }).env).toEqual({
+      PATH: "/bin",
+      [SETUP_ORCHESTRATOR_ENV]: "1",
+      [SETUP_DAEMON_DRAINS_ENV]: "1",
     });
-
-    expect(spawned.mock.calls.length).toBeGreaterThan(1);
-    for (const [, , options] of spawned.mock.calls) {
-      expect(options?.env).toMatchObject({ [SETUP_ORCHESTRATOR_ENV]: "1" });
-    }
-    spawned.mockReset();
+    // A --no-daemon setup inside an outer setup step does not inherit it.
+    const nested = setupStepSpawnOptions(
+      false,
+      { [SETUP_DAEMON_DRAINS_ENV]: "1" },
+      { startsDaemon: false },
+    );
+    expect(nested.env?.[SETUP_DAEMON_DRAINS_ENV]).toBeUndefined();
   });
+
+  it.each([
+    { label: "--no-daemon", flags: ["--no-daemon"], drains: undefined },
+    { label: "the daemon", flags: [], drains: "1" },
+  ])(
+    "spawns every real step of a setup with $label with the matching markers",
+    async ({ flags, drains }) => {
+      const spawned = vi.mocked(spawnSync);
+      spawned.mockImplementation(((_command: string, args: readonly string[]) => ({
+        status: 0,
+        stdout: args.includes("status") ? '{"status":"valid"}' : "",
+      })) as unknown as typeof spawnSync);
+      const program = new Command();
+      registerSetupCommand(program, { note: vi.fn(), exit: vi.fn() });
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project", ...flags], {
+        from: "user",
+      });
+
+      expect(spawned.mock.calls.length).toBeGreaterThan(1);
+      for (const [, , options] of spawned.mock.calls) {
+        expect(options?.env?.[SETUP_ORCHESTRATOR_ENV]).toBe("1");
+        expect(options?.env?.[SETUP_DAEMON_DRAINS_ENV]).toBe(drains);
+      }
+      spawned.mockReset();
+    },
+  );
 });
 
 describe("planCleanupUninstalls", () => {

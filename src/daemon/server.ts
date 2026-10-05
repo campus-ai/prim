@@ -113,7 +113,9 @@ const EXIT_CRASH = 1;
 const startedAt = Date.now();
 const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
-const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
+// The daemon's environment is fixed for its lifetime, so the deployment whose
+// journal partition it drains is too.
+const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt, getSiteUrl());
 const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus, {
   resolveRepositoryBindingState: repositoryBindingState,
 });
@@ -206,6 +208,7 @@ function purgePrincipalScopedState(): void {
   lastOnlineNames = undefined;
   lastOnlineTeammates = undefined;
   lastOkAtLocal = undefined;
+  clearSweepRecord();
 }
 
 /** Re-read the credential generation before every tenant-scoped socket or cache operation. */
@@ -215,6 +218,7 @@ function synchronizeDaemonCredential(): ReturnType<typeof resolveDaemonPrincipal
   if (credentialKey !== activeCredentialKey) {
     activeCredentialKey = credentialKey;
     purgePrincipalScopedState();
+    persistHealth();
   }
   return resolveDaemonPrincipal(token);
 }
@@ -257,6 +261,18 @@ function recordRetainedBuckets(retained: readonly RetainedJournalBucket[]): void
   daemonHealth.ingestion.lastRetainedBucketCount = retained.length;
   daemonHealth.ingestion.lastRetainedReasons =
     retained.length > 0 ? summarizeRetainedBuckets(retained) : undefined;
+}
+
+/**
+ * Forget the last sweep's held-back buckets and failed-drain progress. Both
+ * describe what that sweep saw under the credential it ran with. After a
+ * fresh login or any credential change, a stale "held back
+ * (identity_unavailable:1)" would otherwise keep `daemon start` warning and
+ * setup's doctor failing until the next sweep completes.
+ */
+function clearSweepRecord(): void {
+  daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
+  recordRetainedBuckets([]);
 }
 
 /**
@@ -309,6 +325,9 @@ function exitReauthHold(): void {
   daemonHealth.ingestion.consecutiveFailures = 0;
   daemonHealth.heartbeat.lastError = undefined;
   daemonHealth.ingestion.lastError = undefined;
+  // Like the failure counts, what the last sweep held back or delivered
+  // before failing describes the session that ended, not the new login.
+  clearSweepRecord();
   // A success from before the hold proves nothing about the new login. With
   // the failure count reset it would still read healthy for up to 90s, so
   // heartbeat health waits for the resumed heartbeat below instead.
@@ -543,9 +562,10 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = failures;
     daemonHealth.ingestion.lastError = `journal scan failed: ${errorMessage(err)}`;
     daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
-    // This attempt acknowledged nothing; an earlier sweep's count must not
+    // This attempt acknowledged nothing; an earlier sweep's counts must not
     // read as progress next to the failure it just recorded.
     daemonHealth.ingestion.lastAcknowledgedCount = 0;
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
     persistHealth();
     scheduleIngestion(delay);
     return;
@@ -559,7 +579,7 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
     daemonHealth.ingestion.nextRetryAt = undefined;
-    recordRetainedBuckets([]);
+    clearSweepRecord();
     persistHealth();
     scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
     return;
@@ -579,6 +599,7 @@ async function runIngestionLoop(): Promise<void> {
     }
     daemonHealth.ingestion.lastSuccessAt = Date.now();
     daemonHealth.ingestion.lastAcknowledgedCount = result.flushed;
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
     // A sweep that held buckets back returns without throwing, yet those
@@ -591,6 +612,10 @@ async function runIngestionLoop(): Promise<void> {
     const failures = daemonHealth.ingestion.consecutiveFailures + 1;
     const delay = ingestionRetryDelayMs(failures);
     daemonHealth.ingestion.lastAcknowledgedCount = err instanceof FlushError ? err.flushed : 0;
+    // Only what the failing drains themselves acknowledged shows this failure
+    // is advancing; see DaemonIngestionHealth.
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount =
+      err instanceof FlushError ? err.failedDrainFlushed : 0;
     // Only a FlushError reached bucket classification; any other failure
     // leaves the last completed sweep's record in place.
     if (err instanceof FlushError) recordRetainedBuckets(err.retained);

@@ -508,7 +508,12 @@ export function selectRecoverable(
  * sweep rather than aborting recovery of the rest, and still counts the
  * slices its drain reported retiring before it failed.
  */
-export type DrainSummary = DrainCounts & { errors: unknown[]; failedBuckets: Set<string> };
+export type DrainSummary = DrainCounts & {
+  errors: unknown[];
+  failedBuckets: Set<string>;
+  /** Of `flushed`, the Moves the failed drains acknowledged before failing. */
+  failedDrainFlushed: number;
+};
 
 export async function recoverOrphans(
   candidates: FlushingFile[],
@@ -524,6 +529,7 @@ export async function recoverOrphans(
     quarantined: 0,
     errors: [],
     failedBuckets: new Set(),
+    failedDrainFlushed: 0,
   };
   const recoverable = selectRecoverable(candidates, options.now ?? Date.now(), {
     ownerPid: options.ownerPid ?? process.pid,
@@ -539,6 +545,7 @@ export async function recoverOrphans(
     summary.quarantined += counts.quarantined;
     if (failure) {
       // Leave this orphan on disk for a later sweep; keep recovering the rest.
+      summary.failedDrainFlushed += counts.flushed;
       summary.errors.push(failure.error);
       summary.failedBuckets.add(file.bucket);
     }
@@ -547,22 +554,32 @@ export async function recoverOrphans(
 }
 
 export class FlushError extends Error {
+  /** Moves the whole sweep acknowledged, across every drain it ran. */
   readonly flushed: number;
   readonly quarantined: number;
   /** Buckets the failed sweep held back without sending, as on success. */
   readonly retained: readonly RetainedJournalBucket[];
+  /**
+   * Of `flushed`, the Moves acknowledged by the drains that failed, before
+   * they failed. Only this shows the failure itself is advancing: `flushed`
+   * also counts other buckets' drains, so a bucket whose drain fails every
+   * time would read as progress while a sibling bucket kept delivering.
+   */
+  readonly failedDrainFlushed: number;
 
   constructor(
     cause: unknown,
     flushed: number,
     quarantined: number,
     retained: readonly RetainedJournalBucket[] = [],
+    failedDrainFlushed = 0,
   ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "FlushError";
     this.flushed = flushed;
     this.quarantined = quarantined;
     this.retained = retained;
+    this.failedDrainFlushed = failedDrainFlushed;
   }
 }
 
@@ -597,6 +614,7 @@ async function flushOnce(): Promise<
   );
   let total = recovered.flushed;
   let quarantined = recovered.quarantined;
+  let failedDrainFlushed = recovered.failedDrainFlushed;
   const errors = recovered.errors;
   for (const { bucket, path } of liveBuckets) {
     if (!inspection.deliverableBuckets.has(bucket)) {
@@ -616,11 +634,18 @@ async function flushOnce(): Promise<
     if (failure) {
       // One broken/disabled bucket must not prevent independent buckets from
       // draining. Every failed rotation remains on disk for the next attempt.
+      failedDrainFlushed += counts.flushed;
       errors.push(failure.error);
     }
   }
   if (errors.length > 0) {
-    throw new FlushError(errors[0], total, quarantined, inspection.retainedBuckets);
+    throw new FlushError(
+      errors[0],
+      total,
+      quarantined,
+      inspection.retainedBuckets,
+      failedDrainFlushed,
+    );
   }
   return inspection.retainedBuckets.length > 0
     ? { flushed: total, quarantined, retained: inspection.retainedBuckets }

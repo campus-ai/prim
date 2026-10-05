@@ -4,17 +4,18 @@
  * never reads as draining on one surface and stalled on another.
  *
  * Ingestion health is false whenever any Move has waited past the 30s
- * delivery SLA: a backlog the daemon is working through, organization buckets
- * it holds back without sending, or delivery that is failing. Only what the
+ * delivery SLA: a backlog the daemon is working through, journal buckets it
+ * holds back without sending, or delivery that is failing. Only what the
  * daemon recorded about its last sweep tells them apart:
  *
  * - "failing": a recorded failure (a sweep that threw, or a journal scan that
- *   failed) whose sweep acknowledged nothing.
+ *   failed) whose failing drains acknowledged nothing, or a record too old or
+ *   malformed to tell.
  * - "retained": the last completed sweep held buckets back (unbound, another
  *   organization, identity unavailable, ...). Those Moves cannot deliver
  *   until someone acts, so this is never draining, however the sweep ended.
- * - "draining": no recorded failure, or the failed sweep still acknowledged
- *   Moves first, so the backlog is advancing.
+ * - "draining": no recorded failure, or the drains that failed still
+ *   acknowledged Moves first, so the failure itself is advancing.
  *
  * A sweep still in flight, or one that bowed out to another process holding
  * the drain lock, records nothing, and re-authentication resets the failure
@@ -35,7 +36,7 @@ export type DeliveryIngestion = {
   pendingCount?: number;
   pendingSampled?: boolean;
   oldestPendingAt?: number;
-  lastAcknowledgedCount?: number;
+  lastFailedDrainAcknowledgedCount?: number;
   lastRetainedBucketCount?: number;
   lastRetainedReasons?: string;
 };
@@ -47,33 +48,48 @@ export type PendingBacklog = Pick<
   "pendingCount" | "pendingSampled" | "oldestPendingAt"
 >;
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return isNonNegativeInteger(value) && value > 0;
 }
 
 /**
  * The delivery state while ingestion misses its SLA (see the module comment),
  * undefined while it meets it (or is unreported). A missing or malformed
- * failure count is not evidence of progress, so it reads as failing.
+ * failure count is not evidence of progress, so it reads as failing; so does
+ * a missing held-back count, which a daemon that predates the field omits, so
+ * an older daemon read by a newer CLI is never credited as draining.
+ *
+ * A failure is credited as advancing only on what the failing drains
+ * acknowledged themselves (`lastFailedDrainAcknowledgedCount`), never on the
+ * sweep's total, which also counts sibling buckets that delivered. Known
+ * residual: while checkpoint writes fail persistently, a failing drain
+ * replays its already-delivered prefix every retry, the server acknowledges
+ * those duplicates, and that replay still reads as progress.
  */
 export function deliveryBacklogState(
   ingestion:
     | Pick<
         DeliveryIngestion,
-        "healthy" | "consecutiveFailures" | "lastAcknowledgedCount" | "lastRetainedBucketCount"
+        | "healthy"
+        | "consecutiveFailures"
+        | "lastFailedDrainAcknowledgedCount"
+        | "lastRetainedBucketCount"
       >
     | undefined,
 ): DeliveryBacklogState | undefined {
   if (ingestion?.healthy !== false) return undefined;
   const failures = ingestion.consecutiveFailures;
-  // A failed sweep that acknowledged Moves before failing still advanced the
-  // backlog, so only a failure without that progress reads as failing.
   const failedWithoutProgress =
     failures !== 0 &&
-    !(isPositiveInteger(failures) && isPositiveInteger(ingestion.lastAcknowledgedCount));
+    !(isPositiveInteger(failures) && isPositiveInteger(ingestion.lastFailedDrainAcknowledgedCount));
   if (failedWithoutProgress) return "failing";
-  if (isPositiveInteger(ingestion.lastRetainedBucketCount)) return "retained";
-  return "draining";
+  const retained = ingestion.lastRetainedBucketCount;
+  if (!isNonNegativeInteger(retained)) return "failing";
+  return retained > 0 ? "retained" : "draining";
 }
 
 /** Coarse age for an operator line: a weeks-old backlog reads "52d", not seconds. */
@@ -125,7 +141,7 @@ export function deliveryBacklogSummary(
   if (state === "retained") {
     const buckets = ingestion.lastRetainedBucketCount ?? 0;
     const reasons = boundedHealthError(ingestion.lastRetainedReasons);
-    return `delivery held back: ${String(buckets)} organization bucket${buckets === 1 ? "" : "s"} retained${reasons ? ` (${reasons})` : ""} · holding ${pending} — run \`prim doctor\``;
+    return `delivery held back: ${String(buckets)} journal bucket${buckets === 1 ? "" : "s"} retained${reasons ? ` (${reasons})` : ""} · holding ${pending} — run \`prim doctor\``;
   }
   const failures = ingestion.consecutiveFailures;
   const count = isPositiveInteger(failures)
