@@ -13,15 +13,23 @@ import {
   writeFileSync,
 } from "node:fs";
 import { type Server, createServer } from "node:http";
-import { createConnection } from "node:net";
+import { type Socket, createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "tsup";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  daemonStartHealthFields,
+  daemonStartIsReady,
+  formatDaemonLifecycleMessage,
+} from "./commands/daemon.js";
+import { classifyDaemonHealth } from "./commands/doctor.js";
 import { isClientInstanceId } from "./daemon/client-instance-id.js";
 import { stageRuntime } from "./daemon/launchd.js";
 import type { DaemonPrincipal } from "./daemon/principal.js";
+import { daemonOwnsDrain } from "./lib/background-flush.js";
+import { deliveryBacklogState } from "./lib/delivery-backlog.js";
 
 type ChildResult = { code: number | null; stdout: string; stderr: string };
 type RunningChild = {
@@ -145,11 +153,18 @@ async function eventuallyValue<T>(
   }
 }
 
-function runDaemonProcess(moduleUrl: string, home: string, apiUrl: string): RunningChild {
+function runDaemonProcess(
+  moduleUrl: string,
+  home: string,
+  apiUrl: string,
+  // The daemon's 60s token-check interval, compressed by default so tests do
+  // not wait on it. A test can stretch it to prove another path does the work.
+  tokenCheckIntervalMs = 20,
+): RunningChild {
   const source = `
     const nativeSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = (handler, delay, ...args) =>
-      nativeSetTimeout(handler, delay === 60000 ? 20 : delay, ...args);
+      nativeSetTimeout(handler, delay === 60000 ? ${String(tokenCheckIntervalMs)} : delay, ...args);
     await import(${JSON.stringify(moduleUrl)});
   `;
   const env = {
@@ -492,6 +507,92 @@ describe("daemon terminal-auth lifecycle", () => {
       expect(requestUrls).toContain("/api/cli/moves/ingest");
       expect(authorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
       expect(existsSync(pendingPath)).toBe(false);
+      expect(daemon.stderr()).toContain("re-authentication detected");
+    } finally {
+      if (daemon) {
+        daemon.kill();
+        await daemon.exited;
+      }
+      if (server.listening) await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+  it("leaves the hold on the first status read after a fresh login, then heartbeats promptly", async () => {
+    // `prim daemon start` right after setup's login finds the held daemon
+    // already running on the expected version, so nothing restarts it, and it
+    // waits only 30s for a healthy heartbeat. The token check that also resumes
+    // the hold runs every 60s; it is stretched to an hour here so only the
+    // status read can be what resumes it.
+    const home = mkdtempSync(join(tmpdir(), "prim-daemon-reauth-read-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    const socketPath = join(config, "sock");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "token"), "ended-access\n");
+    writeFileSync(join(config, "refresh_token"), "ended-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+    writeFileSync(
+      join(config, "refresh_terminal"),
+      `${createHash("sha256").update("ended-refresh").digest("hex")}\n`,
+    );
+
+    const heartbeatAuthorizations: Array<string | undefined> = [];
+    let networkCalls = 0;
+    const server = createServer((request, response) => {
+      networkCalls += 1;
+      request.resume();
+      if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
+        heartbeatAuthorizations.push(request.headers.authorization);
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({ accepted: true, lastHeartbeatAt: Date.now(), onlineCount: 1 }),
+        );
+        return;
+      }
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+    let daemon: RunningChild | undefined;
+
+    try {
+      const port = await listen(server);
+      await build({
+        entry: [join(process.cwd(), "src/daemon/server.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
+      daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`, 3_600_000);
+      await eventually(
+        () => existsSync(socketPath) && (statSync(socketPath).mode & 0o777) === 0o600,
+        () => `daemon socket was not secured: ${daemon?.stderr() ?? ""}`,
+      );
+      const held = await daemonRequest(socketPath, "status_snapshot");
+      expect(held.needsReauth).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(networkCalls).toBe(0);
+
+      writeFileSync(join(config, "refresh_token"), "fresh-refresh\n");
+      writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+      writeFileSync(join(config, "token"), "fresh-access\n");
+      unlinkSync(join(config, "refresh_terminal"));
+
+      const resumed = await daemonRequest(socketPath, "status_snapshot");
+      expect(resumed.needsReauth).toBe(false);
+      // The resumed heartbeat starts immediately, well inside start's window.
+      const heartbeating = await eventuallyValue(
+        () => daemonRequest(socketPath, "status_snapshot"),
+        (snapshot) => (snapshot.heartbeat as { healthy?: boolean } | undefined)?.healthy === true,
+        () => `daemon did not heartbeat after re-auth: ${daemon?.stderr() ?? ""}`,
+      );
+      expect(heartbeating.needsReauth).toBe(false);
+      expect(heartbeatAuthorizations.length).toBeGreaterThan(0);
+      expect(heartbeatAuthorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
       expect(daemon.stderr()).toContain("re-authentication detected");
     } finally {
       if (daemon) {
@@ -850,4 +951,503 @@ describe("daemon raw statusline socket", () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 25_000);
+});
+
+describe("daemon delivery state through a real ingestion sweep", () => {
+  const DAY_MS = 86_400_000;
+  const organizationId = "org-local";
+  const workosOrganizationId = "org-workos";
+  let bundleRoot: string;
+  let moduleUrl: string;
+
+  beforeAll(async () => {
+    bundleRoot = mkdtempSync(join(tmpdir(), "prim-daemon-delivery-bundle-"));
+    await build({
+      entry: [join(process.cwd(), "src/daemon/server.ts")],
+      format: ["esm"],
+      outDir: bundleRoot,
+      platform: "node",
+      target: "node20",
+      splitting: false,
+      clean: true,
+      silent: true,
+    });
+    moduleUrl = pathToFileURL(join(bundleRoot, "server.js")).href;
+  }, 30_000);
+
+  afterAll(() => {
+    rmSync(bundleRoot, { recursive: true, force: true });
+  });
+
+  type Reply = { status: number; body: unknown };
+
+  function accepted(moveIds: string[]): Reply {
+    return {
+      status: 200,
+      body: {
+        accepted: moveIds.length,
+        acknowledged: moveIds.length,
+        disposition: "persisted",
+        verdictFooter: null,
+      },
+    };
+  }
+
+  const bindingReply: Reply = {
+    status: 200,
+    body: {
+      authenticated: true,
+      organizationBindingVersion: 1,
+      captureAuthorityKind: "workos",
+      organizationId,
+      workosOrganizationId,
+    },
+  };
+
+  function partition(config: string, port: number): string {
+    return join(config, "moves", `127.0.0.1_${String(port)}`);
+  }
+
+  /** Append three two-day-old Moves to a bucket's live journal. */
+  function queueMoves(config: string, port: number, bucket: string, prefix: string): void {
+    const directory = join(partition(config, port), bucket);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const capturedAt = Date.now() - 2 * DAY_MS;
+    writeFileSync(
+      join(directory, "journal.ndjson"),
+      `${Array.from({ length: 3 }, (_, index) =>
+        JSON.stringify({
+          moveId: `${prefix}-${String(index)}`,
+          capturedAt: capturedAt + index,
+          sessionId: `${prefix}-session`,
+          eventType: "UserPromptSubmit",
+          payload: { prompt: `${prefix} ${String(index)}` },
+        }),
+      ).join("\n")}\n`,
+      { mode: 0o600, flag: "a" },
+    );
+  }
+
+  type DaemonContext = {
+    socketPath: string;
+    apiUrl: string;
+    home: string;
+    config: string;
+    port: number;
+    daemon: RunningChild;
+    ingested: () => string[][];
+  };
+
+  /**
+   * Run the daemon against a stub server that accepts heartbeats, answers
+   * auth status with `authStatus` (by default binding the credential to
+   * org-local/org-workos; "hold" never answers), and ingest with `ingest`.
+   */
+  async function withDaemon(options: {
+    ingest: (moveIds: string[]) => Reply;
+    authStatus?: (authorization: string | undefined) => Reply | "hold";
+    queue: (config: string, port: number) => void;
+    check: (context: DaemonContext) => Promise<void>;
+  }): Promise<void> {
+    const home = mkdtempSync(join(tmpdir(), "prim-daemon-delivery-"));
+    const config = join(home, ".config", "prim");
+    mkdirSync(config, { recursive: true, mode: 0o700 });
+    writeFileSync(join(config, "token"), "delivery-access\n");
+    writeFileSync(join(config, "refresh_token"), "delivery-refresh\n");
+    writeFileSync(join(config, "token_expires_at"), `${String(Date.now() + 3_600_000)}\n`);
+    const ingested: string[][] = [];
+    const sockets = new Set<Socket>();
+    const server = createServer((request, response) => {
+      const respond = (reply: Reply): void => {
+        response.writeHead(reply.status, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(reply.body));
+      };
+      if (request.method === "GET" && request.url === "/api/cli/auth/status") {
+        request.resume();
+        const reply = options.authStatus?.(request.headers.authorization) ?? bindingReply;
+        if (reply !== "hold") respond(reply);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/cli/presence/heartbeat") {
+        request.resume();
+        respond({
+          status: 200,
+          body: { accepted: true, lastHeartbeatAt: Date.now(), onlineCount: 1 },
+        });
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/cli/moves/ingest") {
+        let raw = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => {
+          raw += chunk;
+        });
+        request.on("end", () => {
+          const { batch } = JSON.parse(raw) as { batch: Array<{ moveId: string }> };
+          const moveIds = batch.map((move) => move.moveId);
+          ingested.push(moveIds);
+          respond(options.ingest(moveIds));
+        });
+        return;
+      }
+      request.resume();
+      respond({ status: 404, body: { error: "not_found" } });
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    let daemon: RunningChild | undefined;
+    try {
+      const port = await listen(server);
+      const apiUrl = `http://127.0.0.1:${String(port)}`;
+      options.queue(config, port);
+      daemon = runDaemonProcess(moduleUrl, home, apiUrl);
+      const socketPath = join(config, "sock");
+      await eventually(
+        () => existsSync(socketPath),
+        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+      );
+      await options.check({
+        socketPath,
+        apiUrl,
+        home,
+        config,
+        port,
+        daemon,
+        ingested: () => ingested,
+      });
+    } finally {
+      if (daemon) {
+        daemon.kill();
+        await daemon.exited;
+      }
+      // A held auth status request would otherwise keep close() waiting.
+      for (const socket of sockets) socket.destroy();
+      if (server.listening) await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  type Ingestion = Record<string, unknown> & { healthy?: boolean };
+  type Snapshot = Parameters<typeof daemonStartIsReady>[1] &
+    Parameters<typeof daemonStartHealthFields>[1] &
+    Parameters<typeof classifyDaemonHealth>[0] & { ingestion: Ingestion };
+
+  /** The daemon's status snapshot once `predicate` holds. */
+  async function snapshotWhen(
+    { socketPath, daemon }: DaemonContext,
+    predicate: (snapshot: Snapshot) => boolean,
+    what: string,
+    timeoutMs = 5_000,
+  ): Promise<Snapshot> {
+    return (await eventuallyValue(
+      () => daemonRequest(socketPath, "status_snapshot"),
+      (value) => predicate(value as unknown as Snapshot),
+      () => `daemon did not ${what}: ${daemon.stderr()}`,
+      timeoutMs,
+    )) as unknown as Snapshot;
+  }
+
+  const heartbeating = (snapshot: Snapshot): boolean =>
+    (snapshot.heartbeat as { healthy?: boolean } | undefined)?.healthy === true;
+  const failures = (snapshot: Snapshot): unknown => snapshot.ingestion?.consecutiveFailures;
+  const startLine = (snapshot: Snapshot): string =>
+    formatDaemonLifecycleMessage(
+      "[prim] ✓ daemon started under launchd (pid=1)",
+      "enabled",
+      snapshot,
+    );
+  // Setup's doctor verdict on delivery. Two gates ahead of it are left out,
+  // since each would fail every snapshot here before delivery is checked: the
+  // test daemon's version "test" is not semver, and these socket requests
+  // carry no caller principal, which a real doctor sends.
+  const setupDoctor = (snapshot: Snapshot): string => {
+    const check = classifyDaemonHealth(
+      { ...snapshot, principalMismatch: false },
+      { ingestionStatus: "enabled", backlogExpected: true },
+    );
+    return `${check.status}: ${check.detail ?? ""}`;
+  };
+  const statusline = async ({ socketPath, home, apiUrl }: DaemonContext): Promise<string> =>
+    (await rawStatuslineRequest(socketPath, [statuslineRequest(home, apiUrl)])).toString();
+  // Any batch holding `moveId` is rejected with a server fault that never
+  // dead-letters; the drain bisects down to that one Move and stops there.
+  const rejecting =
+    (poisoned: (moveId: string) => boolean) =>
+    (moveIds: string[]): Reply =>
+      moveIds.some(poisoned) ? { status: 500, body: { error: "unexpected" } } : accepted(moveIds);
+
+  it("records buckets a successful sweep held back, so start and the statusline never say draining", async () => {
+    await withDaemon({
+      ingest: () => ({ status: 500, body: { error: "unexpected" } }),
+      queue: (config, port) => {
+        // Captured before any organization binding, and under another tenant:
+        // the sweep returns without throwing and sends neither.
+        queueMoves(config, port, "_unbound", "unbound");
+        queueMoves(config, port, "org-other", "other");
+      },
+      check: async (context) => {
+        const snapshot = await snapshotWhen(
+          context,
+          (value) => heartbeating(value) && value.ingestion?.lastRetainedBucketCount === 2,
+          "record the retained sweep",
+        );
+
+        expect(snapshot.ingestion).toMatchObject({
+          healthy: false,
+          consecutiveFailures: 0,
+          lastAcknowledgedCount: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+          lastRetainedReasons: "organization_mismatch:1, unbound:1",
+          pendingCount: 6,
+        });
+        expect(snapshot.ingestion.lastError).toBeUndefined();
+        expect(context.ingested()).toEqual([]);
+        expect(deliveryBacklogState(snapshot.ingestion)).toBe("retained");
+
+        // `daemon start` does not gate on delivery, so it still starts, but
+        // with a warning that names the held-back buckets.
+        expect(daemonStartIsReady(true, snapshot, "test")).toBe(true);
+        expect(startLine(snapshot)).toBe(
+          "[prim] ⚠ daemon started under launchd (pid=1) · Decision ingestion enabled · delivery held back: 2 journal buckets retained (organization_mismatch:1, unbound:1) · holding 6 pending moves (oldest 2d) — run `prim doctor`",
+        );
+        expect(daemonStartHealthFields(true, snapshot)).toMatchObject({
+          draining: false,
+          deliveryRetained: true,
+        });
+        // Setup's expected-backlog doctor still fails it.
+        expect(setupDoctor(snapshot)).toBe("fail: ingestion unhealthy · 6 pending");
+        // The daemon's own statusline keeps main's label.
+        expect(await statusline(context)).toBe(
+          "primitive test (daemon: degraded · delivery: stalled · 6 pending)",
+        );
+        // The persisted health names the deployment the daemon drains, so a
+        // CLI leaves the drain to it only when it targets that deployment.
+        const healthPath = join(context.config, "daemon-health.json");
+        expect(JSON.parse(readFileSync(healthPath, "utf8"))).toMatchObject({
+          siteUrl: context.apiUrl,
+        });
+        expect(
+          daemonOwnsDrain({ healthPath, expectedVersion: "test", siteUrl: context.apiUrl }),
+        ).toBe(true);
+        expect(
+          daemonOwnsDrain({
+            healthPath,
+            expectedVersion: "test",
+            siteUrl: "https://api.example.test",
+          }),
+        ).toBe(false);
+      },
+    });
+  }, 30_000);
+
+  it("credits a failed drain that acknowledged Moves first as draining, until a failed journal scan resets it", async () => {
+    await withDaemon({
+      ingest: rejecting((moveId) => moveId === "stuck-2"),
+      queue: (config, port) => {
+        queueMoves(config, port, workosOrganizationId, "stuck");
+      },
+      check: async (context) => {
+        // The drain acknowledges stuck-0 and stuck-1, then fails on stuck-2.
+        const advancing = await snapshotWhen(
+          context,
+          (value) => heartbeating(value) && failures(value) === 1,
+          "record the failed sweep",
+        );
+        expect(advancing.ingestion).toMatchObject({
+          healthy: false,
+          lastAcknowledgedCount: 2,
+          lastFailedDrainAcknowledgedCount: 2,
+          lastRetainedBucketCount: 0,
+          pendingCount: 1,
+        });
+        expect(deliveryBacklogState(advancing.ingestion)).toBe("draining");
+        expect(startLine(advancing)).toBe(
+          "[prim] ✓ daemon started under launchd (pid=1) · Decision ingestion enabled · draining 1 pending move (oldest 2d) in the background",
+        );
+        expect(setupDoctor(advancing)).toBe(
+          "warn: supervised and live · vtest · Decision ingestion enabled · draining 1 pending move (oldest 2d) in the background",
+        );
+        expect(await statusline(context)).toBe(
+          "primitive test (daemon: degraded · delivery: draining · 1 pending)",
+        );
+
+        // A bucket whose journal is a directory makes the next scan throw.
+        mkdirSync(join(partition(context.config, context.port), "org-broken", "journal.ndjson"), {
+          recursive: true,
+        });
+        writeFileSync(
+          join(partition(context.config, context.port), "org-broken", "journal.ndjson", "entry"),
+          "",
+        );
+        const scanFailed = await snapshotWhen(
+          context,
+          (value) => failures(value) === 2,
+          "record the failed journal scan",
+          15_000,
+        );
+        expect(String(scanFailed.ingestion.lastError)).toMatch(/^journal scan failed: /);
+        // The earlier sweep's progress must not vouch for this failure.
+        expect(scanFailed.ingestion).toMatchObject({
+          lastAcknowledgedCount: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+        });
+        expect(deliveryBacklogState(scanFailed.ingestion)).toBe("failing");
+      },
+    });
+  }, 30_000);
+
+  it("reads a bucket that fails every retry as failing while a sibling bucket keeps delivering", async () => {
+    // One organization, two deliverable buckets. The workos bucket's first
+    // Move is always rejected; the local bucket gets fresh captures before
+    // every retry, so each failed sweep still acknowledges Moves overall.
+    await withDaemon({
+      ingest: rejecting((moveId) => moveId.startsWith("poison-")),
+      queue: (config, port) => {
+        queueMoves(config, port, organizationId, "live");
+        queueMoves(config, port, workosOrganizationId, "poison");
+      },
+      check: async (context) => {
+        let snapshot: Snapshot | undefined;
+        for (const round of [1, 2, 3]) {
+          snapshot = await snapshotWhen(
+            context,
+            (value) => heartbeating(value) && failures(value) === round,
+            `record failed sweep ${String(round)}`,
+            15_000,
+          );
+          expect(snapshot.ingestion).toMatchObject({
+            healthy: false,
+            lastAcknowledgedCount: 3,
+            lastFailedDrainAcknowledgedCount: 0,
+            lastRetainedBucketCount: 0,
+            pendingCount: 3,
+          });
+          expect(deliveryBacklogState(snapshot.ingestion)).toBe("failing");
+          if (round < 3)
+            queueMoves(context.config, context.port, organizationId, `next-${String(round)}`);
+        }
+        const delivered = context.ingested().flat();
+        for (const prefix of ["live", "next-1", "next-2"]) {
+          for (const index of [0, 1, 2]) expect(delivered).toContain(`${prefix}-${String(index)}`);
+        }
+        if (!snapshot) throw new Error("no snapshot");
+        expect(startLine(snapshot)).toMatch(
+          /^\[prim\] ⚠ daemon started under launchd \(pid=1\) · Decision ingestion enabled · delivery failing \(3 consecutive failures\)/,
+        );
+        expect(daemonStartHealthFields(true, snapshot)).toMatchObject({
+          draining: false,
+          deliveryFailing: true,
+        });
+        expect(setupDoctor(snapshot)).toMatch(/^fail: ingestion unhealthy · 3 pending — /);
+        expect(await statusline(context)).toBe(
+          "primitive test (daemon: degraded · delivery: stalled · 3 pending)",
+        );
+      },
+    });
+  }, 45_000);
+
+  it("records the buckets a failed sweep held back, so its progress never reads as draining", async () => {
+    await withDaemon({
+      ingest: rejecting((moveId) => moveId === "stuck-2"),
+      queue: (config, port) => {
+        queueMoves(config, port, "_unbound", "unbound");
+        queueMoves(config, port, workosOrganizationId, "stuck");
+      },
+      check: async (context) => {
+        const snapshot = await snapshotWhen(
+          context,
+          (value) => heartbeating(value) && failures(value) === 1,
+          "record the failed sweep",
+        );
+        // The FlushError carried both the failing drain's progress and the
+        // bucket the sweep held back.
+        expect(snapshot.ingestion).toMatchObject({
+          healthy: false,
+          lastFailedDrainAcknowledgedCount: 2,
+          lastRetainedBucketCount: 1,
+          lastRetainedReasons: "unbound:1",
+          pendingCount: 4,
+        });
+        expect(deliveryBacklogState(snapshot.ingestion)).toBe("retained");
+        expect(startLine(snapshot)).toBe(
+          "[prim] ⚠ daemon started under launchd (pid=1) · Decision ingestion enabled · delivery held back: 1 journal bucket retained (unbound:1) · holding 4 pending moves (oldest 2d) — run `prim doctor`",
+        );
+        expect(setupDoctor(snapshot)).toMatch(/^fail: ingestion unhealthy · 4 pending — /);
+        expect(await statusline(context)).toBe(
+          "primitive test (daemon: degraded · delivery: stalled · 4 pending)",
+        );
+      },
+    });
+  }, 30_000);
+
+  it("forgets what the ended session's sweep held back once a fresh login resumes it", async () => {
+    await withDaemon({
+      ingest: accepted,
+      // The ended session's identity check fails, so the sweep holds every
+      // bucket back without throwing. The resumed sweep's check never answers,
+      // so nothing it records can stand in for the reset under test.
+      authStatus: (authorization) =>
+        authorization === "Bearer delivery-access"
+          ? { status: 500, body: { error: "unavailable" } }
+          : "hold",
+      queue: (config, port) => {
+        queueMoves(config, port, workosOrganizationId, "held");
+      },
+      check: async (context) => {
+        const retained = await snapshotWhen(
+          context,
+          (value) => heartbeating(value) && value.ingestion?.lastRetainedBucketCount === 1,
+          "record the held-back sweep",
+        );
+        expect(retained.ingestion).toMatchObject({
+          consecutiveFailures: 0,
+          lastRetainedReasons: "identity_unavailable:1",
+        });
+        expect(deliveryBacklogState(retained.ingestion)).toBe("retained");
+
+        // The broker ends the session; the token check enters the hold.
+        writeFileSync(
+          join(context.config, "refresh_terminal"),
+          `${createHash("sha256").update("delivery-refresh").digest("hex")}\n`,
+        );
+        const held = await snapshotWhen(
+          context,
+          (value) => value.needsReauth === true,
+          "enter the re-auth hold",
+        );
+        expect(held.ingestion.lastRetainedBucketCount).toBe(1);
+
+        // `prim auth login` rotates in a fresh credential.
+        writeFileSync(join(context.config, "refresh_token"), "fresh-refresh\n");
+        writeFileSync(
+          join(context.config, "token_expires_at"),
+          `${String(Date.now() + 3_600_000)}\n`,
+        );
+        writeFileSync(join(context.config, "token"), "fresh-access\n");
+        unlinkSync(join(context.config, "refresh_terminal"));
+
+        const resumed = await snapshotWhen(
+          context,
+          (value) => value.needsReauth === false && heartbeating(value),
+          "resume and heartbeat after login",
+        );
+        expect(resumed.ingestion).toMatchObject({
+          consecutiveFailures: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+          lastRetainedBucketCount: 0,
+        });
+        expect(resumed.ingestion.lastRetainedReasons).toBeUndefined();
+        // What setup's `daemon start` and doctor see right after its login.
+        expect(deliveryBacklogState(resumed.ingestion)).toBe("draining");
+        expect(startLine(resumed)).toBe(
+          "[prim] ✓ daemon started under launchd (pid=1) · Decision ingestion enabled · draining 3 pending moves (oldest 2d) in the background",
+        );
+        expect(setupDoctor(resumed)).toBe(
+          "warn: supervised and live · vtest · Decision ingestion enabled · draining 3 pending moves (oldest 2d) in the background",
+        );
+      },
+    });
+  }, 30_000);
 });

@@ -10,21 +10,56 @@
 import { closeSync, mkdtempSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   classifyLaunchdStatus,
   classifyStatus,
   daemonDegradedReason,
+  daemonStartFailureReason,
   daemonStartHealthFields,
-  daemonStartIsHealthy,
+  daemonStartIsReady,
   formatDaemonLifecycleMessage,
   formatDaemonSnapshotMessage,
   openDaemonLog,
+  waitForReadySnapshot,
 } from "./daemon.js";
 
 const EXIT_OK = 0;
 const EXIT_NOT_RUNNING = 2;
 const EXIT_BOOTING = 3;
+
+const NOW = 1_800_000_000_000;
+const DAY_MS = 86_400_000;
+const healthyHeartbeat = { healthy: true, consecutiveFailures: 0 };
+const healthyIngestion = {
+  healthy: true,
+  consecutiveFailures: 0,
+  pendingCount: 0,
+  pendingSampled: false,
+  strandedCount: 0,
+  lastAcknowledgedCount: 0,
+  lastFailedDrainAcknowledgedCount: 0,
+  lastRetainedBucketCount: 0,
+};
+// The PRI-68 shape: weeks of Moves queued while auth was dead, so the daemon's
+// own ingestion health is red the moment it comes back.
+const backlogIngestion = {
+  ...healthyIngestion,
+  healthy: false,
+  pendingCount: 1200,
+  pendingSampled: true,
+  oldestPendingAt: NOW - 52 * DAY_MS - 1_000,
+};
+const drainingSnapshot = {
+  pid: 4242,
+  uptimeMs: 1,
+  sessionId: "daemon-4242",
+  version: "1.2.3",
+  healthy: false,
+  needsReauth: false,
+  heartbeat: healthyHeartbeat,
+  ingestion: backlogIngestion,
+};
 
 describe("classifyStatus", () => {
   it("reports hard-down with exit 2 when no live pid", () => {
@@ -189,13 +224,101 @@ describe("classifyLaunchdStatus", () => {
   });
 });
 
-describe("daemonStartIsHealthy", () => {
+describe("daemonStartIsReady", () => {
   it("requires a loaded/responding owned service plus matching healthy runtime", () => {
-    expect(daemonStartIsHealthy(true, { healthy: true, version: "1.2.3" }, "1.2.3")).toBe(true);
-    expect(daemonStartIsHealthy(false, { healthy: true, version: "1.2.3" }, "1.2.3")).toBe(false);
-    expect(daemonStartIsHealthy(true, { healthy: false, version: "1.2.3" }, "1.2.3")).toBe(false);
-    expect(daemonStartIsHealthy(true, { healthy: true, version: "old" }, "1.2.3")).toBe(false);
-    expect(daemonStartIsHealthy(true, { healthy: true }, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, { healthy: true, version: "1.2.3" }, "1.2.3")).toBe(true);
+    expect(daemonStartIsReady(false, { healthy: true, version: "1.2.3" }, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, { healthy: false, version: "1.2.3" }, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, { healthy: true, version: "old" }, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, { healthy: true }, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, null, "1.2.3")).toBe(false);
+    expect(daemonStartIsReady(true, { healthy: true, version: "1.2.3" }, undefined)).toBe(false);
+  });
+
+  it("does not gate on delivery: ready while a backlog drains or its delivery fails", () => {
+    expect(daemonStartIsReady(true, drainingSnapshot, "1.2.3")).toBe(true);
+    expect(
+      daemonStartIsReady(
+        true,
+        {
+          ...drainingSnapshot,
+          ingestion: { ...backlogIngestion, consecutiveFailures: 7, lastError: "HTTP 504" },
+        },
+        "1.2.3",
+      ),
+    ).toBe(true);
+  });
+
+  it("still fails version skew, terminal auth, and an unhealthy heartbeat despite the exemption", () => {
+    expect(daemonStartIsReady(true, { ...drainingSnapshot, version: "1.2.2" }, "1.2.3")).toBe(
+      false,
+    );
+    expect(daemonStartIsReady(true, { ...drainingSnapshot, needsReauth: true }, "1.2.3")).toBe(
+      false,
+    );
+    expect(
+      daemonStartIsReady(
+        true,
+        {
+          ...drainingSnapshot,
+          heartbeat: { healthy: false, consecutiveFailures: 3, lastError: "HTTP 401" },
+        },
+        "1.2.3",
+      ),
+    ).toBe(false);
+    expect(daemonStartIsReady(true, { ...drainingSnapshot, heartbeat: undefined }, "1.2.3")).toBe(
+      false,
+    );
+    expect(daemonStartIsReady(false, drainingSnapshot, "1.2.3")).toBe(false);
+  });
+
+  it("exempts only the ingestion cause of an unhealthy aggregate", () => {
+    expect(
+      daemonStartIsReady(true, { ...drainingSnapshot, ingestion: healthyIngestion }, "1.2.3"),
+    ).toBe(false);
+  });
+});
+
+describe("waitForReadySnapshot", () => {
+  function fakeClock() {
+    let now = 0;
+    return {
+      nowMs: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+
+  it("returns once the heartbeat is healthy instead of waiting for the backlog to drain", async () => {
+    const snapshots = [
+      null,
+      { ...drainingSnapshot, heartbeat: { healthy: false, consecutiveFailures: 0 } },
+      drainingSnapshot,
+      { ...drainingSnapshot, healthy: true, ingestion: healthyIngestion },
+    ];
+    const requestSnapshot = vi.fn(async () => snapshots.shift() ?? null);
+
+    await expect(
+      waitForReadySnapshot("1.2.3", { requestSnapshot, ...fakeClock() }),
+    ).resolves.toEqual(drainingSnapshot);
+    expect(requestSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["terminal auth", { ...drainingSnapshot, needsReauth: true }],
+    ["version skew", { ...drainingSnapshot, version: "1.2.2" }],
+    [
+      "an unhealthy heartbeat",
+      { ...drainingSnapshot, heartbeat: { healthy: false, consecutiveFailures: 2 } },
+    ],
+  ])("polls %s to the deadline and returns the last snapshot", async (_label, snapshot) => {
+    const requestSnapshot = vi.fn(async () => snapshot);
+
+    await expect(
+      waitForReadySnapshot("1.2.3", { requestSnapshot, ...fakeClock() }),
+    ).resolves.toEqual(snapshot);
+    expect(requestSnapshot.mock.calls.length).toBeGreaterThan(1);
   });
 });
 
@@ -217,6 +340,22 @@ describe("daemonStartHealthFields", () => {
     });
   });
 
+  it("adds only draining fields to a ready start that is still working through a backlog", () => {
+    expect(daemonStartHealthFields(true, drainingSnapshot)).toEqual({
+      draining: true,
+      ingestion: backlogIngestion,
+    });
+  });
+
+  it("reports recorded delivery failures distinctly from draining", () => {
+    const failing = { ...backlogIngestion, consecutiveFailures: 3, lastError: "HTTP 400" };
+    expect(daemonStartHealthFields(true, { ...drainingSnapshot, ingestion: failing })).toEqual({
+      draining: false,
+      deliveryFailing: true,
+      ingestion: failing,
+    });
+  });
+
   it("adds the complete degraded snapshot fields to unhealthy start JSON", () => {
     const heartbeat = { healthy: false, consecutiveFailures: 1, lastError: "HTTP 401" };
     const ingestion = {
@@ -226,6 +365,8 @@ describe("daemonStartHealthFields", () => {
       pendingSampled: false,
       strandedCount: 0,
       lastAcknowledgedCount: 0,
+      lastFailedDrainAcknowledgedCount: 0,
+      lastRetainedBucketCount: 0,
     };
     expect(
       daemonStartHealthFields(false, {
@@ -257,6 +398,8 @@ describe("daemonDegradedReason", () => {
           pendingSampled: false,
           strandedCount: 0,
           lastAcknowledgedCount: 0,
+          lastFailedDrainAcknowledgedCount: 0,
+          lastRetainedBucketCount: 0,
           lastError: "poison queue",
         },
       }),
@@ -274,6 +417,8 @@ describe("daemonDegradedReason", () => {
         pendingSampled: true,
         strandedCount: 0,
         lastAcknowledgedCount: 0,
+        lastFailedDrainAcknowledgedCount: 0,
+        lastRetainedBucketCount: 0,
         lastError: `bad\u001b[2J${"x".repeat(400)}`,
       },
     });
@@ -281,6 +426,36 @@ describe("daemonDegradedReason", () => {
     expect(reason).toContain("ingestion unhealthy (at least 23 pending): bad");
     expect(reason).not.toContain("\u001b");
     expect(reason?.length).toBeLessThan(300);
+  });
+});
+
+describe("daemonStartFailureReason", () => {
+  it("names version skew instead of blaming a backlog that no longer gates start", () => {
+    expect(daemonStartFailureReason({ ...drainingSnapshot, version: "1.2.2" }, "1.2.3")).toBe(
+      "daemon reports v1.2.2, expected v1.2.3",
+    );
+    expect(daemonStartFailureReason({ ...drainingSnapshot, version: undefined }, "1.2.3")).toBe(
+      "daemon reports no version, expected v1.2.3",
+    );
+  });
+
+  it("keeps terminal auth and heartbeat causes ahead of ingestion", () => {
+    expect(
+      daemonStartFailureReason(
+        { ...drainingSnapshot, version: "1.2.2", needsReauth: true },
+        "1.2.3",
+      ),
+    ).toBe("authentication requires `prim auth login`");
+    expect(
+      daemonStartFailureReason(
+        {
+          ...drainingSnapshot,
+          heartbeat: { healthy: false, consecutiveFailures: 1, lastError: "HTTP 503" },
+        },
+        "1.2.3",
+      ),
+    ).toBe("heartbeat unhealthy: HTTP 503");
+    expect(daemonStartFailureReason(null, "1.2.3")).toBeUndefined();
   });
 });
 
@@ -359,6 +534,57 @@ describe("formatDaemonLifecycleMessage", () => {
     },
   ])("appends $state without changing lifecycle metadata", ({ message, state, expected }) => {
     expect(formatDaemonLifecycleMessage(message, state)).toBe(expected);
+  });
+
+  it("leaves a healthy snapshot's lifecycle line unchanged", () => {
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] ✓ daemon started under launchd (pid=4242)",
+        "enabled",
+        { ingestion: healthyIngestion },
+        NOW,
+      ),
+    ).toBe("[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled");
+  });
+
+  it("states distinctly that a ready daemon is draining a backlog in the background", () => {
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] ✓ daemon started under launchd (pid=4242)",
+        "enabled",
+        drainingSnapshot,
+        NOW,
+      ),
+    ).toBe(
+      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background",
+    );
+  });
+
+  it("warns, and never says draining, while the daemon records delivery failures", () => {
+    const failing = {
+      ingestion: { ...backlogIngestion, consecutiveFailures: 3, lastError: "HTTP 504\n  gateway" },
+    };
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] ✓ daemon started under launchd (pid=4242)",
+        "enabled",
+        failing,
+        NOW,
+      ),
+    ).toBe(
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
+    );
+    // A line with no verdict icon keeps its text; only the clause changes.
+    expect(
+      formatDaemonLifecycleMessage(
+        "[prim] daemon already running (pid=4242)",
+        "enabled",
+        failing,
+        NOW,
+      ),
+    ).toBe(
+      "[prim] daemon already running (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
+    );
   });
 });
 

@@ -31,6 +31,7 @@ import {
   resolveAuthCredential,
 } from "../client.js";
 import { FlushError, flush, hasPendingDrainWork } from "../flusher.js";
+import { type RetainedJournalBucket, summarizeRetainedBuckets } from "../journal-organization.js";
 import { type PendingJournalStats, pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
@@ -112,7 +113,9 @@ const EXIT_CRASH = 1;
 const startedAt = Date.now();
 const client = getClient();
 const runtimeVersion = resolveRuntimeVersion();
-const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt);
+// The daemon's environment is fixed for its lifetime, so the deployment whose
+// journal partition it drains is too.
+const daemonHealth = createDaemonHealthState(runtimeVersion, process.pid, startedAt, getSiteUrl());
 const statuslineIngestionCache = new StatuslineIngestionCache(decisionIngestionStatus, {
   resolveRepositoryBindingState: repositoryBindingState,
 });
@@ -205,6 +208,7 @@ function purgePrincipalScopedState(): void {
   lastOnlineNames = undefined;
   lastOnlineTeammates = undefined;
   lastOkAtLocal = undefined;
+  clearSweepRecord();
 }
 
 /** Re-read the credential generation before every tenant-scoped socket or cache operation. */
@@ -214,6 +218,7 @@ function synchronizeDaemonCredential(): ReturnType<typeof resolveDaemonPrincipal
   if (credentialKey !== activeCredentialKey) {
     activeCredentialKey = credentialKey;
     purgePrincipalScopedState();
+    persistHealth();
   }
   return resolveDaemonPrincipal(token);
 }
@@ -249,6 +254,25 @@ function updatePendingHealth(): PendingJournalStats {
   daemonHealth.ingestion.oldestPendingAt = pending.oldestPendingAt;
   daemonHealth.ingestion.strandedCount = pending.strandedCount;
   return pending;
+}
+
+/** Record what a completed sweep held back; see DaemonIngestionHealth. */
+function recordRetainedBuckets(retained: readonly RetainedJournalBucket[]): void {
+  daemonHealth.ingestion.lastRetainedBucketCount = retained.length;
+  daemonHealth.ingestion.lastRetainedReasons =
+    retained.length > 0 ? summarizeRetainedBuckets(retained) : undefined;
+}
+
+/**
+ * Forget the last sweep's held-back buckets and failed-drain progress. Both
+ * describe what that sweep saw under the credential it ran with. After a
+ * fresh login or any credential change, a stale "held back
+ * (identity_unavailable:1)" would otherwise keep `daemon start` warning and
+ * setup's doctor failing until the next sweep completes.
+ */
+function clearSweepRecord(): void {
+  daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
+  recordRetainedBuckets([]);
 }
 
 /**
@@ -289,7 +313,7 @@ function enterReauthHold(): void {
 /**
  * Resume the loops once a fresh `prim auth login` has rotated in a new refresh
  * token (isSessionEnded() reverts to false on its own). Clears the failure
- * counters so backoff restarts clean.
+ * counters so backoff restarts clean, and starts the first heartbeat at once.
  */
 function exitReauthHold(): void {
   if (!reauthHold) {
@@ -301,6 +325,13 @@ function exitReauthHold(): void {
   daemonHealth.ingestion.consecutiveFailures = 0;
   daemonHealth.heartbeat.lastError = undefined;
   daemonHealth.ingestion.lastError = undefined;
+  // Like the failure counts, what the last sweep held back or delivered
+  // before failing describes the session that ended, not the new login.
+  clearSweepRecord();
+  // A success from before the hold proves nothing about the new login. With
+  // the failure count reset it would still read healthy for up to 90s, so
+  // heartbeat health waits for the resumed heartbeat below instead.
+  daemonHealth.heartbeat.lastSuccessAt = undefined;
   persistHealth();
   process.stderr.write(
     "[prim-daemon] re-authentication detected — resuming heartbeat + ingestion + Decision cache\n",
@@ -308,6 +339,19 @@ function exitReauthHold(): void {
   void sendHeartbeat();
   void runIngestionLoop();
   void runDecisionDigestLoop();
+}
+
+/**
+ * Leave the re-auth hold once a fresh login is visible. The token-check loop
+ * polls this every 60s, and status reads check it too: `prim daemon start`
+ * right after setup's login finds this daemon already running on the expected
+ * version, so nothing restarts it, and it waits only 30s for a healthy
+ * heartbeat. The check reads only local credential files.
+ */
+function resumeIfReauthenticated(): void {
+  if (reauthHold && !isSessionEnded() && resolveAuthCredential()) {
+    exitReauthHold();
+  }
 }
 
 async function takeOwnership(): Promise<void> {
@@ -518,6 +562,10 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = failures;
     daemonHealth.ingestion.lastError = `journal scan failed: ${errorMessage(err)}`;
     daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
+    // This attempt acknowledged nothing; an earlier sweep's counts must not
+    // read as progress next to the failure it just recorded.
+    daemonHealth.ingestion.lastAcknowledgedCount = 0;
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
     persistHealth();
     scheduleIngestion(delay);
     return;
@@ -531,6 +579,7 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
     daemonHealth.ingestion.nextRetryAt = undefined;
+    clearSweepRecord();
     persistHealth();
     scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
     return;
@@ -550,8 +599,12 @@ async function runIngestionLoop(): Promise<void> {
     }
     daemonHealth.ingestion.lastSuccessAt = Date.now();
     daemonHealth.ingestion.lastAcknowledgedCount = result.flushed;
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount = 0;
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
+    // A sweep that held buckets back returns without throwing, yet those
+    // Moves stay queued; record them so delivery never reads as draining.
+    recordRetainedBuckets(result.retained ?? []);
     updatePendingHealth();
     persistHealth();
     scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
@@ -559,6 +612,13 @@ async function runIngestionLoop(): Promise<void> {
     const failures = daemonHealth.ingestion.consecutiveFailures + 1;
     const delay = ingestionRetryDelayMs(failures);
     daemonHealth.ingestion.lastAcknowledgedCount = err instanceof FlushError ? err.flushed : 0;
+    // Only what the failing drains themselves acknowledged shows this failure
+    // is advancing; see DaemonIngestionHealth.
+    daemonHealth.ingestion.lastFailedDrainAcknowledgedCount =
+      err instanceof FlushError ? err.failedDrainFlushed : 0;
+    // Only a FlushError reached bucket classification; any other failure
+    // leaves the last completed sweep's record in place.
+    if (err instanceof FlushError) recordRetainedBuckets(err.retained);
     daemonHealth.ingestion.consecutiveFailures = failures;
     daemonHealth.ingestion.lastError = errorMessage(err);
     daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
@@ -637,6 +697,7 @@ function handleStatusSnapshot(
   caller?: DaemonRequestEnvelope["caller"],
   enforcePrincipal = false,
 ): StatusSnapshot {
+  resumeIfReauthenticated();
   const daemonPrincipal = synchronizeDaemonCredential();
   const wasHealthy = daemonHealth.healthy;
   const heartbeatWasHealthy = daemonHealth.heartbeat.healthy;
@@ -1002,9 +1063,7 @@ async function runTokenCheckLoop(): Promise<void> {
     // Held for re-auth: don't refresh a dead token. Watch for a fresh login —
     // isSessionEnded() flips false once the refresh token rotates — and resume
     // the halted loops when it does.
-    if (!isSessionEnded() && resolveAuthCredential()) {
-      exitReauthHold();
-    }
+    resumeIfReauthenticated();
   } else {
     await ensureTokenFresh();
     synchronizeDaemonCredential();

@@ -23,7 +23,7 @@
  * status line. Idempotent — every underlying step is, so re-running is safe.
  */
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
@@ -31,6 +31,39 @@ import { gitToplevel } from "../lib/git.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
+// Marks every one of setup's child steps.
+export const SETUP_ORCHESTRATOR_ENV = "PRIM_SETUP_ORCHESTRATOR";
+// Marks setup's child steps only when setup starts the daemon. Setup then
+// checks the daemon's delivery health, so its children leave the journal
+// drain to the daemon rather than each starting a background drain that would
+// hold the drain lock while the daemon's own sweeps, and the failures they
+// record, bow out. Under --no-daemon no daemon drains, so the steps still
+// drain for themselves.
+export const SETUP_DAEMON_DRAINS_ENV = "PRIM_SETUP_DAEMON_DRAINS";
+
+/**
+ * How setup runs one step. Capturing a step means we only want its machine
+ * STDOUT (JSON) — a status/auth probe. Its human STDERR is silenced so
+ * status-line noise ("gate ✓ · capture ✗ …") doesn't interleave into the
+ * setup trail. Every step carries SETUP_ORCHESTRATOR_ENV, and
+ * SETUP_DAEMON_DRAINS_ENV exactly when setup starts the daemon.
+ */
+export function setupStepSpawnOptions(
+  capture: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  options: { startsDaemon?: boolean } = {},
+): SpawnSyncOptionsWithStringEncoding {
+  return {
+    env: {
+      ...env,
+      [SETUP_ORCHESTRATOR_ENV]: "1",
+      // Unset rather than inherited when this setup starts no daemon.
+      [SETUP_DAEMON_DRAINS_ENV]: options.startsDaemon === true ? "1" : undefined,
+    },
+    stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
+    encoding: "utf-8",
+  };
+}
 
 export type SetupAgent = "claude" | "codex" | "cursor" | "hermes";
 export type SetupScope = "project" | "user";
@@ -127,10 +160,15 @@ export function planSetupSteps(opts: {
   if (opts.daemon) {
     // Doctor must observe the final installed + enabled state. In particular,
     // setup cannot report success while a local core.hooksPath shadows Prim.
+    // A reinstall or re-auth can inherit Moves queued while capture was not
+    // delivering; they cannot have met the 30s SLA yet. --expect-backlog
+    // reports a backlog the daemon is draining as a warning, but only once
+    // the daemon is live, current, authenticated, and heartbeating; buckets it
+    // holds back and failures it recorded without progress still fail.
     steps.push({
       key: "health",
       label: "Capture health",
-      args: ["doctor"],
+      args: ["doctor", "--expect-backlog"],
       required: true,
     });
   }
@@ -334,13 +372,11 @@ export function registerSetupCommand(
       const run =
         dependencies.run ??
         ((args: string[], capture = false): { code: number; stdout: string } => {
-          // Capturing a step means we only want its machine STDOUT (JSON) — a
-          // status/auth probe. Silence its human STDERR so status-line noise
-          // ("gate ✓ · capture ✗ …") doesn't interleave into the setup trail.
-          const r = spawnSync(process.execPath, [self, ...args], {
-            stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
-            encoding: "utf-8",
-          });
+          const r = spawnSync(
+            process.execPath,
+            [self, ...args],
+            setupStepSpawnOptions(capture, process.env, { startsDaemon: opts.daemon }),
+          );
           return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
         });
 

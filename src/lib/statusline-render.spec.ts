@@ -212,4 +212,53 @@ describe("formatStatusline I/O boundary", () => {
     );
     expect(resolve).toHaveBeenCalledTimes(5);
   });
+
+  it("says draining for the state daemon start reports as draining, and stalled otherwise", () => {
+    const behind = (ingestion: Record<string, unknown>, heartbeat = { healthy: true }) =>
+      formatStatusline(
+        "1.2.3",
+        {
+          pid: 1,
+          uptimeMs: 1,
+          sessionId: "session",
+          healthy: false,
+          heartbeat,
+          ingestion: {
+            healthy: false,
+            pendingCount: 1200,
+            pendingSampled: true,
+            lastRetainedBucketCount: 0,
+            ...ingestion,
+          },
+        },
+        () => "enabled",
+      );
+
+    expect(behind({ consecutiveFailures: 0 })).toBe(
+      "primitive 1.2.3 (daemon: degraded · delivery: draining · at least 1200 pending)",
+    );
+    // Recorded failures, an unknown failure count, or a backlog without a
+    // healthy heartbeat are not progress.
+    expect(behind({ consecutiveFailures: 3 })).toBe(
+      "primitive 1.2.3 (daemon: degraded · delivery: stalled · at least 1200 pending)",
+    );
+    expect(behind({})).toContain("delivery: stalled");
+    expect(behind({ consecutiveFailures: 0 }, { healthy: false })).toContain("delivery: stalled");
+    // Held-back buckets never deliver on their own, however the sweep ended.
+    expect(behind({ consecutiveFailures: 0, lastRetainedBucketCount: 1 })).toContain(
+      "delivery: stalled",
+    );
+    // An older daemon that omits the held-back count cannot show it has none.
+    expect(behind({ consecutiveFailures: 0, lastRetainedBucketCount: undefined })).toContain(
+      "delivery: stalled",
+    );
+    // A failed drain that acknowledged Moves first is still advancing; another
+    // bucket's delivery in the same sweep is not that failure's progress.
+    expect(behind({ consecutiveFailures: 2, lastFailedDrainAcknowledgedCount: 500 })).toContain(
+      "delivery: draining",
+    );
+    expect(behind({ consecutiveFailures: 2, lastAcknowledgedCount: 500 })).toContain(
+      "delivery: stalled",
+    );
+  });
 });

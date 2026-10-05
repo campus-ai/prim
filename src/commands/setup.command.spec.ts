@@ -8,16 +8,25 @@
  * below; only thin glue (the typo-check, the inferred-agent note) rides along.
  */
 
+import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 import {
+  SETUP_DAEMON_DRAINS_ENV,
+  SETUP_ORCHESTRATOR_ENV,
   detectAgent,
   parseSetupAuthStatus,
   planCleanupUninstalls,
   planSetupSteps,
   registerSetupCommand,
   resolveAgent,
+  setupStepSpawnOptions,
 } from "./setup.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawnSync: vi.fn(),
+}));
 
 const keys = (opts: Parameters<typeof planSetupSteps>[0]) => planSetupSteps(opts).map((s) => s.key);
 
@@ -146,6 +155,73 @@ describe("planSetupSteps", () => {
     });
     expect(steps.at(-1)?.key).toBe("health");
   });
+
+  it("health runs doctor with the setup-only expected-backlog relaxation, still required", () => {
+    const steps = planSetupSteps({ agent: "claude", daemon: true, scope: "user" });
+    expect(steps.find((s) => s.key === "health")).toMatchObject({
+      args: ["doctor", "--expect-backlog"],
+      required: true,
+    });
+  });
+});
+
+describe("setup step processes", () => {
+  it("marks every step, captured or not, as setup's own child", () => {
+    expect(setupStepSpawnOptions(true, { PATH: "/bin" })).toStrictEqual({
+      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1", [SETUP_DAEMON_DRAINS_ENV]: undefined },
+      stdio: ["inherit", "pipe", "ignore"],
+      encoding: "utf-8",
+    });
+    expect(setupStepSpawnOptions(false, { PATH: "/bin" })).toStrictEqual({
+      env: { PATH: "/bin", [SETUP_ORCHESTRATOR_ENV]: "1", [SETUP_DAEMON_DRAINS_ENV]: undefined },
+      stdio: "inherit",
+      encoding: "utf-8",
+    });
+  });
+
+  it("marks the steps as leaving the drain to the daemon only when setup starts it", () => {
+    // That marker keeps each step from starting its own background journal
+    // drain, so the daemon setup starts is the only drainer during setup.
+    expect(setupStepSpawnOptions(true, { PATH: "/bin" }, { startsDaemon: true }).env).toEqual({
+      PATH: "/bin",
+      [SETUP_ORCHESTRATOR_ENV]: "1",
+      [SETUP_DAEMON_DRAINS_ENV]: "1",
+    });
+    // A --no-daemon setup inside an outer setup step does not inherit it.
+    const nested = setupStepSpawnOptions(
+      false,
+      { [SETUP_DAEMON_DRAINS_ENV]: "1" },
+      { startsDaemon: false },
+    );
+    expect(nested.env?.[SETUP_DAEMON_DRAINS_ENV]).toBeUndefined();
+  });
+
+  it.each([
+    { label: "--no-daemon", flags: ["--no-daemon"], drains: undefined },
+    { label: "the daemon", flags: [], drains: "1" },
+  ])(
+    "spawns every real step of a setup with $label with the matching markers",
+    async ({ flags, drains }) => {
+      const spawned = vi.mocked(spawnSync);
+      spawned.mockImplementation(((_command: string, args: readonly string[]) => ({
+        status: 0,
+        stdout: args.includes("status") ? '{"status":"valid"}' : "",
+      })) as unknown as typeof spawnSync);
+      const program = new Command();
+      registerSetupCommand(program, { note: vi.fn(), exit: vi.fn() });
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project", ...flags], {
+        from: "user",
+      });
+
+      expect(spawned.mock.calls.length).toBeGreaterThan(1);
+      for (const [, , options] of spawned.mock.calls) {
+        expect(options?.env?.[SETUP_ORCHESTRATOR_ENV]).toBe("1");
+        expect(options?.env?.[SETUP_DAEMON_DRAINS_ENV]).toBe(drains);
+      }
+      spawned.mockReset();
+    },
+  );
 });
 
 describe("planCleanupUninstalls", () => {
@@ -474,6 +550,68 @@ describe("registerSetupCommand", () => {
     expect(doctor).toBeGreaterThan(enable);
     expect(welcome).toBeGreaterThan(doctor);
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  describe("with a journal backlog queued before setup (PRI-68)", () => {
+    // Exit codes mirror the real subcommands on such a machine: `daemon start`
+    // succeeds once the daemon is live/authenticated/heartbeating, and doctor
+    // passes only in setup's expected-backlog mode (standalone it exits 1 on
+    // the missed 30s SLA). Their verdicts are pinned in daemon.start.spec.ts
+    // and doctor.spec.ts; this pins setup's wiring of them.
+    function backlogMachine(daemonStartCode: number, setupDoctorCode: number) {
+      const calls: string[][] = [];
+      const note = vi.fn();
+      const exit = vi.fn();
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) => {
+          calls.push(args);
+          if (args[0] === "auth" && args[1] === "status") {
+            return { code: 0, stdout: '{"status":"valid"}' };
+          }
+          if (args[0] === "daemon" && args[1] === "start") {
+            return { code: daemonStartCode, stdout: "" };
+          }
+          if (args[0] === "doctor") {
+            return { code: args.includes("--expect-backlog") ? setupDoctorCode : 1, stdout: "" };
+          }
+          return { code: 0, stdout: "" };
+        },
+        note,
+        exit,
+      });
+      return { calls, note, exit, program };
+    }
+
+    it("completes while the backlog drains in the background", async () => {
+      const { calls, note, exit, program } = backlogMachine(0, 0);
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project"], {
+        from: "user",
+      });
+
+      expect(calls).toContainEqual(["daemon", "start"]);
+      expect(calls).toContainEqual(["doctor", "--expect-backlog"]);
+      expect(note).toHaveBeenCalledWith(
+        expect.stringMatching(/^setup complete — .*daemon:ok.*health:ok/u),
+      );
+      expect(exit).toHaveBeenCalledWith(0);
+    });
+
+    it("still fails when the daemon cannot become ready (re-auth, version skew, heartbeat)", async () => {
+      // `daemon start` exits 2 for those causes, and doctor's daemon check
+      // fails them even with --expect-backlog.
+      const { note, exit, program } = backlogMachine(2, 1);
+
+      await program.parseAsync(["setup", "--agent", "codex", "--scope", "project"], {
+        from: "user",
+      });
+
+      expect(note).toHaveBeenCalledWith(
+        expect.stringMatching(/setup incomplete \(failed: daemon, health\)/u),
+      );
+      expect(exit).toHaveBeenCalledWith(1);
+    });
   });
 
   it("--no-daemon activates only after every project cleanup during user-scope migration", async () => {

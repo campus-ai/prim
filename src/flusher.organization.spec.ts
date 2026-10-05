@@ -249,4 +249,51 @@ describe("credential-bound journal draining", () => {
     expect(batchSizes).toEqual([500, 1, 1]);
     expect(journal.listFlushing({ sampleBytes: 0 })).toEqual([]);
   });
+
+  it("credits a failed sweep's progress only to its failing drains, and carries what it held back", async () => {
+    // One organization, two deliverable buckets (organizationId and
+    // workosOrganizationId) plus one it holds back. The workos bucket's last
+    // Move is always rejected with a status that never dead-letters.
+    const posted: string[][] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith("/api/cli/auth/status")) {
+          return Promise.resolve(response(workosBinding));
+        }
+        const { batch } = JSON.parse(String(init?.body)) as { batch: Array<{ moveId: string }> };
+        const ids = batch.map((item) => item.moveId);
+        posted.push(ids);
+        if (ids.includes("stuck-2")) {
+          return Promise.resolve(response({ error: "unexpected" }, 500));
+        }
+        return Promise.resolve(
+          response({ disposition: "persisted", acknowledged: ids.length, accepted: ids.length }),
+        );
+      }),
+    );
+    const journal = await import("./journal.js");
+    const { FlushError, flush } = await import("./flusher.js");
+    for (const id of ["stuck-0", "stuck-1", "stuck-2"]) journal.appendMove(move(id), "org_workos");
+    for (const id of ["sent-0", "sent-1", "sent-2"]) journal.appendMove(move(id), "org_local");
+    journal.appendMove(move("held"), "org_other");
+    const retained = [{ bucket: "org_other", reason: "organization_mismatch" }];
+
+    // The failing drain bisects down to its poison Move, acknowledging the
+    // two Moves before it, while the sibling bucket delivers all three.
+    const first = await flush().catch((error: unknown) => error);
+    expect(first).toBeInstanceOf(FlushError);
+    expect(first).toMatchObject({ flushed: 5, failedDrainFlushed: 2, quarantined: 0, retained });
+
+    // The retry resumes the failing rotation at its checkpoint, so only the
+    // poison Move is sent and nothing advances there; the sibling bucket's
+    // fresh captures still deliver, but they are not that failure's progress.
+    posted.length = 0;
+    for (const id of ["late-0", "late-1"]) journal.appendMove(move(id), "org_local");
+    const second = await flush().catch((error: unknown) => error);
+    expect(second).toBeInstanceOf(FlushError);
+    expect(second).toMatchObject({ flushed: 2, failedDrainFlushed: 0, quarantined: 0, retained });
+    expect(posted).toEqual([["stuck-2"], ["late-0", "late-1"]]);
+    expect(existsSync(journal.journalPath("org_other"))).toBe(true);
+  });
 });
