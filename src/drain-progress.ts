@@ -7,8 +7,8 @@
  * failure, re-POSTing every batch the server already held. Each deduped
  * replay still cost a full upload and server pass, so a slow backlog's
  * traffic grew quadratically while its oldest pending move never changed. A
- * checkpoint records the byte offset of the first line not yet durably
- * acknowledged or quarantined, so the next drain resumes there.
+ * checkpoint records a lower bound on the byte offset of the first line not
+ * yet durably acknowledged or quarantined, so the next drain resumes there.
  *
  * The checkpoint is advisory. It only ever advances past work that is already
  * durable elsewhere, so a lost write, or a checkpoint ignored because it does
@@ -51,7 +51,11 @@ export type RotationIdentity = { size: number; ino: number; dev: number };
 
 export type DrainCheckpoint = RotationIdentity & {
   v: 2;
-  /** Byte offset of the first line not yet durably acknowledged or quarantined. */
+  /**
+   * A lower bound on the byte offset of the first line not yet durably
+   * acknowledged or quarantined. It can lag behind trailing blank or invalid
+   * lines, and it is never written for a drain's final slice.
+   */
   offset: number;
 };
 

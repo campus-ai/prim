@@ -63,13 +63,17 @@ import { processIsAlive } from "./lib/process-liveness.js";
 import type { Move } from "./protocol/move.js";
 
 const BATCH_SIZE = 500;
-// Ingest cost scales with payload bytes, not move count: the server stores
-// each large payload before the batch commits, so a count bound alone let a
-// batch of large agent payloads outlive HTTP_TIMEOUT_MS even though the server
-// went on to commit it. Bounding raw journal line bytes approximately bounds
-// each POST's upload — the request re-serializes every move and adds roughly
-// 110 bytes of organization binding to each — and so its server time against
-// that timeout; a single larger line is still sent, alone.
+// The server stages each payload over 8 KiB before the batch commits, so a
+// count bound alone let a batch of large agent payloads outlive
+// HTTP_TIMEOUT_MS even though the server went on to commit it. Bounding raw
+// journal line bytes approximately bounds each POST's request body — the
+// request re-serializes every move and adds roughly 110 bytes of organization
+// binding to each — and the server-side staging memory it needs; a single
+// larger line is still sent, alone. It does not bound server time: staging
+// cost scales with the count of offloaded payloads, about 200 ms each when
+// staged serially, not their bytes, and 1 MiB of lines just over 8 KiB is
+// about 120 payloads, or about 24 s. Fitting that timeout depends on
+// server-side concurrent staging.
 export const BATCH_MAX_BYTES = 1_048_576;
 const HTTP_TIMEOUT_MS = 10_000;
 const OPPORTUNISTIC_FLUSH_AFTER_MS = 60_000;
@@ -250,7 +254,9 @@ export type DrainProgress = (delta: DrainCounts) => void;
 
 // A failed checkpoint write usually has a lasting cause (a full disk, a
 // blocked directory), so every later leaf of every drain would repeat the same
-// warning while delivery carries on. Say it once per process.
+// warning while delivery carries on. Say it once per failure episode: a
+// successful write re-arms it, so a long-lived daemon still reports a later
+// failure after a transient one.
 let drainProgressWarned = false;
 
 /**
@@ -258,11 +264,13 @@ let drainProgressWarned = false;
  * unlink on success. On a POST failure it throws WITHOUT unlinking, so the
  * file stays on disk for the next sweep — no moves are lost on a clean
  * failure. Progress is checkpointed as durably acknowledged or quarantined
- * slices retire, so that sweep resumes at the first unacknowledged line
- * instead of re-POSTing batches the server already committed — including one
- * it committed after this client timed out. `onProgress` hears each retired
- * slice as it happens, so a caller can credit a drain that later throws.
- * Shared by the normal rotate path and orphan recovery.
+ * slices retire, so that sweep resumes no later than the first line not yet
+ * acknowledged or quarantined, instead of re-POSTing batches the server
+ * already committed — including one it committed after this client timed
+ * out. The resume point is a lower bound: it can lag behind trailing blank or
+ * invalid lines, and the final slice is never checkpointed. `onProgress`
+ * hears each retired slice as it happens, so a caller can credit a drain that
+ * later throws. Shared by the normal rotate path and orphan recovery.
  */
 export async function drainFlushingPath(
   flushingPath: string,
@@ -287,6 +295,7 @@ export async function drainFlushingPath(
     }
     try {
       writeDrainCheckpoint(flushingPath, { v: 2, offset: end, ...rotation });
+      drainProgressWarned = false;
     } catch (error) {
       // Progress saves replays; it is never a delivery precondition. A failed
       // write leaves an older checkpoint that only re-sends deduped moves.

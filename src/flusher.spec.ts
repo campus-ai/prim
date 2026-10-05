@@ -1077,32 +1077,47 @@ describe("drain checkpoints and byte-bounded batches", () => {
     expect(existsSync(drainProgressPath(flushing))).toBe(false);
   });
 
-  it("still delivers when progress cannot be recorded, and warns once per process", async () => {
+  it("still delivers when progress cannot be recorded, and warns once per failure episode", async () => {
     // A fresh module, so no earlier test has already spent the warning.
     vi.resetModules();
     const fresh = await import("./flusher.js");
-    // Block creation of the checkpoint directory.
-    writeFileSync(drainProgressDirectory(flushing), "not a directory");
+    const blockProgress = () => writeFileSync(drainProgressDirectory(flushing), "not a directory");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const second = join(dir, "journal.ndjson.flushing.3.4");
+    const warnings = () =>
+      stderr.mock.calls
+        .flat()
+        .filter((chunk) => String(chunk).includes("could not record drain progress"));
     // Two batches each, so each drain attempts one checkpoint.
     const moves = Array.from({ length: 501 }, (_, index) => move(`no-progress-${String(index)}`));
-    for (const path of [flushing, second]) {
+    const drainTwoBatches = (path: string) => {
       for (const item of moves) {
         appendMoveToPath(path, item);
       }
-    }
+      return fresh.drainFlushingPath(path, recordingClient().client, binding);
+    };
 
-    for (const path of [flushing, second]) {
-      await expect(
-        fresh.drainFlushingPath(path, recordingClient().client, binding),
-      ).resolves.toEqual({ flushed: 501, quarantined: 0 });
+    // Block creation of the checkpoint directory.
+    blockProgress();
+    for (const path of [flushing, join(dir, "journal.ndjson.flushing.3.4")]) {
+      await expect(drainTwoBatches(path)).resolves.toEqual({ flushed: 501, quarantined: 0 });
       expect(existsSync(path)).toBe(false);
     }
-    const warnings = stderr.mock.calls
-      .flat()
-      .filter((chunk) => String(chunk).includes("could not record drain progress"));
-    expect(warnings).toHaveLength(1);
+    expect(warnings()).toHaveLength(1);
+
+    // A successful write ends the episode, so a long-lived daemon still
+    // reports a later failure.
+    rmSync(drainProgressDirectory(flushing));
+    await expect(drainTwoBatches(join(dir, "journal.ndjson.flushing.5.6"))).resolves.toEqual({
+      flushed: 501,
+      quarantined: 0,
+    });
+    expect(warnings()).toHaveLength(1);
+    blockProgress();
+    await expect(drainTwoBatches(join(dir, "journal.ndjson.flushing.7.8"))).resolves.toEqual({
+      flushed: 501,
+      quarantined: 0,
+    });
+    expect(warnings()).toHaveLength(2);
   });
 
   function sizedMove(id: string, payloadBytes: number): Move {
@@ -1319,6 +1334,80 @@ describe("drain checkpoints and byte-bounded batches", () => {
     expect(healthy.posts).toEqual([["after-run"]]);
     // The resumed sweep never re-quarantines the run.
     expect(mocks.syncDirectory).not.toHaveBeenCalled();
+  });
+
+  it("never checkpoints past an invalid line while a move before it is pending", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const acknowledged = Array.from({ length: 500 }, (_, index) => move(`held-${String(index)}`));
+    writeJournal(acknowledged);
+    appendMoveToPath(flushing, move("held-p1"));
+    writeFileSync(flushing, invalidLine(), { flag: "a" });
+    appendMoveToPath(flushing, move("held-p2"));
+    const failing = recordingClient((batch) =>
+      batch.some((item) => item.moveId === "held-p1") ? new Error("offline") : undefined,
+    );
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(failing.posts).toEqual([ids(acknowledged), ["held-p1", "held-p2"]]);
+    // The invalid line is durably quarantined, but p1 before it was never
+    // acknowledged, so the checkpoint stays at the last acknowledged batch.
+    expect(readCheckpoint()).toEqual(checkpointAt(journalBytes(acknowledged)));
+    expect(rawDeadLetters()).toHaveLength(1);
+
+    const healthy = recordingClient();
+    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
+      flushed: 2,
+      quarantined: 1,
+    });
+    expect(healthy.posts).toEqual([["held-p1", "held-p2"]]);
+    expect(rawDeadLetters()).toHaveLength(1);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("checkpoints multi-byte UTF-8 lines at exact byte boundaries", async () => {
+    // é, CJK, and emoji each take more UTF-8 bytes than UTF-16 code units, so
+    // an offset counted in characters would land inside an earlier line.
+    const moves = Array.from({ length: 600 }, (_, index) => ({
+      ...move(`utf8-${String(index)}`),
+      payload: { text: `café ${String(index)} 決定事項 🚀🧭` },
+    }));
+    const lines: Buffer[] = [];
+    const ends: number[] = [];
+    let written = 0;
+    for (const [index, item] of moves.entries()) {
+      const terminator = index % 2 === 0 ? "\r\n" : "\n";
+      const line = Buffer.from(`${JSON.stringify(item)}${terminator}`, "utf8");
+      lines.push(line);
+      written += line.length;
+      ends.push(written);
+      if (index % 7 === 0) {
+        const blank = Buffer.from(terminator, "utf8");
+        lines.push(blank);
+        written += blank.length;
+      }
+    }
+    const source = Buffer.concat(lines);
+    writeFileSync(flushing, source);
+    const failing = recordingClient((_batch, call) =>
+      call === 2 ? new Error("offline") : undefined,
+    );
+
+    await expect(drainFlushingPath(flushing, failing.client)).rejects.toThrow("offline");
+    expect(failing.posts.map((batch) => batch.length)).toEqual([500, 100]);
+    const { offset } = readCheckpoint();
+    // Exactly past the 500th move's line terminator, before the blank line.
+    expect(offset).toBe(ends[499]);
+    expect(source[offset - 1]).toBe(0x0a);
+    expect(readCheckpoint()).toEqual(checkpointAt(ends[499]));
+
+    const healthy = recordingClient();
+    await expect(drainFlushingPath(flushing, healthy.client)).resolves.toEqual({
+      flushed: 100,
+      quarantined: 0,
+    });
+    expect(healthy.posts.flat()).toEqual(ids(moves.slice(500)));
+    expect(existsSync(deadLetterDirectoryForRotation(flushing))).toBe(false);
+    expect(existsSync(flushing)).toBe(false);
   });
 
   it.each([
