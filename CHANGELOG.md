@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.93](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.92...v0.1.0-alpha.93) (2026-10-05)
+
+
+### Features
+
+* **daemon:** upgrade a stale daemon from newer attended commands ([#335](https://github.com/campus-ai/prim/issues/335)) ([60281bc](https://github.com/campus-ai/prim/commit/60281bcecbe75b29f35457fde4243ec3f86de464))
+
+
+### Bug Fixes
+
+* **daemon:** report a draining backlog instead of failing start ([#334](https://github.com/campus-ai/prim/issues/334)) ([207070f](https://github.com/campus-ai/prim/commit/207070f09b080539d69022125b78b2c4ef52f252))
+* **flusher:** checkpoint drain progress and bound batches by bytes ([#333](https://github.com/campus-ai/prim/issues/333)) ([a57497e](https://github.com/campus-ai/prim/commit/a57497e6661deaac6409032ed815b937d1c7843a))
+
 ## [0.1.0-alpha.92](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.91...v0.1.0-alpha.92) (2026-09-29)
 
 
