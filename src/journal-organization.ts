@@ -96,6 +96,21 @@ export function parseOrganizationBinding(value: unknown): ParsedOrganizationBind
   };
 }
 
+/**
+ * Count retained buckets by reason as `reason:count`, sorted by reason, the
+ * form doctor's journal-org check and the daemon's health record share.
+ */
+export function summarizeRetainedBuckets(retained: readonly RetainedJournalBucket[]): string {
+  const counts = new Map<string, number>();
+  for (const item of retained) {
+    counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}:${String(count)}`)
+    .join(", ");
+}
+
 export function classifyJournalBuckets(
   buckets: Iterable<string>,
   binding: CurrentOrganizationBinding | JournalRetentionReason,

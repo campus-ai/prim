@@ -152,7 +152,7 @@ describe("macOS daemon start readiness", () => {
     const { stderr, json } = await run(["daemon", "start"]);
 
     expect(stderr).toBe(
-      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background\n",
+      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background\n",
     );
     // Additive only: every pre-existing key keeps its meaning and the exit
     // code still agrees with `started`/`healthy`.
@@ -188,7 +188,7 @@ describe("macOS daemon start readiness", () => {
       forceRestart: true,
     });
     expect(stderr).toBe(
-      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (4 consecutive failures): HTTP 504 from /api/cli/moves · retrying at least 1200 pending moves (oldest 52d) in the background\n",
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (4 consecutive failures): HTTP 504 from /api/cli/moves · retrying at least 1200 pending moves (oldest ≥ 52d) in the background\n",
     );
     expect(stderr).not.toContain("draining");
     expect(json).toEqual({
@@ -206,6 +206,57 @@ describe("macOS daemon start readiness", () => {
       expectedVersion: "1.2.3",
     });
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("starts with a warning, never draining, while the daemon holds buckets back", async () => {
+    // The sweep returned without throwing, so no failure is recorded, but the
+    // retained Moves cannot deliver until someone acts: start reports that
+    // accurately and leaves setup's doctor to fail on the retained buckets.
+    const retained = backlogSnapshot({
+      lastAcknowledgedCount: 0,
+      lastRetainedBucketCount: 1,
+      lastRetainedReasons: "unbound:1",
+    });
+    mockDaemonRequest.mockResolvedValue(retained);
+
+    const { stderr, json } = await run(["daemon", "start"]);
+
+    expect(stderr).toBe(
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery held back: 1 organization bucket retained (unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`\n",
+    );
+    expect(stderr).not.toContain("draining");
+    expect(json).toEqual({
+      started: true,
+      supervised: true,
+      action: "bootstrap",
+      pid: 4242,
+      loaded: true,
+      responding: true,
+      healthy: true,
+      draining: false,
+      deliveryRetained: true,
+      ingestion: retained.ingestion,
+      version: "1.2.3",
+      expectedVersion: "1.2.3",
+    });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("reports draining when the last sweep acknowledged Moves before it failed", async () => {
+    const advancing = backlogSnapshot({
+      consecutiveFailures: 1,
+      lastAcknowledgedCount: 500,
+      lastError: "HTTP 503",
+    });
+    mockDaemonRequest.mockResolvedValue(advancing);
+
+    const { stderr, json } = await run(["daemon", "start"]);
+
+    expect(stderr).toBe(
+      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background\n",
+    );
+    expect(json).toMatchObject({ started: true, draining: true });
+    expect(json).not.toHaveProperty("deliveryFailing");
   });
 
   it.each([
@@ -255,7 +306,7 @@ describe("macOS daemon start readiness", () => {
     const { stderr, json } = await run(["daemon", "ensure"]);
 
     expect(stderr).toBe(
-      "[prim] ✓ daemon ensured under launchd (none) · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background\n",
+      "[prim] ✓ daemon ensured under launchd (none) · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background\n",
     );
     expect(json).toEqual({
       ensured: true,
@@ -276,7 +327,7 @@ describe("macOS daemon start readiness", () => {
     const { stderr, json } = await run(["daemon", "ensure"]);
 
     expect(stderr).toBe(
-      "[prim] ⚠ daemon ensured under launchd (none) · Decision ingestion enabled · delivery failing (2 consecutive failures): HTTP 400 · retrying at least 1200 pending moves (oldest 52d) in the background\n",
+      "[prim] ⚠ daemon ensured under launchd (none) · Decision ingestion enabled · delivery failing (2 consecutive failures): HTTP 400 · retrying at least 1200 pending moves (oldest ≥ 52d) in the background\n",
     );
     expect(json).toEqual({
       ensured: true,

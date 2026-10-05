@@ -83,9 +83,10 @@ const VERIFIED_PREFIX = "[prim] ✓ ";
 
 /**
  * Append Decision ingestion and, for a daemon behind its delivery SLA, the
- * shared backlog clause. A ready daemon whose delivery the daemon has
- * recorded as failing still started (start does not gate on delivery), but
- * its line must not read as all-clear, so its verdict becomes a warning.
+ * shared backlog clause. A ready daemon whose delivery is failing, or that
+ * holds organization buckets back, still started (start does not gate on
+ * delivery), but its line must not read as all-clear, so its verdict becomes
+ * a warning.
  */
 export function formatDaemonLifecycleMessage(
   message: string,
@@ -94,8 +95,9 @@ export function formatDaemonLifecycleMessage(
   now: number = Date.now(),
 ): string {
   const backlog = deliveryBacklogSummary(snapshot?.ingestion, now);
+  const state = deliveryBacklogState(snapshot?.ingestion);
   const verdict =
-    deliveryBacklogState(snapshot?.ingestion) === "failing" && message.startsWith(VERIFIED_PREFIX)
+    (state === "failing" || state === "retained") && message.startsWith(VERIFIED_PREFIX)
       ? `[prim] ⚠ ${message.slice(VERIFIED_PREFIX.length)}`
       : message;
   return `${verdict} · Decision ingestion ${decisionIngestion}${backlog ? ` · ${backlog}` : ""}`;
@@ -293,15 +295,17 @@ export function daemonStartIsReady(
 }
 
 /**
- * Additive JSON for a ready daemon behind its delivery SLA: `draining` while
- * no delivery failure is recorded, `deliveryFailing` once one is. A daemon
- * within its SLA adds nothing, so healthy JSON stays byte-identical.
+ * Additive JSON for a ready daemon behind its delivery SLA, one flag per
+ * delivery state: `draining`, `deliveryRetained` while it holds organization
+ * buckets back, or `deliveryFailing`. A daemon within its SLA adds nothing,
+ * so healthy JSON stays byte-identical.
  */
 function daemonBacklogFields(snapshot: StatusSnapshot | null): Record<string, unknown> {
   const state = deliveryBacklogState(snapshot?.ingestion);
   if (!state) return {};
-  return state === "draining"
-    ? { draining: true, ingestion: snapshot?.ingestion }
+  if (state === "draining") return { draining: true, ingestion: snapshot?.ingestion };
+  return state === "retained"
+    ? { draining: false, deliveryRetained: true, ingestion: snapshot?.ingestion }
     : { draining: false, deliveryFailing: true, ingestion: snapshot?.ingestion };
 }
 
@@ -415,7 +419,7 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
   if (live) {
     const after = readPidfile();
     // Readiness here is the socket alone; one best-effort snapshot only lets
-    // the line report a backlog that is still draining or failing.
+    // the line report a backlog that is draining, held back, or failing.
     const snapshot = await requestStatusSnapshot();
     process.stderr.write(
       `${formatCurrentDaemonLifecycleMessage(`[prim] ✓ daemon started (pid=${after?.pid ?? "?"}, socket=${SOCK_PATH})`, snapshot)}\n`,
@@ -579,8 +583,9 @@ async function macDaemonStart(forceRestart = false): Promise<void> {
         // `healthy` keeps meaning "start succeeded" (always equal to `started`
         // and the exit code) so existing consumers stay correct. It is not the
         // daemon's own health: `daemon status --json` stays degraded while a
-        // backlog drains or delivery fails, which start reports additively via
-        // `draining`, `deliveryFailing`, and `ingestion`.
+        // backlog drains, is held back, or fails to deliver, which start
+        // reports additively via `draining`, `deliveryRetained`,
+        // `deliveryFailing`, and `ingestion`.
         healthy: ready,
         ...daemonStartHealthFields(ready, snapshot),
         version: snapshot?.version,
@@ -943,7 +948,7 @@ async function daemonEnsure(): Promise<CurrentDaemonEnsureResult> {
   }
   const result = await ensureMacDaemon();
   // Ensure never gated on health; one best-effort snapshot only lets the line
-  // report a backlog that is still draining or failing.
+  // report a backlog that is draining, held back, or failing.
   const snapshot = result.state === "running" ? await requestStatusSnapshot() : null;
   if (result.state === "disabled") {
     process.stderr.write("[prim] daemon remains explicitly disabled\n");

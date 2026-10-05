@@ -32,7 +32,11 @@ import {
   getLaunchdService,
 } from "../daemon/launchd.js";
 import { fetchFeedbackCapability } from "../decisions/feedback.js";
-import { type RetainedJournalBucket, inspectJournalDelivery } from "../journal-organization.js";
+import {
+  type RetainedJournalBucket,
+  inspectJournalDelivery,
+  summarizeRetainedBuckets,
+} from "../journal-organization.js";
 import {
   type PendingJournalStats,
   listBuckets,
@@ -114,11 +118,13 @@ export type DaemonDoctorSnapshot = {
  * re-auth can inherit Moves that already missed the 30s delivery SLA, and only
  * the daemon setup just started can drain them. When the daemon passes every
  * other daemon check (supervised, owned, current, authenticated, heartbeating)
- * and has recorded no delivery failure, its missed SLA and the journal backlog
- * are warnings instead of failures. Any such backlog qualifies, however it
- * arose. A delivery failure the daemon has already recorded still fails; one
- * it has not recorded yet (a sweep still in flight, or one that bowed out to a
- * concurrent drain) is not visible here. Standalone doctor never sets it.
+ * and its delivery state is draining (see delivery-backlog.ts), its missed SLA
+ * and the journal backlog are warnings instead of failures. Any such backlog
+ * qualifies, however it arose. Organization buckets the daemon holds back,
+ * and a failure it recorded without acknowledging anything first, still fail;
+ * a failure it has not recorded yet (a sweep still in flight, or one that
+ * bowed out to a concurrent drain) is not visible here. Standalone doctor
+ * never sets it.
  */
 export type DoctorOptions = { backlogExpected?: boolean };
 
@@ -303,7 +309,7 @@ export function classifyDaemonHealth(
   if (!snapshot.ingestion?.healthy) {
     // Every check above passed, so this daemon is live, owned, current, and
     // authenticated, and it owns the drain. An expected backlog is reported;
-    // a delivery failure the daemon has recorded still fails.
+    // held-back buckets and a failure recorded without progress still fail.
     if (options.backlogExpected && deliveryBacklogState(snapshot.ingestion) === "draining") {
       const ingestionStatus = options.ingestionStatus ?? decisionIngestionStatus(process.cwd());
       const live = options.backlog;
@@ -504,18 +510,10 @@ export function classifyJournalOrganization(
       detail: "all pending buckets match the active credential",
     };
   }
-  const reasonCounts = new Map<string, number>();
-  for (const item of retainedBuckets) {
-    reasonCounts.set(item.reason, (reasonCounts.get(item.reason) ?? 0) + 1);
-  }
-  const reasons = [...reasonCounts]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([reason, count]) => `${reason}:${String(count)}`)
-    .join(", ");
   return {
     name: "journal-org",
     status: "fail",
-    detail: `${String(retainedBuckets.length)} bucket(s) retained (${reasons})`,
+    detail: `${String(retainedBuckets.length)} bucket(s) retained (${summarizeRetainedBuckets(retainedBuckets)})`,
   };
 }
 

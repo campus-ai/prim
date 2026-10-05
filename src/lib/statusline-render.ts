@@ -28,6 +28,8 @@ export interface StatusSnapshot {
   ingestion?: {
     healthy?: boolean;
     consecutiveFailures?: number;
+    lastAcknowledgedCount?: number;
+    lastRetainedBucketCount?: number;
     pendingCount?: number;
     pendingSampled?: boolean;
   };
@@ -93,8 +95,9 @@ export function formatStatusline(
       const pending = snapshot.ingestion.pendingCount;
       const qualifier = snapshot.ingestion.pendingSampled ? "at least " : "";
       // The state `daemon start` reports as draining: heartbeating, behind its
-      // SLA, and no delivery failure recorded. Recorded failures, or a backlog
-      // without a healthy heartbeat, still read as stalled.
+      // SLA, and no stall recorded. Held-back buckets, a failure recorded
+      // without progress, or a backlog without a healthy heartbeat still read
+      // as stalled.
       const delivery =
         deliveryBacklogState(snapshot.ingestion) === "draining" &&
         snapshot.heartbeat?.healthy === true

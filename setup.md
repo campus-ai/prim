@@ -70,8 +70,9 @@ unless `--no-daemon` was supplied, so setup cannot report success while the daem
 that delivers continuously is down. A delivery backlog the daemon is draining (any
 Moves past the 30s delivery SLA, for example ones captured while auth had expired)
 is reported as draining in the background instead of failing setup. Setup fails on
-delivery failures the daemon has already recorded; a failure it has not recorded
-yet is not visible to setup.
+organization buckets the daemon holds back and on delivery failures it has recorded
+without delivering anything first; a failure it has not recorded yet is not visible
+to setup.
 
 ### Auth — the one human touch
 

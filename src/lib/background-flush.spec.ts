@@ -15,14 +15,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "tsup";
 import { describe, expect, it, vi } from "vitest";
+import {
+  type DaemonHealthState,
+  createDaemonHealthState,
+  writeDaemonHealthState,
+} from "../daemon/health.js";
 import { flush } from "../flusher.js";
-import { startBackgroundFlush } from "./background-flush.js";
+import { daemonOwnsDrain, startBackgroundFlush } from "./background-flush.js";
 import { processIsAlive } from "./process-liveness.js";
 
 vi.mock("../flusher.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../flusher.js")>()),
   flush: vi.fn(),
 }));
+
+// Unit cases must not read this machine's real daemon health.
+const noDaemon = () => false;
 
 function fakeChild() {
   const child = new EventEmitter() as EventEmitter & { unref: ReturnType<typeof vi.fn> };
@@ -38,6 +46,7 @@ describe("startBackgroundFlush", () => {
     expect(
       startBackgroundFlush({
         needsFlush: () => true,
+        daemonOwnsDrain: noDaemon,
         primEntry: "/pkg/dist/index.js",
         nodeEntry: "/usr/bin/node",
         spawnProcess,
@@ -46,7 +55,7 @@ describe("startBackgroundFlush", () => {
     expect(spawnProcess).toHaveBeenCalledWith(
       "/usr/bin/node",
       ["/pkg/dist/index.js", "moves", "flush"],
-      { detached: true, stdio: "ignore" },
+      { detached: true, stdio: "ignore", windowsHide: true },
     );
     expect(child.unref).toHaveBeenCalledOnce();
     // The invoking process never drains in-process, so it holds no lock,
@@ -58,7 +67,12 @@ describe("startBackgroundFlush", () => {
     const spawnProcess = vi.fn(() => fakeChild());
 
     expect(
-      startBackgroundFlush({ needsFlush: () => false, primEntry: "/pkg/i.js", spawnProcess }),
+      startBackgroundFlush({
+        needsFlush: () => false,
+        daemonOwnsDrain: noDaemon,
+        primEntry: "/pkg/i.js",
+        spawnProcess,
+      }),
     ).toBe(false);
     expect(spawnProcess).not.toHaveBeenCalled();
   });
@@ -70,17 +84,24 @@ describe("startBackgroundFlush", () => {
         needsFlush: () => {
           throw new Error("scan failed");
         },
+        daemonOwnsDrain: noDaemon,
         primEntry: "/pkg/i.js",
         spawnProcess,
       }),
     ).toBe(false);
-    expect(startBackgroundFlush({ needsFlush: () => true, primEntry: null, spawnProcess })).toBe(
-      false,
-    );
+    expect(
+      startBackgroundFlush({
+        needsFlush: () => true,
+        daemonOwnsDrain: noDaemon,
+        primEntry: null,
+        spawnProcess,
+      }),
+    ).toBe(false);
     expect(spawnProcess).not.toHaveBeenCalled();
     expect(
       startBackgroundFlush({
         needsFlush: () => true,
+        daemonOwnsDrain: noDaemon,
         primEntry: "/pkg/i.js",
         spawnProcess: () => {
           throw new Error("spawn failed");
@@ -93,6 +114,7 @@ describe("startBackgroundFlush", () => {
     const child = fakeChild();
     startBackgroundFlush({
       needsFlush: () => true,
+      daemonOwnsDrain: noDaemon,
       primEntry: "/pkg/i.js",
       spawnProcess: () => child,
     });
@@ -100,6 +122,130 @@ describe("startBackgroundFlush", () => {
     // An 'error' event with no listener throws from emit(); EAGAIN/EMFILE
     // arrive this way after spawn() has already returned.
     expect(() => child.emit("error", new Error("spawn EAGAIN"))).not.toThrow();
+  });
+
+  it("starts nothing, and skips the journal scan, while a healthy daemon owns the drain", () => {
+    const needsFlush = vi.fn(() => true);
+    const spawnProcess = vi.fn(() => fakeChild());
+
+    expect(
+      startBackgroundFlush({
+        needsFlush,
+        daemonOwnsDrain: () => true,
+        primEntry: "/pkg/i.js",
+        spawnProcess,
+      }),
+    ).toBe(false);
+    expect(needsFlush).not.toHaveBeenCalled();
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+});
+
+describe("daemonOwnsDrain", () => {
+  const NOW = 1_800_000_000_000;
+  const VERSION = "1.2.3";
+  const DAEMON_PID = 4242;
+
+  // The exact file the daemon persists, built and written by its own code.
+  function withHealth(
+    mutate: (state: DaemonHealthState) => void,
+    check: (healthPath: string) => void,
+  ): void {
+    const root = mkdtempSync(join(tmpdir(), "prim-daemon-owner-"));
+    try {
+      const state = createDaemonHealthState(VERSION, DAEMON_PID, NOW - 60_000);
+      state.heartbeat.lastSuccessAt = NOW - 5_000;
+      state.ingestion.healthy = false;
+      state.ingestion.pendingCount = 1200;
+      state.ingestion.oldestPendingAt = NOW - 2 * 86_400_000;
+      mutate(state);
+      const healthPath = join(root, "daemon-health.json");
+      writeDaemonHealthState(state, healthPath);
+      check(healthPath);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const owns = (healthPath: string, overrides: Parameters<typeof daemonOwnsDrain>[0] = {}) =>
+    daemonOwnsDrain({
+      healthPath,
+      now: NOW,
+      expectedVersion: VERSION,
+      isAlive: (pid) => pid === DAEMON_PID,
+      ...overrides,
+    });
+
+  it("is true for a live, current, heartbeating daemon with no ingestion failure", () => {
+    // Behind its SLA is fine: that daemon is the drainer a child would race.
+    withHealth(
+      () => undefined,
+      (path) => expect(owns(path)).toBe(true),
+    );
+  });
+
+  it.each<[string, (state: DaemonHealthState) => void]>([
+    [
+      "a recorded ingestion failure",
+      (state) => {
+        state.ingestion.consecutiveFailures = 1;
+      },
+    ],
+    [
+      "a failing heartbeat",
+      (state) => {
+        state.heartbeat.consecutiveFailures = 2;
+      },
+    ],
+    [
+      "a heartbeat that never succeeded",
+      (state) => {
+        state.heartbeat.lastSuccessAt = undefined;
+      },
+    ],
+    [
+      "a stale heartbeat",
+      (state) => {
+        state.heartbeat.lastSuccessAt = NOW - 91_000;
+      },
+    ],
+    [
+      "a re-auth hold",
+      (state) => {
+        state.needsReauth = true;
+      },
+    ],
+    [
+      "another version",
+      (state) => {
+        state.version = "1.2.2";
+      },
+    ],
+    [
+      "a dead daemon",
+      (state) => {
+        state.pid = DAEMON_PID + 1;
+      },
+    ],
+  ])("is false for %s", (_label, mutate) => {
+    withHealth(mutate, (path) => expect(owns(path)).toBe(false));
+  });
+
+  it("fails open when the health file or this CLI's version cannot be read", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-daemon-owner-"));
+    try {
+      expect(owns(join(root, "missing.json"))).toBe(false);
+      writeFileSync(join(root, "torn.json"), '{"schemaVersion":1,');
+      expect(owns(join(root, "torn.json"))).toBe(false);
+      writeFileSync(join(root, "shape.json"), '{"schemaVersion":1,"heartbeat":[]}');
+      expect(owns(join(root, "shape.json"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    withHealth(
+      () => undefined,
+      (path) => expect(owns(path, { expectedVersion: null })).toBe(false),
+    );
   });
 });
 

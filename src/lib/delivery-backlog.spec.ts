@@ -37,6 +37,30 @@ describe("deliveryBacklogState", () => {
     expect(deliveryBacklogState({ ...backlogIngestion, consecutiveFailures: 1 })).toBe("failing");
   });
 
+  it("drains when the failed sweep acknowledged Moves before it failed", () => {
+    expect(
+      deliveryBacklogState({
+        ...backlogIngestion,
+        consecutiveFailures: 2,
+        lastAcknowledgedCount: 500,
+      }),
+    ).toBe("draining");
+    // Progress is only credited next to a well-formed failure count.
+    expect(deliveryBacklogState({ healthy: false, lastAcknowledgedCount: 500 })).toBe("failing");
+  });
+
+  it("is retained, never draining, while the last sweep held buckets back", () => {
+    const retained = { ...backlogIngestion, lastRetainedBucketCount: 1 };
+    expect(deliveryBacklogState(retained)).toBe("retained");
+    expect(deliveryBacklogState({ ...retained, lastAcknowledgedCount: 500 })).toBe("retained");
+    expect(
+      deliveryBacklogState({ ...retained, consecutiveFailures: 1, lastAcknowledgedCount: 500 }),
+    ).toBe("retained");
+    // A failure without progress names the failure instead.
+    expect(deliveryBacklogState({ ...retained, consecutiveFailures: 1 })).toBe("failing");
+    expect(deliveryBacklogState({ ...retained, lastRetainedBucketCount: 0 })).toBe("draining");
+  });
+
   it("reads a missing or malformed failure count as failing, never as progress", () => {
     expect(deliveryBacklogState({ healthy: false })).toBe("failing");
     expect(deliveryBacklogState({ healthy: false, consecutiveFailures: Number.NaN })).toBe(
@@ -48,13 +72,36 @@ describe("deliveryBacklogState", () => {
 describe("deliveryBacklogSummary", () => {
   it("renders a sampled backlog as a lower bound with a coarse age", () => {
     expect(deliveryBacklogSummary(backlogIngestion, NOW)).toBe(
-      "draining at least 1200 pending moves (oldest 52d) in the background",
+      "draining at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
   });
 
   it("ignores a resolved error while draining", () => {
     expect(deliveryBacklogSummary({ ...backlogIngestion, lastError: "stale, resolved" }, NOW)).toBe(
-      "draining at least 1200 pending moves (oldest 52d) in the background",
+      "draining at least 1200 pending moves (oldest ≥ 52d) in the background",
+    );
+  });
+
+  it("names held-back buckets and their reasons instead of draining", () => {
+    expect(
+      deliveryBacklogSummary(
+        {
+          ...backlogIngestion,
+          lastRetainedBucketCount: 2,
+          lastRetainedReasons: "organization_mismatch:1, unbound:1",
+        },
+        NOW,
+      ),
+    ).toBe(
+      "delivery held back: 2 organization buckets retained (organization_mismatch:1, unbound:1) · holding at least 1200 pending moves (oldest ≥ 52d) — run `prim doctor`",
+    );
+    expect(
+      deliveryBacklogSummary(
+        { ...backlogIngestion, pendingSampled: false, lastRetainedBucketCount: 1 },
+        NOW,
+      ),
+    ).toBe(
+      "delivery held back: 1 organization bucket retained · holding 1200 pending moves (oldest 52d) — run `prim doctor`",
     );
   });
 
@@ -65,10 +112,10 @@ describe("deliveryBacklogSummary", () => {
         NOW,
       ),
     ).toBe(
-      "delivery failing (3 consecutive failures): HTTP 504 gateway timeout · retrying at least 1200 pending moves (oldest 52d) in the background",
+      "delivery failing (3 consecutive failures): HTTP 504 gateway timeout · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
     expect(deliveryBacklogSummary({ ...backlogIngestion, consecutiveFailures: 1 }, NOW)).toBe(
-      "delivery failing (1 consecutive failure) · retrying at least 1200 pending moves (oldest 52d) in the background",
+      "delivery failing (1 consecutive failure) · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
     expect(deliveryBacklogSummary({ healthy: false }, NOW)).toBe(
       "delivery failing · retrying an unknown number of pending moves in the background",
@@ -113,5 +160,20 @@ describe("formatPendingBacklog", () => {
       "an unknown number of pending moves",
     );
     expect(formatPendingBacklog({}, NOW)).toBe("an unknown number of pending moves");
+  });
+
+  it("bounds a sampled age from below, since unread files can hold older Moves", () => {
+    expect(
+      formatPendingBacklog(
+        { pendingCount: 3, pendingSampled: true, oldestPendingAt: NOW - 3 * 3_600_000 },
+        NOW,
+      ),
+    ).toBe("at least 3 pending moves (oldest ≥ 3h)");
+    expect(
+      formatPendingBacklog(
+        { pendingCount: 0, pendingSampled: true, oldestPendingAt: NOW - 125_000 },
+        NOW,
+      ),
+    ).toBe("an unknown number of pending moves (oldest ≥ 2m)");
   });
 });

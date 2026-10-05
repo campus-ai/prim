@@ -302,7 +302,7 @@ describe("setup's expected-backlog relaxation", () => {
       name: "daemon",
       status: "warn",
       detail:
-        "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+        "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background",
     });
   });
 
@@ -414,7 +414,7 @@ describe("setup's expected-backlog relaxation", () => {
     ).toEqual({
       name: "journal",
       status: "warn",
-      detail: "at least 1200 pending moves (oldest 52d) — draining in the background",
+      detail: "at least 1200 pending moves (oldest ≥ 52d) — draining in the background",
     });
     expect(classifyJournal({ ...stats, pendingCount: 0, sampled: true }, now, expected)).toEqual({
       name: "journal",
@@ -479,12 +479,12 @@ describe("setup's expected-backlog relaxation", () => {
           name: "daemon",
           status: "warn",
           detail:
-            "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+            "supervised and live · v1.2.3 · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background",
         },
         {
           name: "journal",
           status: "warn",
-          detail: "at least 1200 pending moves (oldest 52d) — draining in the background",
+          detail: "at least 1200 pending moves (oldest ≥ 52d) — draining in the background",
         },
         { name: "stranded", status: "ok", detail: "none" },
       ]);
@@ -501,6 +501,21 @@ describe("setup's expected-backlog relaxation", () => {
           snapshot: {
             ...backlog(),
             ingestion: { ...backlog().ingestion, consecutiveFailures: 2, lastError: "HTTP 400" },
+          },
+        },
+      ],
+      [
+        // A sweep that holds buckets back returns without throwing, so no
+        // failure is recorded; its Moves still never deliver on their own.
+        "buckets the daemon holds back",
+        {
+          snapshot: {
+            ...backlog(),
+            ingestion: {
+              ...backlog().ingestion,
+              lastRetainedBucketCount: 1,
+              lastRetainedReasons: "unbound:1",
+            },
           },
         },
       ],

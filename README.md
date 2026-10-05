@@ -244,13 +244,16 @@ supplied. Hooks still fail soft if it later degrades.
 
 `prim daemon start` (and `restart`/`ensure`) does not gate on delivery. While
 Moves are past the 30s delivery SLA it reports them as draining in the
-background if the daemon has recorded no delivery failure, and as delivery
-failing (a ⚠ warning, still exit 0) once it has; its JSON adds `draining`,
-`deliveryFailing`, and `ingestion` in those states. Start's JSON `healthy`
-means the start succeeded, so it can differ from `daemon status --json`, which
-stays degraded until the backlog drains. Setup's own health check reports any
-backlog the daemon is draining as a warning and fails on delivery failures the
-daemon has already recorded; standalone `prim doctor` still fails a missed SLA.
+background when the daemon's last sweep recorded no failure, or acknowledged
+Moves before it failed. Organization buckets the daemon holds back (unbound,
+another organization, identity unavailable) read as delivery held back, and a
+failure with no progress reads as delivery failing; both are a ⚠ warning,
+still exit 0. Its JSON adds `draining`, `deliveryRetained`, `deliveryFailing`,
+and `ingestion` in those states. Start's JSON `healthy` means the start
+succeeded, so it can differ from `daemon status --json`, which stays degraded
+until the backlog drains. Setup's own health check reports a backlog the
+daemon is draining as a warning and fails on held-back buckets and on failures
+recorded without progress; standalone `prim doctor` still fails a missed SLA.
 
 ```bash
 prim daemon start      # start (stop / restart / status)
@@ -349,9 +352,11 @@ prim moves tail           # Pretty-print recent journal entries
 prim moves flush          # Drain the local journals to the server (also runs from hooks)
 ```
 
-Any other command except `uninstall` that finds Moves waiting over a minute (or
-cannot tell how long) hands them to a detached background `prim moves flush` and
-never waits for it.
+Any other command except `uninstall` and `setup` (or one of setup's own steps)
+that finds Moves waiting over a minute (or cannot tell how long) hands them to a
+detached background `prim moves flush` and never waits for it. It starts none
+while a live daemon on the same version, with a healthy heartbeat and no
+recorded ingestion failure, already owns the drain.
 
 ### Skill
 

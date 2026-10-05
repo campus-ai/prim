@@ -33,6 +33,15 @@ export interface DaemonIngestionHealth {
   oldestPendingAt?: number;
   strandedCount: number;
   lastAcknowledgedCount: number;
+  /**
+   * Organization buckets the last completed sweep held back instead of
+   * sending (unbound, another organization, identity unavailable, ...), and
+   * their `reason:count` summary. Such a sweep can succeed while those Moves
+   * never deliver, so delivery state must not read it as draining. Absent
+   * until a sweep completes, and from daemons that predate the field.
+   */
+  lastRetainedBucketCount?: number;
+  lastRetainedReasons?: string;
   nextRetryAt?: number;
 }
 

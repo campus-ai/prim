@@ -31,6 +31,7 @@ import {
   resolveAuthCredential,
 } from "../client.js";
 import { FlushError, flush, hasPendingDrainWork } from "../flusher.js";
+import { type RetainedJournalBucket, summarizeRetainedBuckets } from "../journal-organization.js";
 import { type PendingJournalStats, pendingJournalStats } from "../journal.js";
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { primConfigDirectory } from "../lib/paths.js";
@@ -249,6 +250,13 @@ function updatePendingHealth(): PendingJournalStats {
   daemonHealth.ingestion.oldestPendingAt = pending.oldestPendingAt;
   daemonHealth.ingestion.strandedCount = pending.strandedCount;
   return pending;
+}
+
+/** Record what a completed sweep held back; see DaemonIngestionHealth. */
+function recordRetainedBuckets(retained: readonly RetainedJournalBucket[]): void {
+  daemonHealth.ingestion.lastRetainedBucketCount = retained.length;
+  daemonHealth.ingestion.lastRetainedReasons =
+    retained.length > 0 ? summarizeRetainedBuckets(retained) : undefined;
 }
 
 /**
@@ -535,6 +543,9 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = failures;
     daemonHealth.ingestion.lastError = `journal scan failed: ${errorMessage(err)}`;
     daemonHealth.ingestion.nextRetryAt = Date.now() + delay;
+    // This attempt acknowledged nothing; an earlier sweep's count must not
+    // read as progress next to the failure it just recorded.
+    daemonHealth.ingestion.lastAcknowledgedCount = 0;
     persistHealth();
     scheduleIngestion(delay);
     return;
@@ -548,6 +559,7 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
     daemonHealth.ingestion.nextRetryAt = undefined;
+    recordRetainedBuckets([]);
     persistHealth();
     scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
     return;
@@ -569,6 +581,9 @@ async function runIngestionLoop(): Promise<void> {
     daemonHealth.ingestion.lastAcknowledgedCount = result.flushed;
     daemonHealth.ingestion.consecutiveFailures = 0;
     daemonHealth.ingestion.lastError = undefined;
+    // A sweep that held buckets back returns without throwing, yet those
+    // Moves stay queued; record them so delivery never reads as draining.
+    recordRetainedBuckets(result.retained ?? []);
     updatePendingHealth();
     persistHealth();
     scheduleIngestion(INGESTION_POLL_INTERVAL_MS);
@@ -576,6 +591,9 @@ async function runIngestionLoop(): Promise<void> {
     const failures = daemonHealth.ingestion.consecutiveFailures + 1;
     const delay = ingestionRetryDelayMs(failures);
     daemonHealth.ingestion.lastAcknowledgedCount = err instanceof FlushError ? err.flushed : 0;
+    // Only a FlushError reached bucket classification; any other failure
+    // leaves the last completed sweep's record in place.
+    if (err instanceof FlushError) recordRetainedBuckets(err.retained);
     daemonHealth.ingestion.consecutiveFailures = failures;
     daemonHealth.ingestion.lastError = errorMessage(err);
     daemonHealth.ingestion.nextRetryAt = Date.now() + delay;

@@ -548,7 +548,7 @@ describe("formatDaemonLifecycleMessage", () => {
         NOW,
       ),
     ).toBe(
-      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest 52d) in the background",
+      "[prim] ✓ daemon started under launchd (pid=4242) · Decision ingestion enabled · draining at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
   });
 
@@ -564,7 +564,7 @@ describe("formatDaemonLifecycleMessage", () => {
         NOW,
       ),
     ).toBe(
-      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest 52d) in the background",
+      "[prim] ⚠ daemon started under launchd (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
     // A line with no verdict icon keeps its text; only the clause changes.
     expect(
@@ -575,7 +575,7 @@ describe("formatDaemonLifecycleMessage", () => {
         NOW,
       ),
     ).toBe(
-      "[prim] daemon already running (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest 52d) in the background",
+      "[prim] daemon already running (pid=4242) · Decision ingestion enabled · delivery failing (3 consecutive failures): HTTP 504 gateway · retrying at least 1200 pending moves (oldest ≥ 52d) in the background",
     );
   });
 });

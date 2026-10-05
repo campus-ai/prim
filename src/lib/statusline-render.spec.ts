@@ -238,5 +238,13 @@ describe("formatStatusline I/O boundary", () => {
     );
     expect(behind({})).toContain("delivery: stalled");
     expect(behind({ consecutiveFailures: 0 }, { healthy: false })).toContain("delivery: stalled");
+    // Held-back buckets never deliver on their own, however the sweep ended.
+    expect(behind({ consecutiveFailures: 0, lastRetainedBucketCount: 1 })).toContain(
+      "delivery: stalled",
+    );
+    // A failed sweep that acknowledged Moves first is still advancing.
+    expect(behind({ consecutiveFailures: 2, lastAcknowledgedCount: 500 })).toContain(
+      "delivery: draining",
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { SETUP_ORCHESTRATOR_ENV } from "../commands/setup.js";
 import { UNINSTALL_ORCHESTRATOR_ENV } from "../commands/uninstall.js";
 import { runStartupBackgroundWork } from "./startup-background.js";
 
@@ -32,6 +33,29 @@ describe("runStartupBackgroundWork", () => {
     const background = work();
 
     runStartupBackgroundWork(["--yes", "moves", "flush"], {}, background);
+
+    expect(background.notify).toHaveBeenCalledOnce();
+    expect(background.flush).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "setup's child steps",
+      argv: ["doctor", "--expect-backlog"],
+      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+    },
+    {
+      label: "setup's child steps",
+      argv: ["daemon", "start"],
+      env: { [SETUP_ORCHESTRATOR_ENV]: "1" },
+    },
+    { label: "setup itself", argv: ["--yes", "setup", "--agent", "codex"], env: {} },
+  ])("leaves the drain to the daemon for $label ($argv)", ({ argv, env }) => {
+    // A background drain holding the lock would make the daemon's sweeps bow
+    // out unrecorded, so setup's doctor could never see a delivery failure.
+    const background = work();
+
+    runStartupBackgroundWork(argv, env, background);
 
     expect(background.notify).toHaveBeenCalledOnce();
     expect(background.flush).not.toHaveBeenCalled();

@@ -549,12 +549,20 @@ export async function recoverOrphans(
 export class FlushError extends Error {
   readonly flushed: number;
   readonly quarantined: number;
+  /** Buckets the failed sweep held back without sending, as on success. */
+  readonly retained: readonly RetainedJournalBucket[];
 
-  constructor(cause: unknown, flushed: number, quarantined: number) {
+  constructor(
+    cause: unknown,
+    flushed: number,
+    quarantined: number,
+    retained: readonly RetainedJournalBucket[] = [],
+  ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "FlushError";
     this.flushed = flushed;
     this.quarantined = quarantined;
+    this.retained = retained;
   }
 }
 
@@ -612,7 +620,7 @@ async function flushOnce(): Promise<
     }
   }
   if (errors.length > 0) {
-    throw new FlushError(errors[0], total, quarantined);
+    throw new FlushError(errors[0], total, quarantined, inspection.retainedBuckets);
   }
   return inspection.retainedBuckets.length > 0
     ? { flushed: total, quarantined, retained: inspection.retainedBuckets }
