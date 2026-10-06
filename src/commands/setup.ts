@@ -138,8 +138,8 @@ export function planSetupSteps(opts: {
     });
   }
   // Forward scope to the git hooks and the rules file too, so `--scope user`
-  // (the default) installs a global core.hooksPath and the agent's global rules
-  // file — the whole point of user scope is zero per-repo setup. Unlike the
+  // (the default) offers a global core.hooksPath (set only with consent: a TTY
+  // prompt or --yes) and installs the agent's global rules file. Unlike the
   // session step, hooks/skill take `--scope user` for every agent (hermes
   // included: its global hooks + ~/.hermes/.hermes.md).
   steps.push({
@@ -372,10 +372,14 @@ export function registerSetupCommand(
       const scope: SetupScope = opts.scope;
       const self = process.argv[1];
       // Root program's interactive-gating globals (-y / --non-interactive),
-      // forwarded to the enable step below: setup spawns steps as child processes
-      // that don't inherit the parent's parsed flags, so the repository-binding
-      // prompt would otherwise never see them.
+      // forwarded to the enable step (repository-binding prompt) and, at user
+      // scope, the hooks step (global core.hooksPath consent): setup spawns
+      // steps as child processes that don't inherit the parent's parsed flags.
       const globals = program.optsWithGlobals();
+      const promptFlags = [
+        ...(globals.yes ? ["--yes"] : []),
+        ...(globals.nonInteractive ? ["--non-interactive"] : []),
+      ];
 
       const run =
         dependencies.run ??
@@ -455,7 +459,11 @@ export function registerSetupCommand(
         (candidate) => candidate.key !== "enable" && candidate.key !== "health",
       )) {
         note(`${step.label} · installing…`);
-        const { code } = run(step.args);
+        // Project scope stays unforwarded: --non-interactive would make the
+        // Husky prompt throw instead of falling back to .git/hooks.
+        const { code } = run(
+          step.key === "hooks" && scope === "user" ? [...step.args, ...promptFlags] : step.args,
+        );
         results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
       }
 
@@ -485,11 +493,7 @@ export function registerSetupCommand(
       const enableStep = setupSteps.find((candidate) => candidate.key === "enable");
       if (enableStep) {
         note(`${enableStep.label} · installing…`);
-        const enableArgs = [
-          ...enableStep.args,
-          ...(globals.yes ? ["--yes"] : []),
-          ...(globals.nonInteractive ? ["--non-interactive"] : []),
-        ];
+        const enableArgs = [...enableStep.args, ...promptFlags];
         const { code } = run(enableArgs);
         results[enableStep.key] = code === 0 ? "ok" : enableStep.required ? "failed" : "skipped";
       }

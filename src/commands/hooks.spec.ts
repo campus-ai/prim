@@ -85,6 +85,11 @@ vi.mock("../lib/post-commit-hook.js", () => ({
   })),
 }));
 
+vi.mock("../lib/confirmation.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/confirmation.js")>()),
+  askConfirmation: vi.fn(async () => false),
+}));
+
 vi.mock("../lib/bin-path.js", () => ({
   commandMatchesBin: vi.fn(
     (command: string | undefined, bin: string) =>
@@ -110,6 +115,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { askConfirmation } from "../lib/confirmation.js";
 import {
   ensureEffectivePostCommitHook,
   ensureEffectivePostRewriteHook,
@@ -152,6 +158,7 @@ const mockedEnsurePostRewriteHookAtPath = vi.mocked(ensurePostRewriteHookAtPath)
 const mockedUninstallProjectPostCommitHook = vi.mocked(uninstallProjectPostCommitHook);
 const mockedUninstallProjectPostRewriteHook = vi.mocked(uninstallProjectPostRewriteHook);
 const mockedGitHooksManual = vi.mocked(gitHooksManual);
+const mockedAskConfirmation = vi.mocked(askConfirmation);
 const mockedWriteGitHookScripts = vi.mocked(writeGitHookScripts);
 const mockedRemoveGitHookScripts = vi.mocked(removeGitHookScripts);
 
@@ -821,21 +828,101 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     );
   });
 
-  it("does not override a system-level hooksPath without --force (returns false to signal the skip)", () => {
+  it("does not override a system-level hooksPath without --force (returns false to signal the skip)", async () => {
     stubHooksPath({ system: "/etc/git/hooks" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(installGlobalHooks()).toBe(false); // caller can report an honest skip
+    await expect(installGlobalHooks()).resolves.toBe(false); // caller can report an honest skip
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("system core.hooksPath"));
     errSpy.mockRestore();
   });
 
-  it("overrides a system-level hooksPath with --force (returns true)", () => {
+  it("overrides a system-level hooksPath with --force (returns true)", async () => {
     stubHooksPath({ system: "/etc/git/hooks" });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(installGlobalHooks({ force: true })).toBe(true);
+    await expect(installGlobalHooks({ force: true })).resolves.toBe(true);
     expect(setCalls()).toHaveLength(1);
+    errSpy.mockRestore();
+  });
+});
+
+describe("hooks install --scope user consent", () => {
+  const originalIsTTY = process.stdin.isTTY;
+
+  afterEach(() => {
+    Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
+    vi.unstubAllEnvs();
+  });
+
+  function install(...flags: string[]): Promise<Command> {
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive").exitOverride();
+    registerHooksCommands(program);
+    return program.parseAsync(["hooks", "install", "--scope", "user", ...flags], {
+      from: "user",
+    });
+  }
+
+  it("skips setting an unset global pointer without consent and prints the remedy", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await install();
+    expect(setCalls()).toHaveLength(0);
+    expect(mockedWriteGitHookScripts).toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("prim hooks install --scope user --yes"),
+    );
+    errSpy.mockRestore();
+  });
+
+  it("sets the global pointer with --yes, without prompting", async () => {
+    await install("--yes");
+    expect(setCalls()).toHaveLength(1);
+    expect(mockedAskConfirmation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])("asks on a TTY (answer %s → %i pointer writes)", async (answer, writes) => {
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    mockedAskConfirmation.mockResolvedValue(answer);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await install();
+    expect(mockedAskConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("GLOBAL core.hooksPath"),
+      process.stderr,
+    );
+    expect(setCalls()).toHaveLength(writes);
+    errSpy.mockRestore();
+  });
+
+  it("never prompts under CI", async () => {
+    vi.stubEnv("CI", "1");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await install();
+    expect(mockedAskConfirmation).not.toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+    errSpy.mockRestore();
+  });
+
+  it.each([
+    ["prim's own", PRIM_GIT_HOOKS_DIR],
+    ["a foreign", "/Users/example/.config/git/hooks"],
+  ])("does not prompt when the global pointer is already %s", async (_label, global) => {
+    stubHooksPath({ global });
+    await install();
+    expect(mockedAskConfirmation).not.toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+    expect(mockedWriteFileSync).toHaveBeenCalled();
+  });
+
+  it("never sets the pointer under prim.gitHooks=manual, even with --yes", async () => {
+    mockedGitHooksManual.mockReturnValue(true);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await install("--yes");
+    expect(setCalls()).toHaveLength(0);
+    expect(mockedAskConfirmation).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 });

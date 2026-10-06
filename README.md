@@ -322,6 +322,7 @@ authorizes one retry for the named decision.
 
 ```bash
 prim hooks install                # Install git hooks (pre-commit check + post-commit/post-rewrite capture)
+prim hooks install --scope user   # Offer a global core.hooksPath (asks first; --yes to consent)
 prim hooks script post-commit     # Print a hook script's path (STDOUT) and its wiring block (STDERR)
 prim hooks uninstall              # Remove the prim git hooks
 ```

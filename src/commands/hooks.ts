@@ -18,6 +18,7 @@
  *   - If a global `core.hooksPath` already points elsewhere, prim appends its
  *     block into that dir instead of hijacking the pointer.
  *   - A system-level `core.hooksPath` is not overridden without --force.
+ *   - Setting the global pointer needs consent: --yes or a TTY prompt.
  *   - Requires git ≥ 2.9.
  *
  * Hook files only ever receive a version-stable block that sources a
@@ -598,8 +599,11 @@ export function uninstallProjectHooks(gitRoot: string): void {
 // Install prim's git hooks at USER scope via a global core.hooksPath. Coexists
 // with an existing global hooksPath (appends into it) rather than clobbering.
 // Returns whether hooks were installed — false when it declines (system
-// hooksPath present without --force) so callers can report an honest skip.
-export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
+// hooksPath present without --force, or no consent to set the global pointer)
+// so callers can report an honest skip.
+export async function installGlobalHooks(
+  opts: { force?: boolean; confirmPointerSet?: () => Promise<boolean> } = {},
+): Promise<boolean> {
   writeGitHookScripts();
   const global = gitConfigGet("--global");
   if (gitHooksManual({ global: true })) {
@@ -621,6 +625,12 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
       console.error(
         `[prim] --force: overriding system core.hooksPath ${system}; its hooks will no longer fire (prim chains only to .git/hooks).`,
       );
+    }
+    if (opts.confirmPointerSet && !(await opts.confirmPointerSet())) {
+      console.error(
+        `[prim] Skipped setting the global core.hooksPath to ${PRIM_GIT_HOOKS_DIR}: it would route every repository's hooks through prim. Run \`prim hooks install --scope user --yes\` to allow it; \`prim enable\` still wires each enabled repository.`,
+      );
+      return false;
     }
     writeOwnHooks();
     execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
@@ -731,12 +741,21 @@ export function registerHooksCommands(program: Command) {
         // failure: installGlobalHooks already prints a loud STDERR warning with
         // the remedy, so exit 0 and let `prim setup` complete rather than report
         // an incomplete run for a benign case.
-        if (opts.scope === "user") {
-          installGlobalHooks({ force: opts.force });
-          return;
-        }
         const globals = command.optsWithGlobals();
         const nonInteractive = isNonInteractive(globals);
+        if (opts.scope === "user") {
+          await installGlobalHooks({
+            force: opts.force,
+            confirmPointerSet: async () =>
+              Boolean(globals.yes) ||
+              (!nonInteractive &&
+                (await askConfirmation(
+                  `Set git's GLOBAL core.hooksPath to ${PRIM_GIT_HOOKS_DIR}? Every repository's hooks would route through prim.`,
+                  process.stderr,
+                ))),
+          });
+          return;
+        }
         const gitRoot = getGitRoot();
         writeGitHookScripts();
         if (gitHooksManual({ cwd: gitRoot })) {

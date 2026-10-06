@@ -236,7 +236,7 @@ npx --yes @primitive.ai/prim hooks uninstall
 - **post-commit** -- records each commit as a capture boundary so the server can classify the surrounding work into decisions. It never blocks and runs in the background.
 - **post-rewrite** -- records amend/rebase rewrites the same way, in the background.
 
-Each hook file only gets a short, version-stable block (appended at the end) that sources a prim-owned script in `~/.config/prim/git-hook-scripts/`; `npx --yes @primitive.ai/prim hooks script post-commit` prints a script's path and that block. If the user wires the scripts themselves (`git config prim.gitHooks manual`), prim never edits their hook files and doctor reports the hooks as `manual`.
+Each hook file only gets a short, version-stable block (appended at the end) that sources a prim-owned script in `~/.config/prim/git-hook-scripts/`; `npx --yes @primitive.ai/prim hooks script post-commit` prints a script's path and that block. If the user wires the scripts themselves (`git config prim.gitHooks manual`), prim never edits their hook files and doctor reports the hooks as `manual`. `hooks install --scope user` only sets a global `core.hooksPath` with consent (a TTY prompt or `--yes`) -- never pass `--yes` for the user without asking.
 
 Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` removes prim's blocks from `.git/hooks` and `.husky/` alike, leaving the rest of each hook untouched. To suppress the hooks for one commit, use `git commit --no-verify`.
 

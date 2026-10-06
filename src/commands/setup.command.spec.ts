@@ -470,8 +470,39 @@ describe("registerSetupCommand", () => {
 
     expect(calls).toContainEqual(["enable", "--yes"]);
     expect(calls).not.toContainEqual(["enable"]);
+    // Project scope never forwards: --non-interactive would fail the Husky prompt.
+    expect(calls).toContainEqual(["hooks", "install"]);
     expect(exit).toHaveBeenCalledWith(0);
   });
+
+  it.each([
+    [["--yes"], ["--yes"]],
+    [["--non-interactive"], ["--non-interactive"]],
+    [[], []],
+  ])(
+    "forwards %j to the user-scope hooks step as global core.hooksPath consent",
+    async (flags, forwarded) => {
+      const calls: string[][] = [];
+      const program = new Command();
+      program.option("-y, --yes").option("--non-interactive");
+      registerSetupCommand(program, {
+        run: (args) => {
+          calls.push(args);
+          return args[0] === "auth" && args[1] === "status"
+            ? { code: 0, stdout: '{"status":"valid"}' }
+            : { code: 0, stdout: "" };
+        },
+        note: vi.fn(),
+        exit: vi.fn(),
+      });
+
+      await program.parseAsync([...flags, "setup", "--agent", "codex", "--no-daemon"], {
+        from: "user",
+      });
+
+      expect(calls).toContainEqual(["hooks", "install", "--scope", "user", ...forwarded]);
+    },
+  );
 
   it("reports setup incomplete when GitHub repo connection is required", async () => {
     const calls: string[][] = [];
