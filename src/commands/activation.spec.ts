@@ -10,7 +10,10 @@ vi.mock("../lib/git-hooks.js", () => ({
   externalHookRemedy: vi.fn(() => "place `prim hooks snippet post-commit` there yourself"),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
-vi.mock("../lib/commit-heartbeat.js", () => ({ recordHooksWired: vi.fn() }));
+vi.mock("../lib/commit-heartbeat.js", () => ({
+  clearHooksWired: vi.fn(),
+  recordHooksWired: vi.fn(),
+}));
 vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
 vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn(), stageGitHookRuntime: vi.fn() }));
@@ -24,7 +27,7 @@ vi.mock("./github.js", () => ({ runGithubConnect: vi.fn() }));
 import { execFileSync } from "node:child_process";
 import { daemonRequest } from "../daemon/client.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
-import { recordHooksWired } from "../lib/commit-heartbeat.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation } from "../lib/confirmation.js";
 import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { bindRepository } from "../lib/repository-binding.js";
@@ -323,6 +326,32 @@ describe("prim enable / disable", () => {
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildProgram().parseAsync(["enable"], { from: "user" });
     expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("lets only a post-commit change reset the expectation", async () => {
+    inRepo("/repo", { active: true });
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => ({
+      ...hookResult(hookName),
+      changed: hookName === "pre-commit",
+    }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+    // Wiring pre-commit cannot clear a post-commit hook that stopped firing.
+    expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("disable ends the expectation, so commits while disabled are never judged", async () => {
+    inRepo("/repo", { active: true });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["disable"], { from: "user" });
+    expect(clearHooksWired).toHaveBeenCalledWith("/repo");
+    expect(recordHooksWired).not.toHaveBeenCalled();
     logSpy.mockRestore();
     errSpy.mockRestore();
   });

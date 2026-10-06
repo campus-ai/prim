@@ -707,7 +707,8 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
               { husky: target === "husky" },
             );
       reportInstall(result, gitRoot);
-      changed ||= result.changed;
+      // Only post-commit is what doctor's evidence check judges.
+      if (spec === POST_COMMIT) changed ||= result.changed;
       if (spec === POST_COMMIT && result.outcome === "external") process.exitCode = 1;
     } catch (error) {
       if (spec === POST_COMMIT) throw error;

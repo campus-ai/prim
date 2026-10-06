@@ -10,7 +10,7 @@ import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
 import { repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
-import { recordHooksWired } from "../lib/commit-heartbeat.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import {
   MANAGED_GIT_HOOK_NAMES,
@@ -66,7 +66,9 @@ function wireRepositoryHooks(root: string): {
       }
       paths[hookName] = result.path;
       manual ||= result.outcome === "manual";
-      changed ||= result.changed;
+      // Only post-commit is what doctor's evidence check judges: wiring the
+      // other hooks must not reset its expectation.
+      if (hookName === "post-commit") changed ||= result.changed;
     } catch (error) {
       if (hookName === "post-commit") throw error;
       const detail = error instanceof Error ? error.message : String(error);
@@ -165,6 +167,9 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     }
     phase = "local activation";
     setRepoActive(root, active);
+    // Disabled, commits are not expected to reach prim; the next enable (or
+    // SessionStart once re-activated) starts a fresh expectation.
+    if (!active) clearHooksWired(root);
     if (active) {
       // From here on, doctor expects every local commit to reach prim. Only
       // now: the entrypoint skips commits made before prim.active is set. A

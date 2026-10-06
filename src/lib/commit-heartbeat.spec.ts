@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   POST_COMMIT_GRACE_MS,
+  clearHooksWired,
   inspectPostCommitFiring,
   latestLocalCommit,
   recordHooksWired,
@@ -149,14 +150,37 @@ describe("post-commit firing evidence", () => {
     expect(latestLocalCommit(root)?.sha).toBe(git(root, ["rev-parse", "HEAD"]));
   });
 
-  it("keeps a bounded, private set of stamps", () => {
+  it("keeps a bounded, private set of stamps that survives a long rebase", () => {
     const root = repository();
-    const shas = Array.from({ length: 40 }, (_, index) => index.toString(16).padStart(40, "a"));
+    const shas = Array.from({ length: 321 }, (_, index) => index.toString(16).padStart(40, "0"));
     shas.forEach((sha, index) => recordPostCommitFired(root, sha, Date.now() + index));
     const dir = join(root, ".git", "prim", "post-commit-fired");
-    expect(readdirSync(dir)).toHaveLength(32);
+    const kept = readdirSync(dir);
+    expect(kept).toHaveLength(256);
+    // The newest 256 runs (e.g. a 255-pick rebase plus the commit before it).
+    expect(kept).toContain(shas[65]);
+    expect(kept).not.toContain(shas[64]);
     expect(statSync(join(root, ".git", "prim")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(dir, shas[39] as string)).mode & 0o777).toBe(0o600);
+    expect(statSync(join(dir, shas[320] as string)).mode & 0o777).toBe(0o600);
+  }, 60_000);
+
+  it("never judges commits made while prim was disabled", () => {
+    const root = repository();
+    wiredEarlier(root);
+    recordPostCommitFired(root, commit(root, "one"));
+    clearHooksWired(root); // prim disable
+    git(root, ["config", "prim.active", "false"]);
+    commit(root, "while disabled");
+    git(root, ["config", "prim.active", "true"]); // re-enabled by hand
+    expect(inspectPostCommitFiring(root, later())).toEqual({ state: "unverified" });
+  });
+
+  it("never fails a commit from the same second the hooks were wired", () => {
+    const root = repository();
+    commit(root, "just before enable");
+    const commitAt = latestLocalCommit(root)?.at ?? 0;
+    recordHooksWired(root, { now: commitAt + 500 });
+    expect(inspectPostCommitFiring(root, later())).toEqual({ state: "unverified" });
   });
 
   it("never throws from a hook outside Git", () => {

@@ -23,8 +23,12 @@ const WIRED_PATH = "prim/git-hooks-wired";
 const GIT_TIMEOUT_MS = 1_000;
 const MAX_STAMP_BYTES = 1_024;
 const REFLOG_SCAN_LIMIT = 50;
-/** Stamps kept per checkout; doctor only ever needs the latest commit's. */
-const MAX_FIRED_STAMPS = 32;
+/**
+ * Stamps kept per checkout. Doctor needs only the latest `git commit`'s, but
+ * rebase picks also run post-commit and stamp, so keep room for long rebases.
+ */
+const MAX_FIRED_STAMPS = 256;
+const PRUNE_SLACK = 64;
 const FULL_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const REFLOG_LINE_RE = /^([0-9a-f]{40}|[0-9a-f]{64})\tHEAD@\{([0-9]+)\}\t(.*)$/u;
 /**
@@ -115,8 +119,10 @@ export function recordPostCommitFired(
   try {
     const dir = gitPath(cwd, FIRED_DIR);
     writeStamp(join(dir, sha), now);
-    const stale = readdirSync(dir)
-      .filter((name) => FULL_SHA_RE.test(name))
+    // One directory listing per commit; prune in batches, newest kept.
+    const names = readdirSync(dir).filter((name) => FULL_SHA_RE.test(name));
+    if (names.length <= MAX_FIRED_STAMPS + PRUNE_SLACK) return;
+    const stale = names
       .map((name) => ({ name, at: readStampAt(join(dir, name)) ?? 0 }))
       .sort((left, right) => right.at - left.at || left.name.localeCompare(right.name))
       .slice(MAX_FIRED_STAMPS);
@@ -141,6 +147,15 @@ export function recordHooksWired(
     writeStamp(path, options.now ?? Date.now());
   } catch {
     // Evidence is best effort.
+  }
+}
+
+/** `prim disable`: commits are no longer expected to reach prim here. */
+export function clearHooksWired(cwd: string): void {
+  try {
+    unlinkSync(gitPath(cwd, WIRED_PATH));
+  } catch {
+    // Absent already, or not a repository.
   }
 }
 
@@ -196,10 +211,16 @@ export function inspectPostCommitFiring(cwd: string, now: number = Date.now()): 
   } catch {
     wiredAt = undefined;
   }
-  const expectedSince = Math.max(wiredAt ?? 0, lastFiredAt ?? 0);
-  // Reflog times are whole seconds: a commit stamped 12:00:00 may have happened
-  // at 12:00:00.999, after an expectation recorded within that second.
-  if (expectedSince > 0 && commit.at + REFLOG_RESOLUTION_MS > expectedSince) {
+  // No expectation without a wiring stamp: `prim disable` clears it, so
+  // commits made while disabled are never judged.
+  if (wiredAt === undefined) return { state: "unverified" };
+  // The wiring stamp is compared strictly: a commit in that same second may
+  // have preceded activation, and a missed check beats a false failure. After
+  // a run prim saw, reflog times are whole seconds, so the same second counts.
+  const judged =
+    commit.at > wiredAt ||
+    (lastFiredAt !== undefined && commit.at + REFLOG_RESOLUTION_MS > lastFiredAt);
+  if (judged) {
     return lastFiredAt === undefined
       ? { state: "not_firing", commitAt: commit.at }
       : { state: "not_firing", commitAt: commit.at, firedAt: lastFiredAt };

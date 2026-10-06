@@ -470,6 +470,24 @@ describe("hooks install action", () => {
     expect(recordHooksWired).not.toHaveBeenCalled();
   });
 
+  it("lets only a post-commit change reset doctor's expectation", async () => {
+    mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
+      if (args.join(" ") === "config --get prim.active") return "true\n";
+      if (args[0] !== "rev-parse") return "";
+      if (args.includes("--git-common-dir")) return ".git\n";
+      return "/fake/root\n";
+    }) as typeof execFileSync);
+    mockedEnsureGitHookAtPath.mockImplementation((hookName, path) => ({
+      hookName,
+      path,
+      changed: hookName === "pre-commit",
+      kind: "direct",
+      outcome: hookName === "pre-commit" ? "created" : "unchanged",
+    }));
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root", { onlyIfAbsent: true });
+  });
+
   it("starts doctor's expectation only in an active checkout", async () => {
     mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
       if (args.join(" ") === "config --get prim.active") return "true\n";

@@ -356,7 +356,10 @@ only reports; it never rewrites a hook.
 run that reaches prim leaves a stamp in the checkout's git dir, and doctor's
 `hook-fired` check fails when a local commit made since the hooks were wired
 never reached prim. That catches an `exit` before prim's block, hand wiring
-that broke, or a git client whose environment cannot find prim.
+that broke, or a git client whose environment cannot find prim. The check
+applies in manual mode too: once a repository is enabled, doctor expects your
+own wiring to reach prim. `prim disable` ends the expectation, so commits made
+while disabled are never judged.
 
 To wire the hooks yourself (lefthook, a custom Husky layout, …), run
 `git config prim.gitHooks manual` (or `--global`): prim then never writes a hook
