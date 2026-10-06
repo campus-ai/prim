@@ -28,7 +28,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { gitToplevel } from "../lib/git.js";
-import { globalHooksPathIsPrims } from "./hooks.js";
+import { EXIT_GLOBAL_HOOKS_NOT_INSTALLED, globalHooksPathIsPrims } from "./hooks.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
@@ -230,6 +230,18 @@ export function preCommitRunsPrim(content: string): boolean {
 }
 
 /**
+ * A project pre-commit that runs prim double-fires only beside prim's global
+ * hooks. Without them it is how the repository is wired, and removing it would
+ * drop the decision check.
+ */
+export function projectHooksConflict(
+  globalHooksActive: boolean,
+  preCommit: string | undefined,
+): boolean {
+  return globalHooksActive && preCommit !== undefined && preCommitRunsPrim(preCommit);
+}
+
+/**
  * Detect project-scoped prim config lingering in the current repo — it would
  * double-fire alongside a fresh user-scope install. Reuses the existing status
  * subcommands (their JSON is on STDOUT) for the session + rules file, and a
@@ -255,23 +267,16 @@ function detectProjectConflicts(
     }
   }
 
-  // Project git hook in this repo's .git/hooks. It double-fires only beside
-  // prim's global hooks; without them it is how this repo is wired.
-  if (globalHooksActive) {
-    try {
-      const root = gitToplevel();
-      const preCommit = root && join(root, ".git", "hooks", "pre-commit");
-      if (
-        preCommit &&
-        existsSync(preCommit) &&
-        preCommitRunsPrim(readFileSync(preCommit, "utf-8"))
-      ) {
-        conflicts.push(CONFLICT_HOOKS);
-      }
-    } catch {
-      // not a repo / no hook → absent
-    }
+  // Project git hook in this repo's .git/hooks.
+  let preCommit: string | undefined;
+  try {
+    const root = gitToplevel();
+    const path = root && join(root, ".git", "hooks", "pre-commit");
+    if (path && existsSync(path)) preCommit = readFileSync(path, "utf-8");
+  } catch {
+    // not a repo / no hook → absent
   }
+  if (projectHooksConflict(globalHooksActive, preCommit)) conflicts.push(CONFLICT_HOOKS);
 
   // Project rules file (skill status without --scope resolves the cwd target).
   try {
@@ -367,7 +372,7 @@ export function registerSetupCommand(
     .option("--agent <agent>", "claude, codex, cursor, or hermes (auto-detected when omitted)")
     .option(
       "--scope <scope>",
-      "user (default — install once for every repo) or project (this repo only)",
+      "user (default — agent integration and skill for every repo; git hooks per repo via enable) or project (this repo only)",
       "user",
     )
     .option(
@@ -398,6 +403,11 @@ export function registerSetupCommand(
       }
       if (opts.scope !== "project" && opts.scope !== "user") {
         process.stderr.write(`[prim] unknown --scope "${opts.scope}" (expected project or user)\n`);
+        (dependencies.exit ?? process.exit)(EXIT_USAGE);
+        return;
+      }
+      if (opts.globalHooksPath && opts.scope !== "user") {
+        process.stderr.write("[prim] --global-hooks-path applies only with --scope user\n");
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
         return;
       }
@@ -494,12 +504,23 @@ export function registerSetupCommand(
       )) {
         note(`${step.label} · installing…`);
         const { code } = run(step.args);
-        results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
+        // A declined global-hooks step (manual mode, a system hooksPath) says
+        // why on STDERR and is a skip, not an install.
+        results[step.key] =
+          code === 0
+            ? "ok"
+            : code === EXIT_GLOBAL_HOOKS_NOT_INSTALLED && step.key === "hooks"
+              ? "skipped"
+              : step.required
+                ? "failed"
+                : "skipped";
       }
 
       if (scope === "user" && !opts.globalHooksPath) {
         note(
-          "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)",
+          globalHooksPathIsPrims()
+            ? "git hooks · prim's global hooks stay active; `prim enable` refreshes them"
+            : "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)",
         );
       }
 

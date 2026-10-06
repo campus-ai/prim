@@ -45,7 +45,7 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
         // A shared hooks dir runs in every repository using it: enable never
         // edits one on its own.
         throw new Error(
-          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; wire it with \`prim hooks install --scope user\` or place \`prim hooks snippet ${hookName}\` yourself`,
+          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; wire it with \`prim hooks install --scope user --global-hooks-path\` or place \`prim hooks snippet ${hookName}\` yourself`,
         );
       }
       if (result.outcome === "runtime_missing") {

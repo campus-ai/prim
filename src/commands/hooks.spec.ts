@@ -130,6 +130,7 @@ import {
 } from "../lib/git-hooks.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
+  EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
   PRIM_BLOCK_END,
   PRIM_BLOCK_START,
   PRIM_GIT_HOOKS_DIR,
@@ -619,6 +620,7 @@ describe("installGlobalHooks (user scope)", () => {
   it("changes nothing machine-wide without consent, and says how to opt in", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(installGlobalHooks()).toBe("not_requested");
+    expect(stageHookRuntime).not.toHaveBeenCalled();
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("--global-hooks-path"));
@@ -1104,6 +1106,46 @@ describe("hooks install --scope user consent", () => {
     await install(flags);
     expect(askConfirmation).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
+  });
+
+  it("exits 3 when asked for global hooks it could not install, without prompting", async () => {
+    tty();
+    stubHooksPath({ system: "/etc/git/hooks" });
+    await install([], ["--global-hooks-path"]);
+    expect(setCalls()).toHaveLength(0);
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(EXIT_GLOBAL_HOOKS_NOT_INSTALLED);
+    process.exitCode = undefined;
+  });
+
+  it("never asks a question manual mode would make moot", async () => {
+    tty();
+    vi.mocked(gitHooksMode).mockReturnValue("manual");
+    await install();
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+  });
+
+  it("names the shared dir it would edit when asking", async () => {
+    tty();
+    stubHooksPath({ global: "/Users/example/.config/git/hooks" });
+    vi.mocked(askConfirmation).mockResolvedValue(false);
+    await install();
+    expect(askConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("/Users/example/.config/git/hooks"),
+      process.stderr,
+    );
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("rejects --global-hooks-path outside user scope", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerHooksCommands(program);
+    await expect(
+      program.parseAsync(["hooks", "install", "--global-hooks-path"], { from: "user" }),
+    ).rejects.toThrow(/only with --scope user/);
+    expect(mockedEnsureEffectiveGitHook).not.toHaveBeenCalled();
   });
 
   it("does not prompt when the pointer is already prim's", async () => {

@@ -204,7 +204,7 @@ pass; the setup-specifics line is your close.
 ## Appendix — manual steps (fallback only)
 
 Prefer the one command above. Run these individually only if `setup` is
-unavailable. They mirror the steps `setup` runs, in order; each is idempotent.
+unavailable. They mirror the steps `setup` runs, in order (at the default user scope, setup skips step 5 unless asked for `--global-hooks-path`; step 7 wires this repo's hooks); each is idempotent.
 Note that running them separately means one approval per command — `setup` exists
 precisely to collapse those shell permission prompts to one. That is separate from
 the per-Decision approval required for each `decisions create` while passive capture

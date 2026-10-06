@@ -92,7 +92,7 @@ prim setup --no-daemon       # Stop it and persistently opt out of supervised de
 prim setup --global-hooks-path  # Also route every repository's git hooks through prim
 ```
 
-Orchestrates auth → session hooks → supervised daemon → capture-health gate → git hooks → skill → welcome,
+Orchestrates auth → session hooks → supervised daemon → git hooks (`--scope project`, or `--global-hooks-path`) → skill → activate this repo (which wires its git hooks) → capture-health gate → welcome,
 re-running each underlying command so every step behaves exactly as if run by
 hand (including the browser login). Idempotent — safe to re-run.
 
@@ -348,7 +348,7 @@ never move or rewrite a current block, reformatted or not. Agent session hooks
 only repair Git-private hook files under `.git` and prim's own hooks dir, and
 never add the pre-commit check. prim never edits a hooks dir outside the
 repository, such as a global `core.hooksPath` every repository shares, unless
-you run `prim hooks install --scope user`. In a Husky v8 hook the block goes
+you run `prim hooks install --scope user --global-hooks-path`. In a Husky v8 hook the block goes
 after the `husky.sh` line, so it runs once and honors `HUSKY=0`. `prim doctor`
 only reports; it never rewrites a hook.
 

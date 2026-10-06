@@ -608,7 +608,7 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
     case "unreachable_block":
       if (inspection.location === "prim") return "run `prim enable` to refresh prim's global hooks";
       if (inspection.location === "external") {
-        return `outside this repository — wire it with \`prim hooks install --scope user\` or \`prim hooks snippet ${inspection.hookName}\``;
+        return `outside this repository — wire it with \`prim hooks install --scope user --global-hooks-path\` or \`prim hooks snippet ${inspection.hookName}\``;
       }
       return "run `prim hooks install`";
     case "entrypoint_missing":
