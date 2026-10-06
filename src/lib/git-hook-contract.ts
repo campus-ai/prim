@@ -76,26 +76,67 @@ unset prim_rewrite_stdin
 ${end}`;
 }
 
+// Separators a formatter may add or drop: after these words or operators a
+// newline and a space mean the same thing.
+const OPEN_WORDS = new Set(["then", "do", "else", "{", "(", "&&", "||", "|"]);
+
 /**
  * Compare blocks modulo formatting. Formatters such as shfmt re-indent,
  * re-space redirections, and break `if …; then …; fi` across lines; none of
  * that may look stale, or prim would rewrite the user's formatted bytes and
- * reintroduce churn. Line structure still matters where it changes meaning: a
- * comment is one token running to the end of its line, so a command joined
- * onto a comment line (which silences it) never compares equal.
+ * reintroduce churn. Everything that changes meaning still counts: quoted
+ * text is compared verbatim, `;` and newline are the same command separator
+ * (so deleting one is a change), and a comment runs to the end of its line
+ * (so a command joined onto it is a change).
  */
 export function canonicalHookBlock(text: string): string {
   const tokens: string[] = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line.startsWith("#")) {
-      tokens.push(line.replace(/\s+/gu, " "));
+  let word = "";
+  let quote: "'" | '"' | undefined;
+  const separate = (): void => {
+    const last = tokens.at(-1);
+    if (last !== undefined && last !== ";" && !OPEN_WORDS.has(last)) tokens.push(";");
+  };
+  const flush = (): void => {
+    if (word === "") return;
+    const last = tokens.at(-1);
+    // `> "file"` and `>"file"` are the same redirection.
+    if (last !== undefined && /^[0-9]*(?:<|>|>>|<&|>&)$/u.test(last))
+      tokens[tokens.length - 1] += word;
+    else tokens.push(word);
+    word = "";
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] as string;
+    if (quote) {
+      word += char;
+      if (char === quote) quote = undefined;
       continue;
     }
-    for (const word of line.replace(/([<>])\s+/gu, "$1").split(/[\s;]+/u)) {
-      if (word !== "") tokens.push(word);
+    if (char === "'" || char === '"') {
+      quote = char;
+      word += char;
+    } else if (char === "#" && word === "") {
+      const end = text.indexOf("\n", index);
+      const comment = text.slice(index, end === -1 ? text.length : end);
+      tokens.push(comment.replace(/\s+/gu, " ").trim());
+      index = (end === -1 ? text.length : end) - 1;
+    } else if (char === "\n" || char === ";") {
+      flush();
+      if (char === ";" && text[index + 1] === ";") {
+        tokens.push(";;");
+        index += 1;
+      } else {
+        separate();
+      }
+    } else if (/\s/u.test(char)) {
+      flush();
+    } else {
+      word += char;
     }
   }
+  flush();
+  while (tokens.at(-1) === ";") tokens.pop();
   return tokens.join("\u0000");
 }
 

@@ -9,9 +9,13 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
-import { globalHooksPathIsPrims } from "./hooks.js";
+import { gitToplevel } from "../lib/git.js";
+import { globalHooksPathIsPrims, planGlobalHooks } from "./hooks.js";
 import {
   SETUP_DAEMON_DRAINS_ENV,
   SETUP_ORCHESTRATOR_ENV,
@@ -23,6 +27,7 @@ import {
   projectHooksConflict,
   registerSetupCommand,
   resolveAgent,
+  setupGitHooksNote,
   setupStepSpawnOptions,
 } from "./setup.js";
 
@@ -30,7 +35,12 @@ import {
 vi.mock("./hooks.js", () => ({
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED: 3,
   globalHooksPathIsPrims: vi.fn(() => false),
+  planGlobalHooks: vi.fn(() => ({ action: "set_pointer" })),
 }));
+vi.mock("../lib/git.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/git.js")>();
+  return { ...actual, gitToplevel: vi.fn(actual.gitToplevel) };
+});
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawnSync: vi.fn(),
@@ -781,9 +791,67 @@ describe("setup's global-hooks step status", () => {
   });
 
   it("tells users who already have prim's global hooks that they stay active", async () => {
-    vi.mocked(globalHooksPathIsPrims).mockReturnValueOnce(true);
+    vi.mocked(planGlobalHooks).mockReturnValueOnce({ action: "refresh" });
     const { note, parse } = setupWith(0, ["setup", "--agent", "codex", "--no-daemon"]);
     await parse();
     expect(note).toHaveBeenCalledWith(expect.stringContaining("prim's global hooks stay active"));
+  });
+});
+
+describe("setupGitHooksNote", () => {
+  it("warns users whose global hooks dir prim may not edit that enable needs consent", () => {
+    const note = setupGitHooksNote({ action: "add_to_dir", global: "/home/u/.config/git/hooks" });
+    expect(note).toContain("/home/u/.config/git/hooks");
+    expect(note).toContain("--global-hooks-path, after asking the user");
+  });
+
+  it("does not claim git's global hooks are untouched when prim's are active", () => {
+    expect(setupGitHooksNote({ action: "refresh" })).toContain("stay active");
+    expect(setupGitHooksNote({ action: "set_pointer" })).toContain("untouched");
+  });
+});
+
+describe("setup --migrate with prim's global hooks", () => {
+  it("removes a project pre-commit that would double-fire beside them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-migrate-"));
+    try {
+      mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+      writeFileSync(
+        join(root, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n# <<< prim pre-commit hook <<<\n",
+      );
+      vi.mocked(gitToplevel).mockReturnValue(root);
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(true);
+      const calls: string[][] = [];
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) => {
+          calls.push(args);
+          if (args[0] === "auth" && args[1] === "status") {
+            return { code: 0, stdout: '{"status":"valid"}' };
+          }
+          return { code: 0, stdout: "{}" };
+        },
+        note: vi.fn(),
+        exit: vi.fn(),
+      });
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon", "--migrate"], {
+        from: "user",
+      });
+      expect(calls).toContainEqual(["hooks", "uninstall"]);
+
+      // Without prim's global hooks the same pre-commit is how the repo is
+      // wired, and migrate leaves it.
+      calls.length = 0;
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(false);
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon", "--migrate"], {
+        from: "user",
+      });
+      expect(calls).not.toContainEqual(["hooks", "uninstall"]);
+    } finally {
+      vi.mocked(gitToplevel).mockRestore();
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(false);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

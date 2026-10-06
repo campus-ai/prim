@@ -51,7 +51,9 @@ import {
   type ManagedGitHookName,
   ensureEffectiveGitHook,
   ensureGitHookAtPath,
+  externalHookRemedy,
   gitHooksMode,
+  hasCurrentHookBlock,
   isOwnedStandalonePreCommit,
   managedHookBlock,
   projectGitHookTarget,
@@ -61,7 +63,11 @@ import {
   uninstallProjectGitHook,
 } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
-import { hookRuntimePaths, stageHookRuntime } from "../lib/hook-runtime.js";
+import {
+  hookRuntimePaths,
+  inspectGitHookEntrypoint,
+  stageHookRuntime,
+} from "../lib/hook-runtime.js";
 import { primConfigDirectory } from "../lib/paths.js";
 
 type HookSpec = { hookName: ManagedGitHookName; binName: string };
@@ -301,7 +307,18 @@ function assertOwnedHooksDirectorySafeToRemove(): string[] {
   return entries;
 }
 
-function writeOwnHooks(): void {
+/**
+ * Rewrite prim's owned global hooks. Refuses while the hook runtime is not
+ * staged: the scripts it would write do nothing until it is, and replacing a
+ * working pre-v1 script would silently stop capture in every repository.
+ */
+function writeOwnHooks(): boolean {
+  if (inspectGitHookEntrypoint() !== "ready") {
+    console.error(
+      `[prim] left prim's global hooks in ${PRIM_GIT_HOOKS_DIR} as they are: the hook runtime they run is not staged (run an agent install, or \`prim enable\` from an installed prim).`,
+    );
+    return false;
+  }
   if (!existsSync(PRIM_GIT_HOOKS_DIR)) {
     mkdirSync(PRIM_GIT_HOOKS_DIR, { recursive: true });
   }
@@ -318,13 +335,13 @@ function writeOwnHooks(): void {
   for (const name of PASSTHROUGH_HOOKS) {
     writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, name), passThroughScript(name), { mode: 0o755 });
   }
+  return true;
 }
 
 /** Refresh Prim's wholly-owned global hooks without changing Git config. */
 export function refreshOwnedGlobalHooks(): boolean {
   if (!isOurHooksDir(gitConfigGet("--global"))) return false;
-  writeOwnHooks();
-  return true;
+  return writeOwnHooks();
 }
 
 // Add prim's block into a hook file in a foreign global core.hooksPath dir we
@@ -400,11 +417,16 @@ export function uninstallProjectHooks(gitRoot: string): void {
       husky: true,
       allowOwnedStandalone: false,
     },
-    {
-      path: configured.hookPath,
-      husky: configured.kind === "husky_v9",
-      allowOwnedStandalone: false,
-    },
+    // A shared hooks dir is never stripped on this repository's behalf.
+    ...(configured.location === "external"
+      ? []
+      : [
+          {
+            path: configured.hookPath,
+            husky: configured.kind === "husky_v9",
+            allowOwnedStandalone: false,
+          },
+        ]),
   ].filter(
     (destination, index, all) =>
       all.findIndex((other) => other.path === destination.path) === index,
@@ -417,7 +439,11 @@ export function uninstallProjectHooks(gitRoot: string): void {
 
   for (const spec of [POST_COMMIT, POST_REWRITE]) {
     const result = uninstallProjectGitHook(spec.hookName, gitRoot);
-    if (!result.changed) {
+    if (result.skipped === "external") {
+      console.log(
+        `Left ${result.path} alone: it is outside this repository, and other repositories may run it.`,
+      );
+    } else if (!result.changed) {
       console.log(`No Prim ${spec.hookName} block found at ${result.path}.`);
     } else if (result.removedFile) {
       console.log(`Removed Prim-created ${spec.hookName} hook at ${result.path}.`);
@@ -440,7 +466,11 @@ export type GlobalHooksInstallOutcome =
   /** A system core.hooksPath would have been shadowed, and --force was absent. */
   | "system_declined"
   /** prim.gitHooks=manual (global): prim writes no hook file. */
-  | "manual";
+  | "manual"
+  /** The hook runtime is not staged; prim's global hooks were left as they are. */
+  | "runtime_missing"
+  /** prim's blocks are already current in the existing global hooks dir. */
+  | "present";
 
 /** Whether git's global core.hooksPath already points at prim's own dir. */
 export function globalHooksPathIsPrims(): boolean {
@@ -458,6 +488,7 @@ const INSTALLED_OUTCOMES: ReadonlySet<GlobalHooksInstallOutcome> = new Set([
   "installed",
   "refreshed",
   "added",
+  "present",
 ]);
 
 /** What a user-scope install would change, decided before asking anyone. */
@@ -466,13 +497,20 @@ export type GlobalHooksPlan =
   | { action: "refresh" }
   | { action: "system_declined"; system: string }
   | { action: "set_pointer"; overridesSystem?: string }
-  | { action: "add_to_dir"; global: string };
+  | { action: "add_to_dir"; global: string }
+  | { action: "present_in_dir"; global: string };
 
 export function planGlobalHooks(opts: { force?: boolean } = {}): GlobalHooksPlan {
   const global = gitConfigGet("--global");
   if (gitHooksMode({ global: true }) === "manual") return { action: "manual", global };
   if (isOurHooksDir(global)) return { action: "refresh" };
-  if (global !== "") return { action: "add_to_dir", global };
+  if (global !== "") {
+    // A consented install already put prim's block there: nothing to ask.
+    const dir = expandTilde(global);
+    return HOOKS.every((spec) => hasCurrentHookBlock(spec.hookName, resolve(dir, spec.hookName)))
+      ? { action: "present_in_dir", global }
+      : { action: "add_to_dir", global };
+  }
   const system = gitConfigGet("--system");
   if (system !== "" && !isOurHooksDir(system)) {
     return opts.force
@@ -507,16 +545,19 @@ export function installGlobalHooks(
       return "manual";
     case "system_declined":
       console.error(
-        `[prim] system core.hooksPath is set to ${plan.system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipping — re-run with --force to override, or run per-repo \`prim hooks install\`.`,
+        `[prim] system core.hooksPath is set to ${plan.system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipping — re-run with --force to override it, or place \`prim hooks snippet <hook>\` in ${plan.system} yourself.`,
       );
       return "system_declined";
     case "refresh":
       stageGitHookRuntime();
-      writeOwnHooks(); // idempotent refresh of the scripts
+      if (!writeOwnHooks()) return "runtime_missing";
       console.log(
         `Prim global git hooks already active (${PRIM_GIT_HOOKS_DIR}); refreshed scripts.`,
       );
       return "refreshed";
+    case "present_in_dir":
+      console.log(`Prim hooks already present in core.hooksPath dir ${plan.global}.`);
+      return "present";
     case "set_pointer":
     case "add_to_dir":
       break;
@@ -524,8 +565,8 @@ export function installGlobalHooks(
   if (!opts.machineWide) {
     console.error(
       plan.action === "set_pointer"
-        ? "[prim] Left git's global hooks alone: setting core.hooksPath would route every repository's hooks through prim. `prim enable` wires each repository you activate. To route every repository through prim instead, run `prim hooks install --scope user --global-hooks-path`."
-        : `[prim] Left the hooks in ${plan.global} alone: every repository runs them, so prim edits them only with consent. Repositories that run hooks from there stay unwired until you run \`prim hooks install --scope user --global-hooks-path\`.`,
+        ? "[prim] Left git's global hooks alone: setting core.hooksPath would route every repository's hooks through prim. `prim enable` wires each repository you activate. To route every repository through prim instead, run `prim hooks install --scope user --global-hooks-path`. It changes every repository's hooks: an agent must ask the user before running it."
+        : `[prim] Left the hooks in ${plan.global} alone: every repository runs them, so prim edits them only with consent. Repositories that run hooks from there stay unwired until you run \`prim hooks install --scope user --global-hooks-path\`. It changes every repository's hooks: an agent must ask the user before running it.`,
     );
     return "not_requested";
   }
@@ -547,7 +588,7 @@ export function installGlobalHooks(
       `[prim] --force: overriding system core.hooksPath ${plan.overridesSystem}; its hooks will no longer fire (prim chains only to .git/hooks).`,
     );
   }
-  writeOwnHooks();
+  if (!writeOwnHooks()) return "runtime_missing";
   execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
     stdio: ["ignore", "ignore", "pipe"],
     timeout: GIT_TIMEOUT_MS,
@@ -607,7 +648,7 @@ export function uninstallGlobalHooks(): void {
 
 type InstallTarget = "effective" | "husky" | "git-hooks";
 
-function reportInstall(result: EnsureHookResult): void {
+function reportInstall(result: EnsureHookResult, gitRoot: string): void {
   const { hookName, path } = result;
   switch (result.outcome) {
     case "created":
@@ -621,7 +662,12 @@ function reportInstall(result: EnsureHookResult): void {
       return;
     case "external":
       console.error(
-        `[prim] ${hookName}: Git runs this repository's hooks from ${path}, outside the repository, so prim left it alone. Every repository using that dir would be affected: wire it with \`prim hooks install --scope user --global-hooks-path\`, or place \`prim hooks snippet ${hookName}\` yourself.`,
+        `[prim] ${hookName}: Git runs this repository's hooks from ${path}, outside the repository, so prim left it alone. ${externalHookRemedy(hookName, gitRoot)}.`,
+      );
+      return;
+    case "kept":
+      console.error(
+        `[prim] ${hookName}: kept the working pre-v1 prim block at ${path}, outside the repository; it still captures. To upgrade it, ${externalHookRemedy(hookName, gitRoot)}.`,
       );
       return;
     case "runtime_missing":
@@ -660,7 +706,7 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
                 : resolve(projectHooksDir(gitRoot), spec.hookName),
               { husky: target === "husky" },
             );
-      reportInstall(result);
+      reportInstall(result, gitRoot);
       changed ||= result.changed;
       if (spec === POST_COMMIT && result.outcome === "external") process.exitCode = 1;
     } catch (error) {
@@ -726,7 +772,9 @@ export function registerHooksCommands(program: Command) {
         // no --target (husky/git-hooks are per-repo concepts). Every outcome
         // short of a write (no consent, a system hooksPath without --force,
         // manual mode) is a legitimate config, not a failure: installGlobalHooks
-        // prints the reason and the remedy on STDERR, and the command exits 0.
+        // prints the reason and the remedy on STDERR. The command exits 0,
+        // except with --global-hooks-path: asked for global hooks and given
+        // none, it exits EXIT_GLOBAL_HOOKS_NOT_INSTALLED (3).
         if (opts.scope === "user") {
           const plan = planGlobalHooks({ force: opts.force });
           const outcome = installGlobalHooks({
@@ -745,7 +793,10 @@ export function registerHooksCommands(program: Command) {
           return;
         }
         if (opts.globalHooksPath) {
-          throw new Error("--global-hooks-path applies only with --scope user");
+          // A usage error, exit 2, as `prim setup` reports the same misuse.
+          console.error("[prim] --global-hooks-path applies only with --scope user");
+          process.exitCode = 2;
+          return;
         }
         const gitRoot = getGitRoot();
         if (gitHooksMode({ cwd: gitRoot }) === "manual") {
@@ -800,7 +851,7 @@ export function registerHooksCommands(program: Command) {
         // An unusable config root only affects this hint.
       }
       process.stderr.write(
-        `[prim] Place this block near the top of your ${hook} hook, before any exit or exec. It runs prim's ${hook} step where prim is installed and enabled, and does nothing elsewhere.${
+        `[prim] Place this block right after the shebang of your ${hook} hook (in a Husky v8 hook, right after the husky.sh line), before any exit or exec. It runs prim's ${hook} step where prim is installed and enabled, and does nothing elsewhere.${
           hook === "post-rewrite"
             ? " It re-arms stdin, so commands after it still read Git's rewrite pairs."
             : ""

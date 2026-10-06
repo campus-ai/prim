@@ -863,8 +863,17 @@ describe("effective post-commit diagnostics", () => {
     ["external", "outside this repository"],
   ] as const)("names the remedy for a %s hook", (location, remedy) => {
     expect(
-      classifyManagedHook("post-commit", { ...uncovered, location, reason: "stale_block" }),
+      classifyManagedHook("post-commit", { ...uncovered, location, reason: "missing_block" }),
     ).toMatchObject({ status: "fail", detail: expect.stringContaining(remedy) });
+  });
+
+  it.each([
+    ["a working pre-v1 block prim may not upgrade", "external", "stale_block"],
+    ["a block that runs twice above husky.sh", "worktree", "misplaced_block"],
+  ] as const)("warns rather than fails for %s", (_label, location, reason) => {
+    expect(classifyManagedHook("post-commit", { ...uncovered, location, reason })).toMatchObject({
+      status: "warn",
+    });
   });
 
   it("reports manual wiring as a warning that names the snippet command", () => {

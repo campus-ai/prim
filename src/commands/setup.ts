@@ -28,7 +28,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { gitToplevel } from "../lib/git.js";
-import { EXIT_GLOBAL_HOOKS_NOT_INSTALLED, globalHooksPathIsPrims } from "./hooks.js";
+import {
+  EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
+  type GlobalHooksPlan,
+  globalHooksPathIsPrims,
+  planGlobalHooks,
+} from "./hooks.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
@@ -239,6 +244,20 @@ export function projectHooksConflict(
   preCommit: string | undefined,
 ): boolean {
   return globalHooksActive && preCommit !== undefined && preCommitRunsPrim(preCommit);
+}
+
+/** Setup's trail line for git hooks at user scope, without --global-hooks-path. */
+export function setupGitHooksNote(plan: GlobalHooksPlan): string {
+  switch (plan.action) {
+    case "refresh":
+      return "git hooks · prim's global hooks stay active; `prim enable` refreshes them";
+    case "present_in_dir":
+      return `git hooks · prim's hooks are already in your global hooks dir ${plan.global}`;
+    case "add_to_dir":
+      return `git hooks · your global core.hooksPath (${plan.global}) runs every repository's hooks, so \`prim enable\` cannot wire this repository without it; add prim there with --global-hooks-path, after asking the user`;
+    default:
+      return "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)";
+  }
 }
 
 /**
@@ -517,11 +536,7 @@ export function registerSetupCommand(
       }
 
       if (scope === "user" && !opts.globalHooksPath) {
-        note(
-          globalHooksPathIsPrims()
-            ? "git hooks · prim's global hooks stay active; `prim enable` refreshes them"
-            : "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)",
-        );
+        note(setupGitHooksNote(planGlobalHooks()));
       }
 
       // N+1 · Migrate — with the (default) user scope, a lingering PROJECT-scoped
