@@ -47,12 +47,19 @@ vi.mock("../lib/git-hooks.js", async (importOriginal) => {
     ),
     ensureGitHookAtPath: vi.fn((hookName: string, path: string) => ensured(hookName, path)),
     gitHooksMode: vi.fn(() => "auto"),
+    projectGitHookTarget: vi.fn((hookName: string, root: string) => ({
+      gitRoot: root,
+      hooksDir: `${root}/.git/hooks`,
+      hookPath: `${root}/.git/hooks/${hookName}`,
+      kind: "direct",
+      location: "repository",
+    })),
     resolveEffectiveGitHook: vi.fn((hookName: string, root: string) => ({
       gitRoot: root,
       hooksDir: `${root}/.git/hooks`,
       hookPath: `${root}/.git/hooks/${hookName}`,
       kind: "direct",
-      inWorktree: false,
+      location: "repository",
     })),
     uninstallGitHookAtPath: vi.fn((_hookName: string, path: string) => ({
       path,
@@ -115,6 +122,7 @@ import {
   ensureGitHookAtPath,
   gitHooksMode,
   managedHookBlock,
+  projectGitHookTarget,
   projectHooksDir,
   resolveEffectiveGitHook,
   uninstallGitHookAtPath,
@@ -253,6 +261,30 @@ describe("registerHooksCommands", () => {
       "pre-commit",
       "/fake/root/.husky/pre-commit",
       { husky: true },
+    );
+  });
+
+  it("project uninstall also removes pre-commit from a repo-local core.hooksPath", async () => {
+    vi.mocked(projectGitHookTarget).mockReturnValue({
+      gitRoot: "/fake/root",
+      hooksDir: "/fake/root/.githooks",
+      hookPath: "/fake/root/.githooks/pre-commit",
+      kind: "direct",
+      location: "worktree",
+    });
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.githooks/pre-commit");
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\nmake lint\n${PRIM_BLOCK_START}\n…\n${PRIM_BLOCK_END}\n`,
+    );
+    const program = new Command();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "uninstall"], { from: "user" });
+
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/root/.githooks/pre-commit",
+      { husky: false },
     );
   });
 
@@ -404,7 +436,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/root/.husky/_",
       hookPath: "/fake/root/.husky/pre-commit",
       kind: "husky_v9",
-      inWorktree: true,
+      location: "worktree",
     });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
@@ -445,7 +477,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/root/.husky/_",
       hookPath: "/fake/root/.husky/pre-commit",
       kind: "husky_v9",
-      inWorktree: true,
+      location: "worktree",
     });
     await buildProgram().parseAsync(["hooks", "install", "--non-interactive"], { from: "user" });
     expect(mockedEnsureEffectiveGitHook).toHaveBeenCalledTimes(3);
@@ -465,6 +497,22 @@ describe("hooks install action", () => {
       expect.stringContaining("post-rewrite hook coverage is degraded"),
     );
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim hooks snippet post-rewrite"));
+    errSpy.mockRestore();
+  });
+
+  it("leaves a hook outside the repository alone and fails when it is post-commit", async () => {
+    mockedEnsureEffectiveGitHook.mockImplementation((hookName) => ({
+      hookName,
+      path: `/home/u/.config/git/hooks/${hookName}`,
+      changed: false,
+      kind: "direct",
+      outcome: "external",
+    }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
     errSpy.mockRestore();
   });
 
@@ -489,7 +537,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/main/.git/hooks",
       hookPath: "/fake/main/.git/hooks/pre-commit",
       kind: "direct",
-      inWorktree: false,
+      location: "repository",
     });
 
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {

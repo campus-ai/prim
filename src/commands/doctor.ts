@@ -85,7 +85,6 @@ import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
 } from "./hermes-install.js";
-import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -599,14 +598,18 @@ export async function checkRepositoryBinding(): Promise<Check> {
   }
 }
 
-// The command that repairs an uncovered hook, by reason. Only an explicit
-// command writes hook files inside the worktree, so the remedy names one.
+// The command that repairs an uncovered hook, by reason and by where the hook
+// lives. Doctor itself never writes: it only reports and names the remedy.
 function managedHookRemedy(inspection: ManagedHookInspection): string | undefined {
   switch (inspection.reason) {
     case "missing":
     case "missing_block":
     case "stale_block":
     case "unreachable_block":
+      if (inspection.location === "prim") return "run `prim enable` to refresh prim's global hooks";
+      if (inspection.location === "external") {
+        return `outside this repository — wire it with \`prim hooks install --scope user\` or \`prim hooks snippet ${inspection.hookName}\``;
+      }
       return "run `prim hooks install`";
     case "entrypoint_missing":
       return "run `prim enable` to stage the hook runtime";
@@ -1051,19 +1054,6 @@ async function checkFeedbackCapability(): Promise<Check> {
 }
 
 /**
- * Repair stale Prim-owned global hooks before checking their effective coverage.
- * A failed repair is intentionally ignored here so the inspection below can
- * report the underlying hook problem to the user.
- */
-export function refreshOwnedGlobalHooksForHealth(): void {
-  try {
-    refreshOwnedGlobalHooks();
-  } catch {
-    // The managed-hook checks below retain the diagnostic when repair fails.
-  }
-}
-
-/**
  * The probes behind doctor's checks. Only the delivery checks depend on
  * DoctorOptions; the rest are grouped around them in display order.
  */
@@ -1073,7 +1063,6 @@ export type DoctorProbes = {
 };
 
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
-  refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
   return {
     before: [checkAuth()],
