@@ -321,15 +321,32 @@ authorizes one retry for the named decision.
 ### Hooks
 
 ```bash
-prim hooks install     # Install git hooks (pre-commit decision check + post-commit capture)
-prim hooks uninstall   # Remove the prim git hooks
+prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
+prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
+prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```
 
 The pre-commit hook checks staged files against the live decision graph
-(warn-only — it never blocks the commit). The post-commit hook records each
-commit as a capture boundary for classification. Supports
-[Husky](https://typicode.github.io/husky/) — `prim hooks install` detects Husky
-and offers to install into `.husky/`.
+(warn-only — it never blocks the commit). The post-commit and post-rewrite hooks
+record each commit and each amend/rebase as capture boundaries for
+classification. All three act only in repos where prim is active (`prim enable`).
+Supports [Husky](https://typicode.github.io/husky/) — `prim hooks install`
+detects Husky and offers to install into `.husky/`.
+
+Each hook file gets one short block, inserted right after the shebang so it runs
+before any `exit` or `exec`. The block names no version and no machine path: it
+runs prim's staged entrypoint (`~/.config/prim/prim-git-hook-v1`) and does
+nothing on a machine without prim, so a tracked `.husky/*` file never changes
+across prim releases. `prim enable` and `prim hooks install` write it once and
+never move or rewrite a current block, reformatted or not; agent session hooks
+only repair hook files outside the working tree, such as `.git/hooks`.
+
+To wire the hooks yourself (lefthook, a custom Husky layout, …), run
+`git config prim.gitHooks manual` (or `--global`): prim then never writes a hook
+file, and `prim doctor` reports what it finds as a warning. Paste the block from
+`prim hooks snippet <hook>`, or have your hook manager run
+`~/.config/prim/prim-git-hook-v1 <hook> "$@"` (post-rewrite also needs Git's
+stdin).
 
 ### Presence statusline
 

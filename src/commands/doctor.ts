@@ -58,12 +58,12 @@ import {
   deliveryBacklogSummary,
   formatPendingBacklog,
 } from "../lib/delivery-backlog.js";
-import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
+  type ManagedGitHookName,
   type ManagedHookInspection,
-  inspectEffectivePostCommitHook,
-  inspectEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
+  inspectEffectiveGitHook,
+} from "../lib/git-hooks.js";
+import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type RepositoryBindingResult,
   resolveRepositoryBinding,
@@ -599,21 +599,49 @@ export async function checkRepositoryBinding(): Promise<Check> {
   }
 }
 
+// The command that repairs an uncovered hook, by reason. Only an explicit
+// command writes hook files inside the worktree, so the remedy names one.
+function managedHookRemedy(inspection: ManagedHookInspection): string | undefined {
+  switch (inspection.reason) {
+    case "missing":
+    case "missing_block":
+    case "stale_block":
+    case "unreachable_block":
+      return "run `prim hooks install`";
+    case "entrypoint_missing":
+      return "run `prim enable` to stage the hook runtime";
+    default:
+      return undefined;
+  }
+}
+
 export function classifyManagedHook(
-  hookName: "post-commit" | "post-rewrite",
+  hookName: ManagedGitHookName,
   inspection: ManagedHookInspection,
 ): Check {
   if (inspection.covered) {
+    const wiring = inspection.wiring === "user" ? " · wired by user" : "";
     return {
       name: hookName,
       status: "ok",
-      detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
+      detail: `effective and executable · ${inspection.kind}${wiring} · ${inspection.hookPath}`,
     };
   }
+  const reason = inspection.reason ?? "uncovered";
+  // Manual mode is the user's choice, not a fault: report what prim found
+  // without failing. pre-commit is a warn-only check, so it never fails doctor.
+  if (inspection.mode === "manual") {
+    return {
+      name: hookName,
+      status: "warn",
+      detail: `manual (prim.gitHooks=manual) · ${reason} · wire with \`prim hooks snippet ${hookName}\` · ${inspection.hookPath}`,
+    };
+  }
+  const remedy = managedHookRemedy(inspection);
   return {
     name: hookName,
-    status: "fail",
-    detail: `${inspection.reason ?? "uncovered"} · ${inspection.hookPath}`,
+    status: hookName === "pre-commit" ? "warn" : "fail",
+    detail: `${reason}${remedy ? ` · ${remedy}` : ""} · ${inspection.hookPath}`,
   };
 }
 
@@ -621,12 +649,9 @@ export function classifyPostCommitHook(inspection: ManagedHookInspection): Check
   return classifyManagedHook("post-commit", inspection);
 }
 
-function checkManagedHook(
-  hookName: "post-commit" | "post-rewrite",
-  inspect: () => ManagedHookInspection,
-): Check {
+function checkManagedHook(hookName: ManagedGitHookName): Check {
   try {
-    return classifyManagedHook(hookName, inspect());
+    return classifyManagedHook(hookName, inspectEffectiveGitHook(hookName));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
@@ -1058,8 +1083,9 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
       ...checkAgentHooks(),
       checkHookRuntime(),
       await checkRepositoryBinding(),
-      checkManagedHook("post-commit", inspectEffectivePostCommitHook),
-      checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
+      checkManagedHook("pre-commit"),
+      checkManagedHook("post-commit"),
+      checkManagedHook("post-rewrite"),
       ...backend,
       await checkFeedbackCapability(),
     ],

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -20,10 +20,12 @@ import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as atomicFile from "./atomic-file.js";
 import { stableHookCommand } from "./bin-path.js";
+import { GIT_HOOK_ENTRYPOINT_CONTENT, managedHookBlock } from "./git-hook-contract.js";
 import {
   HOOK_RUNTIME_ENTRIES,
   STABLE_HOOK_LAUNCHER_CONTENT,
   hookRuntimePaths,
+  inspectGitHookEntrypoint,
   inspectHookRuntime,
   removeHookRuntime,
   stableNodePath,
@@ -587,5 +589,61 @@ describe("removeHookRuntime", () => {
     expect(() => removeHookRuntime({ env })).toThrow("non-directory hook runtime");
     expect(existsSync(staged.paths.launcher)).toBe(true);
     expect(lstatSync(staged.paths.runtimeDir).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe("Git hook entrypoint", () => {
+  function staged(label: string, version: string) {
+    const root = temporaryRoot(`prim-git-entrypoint-${label}-`);
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const result = stageHookRuntime({
+      sourceDir: sourceRuntime(root, label),
+      version,
+      nodePath: process.execPath,
+      env,
+    });
+    return { root, env, result };
+  }
+
+  it("stages the frozen entrypoint beside the launcher and reports it ready", () => {
+    const { env, result } = staged("entry", "1.0.0");
+    expect(readFileSync(result.paths.gitHookEntrypoint, "utf8")).toBe(GIT_HOOK_ENTRYPOINT_CONTENT);
+    expect(statSync(result.paths.gitHookEntrypoint).mode & 0o777).toBe(0o700);
+    expect(inspectGitHookEntrypoint({ env })).toBe("ready");
+  });
+
+  it("runs the selected release from a managed block end to end", () => {
+    const { root, env } = staged("e2e", "1.0.0");
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const runBlock = () =>
+      execFileSync("/bin/sh", ["-c", managedHookBlock("pre-commit")], {
+        cwd: repo,
+        env: {
+          ...env,
+          PATH: process.env.PATH,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_NOSYSTEM: "1",
+        },
+        encoding: "utf8",
+      });
+    // Gated on prim.active: an inactive repository runs nothing.
+    expect(runBlock()).toBe("");
+    execFileSync("git", ["config", "prim.active", "true"], { cwd: repo });
+    expect(runBlock()).toBe("e2e:prim-pre-commit");
+  });
+
+  it("is removed with the runtime, and a modified one blocks removal", () => {
+    const { env, result } = staged("remove", "1.0.0");
+    writeFileSync(result.paths.gitHookEntrypoint, "#!/bin/sh\necho foreign\n");
+    expect(inspectGitHookEntrypoint({ env })).toBe("invalid");
+    expect(() => removeHookRuntime({ env })).toThrow(/unrecognized Git hook entrypoint/);
+    expect(existsSync(result.paths.launcher)).toBe(true);
+
+    writeFileSync(result.paths.gitHookEntrypoint, GIT_HOOK_ENTRYPOINT_CONTENT);
+    expect(removeHookRuntime({ env }).changed).toBe(true);
+    expect(existsSync(result.paths.gitHookEntrypoint)).toBe(false);
+    expect(inspectGitHookEntrypoint({ env })).toBe("missing");
   });
 });

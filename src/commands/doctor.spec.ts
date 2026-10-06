@@ -844,10 +844,53 @@ describe("effective post-commit diagnostics", () => {
     hooksDir: "/repo/.git/hooks",
     hookPath: "/repo/.git/hooks/post-commit",
     kind: "direct" as const,
+    inWorktree: false,
+    hookName: "post-commit" as const,
+    mode: "auto" as const,
+    entrypoint: "ready" as const,
     covered: true,
     executable: true,
     current: true,
   };
+  const uncovered = { ...inspection, covered: false, current: false };
+
+  it.each([
+    ["missing_block", "run `prim hooks install`"],
+    ["stale_block", "run `prim hooks install`"],
+    ["unreachable_block", "run `prim hooks install`"],
+    ["entrypoint_missing", "run `prim enable` to stage the hook runtime"],
+  ] as const)("fails %s with the command that repairs it", (reason, remedy) => {
+    expect(classifyManagedHook("post-commit", { ...uncovered, reason })).toMatchObject({
+      status: "fail",
+      detail: `${reason} · ${remedy} · /repo/.git/hooks/post-commit`,
+    });
+  });
+
+  it("reports manual wiring as a warning that names the snippet command", () => {
+    expect(
+      classifyManagedHook("post-commit", { ...uncovered, mode: "manual", reason: "missing" }),
+    ).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("prim hooks snippet post-commit"),
+    });
+  });
+
+  it("passes a hook the user wired to the entrypoint themselves", () => {
+    expect(classifyManagedHook("post-commit", { ...inspection, wiring: "user" })).toMatchObject({
+      status: "ok",
+      detail: expect.stringContaining("wired by user"),
+    });
+  });
+
+  it("never fails doctor for the warn-only pre-commit check", () => {
+    expect(
+      classifyManagedHook("pre-commit", {
+        ...uncovered,
+        hookName: "pre-commit",
+        reason: "missing_block",
+      }),
+    ).toMatchObject({ name: "pre-commit", status: "warn" });
+  });
 
   it("passes only a current executable effective hook", () => {
     expect(classifyPostCommitHook(inspection)).toMatchObject({

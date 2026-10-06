@@ -230,10 +230,10 @@ user` where noted, then `prim enable` in each repo you want captured.
    with the explicit `--no-daemon` opt-out; otherwise a failed health check makes
    setup incomplete.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
-   pre-commit decision check plus a post-commit capture boundary. Add `--scope
-   user` to install one global `core.hooksPath` covering every repo (the hooks
-   fire everywhere but only act where activated — see step 7). Separate from the
-   session hooks in step 3.
+   pre-commit decision check plus post-commit and post-rewrite capture
+   boundaries. Add `--scope user` to install one global `core.hooksPath`
+   covering every repo (the hooks fire everywhere but only act where activated —
+   see step 7). Separate from the session hooks in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
    (claude/cursor/codex/hermes). Teaches you to work with the decision graph. For
    **claude** it installs a skills-directory plugin at `<repo>/.claude/skills/prim/`
@@ -245,8 +245,8 @@ user` where noted, then `prim enable` in each repo you want captured.
    global location. Omit `--agent` to auto-detect an existing rules file (block
    path), or pass `--target <path>`.
 7. **Activate** (user scope): `npx --yes @primitive.ai/prim@latest enable` marks
-   this repo prim-active (`git config prim.active true`) so the global hooks
-   capture here. Repeat in each repo you want; `… disable` mutes one. A per-repo
+   this repo prim-active (`git config prim.active true`) and wires its git hooks
+   where Git runs them, so prim captures here. Repeat in each repo you want; `… disable` mutes one. A per-repo
    (project-scope) install in step 3/5 activates automatically.
 8. **Welcome**: `npx --yes @primitive.ai/prim@latest welcome --agent <your agent>`
    — then present it as in section 2 above.

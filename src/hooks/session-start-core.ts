@@ -11,11 +11,8 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
-import {
-  ensureEffectivePostCommitHook,
-  ensureEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
@@ -62,15 +59,14 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
       }
     }
     if (shellGateActive) {
-      try {
-        ensureEffectivePostCommitHook(root);
-      } catch {
-        // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
-      }
-      try {
-        ensureEffectivePostRewriteHook(root);
-      } catch {
-        // Husky may not dispatch post-rewrite; doctor reports the degradation.
+      // Ambient repair: it never writes a hook file inside the worktree (such
+      // as a tracked .husky/* file); doctor reports what it leaves behind.
+      for (const hookName of MANAGED_GIT_HOOK_NAMES) {
+        try {
+          ensureEffectiveGitHook(hookName, root, { context: "ambient" });
+        } catch {
+          // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
+        }
       }
     }
     try {

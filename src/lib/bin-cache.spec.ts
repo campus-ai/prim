@@ -26,7 +26,7 @@ import {
   warmBinCache,
 } from "./bin-cache.js";
 import { binFile } from "./bin-path.js";
-import { postCommitHookBlock, postRewriteHookBlock } from "./post-commit-hook.js";
+import { legacyInlineHookBlock } from "./git-hook-legacy.js";
 
 const ENV_KEYS = ["XDG_CACHE_HOME", "HOME", "PRIM_BIN_CACHE"] as const;
 
@@ -89,8 +89,13 @@ describe("binCacheDir", () => {
     }
   });
 
-  it("keeps both live Git hook readers coupled to the canonical dir and TTL", () => {
-    for (const block of [postCommitHookBlock(), postRewriteHookBlock()]) {
+  // Pre-v1 blocks still live in repos that have not been re-wired; they read
+  // this cache, which is why SessionStart keeps warming it.
+  it("keeps both legacy Git hook readers coupled to the canonical dir and TTL", () => {
+    for (const block of [
+      legacyInlineHookBlock("post-commit"),
+      legacyInlineHookBlock("post-rewrite"),
+    ]) {
       expect(block).toContain(`prim_cache_dir="${GIT_HOOK_CACHE_SHELL_DIR}"`);
       expect(block).toContain(`-mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${GIT_HOOK_CACHE_TTL_MINUTES}}"`);
     }

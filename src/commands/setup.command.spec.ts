@@ -18,6 +18,7 @@ import {
   parseSetupAuthStatus,
   planCleanupUninstalls,
   planSetupSteps,
+  preCommitRunsPrim,
   registerSetupCommand,
   resolveAgent,
   setupStepSpawnOptions,
@@ -647,5 +648,13 @@ describe("registerSetupCommand", () => {
     expect(enable).toBeGreaterThan(cleanup);
     expect(calls.some((args) => args[0] === "doctor")).toBe(false);
     expect(exit).toHaveBeenCalledWith(0);
+  });
+});
+
+describe("preCommitRunsPrim", () => {
+  it("recognizes the managed block and an older direct call, but not foreign hooks", () => {
+    expect(preCommitRunsPrim("#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n")).toBe(true);
+    expect(preCommitRunsPrim("#!/bin/sh\nprim-pre-commit\n")).toBe(true);
+    expect(preCommitRunsPrim("#!/bin/sh\nnpx lint-staged\n")).toBe(false);
   });
 });

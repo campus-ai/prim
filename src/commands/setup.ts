@@ -214,6 +214,15 @@ export function planCleanupUninstalls(agent: SetupAgent, conflicts: string[]): s
 }
 
 /**
+ * Whether a pre-commit hook runs prim: the managed block (every release since
+ * the v1 contract, whose block execs the entrypoint by hook name) or an older
+ * direct `prim-pre-commit` call.
+ */
+export function preCommitRunsPrim(content: string): boolean {
+  return content.includes("# >>> prim pre-commit hook >>>") || content.includes("prim-pre-commit");
+}
+
+/**
  * Detect project-scoped prim config lingering in the current repo — it would
  * double-fire alongside a fresh user-scope install. Reuses the existing status
  * subcommands (their JSON is on STDOUT) for the session + rules file, and a
@@ -239,11 +248,7 @@ function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
   try {
     const root = gitToplevel();
     const preCommit = root && join(root, ".git", "hooks", "pre-commit");
-    if (
-      preCommit &&
-      existsSync(preCommit) &&
-      readFileSync(preCommit, "utf-8").includes("prim-pre-commit")
-    ) {
+    if (preCommit && existsSync(preCommit) && preCommitRunsPrim(readFileSync(preCommit, "utf-8"))) {
       conflicts.push(CONFLICT_HOOKS);
     }
   } catch {
