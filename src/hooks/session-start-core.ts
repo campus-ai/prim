@@ -11,6 +11,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
@@ -67,10 +68,18 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
           // Capture hooks are wired here, as before; the pre-commit check
           // (a synchronous network call) only ever gets wired explicitly, so
           // here it is refreshed where prim already put it, never added.
-          ensureEffectiveGitHook(hookName, root, {
+          const result = ensureEffectiveGitHook(hookName, root, {
             context: "ambient",
             repairOnly: hookName === "pre-commit",
           });
+          // A checkout wired before doctor's evidence check existed (or a new
+          // linked worktree) has no expectation yet: start one here, once.
+          if (
+            hookName === "post-commit" &&
+            ["created", "updated", "unchanged"].includes(result.outcome)
+          ) {
+            recordHooksWired(root, { onlyIfAbsent: true });
+          }
         } catch {
           // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
         }

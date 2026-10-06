@@ -41,6 +41,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Argument, type Command, Option } from "commander";
+import { repoActiveFlag } from "../lib/activation.js";
 import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { isLegacyOwnedGlobalHook } from "../lib/git-hook-legacy.js";
@@ -637,6 +638,7 @@ function reportInstall(result: EnsureHookResult): void {
 // chosen destination, pre-commit first so its write is calls[0] in tests.
 // post-commit capture is required; the other two degrade with a warning.
 function installHooks(gitRoot: string, target: InstallTarget): void {
+  let changed = false;
   if (target !== "effective") {
     const effectiveDir = resolveEffectiveGitHook(PRE_COMMIT.hookName, gitRoot).hooksDir;
     const chosenDir = target === "husky" ? resolve(gitRoot, ".husky") : projectHooksDir(gitRoot);
@@ -659,6 +661,7 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
               { husky: target === "husky" },
             );
       reportInstall(result);
+      changed ||= result.changed;
       if (spec === POST_COMMIT && result.outcome === "external") process.exitCode = 1;
     } catch (error) {
       if (spec === POST_COMMIT) throw error;
@@ -668,8 +671,12 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
       );
     }
   }
-  // From here on, doctor expects every local commit to reach prim.
-  recordHooksWired(gitRoot);
+  // In an active checkout, doctor now expects every local commit to reach
+  // prim (an inactive one never runs prim, so `prim enable` stamps it later).
+  // A re-run that changed nothing keeps the existing expectation.
+  if (repoActiveFlag(gitRoot) === "true") {
+    recordHooksWired(gitRoot, { onlyIfAbsent: !changed });
+  }
 }
 
 function printManualNote(gitRoot: string): void {

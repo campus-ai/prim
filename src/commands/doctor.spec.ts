@@ -1054,7 +1054,9 @@ describe("post-commit firing evidence", () => {
     expect(check).toMatchObject({ name: "hook-fired", status: "fail" });
     expect(check.detail).toContain("made 5m ago (last run 60m ago)");
     expect(check.detail).toContain("exit/exec before prim's block");
-    expect(check.detail).toContain("prim hooks install");
+    expect(check.detail).toContain("HUSKY=0");
+    // Re-running an install cannot fix an environment; only a new commit re-checks.
+    expect(check.detail).not.toContain("prim hooks install");
   });
 
   it.each([

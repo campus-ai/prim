@@ -463,7 +463,19 @@ describe("hooks install action", () => {
     });
     expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.git/hooks/${hook}`));
     expect(stageHookRuntime).toHaveBeenCalledTimes(1);
-    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root");
+    // An inactive checkout never runs prim, so no expectation starts yet.
+    expect(recordHooksWired).not.toHaveBeenCalled();
+  });
+
+  it("starts doctor's expectation only in an active checkout", async () => {
+    mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
+      if (args.join(" ") === "config --get prim.active") return "true\n";
+      if (args[0] !== "rev-parse") return "";
+      if (args.includes("--git-common-dir")) return ".git\n";
+      return "/fake/root\n";
+    }) as typeof execFileSync);
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root", { onlyIfAbsent: false });
   });
 
   it("wires all three hooks where Git runs them when no Husky choice is needed", async () => {

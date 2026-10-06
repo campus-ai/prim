@@ -8,7 +8,7 @@
  */
 import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
-import { setRepoActive } from "../lib/activation.js";
+import { repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
@@ -34,11 +34,15 @@ const GITHUB_CONNECTION_REQUIRED =
  * the block is version-stable and is never moved or rewritten when current.
  * post-commit capture is required; pre-commit and post-rewrite degrade.
  */
-function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, string>> {
+function wireRepositoryHooks(root: string): {
+  paths: Partial<Record<ManagedGitHookName, string>>;
+  changed: boolean;
+} {
   stageGitHookRuntime();
   refreshOwnedGlobalHooks();
   const paths: Partial<Record<ManagedGitHookName, string>> = {};
   let manual = false;
+  let changed = false;
   for (const hookName of MANAGED_GIT_HOOK_NAMES) {
     try {
       const result = ensureEffectiveGitHook(hookName, root, { context: "explicit" });
@@ -56,6 +60,7 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
       }
       paths[hookName] = result.path;
       manual ||= result.outcome === "manual";
+      changed ||= result.changed;
     } catch (error) {
       if (hookName === "post-commit") throw error;
       const detail = error instanceof Error ? error.message : String(error);
@@ -67,9 +72,7 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
       "[prim] prim.gitHooks=manual: left hook files untouched; wire them with `prim hooks snippet <hook>`\n",
     );
   }
-  // From here on, doctor expects every local commit to reach prim.
-  recordHooksWired(root);
-  return paths;
+  return { paths, changed };
 }
 
 /**
@@ -124,8 +127,10 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
   try {
     let binding: RepositoryBindingResult | undefined;
     let hookPaths: Partial<Record<ManagedGitHookName, string>> = {};
+    let hooksChanged = false;
+    const wasActive = repoActiveFlag(root) === "true";
     if (active) {
-      hookPaths = wireRepositoryHooks(root);
+      ({ paths: hookPaths, changed: hooksChanged } = wireRepositoryHooks(root));
       phase = "GitHub repo connection";
       binding = await bindRepository(root);
     }
@@ -154,6 +159,13 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     }
     phase = "local activation";
     setRepoActive(root, active);
+    if (active) {
+      // From here on, doctor expects every local commit to reach prim. Only
+      // now: the entrypoint skips commits made before prim.active is set. A
+      // re-run that changed nothing keeps the existing expectation, so it
+      // cannot paper over a hook that stopped firing.
+      recordHooksWired(root, { onlyIfAbsent: wasActive && !hooksChanged });
+    }
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
     printJson({

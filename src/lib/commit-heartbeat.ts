@@ -4,35 +4,40 @@
  * Reading hook files cannot prove capture. A block can sit behind an `exit` a
  * heuristic misses, a hook manager can wire prim by hand, or the committing
  * process (an IDE, a GUI client) can lack the environment that locates prim's
- * config root. So the post-commit driver stamps each run, and doctor compares
- * the stamp with Git's own record of local commits: the HEAD reflog.
+ * config root. So the post-commit driver stamps each commit it sees, and doctor
+ * checks the latest local commit in Git's own record, the HEAD reflog, against
+ * those stamps by SHA.
  *
  * Stamps live beside the workspace id, in this checkout's git dir (`git
  * rev-parse --git-path prim/…`), so they are per worktree like the reflog they
  * are checked against, and never touch `.git/config` from a background hook.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { repoActiveFlag } from "./activation.js";
 import { atomicWriteFile } from "./atomic-file.js";
 
-const FIRED_PATH = "prim/post-commit-fired";
+const FIRED_DIR = "prim/post-commit-fired";
 const WIRED_PATH = "prim/git-hooks-wired";
 const GIT_TIMEOUT_MS = 1_000;
 const MAX_STAMP_BYTES = 1_024;
 const REFLOG_SCAN_LIMIT = 50;
+/** Stamps kept per checkout; doctor only ever needs the latest commit's. */
+const MAX_FIRED_STAMPS = 32;
 const FULL_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-const REFLOG_LINE_RE = /^HEAD@\{([0-9]+)\}\t(.*)$/u;
-// Every reflog subject Git writes for a commit that runs post-commit.
-const COMMIT_SUBJECT_RE = /^commit(?: \((?:initial|amend|merge)\))?:/u;
+const REFLOG_LINE_RE = /^([0-9a-f]{40}|[0-9a-f]{64})\tHEAD@\{([0-9]+)\}\t(.*)$/u;
+/**
+ * Reflog subjects of `git commit`, which runs post-commit: `commit:` and any
+ * `commit (…):` variant (initial, amend, merge, cherry-pick). Other commands
+ * that run post-commit, such as rebase picks, are simply not judged.
+ */
+const COMMIT_SUBJECT_RE = /^commit(?: \([^)]*\))?:/u;
 
-/** Reflog times have one-second resolution; the stamp is taken just after. */
-const CLOCK_SKEW_MS = 5_000;
+const REFLOG_RESOLUTION_MS = 1_000;
+
 /** The detached driver may still be starting right after a commit. */
 export const POST_COMMIT_GRACE_MS = 60_000;
-
-type Stamp = { at: number; sha?: string };
 
 export type PostCommitFiring =
   /** prim.active is not true here, so no run is expected. */
@@ -57,53 +62,104 @@ function gitPath(cwd: string, relative: string): string {
   return resolve(cwd, value);
 }
 
-function writeStamp(cwd: string, relative: string, stamp: Stamp): void {
-  try {
-    atomicWriteFile(gitPath(cwd, relative), `${JSON.stringify(stamp)}\n`, {
-      ensureParent: true,
-      mode: 0o600,
-    });
-  } catch {
-    // Evidence is best effort: a commit hook must never fail on it.
-  }
+/** Create `<git dir>/prim` private, as the workspace id does. */
+function ensurePrivateParent(path: string): void {
+  mkdirSync(dirname(dirname(path)), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 }
 
-function readStamp(cwd: string, relative: string): Stamp | undefined {
+function writeStamp(path: string, at: number): void {
+  ensurePrivateParent(path);
+  atomicWriteFile(path, `${JSON.stringify({ at })}\n`, { mode: 0o600 });
+}
+
+function readStampAt(path: string): number | undefined {
   try {
-    const raw = readFileSync(gitPath(cwd, relative), "utf8");
+    const raw = readFileSync(path, "utf8");
     if (raw.length > MAX_STAMP_BYTES) return undefined;
-    const parsed = JSON.parse(raw) as { at?: unknown; sha?: unknown };
-    if (typeof parsed.at !== "number" || !Number.isSafeInteger(parsed.at) || parsed.at <= 0) {
-      return undefined;
-    }
-    const sha = typeof parsed.sha === "string" && FULL_SHA_RE.test(parsed.sha) ? parsed.sha : "";
-    return sha ? { at: parsed.at, sha } : { at: parsed.at };
+    const parsed = JSON.parse(raw) as { at?: unknown };
+    return typeof parsed.at === "number" && Number.isSafeInteger(parsed.at) && parsed.at > 0
+      ? parsed.at
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** Called by the post-commit driver on every run that reaches prim. */
+type FiredStamp = { sha: string; at: number };
+
+function readFiredStamps(cwd: string): FiredStamp[] {
+  try {
+    const dir = gitPath(cwd, FIRED_DIR);
+    return readdirSync(dir).flatMap((sha) => {
+      if (!FULL_SHA_RE.test(sha)) return [];
+      const at = readStampAt(join(dir, sha));
+      return at === undefined ? [] : [{ sha, at }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Called by the post-commit driver on every run that reaches prim. One file
+ * per commit, so concurrent drivers for rapid commits never overwrite each
+ * other's evidence. Best effort: a commit hook must never fail on it.
+ */
 export function recordPostCommitFired(
   cwd: string,
   sha: string | undefined,
   now: number = Date.now(),
 ): void {
-  writeStamp(cwd, FIRED_PATH, sha && FULL_SHA_RE.test(sha) ? { at: now, sha } : { at: now });
+  if (!sha || !FULL_SHA_RE.test(sha)) return;
+  try {
+    const dir = gitPath(cwd, FIRED_DIR);
+    writeStamp(join(dir, sha), now);
+    const stale = readdirSync(dir)
+      .filter((name) => FULL_SHA_RE.test(name))
+      .map((name) => ({ name, at: readStampAt(join(dir, name)) ?? 0 }))
+      .sort((left, right) => right.at - left.at || left.name.localeCompare(right.name))
+      .slice(MAX_FIRED_STAMPS);
+    for (const { name } of stale) unlinkSync(join(dir, name));
+  } catch {
+    // Evidence is best effort.
+  }
 }
 
-/** Called when an explicit command wires this checkout's hooks. */
-export function recordHooksWired(cwd: string, now: number = Date.now()): void {
-  writeStamp(cwd, WIRED_PATH, { at: now });
+/**
+ * Called when the hooks are (re)wired for an active checkout: from then on,
+ * doctor expects every local commit to reach prim. `onlyIfAbsent` keeps an
+ * existing expectation (a re-run that changed nothing proves nothing).
+ */
+export function recordHooksWired(
+  cwd: string,
+  options: { now?: number; onlyIfAbsent?: boolean } = {},
+): void {
+  try {
+    const path = gitPath(cwd, WIRED_PATH);
+    if (options.onlyIfAbsent && readStampAt(path) !== undefined) return;
+    writeStamp(path, options.now ?? Date.now());
+  } catch {
+    // Evidence is best effort.
+  }
 }
 
-/** When HEAD last moved because of a local commit, from this worktree's reflog. */
-export function latestLocalCommitAt(cwd: string): number | undefined {
+/** The latest local commit in this worktree's HEAD reflog. */
+export function latestLocalCommit(cwd: string): { sha: string; at: number } | undefined {
   let output: string;
   try {
     output = execFileSync(
       "git",
-      ["log", "-g", "-n", String(REFLOG_SCAN_LIMIT), "--date=unix", "--format=%gd%x09%gs", "HEAD"],
+      [
+        "log",
+        "-g",
+        "--no-show-signature",
+        "-n",
+        String(REFLOG_SCAN_LIMIT),
+        "--date=unix",
+        "--format=%H%x09%gd%x09%gs",
+        "HEAD",
+      ],
       { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: GIT_TIMEOUT_MS },
     );
   } catch {
@@ -111,31 +167,42 @@ export function latestLocalCommitAt(cwd: string): number | undefined {
   }
   for (const line of output.split("\n")) {
     const match = REFLOG_LINE_RE.exec(line);
-    if (match?.[1] && COMMIT_SUBJECT_RE.test(match[2] ?? "")) return Number(match[1]) * 1_000;
+    if (match?.[1] && match[2] && COMMIT_SUBJECT_RE.test(match[3] ?? "")) {
+      return { sha: match[1], at: Number(match[2]) * 1_000 };
+    }
   }
   return undefined;
 }
 
 /**
- * Judge only commits after the hooks were last wired or last fired: before
- * that, nobody promised a run. A stamp older than the latest commit means the
- * hook stopped reaching prim.
+ * Judge only commits after the hooks were wired for an active checkout or
+ * after prim last saw a commit: before that, nobody promised a run.
  */
 export function inspectPostCommitFiring(cwd: string, now: number = Date.now()): PostCommitFiring {
   if (repoActiveFlag(cwd) !== "true") return { state: "inactive" };
-  const commitAt = latestLocalCommitAt(cwd);
-  if (commitAt === undefined) return { state: "unverified" };
-  const fired = readStamp(cwd, FIRED_PATH);
-  if (fired && fired.at >= commitAt - CLOCK_SKEW_MS) {
-    return { state: "fired", commitAt, firedAt: fired.at };
+  const commit = latestLocalCommit(cwd);
+  if (!commit) return { state: "unverified" };
+  const stamps = readFiredStamps(cwd);
+  const own = stamps.find((stamp) => stamp.sha === commit.sha);
+  if (own) return { state: "fired", commitAt: commit.at, firedAt: own.at };
+  if (now - commit.at < POST_COMMIT_GRACE_MS) return { state: "pending", commitAt: commit.at };
+  const lastFiredAt = stamps.reduce<number | undefined>(
+    (latest, stamp) => (latest === undefined || stamp.at > latest ? stamp.at : latest),
+    undefined,
+  );
+  let wiredAt: number | undefined;
+  try {
+    wiredAt = readStampAt(gitPath(cwd, WIRED_PATH));
+  } catch {
+    wiredAt = undefined;
   }
-  if (now - commitAt < POST_COMMIT_GRACE_MS) return { state: "pending", commitAt };
-  const wired = readStamp(cwd, WIRED_PATH);
-  const expectedSince = Math.max(wired?.at ?? 0, fired?.at ?? 0);
-  if (expectedSince > 0 && commitAt > expectedSince) {
-    return fired
-      ? { state: "not_firing", commitAt, firedAt: fired.at }
-      : { state: "not_firing", commitAt };
+  const expectedSince = Math.max(wiredAt ?? 0, lastFiredAt ?? 0);
+  // Reflog times are whole seconds: a commit stamped 12:00:00 may have happened
+  // at 12:00:00.999, after an expectation recorded within that second.
+  if (expectedSince > 0 && commit.at + REFLOG_RESOLUTION_MS > expectedSince) {
+    return lastFiredAt === undefined
+      ? { state: "not_firing", commitAt: commit.at }
+      : { state: "not_firing", commitAt: commit.at, firedAt: lastFiredAt };
   }
   return { state: "unverified" };
 }
