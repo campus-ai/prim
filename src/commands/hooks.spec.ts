@@ -47,12 +47,19 @@ vi.mock("../lib/git-hooks.js", async (importOriginal) => {
     ),
     ensureGitHookAtPath: vi.fn((hookName: string, path: string) => ensured(hookName, path)),
     gitHooksMode: vi.fn(() => "auto"),
+    projectGitHookTarget: vi.fn((hookName: string, root: string) => ({
+      gitRoot: root,
+      hooksDir: `${root}/.git/hooks`,
+      hookPath: `${root}/.git/hooks/${hookName}`,
+      kind: "direct",
+      location: "repository",
+    })),
     resolveEffectiveGitHook: vi.fn((hookName: string, root: string) => ({
       gitRoot: root,
       hooksDir: `${root}/.git/hooks`,
       hookPath: `${root}/.git/hooks/${hookName}`,
       kind: "direct",
-      inWorktree: false,
+      location: "repository",
     })),
     uninstallGitHookAtPath: vi.fn((_hookName: string, path: string) => ({
       path,
@@ -118,6 +125,7 @@ import {
   ensureGitHookAtPath,
   gitHooksMode,
   managedHookBlock,
+  projectGitHookTarget,
   projectHooksDir,
   resolveEffectiveGitHook,
   uninstallGitHookAtPath,
@@ -125,6 +133,7 @@ import {
 } from "../lib/git-hooks.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
+  EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
   PRIM_BLOCK_END,
   PRIM_BLOCK_START,
   PRIM_GIT_HOOKS_DIR,
@@ -256,6 +265,30 @@ describe("registerHooksCommands", () => {
       "pre-commit",
       "/fake/root/.husky/pre-commit",
       { husky: true },
+    );
+  });
+
+  it("project uninstall also removes pre-commit from a repo-local core.hooksPath", async () => {
+    vi.mocked(projectGitHookTarget).mockReturnValue({
+      gitRoot: "/fake/root",
+      hooksDir: "/fake/root/.githooks",
+      hookPath: "/fake/root/.githooks/pre-commit",
+      kind: "direct",
+      location: "worktree",
+    });
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.githooks/pre-commit");
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\nmake lint\n${PRIM_BLOCK_START}\n…\n${PRIM_BLOCK_END}\n`,
+    );
+    const program = new Command();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "uninstall"], { from: "user" });
+
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/root/.githooks/pre-commit",
+      { husky: false },
     );
   });
 
@@ -407,7 +440,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/root/.husky/_",
       hookPath: "/fake/root/.husky/pre-commit",
       kind: "husky_v9",
-      inWorktree: true,
+      location: "worktree",
     });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
@@ -449,7 +482,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/root/.husky/_",
       hookPath: "/fake/root/.husky/pre-commit",
       kind: "husky_v9",
-      inWorktree: true,
+      location: "worktree",
     });
     await buildProgram().parseAsync(["hooks", "install", "--non-interactive"], { from: "user" });
     expect(mockedEnsureEffectiveGitHook).toHaveBeenCalledTimes(3);
@@ -469,6 +502,22 @@ describe("hooks install action", () => {
       expect.stringContaining("post-rewrite hook coverage is degraded"),
     );
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim hooks snippet post-rewrite"));
+    errSpy.mockRestore();
+  });
+
+  it("leaves a hook outside the repository alone and fails when it is post-commit", async () => {
+    mockedEnsureEffectiveGitHook.mockImplementation((hookName) => ({
+      hookName,
+      path: `/home/u/.config/git/hooks/${hookName}`,
+      changed: false,
+      kind: "direct",
+      outcome: "external",
+    }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
     errSpy.mockRestore();
   });
 
@@ -493,7 +542,7 @@ describe("hooks install action", () => {
       hooksDir: "/fake/main/.git/hooks",
       hookPath: "/fake/main/.git/hooks/pre-commit",
       kind: "direct",
-      inWorktree: false,
+      location: "repository",
     });
 
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
@@ -575,6 +624,7 @@ describe("installGlobalHooks (user scope)", () => {
   it("changes nothing machine-wide without consent, and says how to opt in", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(installGlobalHooks()).toBe("not_requested");
+    expect(stageHookRuntime).not.toHaveBeenCalled();
     expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("--global-hooks-path"));
@@ -1060,6 +1110,46 @@ describe("hooks install --scope user consent", () => {
     await install(flags);
     expect(askConfirmation).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0);
+  });
+
+  it("exits 3 when asked for global hooks it could not install, without prompting", async () => {
+    tty();
+    stubHooksPath({ system: "/etc/git/hooks" });
+    await install([], ["--global-hooks-path"]);
+    expect(setCalls()).toHaveLength(0);
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(EXIT_GLOBAL_HOOKS_NOT_INSTALLED);
+    process.exitCode = undefined;
+  });
+
+  it("never asks a question manual mode would make moot", async () => {
+    tty();
+    vi.mocked(gitHooksMode).mockReturnValue("manual");
+    await install();
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+  });
+
+  it("names the shared dir it would edit when asking", async () => {
+    tty();
+    stubHooksPath({ global: "/Users/example/.config/git/hooks" });
+    vi.mocked(askConfirmation).mockResolvedValue(false);
+    await install();
+    expect(askConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("/Users/example/.config/git/hooks"),
+      process.stderr,
+    );
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("rejects --global-hooks-path outside user scope", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerHooksCommands(program);
+    await expect(
+      program.parseAsync(["hooks", "install", "--global-hooks-path"], { from: "user" }),
+    ).rejects.toThrow(/only with --scope user/);
+    expect(mockedEnsureEffectiveGitHook).not.toHaveBeenCalled();
   });
 
   it("does not prompt when the pointer is already prim's", async () => {

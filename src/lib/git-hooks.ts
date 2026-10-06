@@ -12,9 +12,12 @@
  *   before any `exit`/`exec` and reads post-rewrite's stdin first. An existing
  *   block is never moved, except by an explicit install when it sits behind a
  *   top-level `exit`/`exec`/`return` and could never run.
- * - Write context: explicit commands (`prim enable`, `prim hooks install`) may
- *   write a hook file inside the worktree; ambient repair (SessionStart) only
- *   writes hook files outside it, such as `.git/hooks`.
+ * - Write context, by where the file lives (symlinks resolved): ambient repair
+ *   (SessionStart) writes only Git-private files under this checkout's git dir
+ *   and prim's own global hooks; explicit commands (`prim enable`, `prim hooks
+ *   install`) may also write a file inside the working tree. Neither writes a
+ *   file anywhere else (another repository, a dotfiles or shared global hooks
+ *   dir) without the user choosing that path or consenting to it.
  *
  * `git config prim.gitHooks manual` hands wiring to the user: prim then never
  * writes a hook file, and inspection still reports what it finds.
@@ -31,12 +34,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { commandMatchesBin } from "./bin-path.js";
 import {
   GIT_HOOK_CONTRACT_VERSION,
@@ -50,6 +54,7 @@ import {
 } from "./git-hook-contract.js";
 import { gitToplevel } from "./git.js";
 import { type GitHookEntrypointState, inspectGitHookEntrypoint } from "./hook-runtime.js";
+import { primConfigDirectory } from "./paths.js";
 
 export { MANAGED_GIT_HOOK_NAMES, type ManagedGitHookName, managedHookBlock };
 
@@ -135,9 +140,18 @@ export type EffectiveManagedHook = {
   kind: "direct" | "husky_v9";
   /** Husky's generated dispatcher. Prim observes it but never writes it. */
   dispatcherPath?: string;
-  /** Inside the working tree (so possibly tracked), not under `.git`. */
-  inWorktree: boolean;
+  location: HookLocation;
 };
+
+/**
+ * Who owns a hook file, which decides who may write it:
+ * - `repository`: under this checkout's git dir — Git-private, never tracked.
+ * - `prim`: prim's own global hooks dir.
+ * - `worktree`: inside the working tree — possibly tracked and shared.
+ * - `external`: anywhere else — another repository, dotfiles, or a global
+ *   hooks dir every repository on the machine runs.
+ */
+export type HookLocation = "repository" | "prim" | "worktree" | "external";
 
 export type ManagedHookInspection = EffectiveManagedHook & {
   hookName: ManagedGitHookName;
@@ -170,10 +184,24 @@ export type EnsureHookResult = {
   kind: EffectiveManagedHook["kind"];
   changed: boolean;
   /**
-   * `deferred`: ambient repair found work in a worktree hook file and left it
-   * for an explicit command. `manual`: prim.gitHooks=manual, nothing written.
+   * Nothing was written for every outcome after `unchanged`:
+   * - `deferred`: ambient repair found work in a worktree file and left it
+   *   for an explicit command.
+   * - `external`: the file lives outside this repository and prim's own dir.
+   * - `skipped`: repair-only, and the file carries no prim block to repair.
+   * - `runtime_missing`: replacing a working pre-v1 block would leave it inert
+   *   until the hook runtime is staged.
+   * - `manual`: prim.gitHooks=manual.
    */
-  outcome: "created" | "updated" | "unchanged" | "deferred" | "manual";
+  outcome:
+    | "created"
+    | "updated"
+    | "unchanged"
+    | "deferred"
+    | "external"
+    | "skipped"
+    | "runtime_missing"
+    | "manual";
 };
 
 export type UninstallHookResult = { path: string; changed: boolean; removedFile: boolean };
@@ -283,12 +311,48 @@ export function isOwnedStandalonePreCommit(content: string): boolean {
   return commandMatchesBin(body.slice(2), "prim-pre-commit");
 }
 
-function isInWorktree(gitRoot: string, hookPath: string): boolean {
-  const path = relative(gitRoot, hookPath);
-  if (path === "" || isAbsolute(path) || path === ".." || path.startsWith(`..${sep}`)) {
-    return false;
+/** Resolve symlinks through the deepest existing ancestor of `path`. */
+function realpathLoose(path: string): string {
+  const missing: string[] = [];
+  let current = resolve(path);
+  for (;;) {
+    try {
+      return join(realpathSync.native(current), ...missing);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolve(path);
+      missing.unshift(basename(current));
+      current = parent;
+    }
   }
-  return path.split(sep)[0] !== ".git";
+}
+
+function isWithin(path: string, directory: string): boolean {
+  const rel = relative(directory, path);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+
+/** prim's own global hooks dir (`<config>/git-hooks`), or undefined if unresolvable. */
+export function primGitHooksDirectory(): string | undefined {
+  try {
+    return join(primConfigDirectory(), "git-hooks");
+  } catch {
+    return undefined;
+  }
+}
+
+function hookLocation(
+  hookPath: string,
+  dirs: { gitRoot: string; gitDir: string; commonDir: string },
+): HookLocation {
+  const path = realpathLoose(hookPath);
+  if (isWithin(path, realpathLoose(dirs.gitDir)) || isWithin(path, realpathLoose(dirs.commonDir))) {
+    return "repository";
+  }
+  const primDir = primGitHooksDirectory();
+  if (primDir !== undefined && isWithin(path, realpathLoose(primDir))) return "prim";
+  if (isWithin(path, realpathLoose(dirs.gitRoot))) return "worktree";
+  return "external";
 }
 
 function safeGitPath(root: string, value: string): string {
@@ -313,13 +377,26 @@ export function resolveEffectiveGitHook(
 ): EffectiveManagedHook {
   const gitRoot = gitToplevel(cwd);
   if (!gitRoot) throw new Error("not a git repository");
-  const value = execFileSync("git", ["rev-parse", "--git-path", "hooks"], {
-    cwd: gitRoot,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: GIT_TIMEOUT_MS,
-  }).replace(/\r?\n$/u, "");
-  const hooksDir = safeGitPath(gitRoot, value);
+  const lines = execFileSync(
+    "git",
+    ["rev-parse", "--git-path", "hooks", "--absolute-git-dir", "--git-common-dir"],
+    {
+      cwd: gitRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    },
+  )
+    .replace(/\r?\n$/u, "")
+    .split(/\r?\n/u);
+  if (lines.length !== 3) throw new Error("Git returned unexpected repository paths");
+  const [hooksValue, gitDirValue, commonDirValue] = lines as [string, string, string];
+  const hooksDir = safeGitPath(gitRoot, hooksValue);
+  const dirs = {
+    gitRoot,
+    gitDir: safeGitPath(gitRoot, gitDirValue),
+    commonDir: safeGitPath(gitRoot, commonDirValue),
+  };
   if (basename(hooksDir) === "_" && basename(dirname(hooksDir)) === ".husky") {
     const hookPath = resolve(dirname(hooksDir), hookName);
     return {
@@ -328,7 +405,7 @@ export function resolveEffectiveGitHook(
       hookPath,
       kind: "husky_v9",
       dispatcherPath: resolve(hooksDir, hookName),
-      inWorktree: isInWorktree(gitRoot, hookPath),
+      location: hookLocation(hookPath, dirs),
     };
   }
   const hookPath = resolve(hooksDir, hookName);
@@ -337,7 +414,7 @@ export function resolveEffectiveGitHook(
     hooksDir,
     hookPath,
     kind: "direct",
-    inWorktree: isInWorktree(gitRoot, hookPath),
+    location: hookLocation(hookPath, dirs),
   };
 }
 
@@ -449,13 +526,51 @@ function blockRange(content: Buffer, spec: ManagedHookSpec): BlockRange {
   return { kind: "stale", start, end };
 }
 
-/** The user calls prim from this hook themselves, outside any managed block. */
+function invokesCommand(line: string, command: string): boolean {
+  const escaped = command.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`(?:^|[\\s;&|(/"'])${escaped}(?=$|[\\s;&|)"'])`, "u").test(line);
+}
+
+/**
+ * The user calls prim from this hook themselves, outside any managed block:
+ * a command line (not a comment) that runs the entrypoint or the hook's bin.
+ */
 function isUserWired(content: Buffer, spec: ManagedHookSpec): boolean {
-  const text = content.toString("utf8");
-  return (
-    text.includes(GIT_HOOK_ENTRYPOINT_NAME) ||
-    (spec.userWiredBin !== undefined && text.includes(spec.userWiredBin))
-  );
+  return content
+    .toString("utf8")
+    .split("\n")
+    .some((raw) => {
+      const line = raw.trim();
+      if (line === "" || line.startsWith("#")) return false;
+      return (
+        invokesCommand(line, GIT_HOOK_ENTRYPOINT_NAME) ||
+        (spec.userWiredBin !== undefined && invokesCommand(line, spec.userWiredBin))
+      );
+    });
+}
+
+// Husky v8 hooks source `_/husky.sh`, which re-runs the file in a child shell
+// and exits. Code above that line runs twice and ignores HUSKY=0.
+const HUSKY_V8_SOURCE_RE =
+  /^\.[ \t]+"\$\(dirname(?:[ \t]+--)?[ \t]+"\$0"\)\/_\/husky\.sh"[ \t]*$/mu;
+
+/**
+ * Where a new block goes: right after the shebang, so it runs before any
+ * `exit`/`exec` and reads post-rewrite's stdin first — or, in a Husky v8
+ * hook, right after the `husky.sh` line, so it runs once and honors HUSKY=0.
+ */
+function blockInsertionPoint(
+  content: Buffer,
+  allowShebangless: boolean,
+  spec: ManagedHookSpec,
+): number {
+  const shebangEnd = shellInsertionPoint(content, allowShebangless, spec);
+  const rest = content.subarray(shebangEnd).toString("utf8");
+  const match = HUSKY_V8_SOURCE_RE.exec(rest);
+  if (!match) return shebangEnd;
+  const lineEnd = match.index + match[0].length;
+  const afterLine = rest[lineEnd] === "\n" ? lineEnd + 1 : lineEnd;
+  return shebangEnd + Buffer.byteLength(rest.slice(0, afterLine), "utf8");
 }
 
 const TERMINAL_LINE_RE = /^(?:exit|return)(?:\s|;|$)/u;
@@ -531,7 +646,7 @@ function migratedLegacyContent(
     ]);
     return insertBlock(
       withoutLegacyGate,
-      shellInsertionPoint(withoutLegacyGate, allowShebangless, spec),
+      blockInsertionPoint(withoutLegacyGate, allowShebangless, spec),
       spec,
     );
   }
@@ -545,21 +660,30 @@ function migratedLegacyContent(
   return undefined;
 }
 
+type Merge = {
+  /** The next bytes; `existing` itself when nothing should change. */
+  content: Buffer;
+  /** Replaces a pre-v1 prim invocation, which works without the runtime. */
+  migrates: boolean;
+};
+
 /**
- * The next bytes for a hook file. Returns `existing` itself when nothing should
- * change, so repeated installs are byte-identical.
+ * The next bytes for a hook file. Repeated installs are byte-identical, and a
+ * current block is never moved, with two exceptions on an explicit install: a
+ * block behind a top-level `exit`/`exec`/`return` can never run, and a block
+ * above Husky v8's `husky.sh` line runs twice.
  */
 function mergedContent(
   existing: Buffer | undefined,
   allowShebangless: boolean,
   spec: ManagedHookSpec,
-  relocateUnreachable: boolean,
-): Buffer {
-  if (!existing) return createdScaffold(spec);
+  relocate: boolean,
+): Merge {
+  if (!existing) return { content: createdScaffold(spec), migrates: false };
   const range = blockRange(existing, spec);
   if (range.kind === "absent") {
     const migrated = migratedLegacyContent(existing, allowShebangless, spec);
-    if (migrated) return migrated;
+    if (migrated) return { content: migrated, migrates: true };
   } else if (range.kind !== "newer") {
     const oldCreated = oldCreatedPrefixes(spec).some(
       (prefix) =>
@@ -568,28 +692,43 @@ function mergedContent(
     if (oldCreated) {
       const suffix = existing.subarray(range.end);
       const tail = suffix.at(0) === 10 ? suffix.subarray(1) : suffix;
-      return Buffer.concat([createdScaffold(spec), tail]);
+      return {
+        content: Buffer.concat([createdScaffold(spec), tail]),
+        migrates: range.kind === "stale",
+      };
     }
   }
-  const insertion = shellInsertionPoint(existing, allowShebangless, spec);
+  const shebangEnd = shellInsertionPoint(existing, allowShebangless, spec);
+  const insertion = blockInsertionPoint(existing, allowShebangless, spec);
   switch (range.kind) {
     case "newer":
-      return existing;
+      return { content: existing, migrates: false };
     case "absent":
-      return isUserWired(existing, spec) ? existing : insertBlock(existing, insertion, spec);
+      return {
+        content: isUserWired(existing, spec) ? existing : insertBlock(existing, insertion, spec),
+        migrates: false,
+      };
     case "current":
     case "stale": {
-      const unreachable = terminatesBefore(existing, insertion, range.start);
-      if (relocateUnreachable && unreachable) {
-        return insertBlock(withoutRange(existing, range.start, range.end), insertion, spec);
+      const misplaced =
+        terminatesBefore(existing, shebangEnd, range.start) || range.start < insertion;
+      if (relocate && misplaced) {
+        const without = withoutRange(existing, range.start, range.end);
+        return {
+          content: insertBlock(without, blockInsertionPoint(without, allowShebangless, spec), spec),
+          migrates: range.kind === "stale",
+        };
       }
-      if (range.kind === "current") return existing;
+      if (range.kind === "current") return { content: existing, migrates: false };
       // Refresh a pre-v1 block where it stands: never move a block for churn.
-      return Buffer.concat([
-        existing.subarray(0, range.start),
-        Buffer.from(managedHookBlock(spec.hookName)),
-        existing.subarray(range.end),
-      ]);
+      return {
+        content: Buffer.concat([
+          existing.subarray(0, range.start),
+          Buffer.from(managedHookBlock(spec.hookName)),
+          existing.subarray(range.end),
+        ]),
+        migrates: true,
+      };
     }
   }
 }
@@ -687,37 +826,61 @@ function unlinkHookUnchanged(
   unlinkSync(path);
 }
 
+type WritePolicy = {
+  /** Whether this caller may write a file at the target's location. */
+  writable: (location: HookLocation) => boolean;
+  /** Relocate a misplaced block (explicit installs only). */
+  relocate: boolean;
+  /** Only refresh an existing prim block; never insert or create one. */
+  repairOnly: boolean;
+};
+
+const AMBIENT_LOCATIONS: readonly HookLocation[] = ["repository", "prim"];
+const EXPLICIT_LOCATIONS: readonly HookLocation[] = ["repository", "prim", "worktree"];
+
 function ensureTarget(
   target: EffectiveManagedHook,
   spec: ManagedHookSpec,
-  context: HookWriteContext,
+  policy: WritePolicy,
 ): EnsureHookResult {
+  const result = { hookName: spec.hookName, path: target.hookPath, kind: target.kind };
+  const skip = (outcome: EnsureHookResult["outcome"]): EnsureHookResult => ({
+    ...result,
+    changed: false,
+    outcome,
+  });
   assertUsableHuskyDispatcher(target, spec);
   const stat = assertSafeFile(target.hookPath, spec);
   if (stat && target.kind === "direct" && (stat.mode & 0o100) === 0) {
     throw new Error(`existing ${spec.hookName} hook is not executable: ${target.hookPath}`);
   }
   const existing = stat ? readHookFile(target.hookPath) : undefined;
-  const next = mergedContent(existing, target.kind === "husky_v9", spec, context === "explicit");
-  const result = { hookName: spec.hookName, path: target.hookPath, kind: target.kind };
-  if (existing && next.equals(existing)) {
-    return { ...result, changed: false, outcome: "unchanged" };
+  if (policy.repairOnly && (!existing || blockRange(existing, spec).kind === "absent")) {
+    return skip("skipped");
   }
-  if (context === "ambient" && target.inWorktree) {
-    return { ...result, changed: false, outcome: "deferred" };
+  const next = mergedContent(existing, target.kind === "husky_v9", spec, policy.relocate);
+  if (existing && next.content.equals(existing)) return skip("unchanged");
+  if (!policy.writable(target.location)) {
+    return skip(target.location === "worktree" ? "deferred" : "external");
   }
-  rewriteHookAtomically(target.hookPath, next, existing, spec, stat);
+  // A pre-v1 invocation still captures on its own; a v1 block does nothing
+  // until the entrypoint is staged. Never trade working capture for an inert one.
+  if (next.migrates && inspectGitHookEntrypoint() !== "ready") return skip("runtime_missing");
+  rewriteHookAtomically(target.hookPath, next.content, existing, spec, stat);
   return { ...result, changed: true, outcome: existing ? "updated" : "created" };
 }
 
 /**
- * Wire one managed hook where Git runs it for this repository. Ambient callers
- * never write a hook file inside the worktree; manual mode never writes.
+ * Wire one managed hook where Git runs it for this repository. Ambient repair
+ * writes only Git-private files and prim's own dir; an explicit command may
+ * also write a worktree file. Neither writes outside the repository (a shared
+ * global hooks dir, another repository): wiring there takes a user-chosen
+ * path (`ensureGitHookAtPath`). Manual mode never writes.
  */
 export function ensureEffectiveGitHook(
   hookName: ManagedGitHookName,
   cwd: string = process.cwd(),
-  options: { context?: HookWriteContext } = {},
+  options: { context?: HookWriteContext; repairOnly?: boolean } = {},
 ): EnsureHookResult {
   const target = resolveEffectiveGitHook(hookName, cwd);
   if (gitHooksMode({ cwd: target.gitRoot }) === "manual") {
@@ -729,7 +892,13 @@ export function ensureEffectiveGitHook(
       outcome: "manual",
     };
   }
-  return ensureTarget(target, managedHookSpec(hookName), options.context ?? "explicit");
+  const explicit = (options.context ?? "explicit") === "explicit";
+  const allowed = explicit ? EXPLICIT_LOCATIONS : AMBIENT_LOCATIONS;
+  return ensureTarget(target, managedHookSpec(hookName), {
+    writable: (location) => allowed.includes(location),
+    relocate: explicit,
+    repairOnly: options.repairOnly === true,
+  });
 }
 
 function explicitTarget(hookPath: string, options: { husky?: boolean }): EffectiveManagedHook {
@@ -741,17 +910,22 @@ function explicitTarget(hookPath: string, options: { husky?: boolean }): Effecti
     // A `.husky/<hook>` file is run by Husky's dispatcher via `sh`, so it needs
     // neither a shebang nor the executable bit.
     kind: options.husky ? "husky_v9" : "direct",
-    inWorktree: false,
+    // The caller chose this exact file (a --target, or a consented global dir).
+    location: "external",
   };
 }
 
-/** Wire one managed hook into an explicitly chosen file (an explicit write). */
+/** Wire one managed hook into a file the caller chose and is authorized to write. */
 export function ensureGitHookAtPath(
   hookName: ManagedGitHookName,
   hookPath: string,
   options: { husky?: boolean } = {},
 ): EnsureHookResult {
-  return ensureTarget(explicitTarget(hookPath, options), managedHookSpec(hookName), "explicit");
+  return ensureTarget(explicitTarget(hookPath, options), managedHookSpec(hookName), {
+    writable: () => true,
+    relocate: true,
+    repairOnly: false,
+  });
 }
 
 /** Read-only effective coverage check used by doctor and setup verification. */
@@ -877,12 +1051,27 @@ export function uninstallProjectGitHook(
   hookName: ManagedGitHookName,
   cwd: string = process.cwd(),
 ): UninstallHookResult {
+  const target = projectGitHookTarget(hookName, cwd);
+  return uninstallTarget(target, managedHookSpec(hookName));
+}
+
+/**
+ * The hook file this checkout owns for `hookName`: the one a repo-local
+ * core.hooksPath selects (Husky, `.githooks`, …), else the common `.git/hooks`.
+ * An inherited global/system core.hooksPath is never the checkout's own.
+ */
+export function projectGitHookTarget(
+  hookName: ManagedGitHookName,
+  cwd: string = process.cwd(),
+): EffectiveManagedHook {
   const gitRoot = gitToplevel(cwd);
   if (!gitRoot) throw new Error("not a git repository");
-  if (projectHooksPathIsConfigured(gitRoot)) {
-    return uninstallEffectiveGitHook(hookName, gitRoot);
-  }
-  return uninstallGitHookAtPath(hookName, resolve(projectHooksDir(gitRoot), hookName));
+  if (projectHooksPathIsConfigured(gitRoot)) return resolveEffectiveGitHook(hookName, gitRoot);
+  return {
+    ...explicitTarget(resolve(projectHooksDir(gitRoot), hookName), {}),
+    gitRoot,
+    location: "repository",
+  };
 }
 
 /**

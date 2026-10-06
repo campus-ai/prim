@@ -11,6 +11,7 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
+import { globalHooksPathIsPrims } from "./hooks.js";
 import {
   SETUP_DAEMON_DRAINS_ENV,
   SETUP_ORCHESTRATOR_ENV,
@@ -19,11 +20,17 @@ import {
   planCleanupUninstalls,
   planSetupSteps,
   preCommitRunsPrim,
+  projectHooksConflict,
   registerSetupCommand,
   resolveAgent,
   setupStepSpawnOptions,
 } from "./setup.js";
 
+// Hermetic: never read the developer's real global git config.
+vi.mock("./hooks.js", () => ({
+  EXIT_GLOBAL_HOOKS_NOT_INSTALLED: 3,
+  globalHooksPathIsPrims: vi.fn(() => false),
+}));
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawnSync: vi.fn(),
@@ -703,5 +710,80 @@ describe("setup and git's global hooks", () => {
     ]);
     await parse();
     expect(calls).toContainEqual(["hooks", "install", "--scope", "user", "--global-hooks-path"]);
+  });
+});
+
+describe("projectHooksConflict", () => {
+  const prim = "#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n";
+  it("is a conflict only beside prim's global hooks", () => {
+    expect(projectHooksConflict(true, prim)).toBe(true);
+    expect(projectHooksConflict(false, prim)).toBe(false);
+    expect(projectHooksConflict(true, "#!/bin/sh\nnpm test\n")).toBe(false);
+    expect(projectHooksConflict(true, undefined)).toBe(false);
+  });
+});
+
+describe("setup's global-hooks step status", () => {
+  function setupWith(hooksCode: number, argv: string[]) {
+    const note = vi.fn();
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        if (args[0] === "hooks") return { code: hooksCode, stdout: "" };
+        return { code: 0, stdout: "{}" };
+      },
+      note,
+      exit,
+    });
+    return { note, exit, parse: () => program.parseAsync(argv, { from: "user" }) };
+  }
+
+  it("reports a declined global-hooks step as skipped, not ok", async () => {
+    const { note, exit, parse } = setupWith(3, [
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringMatching(/setup complete — .*hooks:skipped/u));
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("still fails setup when the global-hooks step fails outright", async () => {
+    const { note, parse } = setupWith(1, [
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringMatching(/failed: hooks/u));
+  });
+
+  it("rejects --global-hooks-path outside user scope", async () => {
+    const { exit, parse } = setupWith(0, [
+      "setup",
+      "--agent",
+      "codex",
+      "--scope",
+      "project",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("tells users who already have prim's global hooks that they stay active", async () => {
+    vi.mocked(globalHooksPathIsPrims).mockReturnValueOnce(true);
+    const { note, parse } = setupWith(0, ["setup", "--agent", "codex", "--no-daemon"]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("prim's global hooks stay active"));
   });
 });

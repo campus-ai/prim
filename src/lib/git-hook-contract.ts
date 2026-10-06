@@ -77,12 +77,26 @@ ${end}`;
 }
 
 /**
- * Compare blocks modulo formatting. Formatters such as shfmt re-indent and
- * re-space a committed block; that must never look stale, or prim would
- * rewrite the user's formatted bytes and reintroduce churn.
+ * Compare blocks modulo formatting. Formatters such as shfmt re-indent,
+ * re-space redirections, and break `if …; then …; fi` across lines; none of
+ * that may look stale, or prim would rewrite the user's formatted bytes and
+ * reintroduce churn. Line structure still matters where it changes meaning: a
+ * comment is one token running to the end of its line, so a command joined
+ * onto a comment line (which silences it) never compares equal.
  */
 export function canonicalHookBlock(text: string): string {
-  return text.replace(/[\s;]+/gu, "");
+  const tokens: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("#")) {
+      tokens.push(line.replace(/\s+/gu, " "));
+      continue;
+    }
+    for (const word of line.replace(/([<>])\s+/gu, "$1").split(/[\s;]+/u)) {
+      if (word !== "") tokens.push(word);
+    }
+  }
+  return tokens.join("\u0000");
 }
 
 /** The contract version a block declares, or undefined for pre-v1 blocks. */
