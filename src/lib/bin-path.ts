@@ -73,7 +73,7 @@ export function packageRoot(): string | null {
   return locateRoot()?.dir ?? null;
 }
 
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
@@ -133,6 +133,23 @@ const STABLE_HOOK_ARGUMENTS_RE = /^[-A-Za-z0-9_ ]*$/u;
 const STABLE_HOOK_BIN_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/u;
 
 /**
+ * POSIX statements that set `prim_config` exactly as `primConfigDirectory`
+ * resolves it: only absolute, canonical PRIM_CONFIG_DIR/XDG_CONFIG_HOME values
+ * are honored, with an absolute HOME fallback; anything else exits 78. Shared
+ * by every persisted command that must find a file under the config root.
+ */
+export const PRIM_CONFIG_SHELL_RESOLVER = [
+  'prim_absolute() { case "$1" in [/]* ) ;; *) return 1 ;; esac; ' +
+    'case "$1" in [[:space:]]*|*[[:space:]]|*[/][/]*|*[/].[/]*|*[/]..[/]*|*[/].|*[/]..|?*[/]) return 1 ;; esac; }; ',
+  'prim_config=${PRIM_CONFIG_DIR:-}; if ! prim_absolute "$prim_config"; then ' +
+    'prim_config=${XDG_CONFIG_HOME:-}; if prim_absolute "$prim_config"; then ',
+  'case "$prim_config" in /) prim_config=/prim ;; *) prim_config="$prim_config/prim" ;; esac; ',
+  'else prim_home=${HOME:-}; prim_absolute "$prim_home" || exit 78; ' +
+    'case "$prim_home" in /) prim_config=/.config/prim ;; *) prim_config="$prim_home/.config/prim" ;; esac; ',
+  "fi; fi; ",
+].join("");
+
+/**
  * Render the one machine-, config-root-, and package-version-independent hook
  * command stored in agent configuration. The inline POSIX resolver mirrors
  * `primConfigDirectory`: only absolute PRIM_CONFIG_DIR/XDG_CONFIG_HOME values
@@ -152,14 +169,7 @@ export function stableHookCommand(bin: string, args = ""): string {
     // it as inert data during the rolling window so an older uninstall or
     // reinstall can remove the stable entry without invoking npm or PATH.
     `prim_legacy_reader='-p ${PKG_NAME}@stable prim-shim.sh ${bin} '; `,
-    'prim_absolute() { case "$1" in [/]* ) ;; *) return 1 ;; esac; ' +
-      'case "$1" in [[:space:]]*|*[[:space:]]|*[/][/]*|*[/].[/]*|*[/]..[/]*|*[/].|*[/]..|?*[/]) return 1 ;; esac; }; ',
-    'prim_config=${PRIM_CONFIG_DIR:-}; if ! prim_absolute "$prim_config"; then ' +
-      'prim_config=${XDG_CONFIG_HOME:-}; if prim_absolute "$prim_config"; then ',
-    'case "$prim_config" in /) prim_config=/prim ;; *) prim_config="$prim_config/prim" ;; esac; ',
-    'else prim_home=${HOME:-}; prim_absolute "$prim_home" || exit 78; ' +
-      'case "$prim_home" in /) prim_config=/.config/prim ;; *) prim_config="$prim_home/.config/prim" ;; esac; ',
-    "fi; fi; ",
+    PRIM_CONFIG_SHELL_RESOLVER,
     `case "$prim_config" in /) prim_launcher=/${STABLE_HOOK_LAUNCHER_NAME} ;; ` +
       `*) prim_launcher="$prim_config/${STABLE_HOOK_LAUNCHER_NAME}" ;; esac; `,
     'exec "$prim_launcher" "$@"',
