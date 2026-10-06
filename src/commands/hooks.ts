@@ -49,6 +49,7 @@ import {
   type ManagedGitHookName,
   ensureEffectiveGitHook,
   ensureGitHookAtPath,
+  externalHookRemedy,
   gitHooksMode,
   isOwnedStandalonePreCommit,
   managedHookBlock,
@@ -59,7 +60,11 @@ import {
   uninstallProjectGitHook,
 } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
-import { hookRuntimePaths, stageHookRuntime } from "../lib/hook-runtime.js";
+import {
+  hookRuntimePaths,
+  inspectGitHookEntrypoint,
+  stageHookRuntime,
+} from "../lib/hook-runtime.js";
 import { primConfigDirectory } from "../lib/paths.js";
 
 type HookSpec = { hookName: ManagedGitHookName; binName: string };
@@ -299,7 +304,18 @@ function assertOwnedHooksDirectorySafeToRemove(): string[] {
   return entries;
 }
 
-function writeOwnHooks(): void {
+/**
+ * Rewrite prim's owned global hooks. Refuses while the hook runtime is not
+ * staged: the scripts it would write do nothing until it is, and replacing a
+ * working pre-v1 script would silently stop capture in every repository.
+ */
+function writeOwnHooks(): boolean {
+  if (inspectGitHookEntrypoint() !== "ready") {
+    console.error(
+      `[prim] left prim's global hooks in ${PRIM_GIT_HOOKS_DIR} as they are: the hook runtime they run is not staged (run an agent install, or \`prim enable\` from an installed prim).`,
+    );
+    return false;
+  }
   if (!existsSync(PRIM_GIT_HOOKS_DIR)) {
     mkdirSync(PRIM_GIT_HOOKS_DIR, { recursive: true });
   }
@@ -316,13 +332,13 @@ function writeOwnHooks(): void {
   for (const name of PASSTHROUGH_HOOKS) {
     writeFileSync(resolve(PRIM_GIT_HOOKS_DIR, name), passThroughScript(name), { mode: 0o755 });
   }
+  return true;
 }
 
 /** Refresh Prim's wholly-owned global hooks without changing Git config. */
 export function refreshOwnedGlobalHooks(): boolean {
   if (!isOurHooksDir(gitConfigGet("--global"))) return false;
-  writeOwnHooks();
-  return true;
+  return writeOwnHooks();
 }
 
 // Add prim's block into a hook file in a foreign global core.hooksPath dir we
@@ -398,11 +414,16 @@ export function uninstallProjectHooks(gitRoot: string): void {
       husky: true,
       allowOwnedStandalone: false,
     },
-    {
-      path: configured.hookPath,
-      husky: configured.kind === "husky_v9",
-      allowOwnedStandalone: false,
-    },
+    // A shared hooks dir is never stripped on this repository's behalf.
+    ...(configured.location === "external"
+      ? []
+      : [
+          {
+            path: configured.hookPath,
+            husky: configured.kind === "husky_v9",
+            allowOwnedStandalone: false,
+          },
+        ]),
   ].filter(
     (destination, index, all) =>
       all.findIndex((other) => other.path === destination.path) === index,
@@ -415,7 +436,11 @@ export function uninstallProjectHooks(gitRoot: string): void {
 
   for (const spec of [POST_COMMIT, POST_REWRITE]) {
     const result = uninstallProjectGitHook(spec.hookName, gitRoot);
-    if (!result.changed) {
+    if (result.skipped === "external") {
+      console.log(
+        `Left ${result.path} alone: it is outside this repository, and other repositories may run it.`,
+      );
+    } else if (!result.changed) {
       console.log(`No Prim ${spec.hookName} block found at ${result.path}.`);
     } else if (result.removedFile) {
       console.log(`Removed Prim-created ${spec.hookName} hook at ${result.path}.`);
@@ -454,7 +479,7 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
         `[prim] --force: overriding system core.hooksPath ${system}; its hooks will no longer fire (prim chains only to .git/hooks).`,
       );
     }
-    writeOwnHooks();
+    if (!writeOwnHooks()) return false;
     execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
       stdio: ["ignore", "ignore", "pipe"],
       timeout: GIT_TIMEOUT_MS,
@@ -465,8 +490,11 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
     return true;
   }
   if (isOurHooksDir(global)) {
-    writeOwnHooks(); // idempotent refresh of the scripts
-    console.log(`Prim global git hooks already active (${PRIM_GIT_HOOKS_DIR}); refreshed scripts.`);
+    if (writeOwnHooks()) {
+      console.log(
+        `Prim global git hooks already active (${PRIM_GIT_HOOKS_DIR}); refreshed scripts.`,
+      );
+    }
     return true;
   }
   // Coexist: a global core.hooksPath already points elsewhere — add prim's
@@ -506,7 +534,7 @@ export function uninstallGlobalHooks(): void {
 
 type InstallTarget = "effective" | "husky" | "git-hooks";
 
-function reportInstall(result: EnsureHookResult): void {
+function reportInstall(result: EnsureHookResult, gitRoot: string): void {
   const { hookName, path } = result;
   switch (result.outcome) {
     case "created":
@@ -520,7 +548,12 @@ function reportInstall(result: EnsureHookResult): void {
       return;
     case "external":
       console.error(
-        `[prim] ${hookName}: Git runs this repository's hooks from ${path}, outside the repository, so prim left it alone. Every repository using that dir would be affected: wire it with \`prim hooks install --scope user\`, or place \`prim hooks snippet ${hookName}\` yourself.`,
+        `[prim] ${hookName}: Git runs this repository's hooks from ${path}, outside the repository, so prim left it alone. ${externalHookRemedy(hookName, gitRoot)}.`,
+      );
+      return;
+    case "kept":
+      console.error(
+        `[prim] ${hookName}: kept the working pre-v1 prim block at ${path}, outside the repository; it still captures. To upgrade it, ${externalHookRemedy(hookName, gitRoot)}.`,
       );
       return;
     case "runtime_missing":
@@ -558,7 +591,7 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
                 : resolve(projectHooksDir(gitRoot), spec.hookName),
               { husky: target === "husky" },
             );
-      reportInstall(result);
+      reportInstall(result, gitRoot);
       if (spec === POST_COMMIT && result.outcome === "external") process.exitCode = 1;
     } catch (error) {
       if (spec === POST_COMMIT) throw error;
@@ -667,7 +700,7 @@ export function registerHooksCommands(program: Command) {
         // An unusable config root only affects this hint.
       }
       process.stderr.write(
-        `[prim] Place this block near the top of your ${hook} hook, before any exit or exec. It runs prim's ${hook} step where prim is installed and enabled, and does nothing elsewhere.${
+        `[prim] Place this block right after the shebang of your ${hook} hook (in a Husky v8 hook, right after the husky.sh line), before any exit or exec. It runs prim's ${hook} step where prim is installed and enabled, and does nothing elsewhere.${
           hook === "post-rewrite"
             ? " It re-arms stdin, so commands after it still read Git's rewrite pairs."
             : ""

@@ -7,6 +7,7 @@ vi.mock("node:child_process", () => ({
 vi.mock("../lib/git-hooks.js", () => ({
   MANAGED_GIT_HOOK_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
   ensureEffectiveGitHook: vi.fn(),
+  externalHookRemedy: vi.fn(() => "place `prim hooks snippet post-commit` there yourself"),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
@@ -314,10 +315,25 @@ describe("prim enable / disable", () => {
     });
     await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim hooks snippet"));
     expect(bindRepository).not.toHaveBeenCalled();
     exitSpy.mockRestore();
     errSpy.mockRestore();
     logSpy.mockRestore();
+  });
+
+  it("keeps enabling when a working pre-v1 block outside the repo is kept", async () => {
+    inRepo("/repo");
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
+      hookResult(hookName, "kept"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("kept the working pre-v1"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
+    logSpy.mockRestore();
+    errSpy.mockRestore();
   });
 
   it("reports manual wiring instead of writing hooks under prim.gitHooks=manual", async () => {
