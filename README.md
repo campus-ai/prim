@@ -89,11 +89,16 @@ prim setup --agent cursor    # Same, for Cursor IDE and Cursor CLI
 prim setup --agent codex     # Same, for OpenAI Codex
 prim setup --agent hermes    # Same, for Hermes Agent (global-only config)
 prim setup --no-daemon       # Stop it and persistently opt out of supervised delivery
+prim setup --global-hooks-path  # Also route every repository's git hooks through prim
 ```
 
 Orchestrates auth → session hooks → supervised daemon → capture-health gate → git hooks → skill → welcome,
 re-running each underlying command so every step behaves exactly as if run by
 hand (including the browser login). Idempotent — safe to re-run.
+
+Setup wires the current repository's git hooks and never changes git's global
+config on its own: a global `core.hooksPath` reroutes every repository on the
+machine. Pass `--global-hooks-path` to opt in; `prim --yes setup` does not.
 
 ### Uninstall
 
@@ -322,6 +327,7 @@ authorizes one retry for the named decision.
 
 ```bash
 prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
+prim hooks install --scope user --global-hooks-path  # Route every repository through prim
 prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
 prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```

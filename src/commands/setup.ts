@@ -28,6 +28,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { gitToplevel } from "../lib/git.js";
+import { globalHooksPathIsPrims } from "./hooks.js";
 
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
@@ -102,6 +103,8 @@ export function planSetupSteps(opts: {
   agent: SetupAgent;
   daemon: boolean;
   scope: SetupScope;
+  /** Opt in to git's global hooks, which reach every repository on the machine. */
+  globalHooksPath?: boolean;
 }): SetupStep[] {
   const scopeArgs = opts.scope === "user" ? ["--scope", "user"] : [];
   // Hermes config is global-only: it has no project/user layer, so don't
@@ -137,21 +140,25 @@ export function planSetupSteps(opts: {
       required: true,
     });
   }
-  // Forward scope to the git hooks and the rules file too, so `--scope user`
-  // (the default) installs a global core.hooksPath and the agent's global rules
-  // file — the whole point of user scope is zero per-repo setup. Unlike the
-  // session step, hooks/skill take `--scope user` for every agent (hermes
-  // included: its global hooks + ~/.hermes/.hermes.md).
-  steps.push({
-    key: "hooks",
-    label: "Git hooks",
-    args: ["hooks", "install", ...scopeArgs],
-    required: true,
-  });
+  // Git hooks: project scope wires this repo. User scope leaves git's global
+  // config alone unless asked: a global core.hooksPath reroutes every
+  // repository on the machine, and setup usually runs unattended in an agent
+  // session. The enable step below wires this repo either way.
+  if (opts.scope === "project") {
+    steps.push({ key: "hooks", label: "Git hooks", args: ["hooks", "install"], required: true });
+  } else if (opts.globalHooksPath) {
+    steps.push({
+      key: "hooks",
+      label: "Git hooks (global)",
+      args: ["hooks", "install", "--scope", "user", "--global-hooks-path"],
+      required: true,
+    });
+  }
   // Guidance follows the agent: native skills for Claude/Cursor and rules files
   // for Codex/Hermes. Passing --agent lets `skill install` pick it
   // deterministically — vs. auto-detection, which could land a non-Claude agent
-  // on CLAUDE.md (its no-candidate default).
+  // on CLAUDE.md (its no-candidate default). Unlike the session step, the skill
+  // takes `--scope user` for every agent (hermes included: ~/.hermes/.hermes.md).
   const skillArgs = ["skill", "install", "--agent", opts.agent, ...scopeArgs];
   steps.push({ key: "skill", label: "Agent skill", args: skillArgs, required: true });
   // Activation also verifies the effective post-commit destination and
@@ -229,7 +236,11 @@ export function preCommitRunsPrim(content: string): boolean {
  * direct read for the git hook (there is no `hooks status`). Every probe is
  * fail-soft: a missing/erroring signal is simply "not present".
  */
-function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
+function detectProjectConflicts(
+  agent: SetupAgent,
+  run: RunFn,
+  globalHooksActive: boolean,
+): string[] {
   const conflicts: string[] = [];
 
   // Session hooks — hermes has no project scope, so never a conflict.
@@ -244,15 +255,22 @@ function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
     }
   }
 
-  // Project git hook in this repo's .git/hooks.
-  try {
-    const root = gitToplevel();
-    const preCommit = root && join(root, ".git", "hooks", "pre-commit");
-    if (preCommit && existsSync(preCommit) && preCommitRunsPrim(readFileSync(preCommit, "utf-8"))) {
-      conflicts.push(CONFLICT_HOOKS);
+  // Project git hook in this repo's .git/hooks. It double-fires only beside
+  // prim's global hooks; without them it is how this repo is wired.
+  if (globalHooksActive) {
+    try {
+      const root = gitToplevel();
+      const preCommit = root && join(root, ".git", "hooks", "pre-commit");
+      if (
+        preCommit &&
+        existsSync(preCommit) &&
+        preCommitRunsPrim(readFileSync(preCommit, "utf-8"))
+      ) {
+        conflicts.push(CONFLICT_HOOKS);
+      }
+    } catch {
+      // not a repo / no hook → absent
     }
-  } catch {
-    // not a repo / no hook → absent
   }
 
   // Project rules file (skill status without --scope resolves the cwd target).
@@ -329,6 +347,14 @@ export function parseSetupAuthStatus(result: { code: number; stdout: string }): 
   return result.code === EXIT_USAGE ? "unreachable" : "invalid";
 }
 
+type SetupCommandOptions = {
+  agent?: string;
+  scope: string;
+  migrate?: boolean;
+  daemon: boolean;
+  globalHooksPath?: boolean;
+};
+
 export function registerSetupCommand(
   program: Command,
   dependencies: SetupCommandDependencies = {},
@@ -345,11 +371,15 @@ export function registerSetupCommand(
       "user",
     )
     .option(
+      "--global-hooks-path",
+      "with the default user scope, also change git's global hooks so prim's hooks run in every repository",
+    )
+    .option(
       "--migrate",
       "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
     )
     .option("--no-daemon", "stop and disable the companion daemon")
-    .action((opts: { agent?: string; scope: string; migrate?: boolean; daemon: boolean }) => {
+    .action((opts: SetupCommandOptions) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
       // a bare `prim setup` wires the integration matching the calling agent.
@@ -453,7 +483,12 @@ export function registerSetupCommand(
       // deferred until after optional migration, which may remove project hook
       // bytes. Activation then repairs and verifies the final effective hook even
       // for --no-daemon setups, where no doctor step is planned.
-      const setupSteps = planSetupSteps({ agent, daemon: opts.daemon, scope });
+      const setupSteps = planSetupSteps({
+        agent,
+        daemon: opts.daemon,
+        scope,
+        globalHooksPath: opts.globalHooksPath === true,
+      });
       for (const step of setupSteps.filter(
         (candidate) => candidate.key !== "enable" && candidate.key !== "health",
       )) {
@@ -462,12 +497,18 @@ export function registerSetupCommand(
         results[step.key] = code === 0 ? "ok" : step.required ? "failed" : "skipped";
       }
 
+      if (scope === "user" && !opts.globalHooksPath) {
+        note(
+          "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)",
+        );
+      }
+
       // N+1 · Migrate — with the (default) user scope, a lingering PROJECT-scoped
       // install in this repo double-fires alongside the user-scope one. Detect it;
       // with --migrate remove it via the existing uninstall subcommands, else warn
       // with the one-flag remedy so the user opts in explicitly.
       if (scope === "user") {
-        const conflicts = detectProjectConflicts(agent, run);
+        const conflicts = detectProjectConflicts(agent, run, globalHooksPathIsPrims());
         if (conflicts.length > 0 && opts.migrate) {
           note(`migrate · removing project-scoped config (${conflicts.join(", ")})…`);
           // Attempt EVERY removal (map, not .every) — a short-circuit would leave

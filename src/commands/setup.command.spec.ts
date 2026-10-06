@@ -89,16 +89,11 @@ describe("planSetupSteps", () => {
     expect(optOut).toMatchObject({ args: ["daemon", "stop"], required: true });
   });
 
-  it("user scope: forwards --scope user to session, hooks, AND skill", () => {
+  it("user scope: forwards --scope user to session and skill, and leaves git's global hooks alone", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["claude", "install", "--scope", "user"]);
-    // The whole point of user scope: git hooks and the rules file go global too.
-    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
-      "hooks",
-      "install",
-      "--scope",
-      "user",
-    ]);
+    // A global core.hooksPath reroutes every repository; enable wires this one.
+    expect(steps.find((s) => s.key === "hooks")).toBeUndefined();
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
@@ -121,16 +116,26 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("hermes: session stays global-only (no scope flag), but hooks + skill still take --scope user", () => {
+  it("user scope: sets git's global hooks only with --global-hooks-path", () => {
+    const steps = planSetupSteps({
+      agent: "claude",
+      daemon: false,
+      scope: "user",
+      globalHooksPath: true,
+    });
+    expect(steps.find((s) => s.key === "hooks")).toMatchObject({
+      args: ["hooks", "install", "--scope", "user", "--global-hooks-path"],
+      required: true,
+    });
+    expect(steps.findIndex((s) => s.key === "hooks")).toBeLessThan(
+      steps.findIndex((s) => s.key === "enable"),
+    );
+  });
+
+  it("hermes: session stays global-only (no scope flag), but the skill still takes --scope user", () => {
     const steps = planSetupSteps({ agent: "hermes", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["hermes", "install"]);
     expect(steps[0].label).toMatch(/hermes/i);
-    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
-      "hooks",
-      "install",
-      "--scope",
-      "user",
-    ]);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
@@ -656,5 +661,47 @@ describe("preCommitRunsPrim", () => {
     expect(preCommitRunsPrim("#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n")).toBe(true);
     expect(preCommitRunsPrim("#!/bin/sh\nprim-pre-commit\n")).toBe(true);
     expect(preCommitRunsPrim("#!/bin/sh\nnpx lint-staged\n")).toBe(false);
+  });
+});
+
+describe("setup and git's global hooks", () => {
+  function runSetup(argv: string[]) {
+    const calls: string[][] = [];
+    const note = vi.fn();
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive");
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        return { code: 0, stdout: "{}" };
+      },
+      note,
+      exit: vi.fn(),
+    });
+    return { calls, note, parse: () => program.parseAsync(argv, { from: "user" }) };
+  }
+
+  it("never touches git's global hooks by default, even with --yes", async () => {
+    const { calls, note, parse } = runSetup(["--yes", "setup", "--agent", "codex", "--no-daemon"]);
+    await parse();
+    expect(calls.some((args) => args[0] === "hooks")).toBe(false);
+    expect(calls.some((args) => args.includes("--global-hooks-path"))).toBe(false);
+    expect(calls.some((args) => args[0] === "enable")).toBe(true);
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("--global-hooks-path"));
+  });
+
+  it("forwards --global-hooks-path as the only consent to a machine-wide change", async () => {
+    const { calls, parse } = runSetup([
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(calls).toContainEqual(["hooks", "install", "--scope", "user", "--global-hooks-path"]);
   });
 });
