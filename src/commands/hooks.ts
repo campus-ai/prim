@@ -52,6 +52,7 @@ import {
   gitHooksMode,
   isOwnedStandalonePreCommit,
   managedHookBlock,
+  projectGitHookTarget,
   projectHooksDir,
   resolveEffectiveGitHook,
   uninstallGitHookAtPath,
@@ -381,23 +382,35 @@ function applyPreCommitRemoval(plan: PreCommitRemovalPlan, husky: boolean): void
 }
 
 export function uninstallProjectHooks(gitRoot: string): void {
-  // Preflight both possible pre-commit destinations before mutating either one.
-  // This prevents a malformed/ambiguous Husky hook from causing a partial
-  // deletion of the repository-owned .git hook (or vice versa).
-  const plans = [
+  // Every place a project install may have put pre-commit: the common
+  // .git/hooks, .husky, and wherever a repo-local core.hooksPath points.
+  // Preflight them all before mutating any, so a malformed or ambiguous hook
+  // in one cannot leave a partial uninstall in another.
+  const configured = projectGitHookTarget(PRE_COMMIT.hookName, gitRoot);
+  const destinations = [
     {
-      plan: planPreCommitRemoval(resolve(projectHooksDir(gitRoot), PRE_COMMIT.hookName), {
-        allowOwnedStandalone: true,
-      }),
+      path: resolve(projectHooksDir(gitRoot), PRE_COMMIT.hookName),
       husky: false,
+      allowOwnedStandalone: true,
     },
     {
-      plan: planPreCommitRemoval(resolve(gitRoot, ".husky", PRE_COMMIT.hookName), {
-        allowOwnedStandalone: false,
-      }),
+      path: resolve(gitRoot, ".husky", PRE_COMMIT.hookName),
       husky: true,
+      allowOwnedStandalone: false,
     },
-  ];
+    {
+      path: configured.hookPath,
+      husky: configured.kind === "husky_v9",
+      allowOwnedStandalone: false,
+    },
+  ].filter(
+    (destination, index, all) =>
+      all.findIndex((other) => other.path === destination.path) === index,
+  );
+  const plans = destinations.map(({ path, husky, allowOwnedStandalone }) => ({
+    plan: planPreCommitRemoval(path, { allowOwnedStandalone }),
+    husky,
+  }));
   for (const { plan, husky } of plans) applyPreCommitRemoval(plan, husky);
 
   for (const spec of [POST_COMMIT, POST_REWRITE]) {
@@ -494,13 +507,30 @@ export function uninstallGlobalHooks(): void {
 type InstallTarget = "effective" | "husky" | "git-hooks";
 
 function reportInstall(result: EnsureHookResult): void {
-  const verb =
-    result.outcome === "created"
-      ? "Installed"
-      : result.outcome === "updated"
-        ? "Updated"
-        : "Already current:";
-  console.log(`${verb} prim ${result.hookName} hook at ${result.path}.`);
+  const { hookName, path } = result;
+  switch (result.outcome) {
+    case "created":
+      console.log(`Installed prim ${hookName} hook at ${path}.`);
+      return;
+    case "updated":
+      console.log(`Updated prim ${hookName} hook at ${path}.`);
+      return;
+    case "unchanged":
+      console.log(`Already current: prim ${hookName} hook at ${path}.`);
+      return;
+    case "external":
+      console.error(
+        `[prim] ${hookName}: Git runs this repository's hooks from ${path}, outside the repository, so prim left it alone. Every repository using that dir would be affected: wire it with \`prim hooks install --scope user\`, or place \`prim hooks snippet ${hookName}\` yourself.`,
+      );
+      return;
+    case "runtime_missing":
+      console.error(
+        `[prim] ${hookName}: kept the existing prim hook at ${path}; it still works, and its replacement would stay inert until the hook runtime is staged.`,
+      );
+      return;
+    default:
+      console.error(`[prim] ${hookName}: left ${path} as it was (${result.outcome}).`);
+  }
 }
 
 // Install every prim git hook (pre-commit + post-commit + post-rewrite) to the
@@ -529,6 +559,7 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
               { husky: target === "husky" },
             );
       reportInstall(result);
+      if (spec === POST_COMMIT && result.outcome === "external") process.exitCode = 1;
     } catch (error) {
       if (spec === POST_COMMIT) throw error;
       const detail = error instanceof Error ? error.message : String(error);

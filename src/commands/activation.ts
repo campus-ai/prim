@@ -41,6 +41,18 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
   for (const hookName of MANAGED_GIT_HOOK_NAMES) {
     try {
       const result = ensureEffectiveGitHook(hookName, root, { context: "explicit" });
+      if (result.outcome === "external") {
+        // A shared hooks dir runs in every repository using it: enable never
+        // edits one on its own.
+        throw new Error(
+          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; wire it with \`prim hooks install --scope user\` or place \`prim hooks snippet ${hookName}\` yourself`,
+        );
+      }
+      if (result.outcome === "runtime_missing") {
+        process.stderr.write(
+          `[prim] kept the working pre-v1 ${hookName} hook at ${result.path}; it is replaced once the hook runtime is staged\n`,
+        );
+      }
       paths[hookName] = result.path;
       manual ||= result.outcome === "manual";
     } catch (error) {

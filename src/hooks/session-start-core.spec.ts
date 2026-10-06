@@ -67,7 +67,10 @@ vi.mock("../lib/git-hooks.js", () => ({
   ensureEffectiveGitHook: vi.fn(),
 }));
 
-const AMBIENT = { context: "ambient" };
+// SessionStart wires the capture hooks but only refreshes an existing
+// pre-commit block: the synchronous decision check is wired explicitly.
+const AMBIENT = { context: "ambient", repairOnly: false };
+const AMBIENT_REPAIR_ONLY = { context: "ambient", repairOnly: true };
 
 function hookResult(hookName: EnsureHookResult["hookName"]): EnsureHookResult {
   return {
@@ -223,7 +226,8 @@ describe("processSessionStart", () => {
       },
     });
     expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
-    for (const hookName of ["pre-commit", "post-commit", "post-rewrite"]) {
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("pre-commit", "/repo", AMBIENT_REPAIR_ONLY);
+    for (const hookName of ["post-commit", "post-rewrite"]) {
       expect(ensureEffectiveGitHook).toHaveBeenCalledWith(hookName, "/repo", AMBIENT);
     }
     expect(gitToplevel).toHaveBeenCalledWith("/repo");

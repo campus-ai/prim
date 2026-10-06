@@ -689,7 +689,7 @@ describe("v1 hook wiring contract", () => {
     });
     expect(() => lstatSync(path)).toThrow();
     expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
-      inWorktree: true,
+      location: "worktree",
       reason: "missing",
     });
 
@@ -711,7 +711,7 @@ describe("v1 hook wiring contract", () => {
       outcome: "created",
     });
     expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
-      inWorktree: false,
+      location: "repository",
       covered: true,
     });
   });
@@ -938,3 +938,194 @@ function spawnShellcheck(): string | null {
     return null;
   }
 }
+
+// Husky v8's runtime (8.0.x): it re-runs the hook in a child shell, then exits.
+const HUSKY_V8_SH = `#!/usr/bin/env sh
+if [ -z "$husky_skip_init" ]; then
+  readonly hook_name="$(basename -- "$0")"
+  if [ "$HUSKY" = "0" ]; then
+    exit 0
+  fi
+  readonly husky_skip_init=1
+  export husky_skip_init
+  sh -e "$0" "$@"
+  exitCode="$?"
+  exit $exitCode
+fi
+`;
+
+describe("where prim may write", () => {
+  it("never edits a shared global hooks dir, explicit or ambient", () => {
+    const root = repository("foreign-global");
+    const globalHooks = temp("foreign-global-hooks");
+    const globalConfig = join(temp("foreign-global-config"), "config");
+    writeFileSync(globalConfig, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    git(root, "config", "--global", "core.hooksPath", globalHooks);
+    const path = join(globalHooks, "post-commit");
+    writeFileSync(path, "#!/bin/sh\nteam-lint\n", { mode: 0o755 });
+
+    for (const context of ["explicit", "ambient"] as const) {
+      expect(ensureEffectiveGitHook("post-commit", root, { context })).toMatchObject({
+        changed: false,
+        outcome: "external",
+      });
+    }
+    expect(readFileSync(path, "utf8")).toBe("#!/bin/sh\nteam-lint\n");
+    expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
+      location: "external",
+      reason: "missing_block",
+    });
+
+    // A path the user chose (a consented user-scope install) is still writable.
+    expect(ensureGitHookAtPath("post-commit", path).outcome).toBe("updated");
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("unchanged");
+  });
+
+  it("treats a worktree hooks dir reached through a symlink as the worktree", () => {
+    const root = repository("symlinked-hooks");
+    mkdirSync(join(root, ".githooks"));
+    const alias = join(temp("symlink-parent"), "alias");
+    symlinkSync(root, alias);
+    git(root, "config", "--local", "core.hooksPath", join(alias, ".githooks"));
+
+    expect(ensureEffectiveGitHook("post-commit", root, { context: "ambient" })).toMatchObject({
+      outcome: "deferred",
+    });
+    expect(() => lstatSync(join(root, ".githooks", "post-commit"))).toThrow();
+    expect(inspectEffectiveGitHook("post-commit", root).location).toBe("worktree");
+  });
+
+  it("never edits another worktree's tracked hooks from a linked worktree", () => {
+    const root = repository("main-tracked-hooks");
+    mkdirSync(join(root, ".githooks"));
+    writeFileSync(join(root, ".githooks", "pre-commit"), "#!/bin/sh\nmake lint\n", {
+      mode: 0o755,
+    });
+    git(root, "add", ".githooks");
+    git(root, "commit", "-qm", "hooks");
+    git(root, "config", "core.hooksPath", join(root, ".githooks"));
+    const linked = join(temp("linked-parent"), "linked");
+    git(root, "worktree", "add", "-qb", "linked", linked);
+
+    for (const context of ["ambient", "explicit"] as const) {
+      expect(ensureEffectiveGitHook("pre-commit", linked, { context }).outcome).toBe("external");
+    }
+    expect(git(root, "status", "--porcelain")).toBe("");
+  });
+
+  it("only refreshes, never adds, under repair-only (SessionStart's pre-commit)", () => {
+    const root = repository("repair-only");
+    const path = join(root, ".git", "hooks", "pre-commit");
+    expect(
+      ensureEffectiveGitHook("pre-commit", root, { context: "ambient", repairOnly: true }),
+    ).toMatchObject({ outcome: "skipped" });
+    expect(() => lstatSync(path)).toThrow();
+
+    writeFileSync(path, "#!/bin/sh\nnpm test\n", { mode: 0o755 });
+    expect(
+      ensureEffectiveGitHook("pre-commit", root, { context: "ambient", repairOnly: true }).outcome,
+    ).toBe("skipped");
+
+    const stale = `#!/bin/sh\n${blockMarkers("pre-commit").start}\n{ prim-pre-commit; } || true\n${blockMarkers("pre-commit").end}\nnpm test\n`;
+    writeFileSync(path, stale, { mode: 0o755 });
+    expect(
+      ensureEffectiveGitHook("pre-commit", root, { context: "ambient", repairOnly: true }).outcome,
+    ).toBe("updated");
+    expect(readFileSync(path, "utf8")).toBe(
+      `#!/bin/sh\n${managedHookBlock("pre-commit")}\nnpm test\n`,
+    );
+  });
+
+  it("keeps a working pre-v1 block while the hook runtime is not staged", () => {
+    const root = repository("runtime-missing");
+    const path = join(root, ".git", "hooks", "post-commit");
+    const legacy = `#!/bin/sh\n${legacyInlineHookBlock("post-commit")}\n`;
+    writeFileSync(path, legacy, { mode: 0o755 });
+    rmSync(join(configDir, GIT_HOOK_ENTRYPOINT_NAME));
+
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("runtime_missing");
+    expect(readFileSync(path, "utf8")).toBe(legacy);
+  });
+
+  it("removes pre-commit from a repo-local core.hooksPath on project uninstall", () => {
+    const root = repository("uninstall-configured");
+    git(root, "config", "--local", "core.hooksPath", ".githooks");
+    const path = join(root, ".githooks", "pre-commit");
+    mkdirSync(join(root, ".githooks"));
+    writeFileSync(path, "#!/bin/sh\nmake lint\n", { mode: 0o755 });
+    ensureEffectiveGitHook("pre-commit", root);
+    expect(readFileSync(path, "utf8")).toContain(blockMarkers("pre-commit").start);
+
+    expect(uninstallProjectGitHook("pre-commit", root)).toMatchObject({ changed: true });
+    expect(readFileSync(path, "utf8")).toBe("#!/bin/sh\nmake lint\n");
+  });
+});
+
+describe("Husky v8", () => {
+  function huskyV8Repository(name: string, preCommit: string): { root: string; path: string } {
+    const root = repository(name);
+    mkdirSync(join(root, ".husky", "_"), { recursive: true });
+    writeFileSync(join(root, ".husky", "_", "husky.sh"), HUSKY_V8_SH);
+    const path = join(root, ".husky", "pre-commit");
+    writeFileSync(path, preCommit, { mode: 0o755 });
+    git(root, "config", "--local", "core.hooksPath", ".husky");
+    git(root, "config", "--local", "prim.active", "true");
+    return { root, path };
+  }
+  const V8_HOOK = '#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n\ntrue\n';
+
+  it("places the block after husky.sh, so it runs once and honors HUSKY=0", () => {
+    const { root, path } = huskyV8Repository("husky-v8", V8_HOOK);
+    const log = join(temp("husky-v8-log"), "runs");
+    stageFakeGitHookRuntime(configDir, {
+      "prim-pre-commit": `printf 'run\\n' >> '${log}'\n`,
+    });
+    ensureEffectiveGitHook("pre-commit", root);
+    expect(readFileSync(path, "utf8")).toBe(
+      `#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n${managedHookBlock("pre-commit")}\n\ntrue\n`,
+    );
+
+    const run = (env: NodeJS.ProcessEnv) =>
+      execFileSync(path, [], { cwd: root, env: { ...process.env, ...env }, stdio: "ignore" });
+    run({});
+    expect(readFileSync(log, "utf8")).toBe("run\n");
+    run({ HUSKY: "0" });
+    expect(readFileSync(log, "utf8")).toBe("run\n");
+  });
+
+  it("moves a block above husky.sh below it on an explicit install only", () => {
+    const above = `#!/usr/bin/env sh\n${managedHookBlock("pre-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n\ntrue\n`;
+    const { root, path } = huskyV8Repository("husky-v8-above", above);
+    expect(ensureEffectiveGitHook("pre-commit", root, { context: "ambient" }).outcome).toBe(
+      "unchanged",
+    );
+    ensureEffectiveGitHook("pre-commit", root);
+    expect(readFileSync(path, "utf8")).toBe(
+      `#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n${managedHookBlock("pre-commit")}\n\ntrue\n`,
+    );
+  });
+});
+
+describe("recognizing prim in a hook file", () => {
+  it("does not mistake a comment mentioning prim for wiring", () => {
+    const root = repository("comment-mention");
+    const path = join(root, ".git", "hooks", "pre-commit");
+    writeFileSync(path, "#!/bin/sh\n# TODO re-add prim-pre-commit\nnpm test\n", { mode: 0o755 });
+    expect(inspectEffectiveGitHook("pre-commit", root).reason).toBe("missing_block");
+    expect(ensureEffectiveGitHook("pre-commit", root).outcome).toBe("updated");
+  });
+
+  it("does not accept a block whose command was joined onto its comment", () => {
+    const root = repository("joined-comment");
+    const path = join(root, ".git", "hooks", "post-commit");
+    const broken = managedHookBlock("post-commit").replace(
+      "# shellcheck disable=SC2016\n",
+      "# shellcheck disable=SC2016 ",
+    );
+    writeFileSync(path, `#!/bin/sh\n${broken}\n`, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("stale_block");
+    ensureEffectiveGitHook("post-commit", root, { context: "ambient" });
+    expect(readFileSync(path, "utf8")).toBe(`#!/bin/sh\n${managedHookBlock("post-commit")}\n`);
+  });
+});

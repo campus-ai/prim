@@ -302,6 +302,24 @@ describe("prim enable / disable", () => {
     },
   );
 
+  it("never edits a shared hooks dir: post-commit outside the repo fails enable", async () => {
+    inRepo("/repo");
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
+      hookResult(hookName, "external"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+    await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(bindRepository).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
   it("reports manual wiring instead of writing hooks under prim.gitHooks=manual", async () => {
     inRepo("/repo");
     vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
