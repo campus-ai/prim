@@ -30,6 +30,7 @@ import {
   classifyDelivery,
   classifyDoctor,
   classifyHermesHooks,
+  classifyHookFiring,
   classifyHookRuntime,
   classifyJournal,
   classifyJournalOrganization,
@@ -882,6 +883,16 @@ describe("effective post-commit diagnostics", () => {
     });
   });
 
+  it("passes manual wiring once a run for the latest commit proves it", () => {
+    const manual = { ...uncovered, mode: "manual" as const, reason: "missing_block" as const };
+    expect(
+      classifyManagedHook("post-commit", manual, { state: "fired", commitAt: 1, firedAt: 2 }),
+    ).toMatchObject({ status: "ok", detail: expect.stringContaining("ran for the latest commit") });
+    expect(
+      classifyManagedHook("post-commit", manual, { state: "not_firing", commitAt: 1 }),
+    ).toMatchObject({ status: "warn" });
+  });
+
   it("never fails doctor for the warn-only pre-commit check", () => {
     expect(
       classifyManagedHook("pre-commit", {
@@ -1029,5 +1040,33 @@ describe("GitHub repo connection diagnostics", () => {
     expect(check.detail).toContain("local cached connection state is invalid");
     expect(check.detail).not.toContain("secret");
     expect(check.detail).not.toContain("\u001b");
+  });
+});
+
+describe("post-commit firing evidence", () => {
+  const now = 10 * 60_000;
+
+  it("fails a commit that never reached prim, naming the likely causes and the repair", () => {
+    const check = classifyHookFiring(
+      { state: "not_firing", commitAt: now - 5 * 60_000, firedAt: now - 60 * 60_000 },
+      now,
+    );
+    expect(check).toMatchObject({ name: "hook-fired", status: "fail" });
+    expect(check.detail).toContain("made 5m ago (last run 60m ago)");
+    expect(check.detail).toContain("exit/exec before prim's block");
+    expect(check.detail).toContain("prim hooks install");
+  });
+
+  it.each([
+    [{ state: "inactive" as const }, "not active"],
+    [{ state: "unverified" as const }, "next commit is checked"],
+    [{ state: "pending" as const, commitAt: now }, "may still be starting"],
+    [{ state: "fired" as const, commitAt: now - 1, firedAt: now }, "reached prim"],
+  ])("does not fail a fresh setup or a working hook (%o)", (firing, detail) => {
+    expect(classifyHookFiring(firing, now)).toMatchObject({
+      name: "hook-fired",
+      status: "ok",
+      detail: expect.stringContaining(detail),
+    });
   });
 });

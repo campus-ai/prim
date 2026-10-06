@@ -10,6 +10,7 @@ import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import {
   MANAGED_GIT_HOOK_NAMES,
@@ -54,6 +55,8 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
       "[prim] prim.gitHooks=manual: left hook files untouched; wire them with `prim hooks snippet <hook>`\n",
     );
   }
+  // From here on, doctor expects every local commit to reach prim.
+  recordHooksWired(root);
   return paths;
 }
 

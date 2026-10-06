@@ -67,6 +67,8 @@ vi.mock("../lib/git-hooks.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/commit-heartbeat.js", () => ({ recordHooksWired: vi.fn() }));
+
 vi.mock("../lib/confirmation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/confirmation.js")>();
   return { ...actual, askConfirmation: vi.fn() };
@@ -109,6 +111,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation } from "../lib/confirmation.js";
 import {
   ensureEffectiveGitHook,
@@ -427,6 +430,7 @@ describe("hooks install action", () => {
     });
     expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.git/hooks/${hook}`));
     expect(stageHookRuntime).toHaveBeenCalledTimes(1);
+    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root");
   });
 
   it("wires all three hooks where Git runs them when no Husky choice is needed", async () => {

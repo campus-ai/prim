@@ -347,6 +347,12 @@ across prim releases. `prim enable` and `prim hooks install` write it once and
 never move or rewrite a current block, reformatted or not; agent session hooks
 only repair hook files outside the working tree, such as `.git/hooks`.
 
+`prim doctor` also checks evidence rather than file contents: each post-commit
+run that reaches prim leaves a stamp in the checkout's git dir, and doctor's
+`hook-fired` check fails when a local commit made since the hooks were wired
+never reached prim. That catches an `exit` before prim's block, hand wiring
+that broke, or a git client whose environment cannot find prim.
+
 To wire the hooks yourself (lefthook, a custom Husky layout, …), run
 `git config prim.gitHooks manual` (or `--global`): prim then never writes a hook
 file, and `prim doctor` reports what it finds as a warning. Paste the block from

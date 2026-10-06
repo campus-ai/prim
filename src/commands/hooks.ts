@@ -41,6 +41,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Argument, type Command, Option } from "commander";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { isLegacyOwnedGlobalHook } from "../lib/git-hook-legacy.js";
 import {
@@ -583,6 +584,8 @@ function installHooks(gitRoot: string, target: InstallTarget): void {
       );
     }
   }
+  // From here on, doctor expects every local commit to reach prim.
+  recordHooksWired(gitRoot);
 }
 
 function printManualNote(gitRoot: string): void {

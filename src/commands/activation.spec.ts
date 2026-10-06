@@ -9,6 +9,7 @@ vi.mock("../lib/git-hooks.js", () => ({
   ensureEffectiveGitHook: vi.fn(),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
+vi.mock("../lib/commit-heartbeat.js", () => ({ recordHooksWired: vi.fn() }));
 vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
 vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn(), stageGitHookRuntime: vi.fn() }));
@@ -22,6 +23,7 @@ vi.mock("./github.js", () => ({ runGithubConnect: vi.fn() }));
 import { execFileSync } from "node:child_process";
 import { daemonRequest } from "../daemon/client.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation } from "../lib/confirmation.js";
 import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { bindRepository } from "../lib/repository-binding.js";
@@ -133,6 +135,8 @@ describe("prim enable / disable", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postRewriteHook"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"preCommitHook"'));
+    // Doctor's hook-fired check expects every later local commit to reach prim.
+    expect(recordHooksWired).toHaveBeenCalledWith("/repo");
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -250,6 +254,7 @@ describe("prim enable / disable", () => {
   it("never activates or reports success when effective hook repair fails", async () => {
     inRepo("/repo");
     failHook("post-commit", "malformed Prim hook markers");
+    vi.mocked(recordHooksWired).mockClear();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -268,6 +273,7 @@ describe("prim enable / disable", () => {
         "failed to enable prim during post-commit hook coverage: malformed Prim hook markers",
       ),
     );
+    expect(recordHooksWired).not.toHaveBeenCalled();
     exitSpy.mockRestore();
     errSpy.mockRestore();
     logSpy.mockRestore();

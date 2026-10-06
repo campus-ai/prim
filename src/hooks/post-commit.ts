@@ -24,6 +24,7 @@ import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { recordPostCommitFired } from "../lib/commit-heartbeat.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
@@ -182,6 +183,9 @@ function spawnBackgroundFlush(): void {
 
 export function runPostCommit(): void {
   const cwd = gitText(["rev-parse", "--show-toplevel"]) ?? process.cwd();
+  // Evidence that Git reached prim, whatever capture decides next: doctor
+  // checks it against the reflog to catch a hook that silently stopped firing.
+  recordPostCommitFired(cwd, process.env.PRIM_COMMIT_SHA);
   if (!isRepoActiveForCapture(cwd)) {
     return;
   }

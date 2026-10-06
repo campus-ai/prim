@@ -52,6 +52,11 @@ import {
 import { boundedHealthError } from "../lib/ansi.js";
 import { type HookCommandResolution, packageVersion } from "../lib/bin-path.js";
 import {
+  POST_COMMIT_GRACE_MS,
+  type PostCommitFiring,
+  inspectPostCommitFiring,
+} from "../lib/commit-heartbeat.js";
+import {
   MS_PER_SECOND,
   type PendingBacklog,
   deliveryBacklogState,
@@ -63,6 +68,7 @@ import {
   type ManagedHookInspection,
   inspectEffectiveGitHook,
 } from "../lib/git-hooks.js";
+import { gitToplevel } from "../lib/git.js";
 import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type RepositoryBindingResult,
@@ -618,6 +624,7 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
 export function classifyManagedHook(
   hookName: ManagedGitHookName,
   inspection: ManagedHookInspection,
+  firing?: PostCommitFiring,
 ): Check {
   if (inspection.covered) {
     const wiring = inspection.wiring === "user" ? " · wired by user" : "";
@@ -631,6 +638,15 @@ export function classifyManagedHook(
   // Manual mode is the user's choice, not a fault: report what prim found
   // without failing. pre-commit is a warn-only check, so it never fails doctor.
   if (inspection.mode === "manual") {
+    // The user's own wiring is invisible to file inspection; a run for the
+    // latest commit proves it.
+    if (hookName === "post-commit" && firing?.state === "fired") {
+      return {
+        name: hookName,
+        status: "ok",
+        detail: `manual (prim.gitHooks=manual) · ran for the latest commit · ${inspection.hookPath}`,
+      };
+    }
     return {
       name: hookName,
       status: "warn",
@@ -649,9 +665,68 @@ export function classifyPostCommitHook(inspection: ManagedHookInspection): Check
   return classifyManagedHook("post-commit", inspection);
 }
 
-function checkManagedHook(hookName: ManagedGitHookName): Check {
+function minutesAgo(at: number, now: number): string {
+  const minutes = Math.max(0, Math.round((now - at) / 60_000));
+  return minutes === 0 ? "just now" : `${String(minutes)}m ago`;
+}
+
+/**
+ * Whether post-commit reached prim for the latest local commit. A hook that
+ * looks wired but never runs (an `exit` the heuristic missed, a GUI client
+ * without prim's environment) fails here even when every file looks right.
+ */
+export function classifyHookFiring(firing: PostCommitFiring, now: number = Date.now()): Check {
+  const name = "hook-fired";
+  switch (firing.state) {
+    case "inactive":
+      return { name, status: "ok", detail: "repository not active — no post-commit run expected" };
+    case "unverified":
+      return {
+        name,
+        status: "ok",
+        detail: "no local commit since the hooks were wired — the next commit is checked",
+      };
+    case "pending":
+      return {
+        name,
+        status: "ok",
+        detail: `latest commit is under ${String(POST_COMMIT_GRACE_MS / 1_000)}s old — capture may still be starting`,
+      };
+    case "fired":
+      return {
+        name,
+        status: "ok",
+        detail: `post-commit reached prim for the latest commit (${minutesAgo(firing.firedAt, now)})`,
+      };
+    case "not_firing":
+      return {
+        name,
+        status: "fail",
+        detail: `post-commit never reached prim for the commit made ${minutesAgo(firing.commitAt, now)}${
+          firing.firedAt === undefined ? "" : ` (last run ${minutesAgo(firing.firedAt, now)})`
+        } · check for an exit/exec before prim's block, or a git client without prim's environment · run \`prim hooks install\``,
+      };
+  }
+}
+
+function inspectFiringHere(): PostCommitFiring | undefined {
   try {
-    return classifyManagedHook(hookName, inspectEffectiveGitHook(hookName));
+    const root = gitToplevel();
+    return root ? inspectPostCommitFiring(root) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function checkHookFiring(firing: PostCommitFiring | undefined): Check {
+  return firing
+    ? classifyHookFiring(firing)
+    : { name: "hook-fired", status: "warn", detail: "not a git repository" };
+}
+
+function checkManagedHook(hookName: ManagedGitHookName, firing?: PostCommitFiring): Check {
+  try {
+    return classifyManagedHook(hookName, inspectEffectiveGitHook(hookName), firing);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
@@ -1075,6 +1150,7 @@ export type DoctorProbes = {
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
   refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
+  const firing = inspectFiringHere();
   return {
     before: [checkAuth()],
     after: [
@@ -1084,8 +1160,9 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
       checkHookRuntime(),
       await checkRepositoryBinding(),
       checkManagedHook("pre-commit"),
-      checkManagedHook("post-commit"),
+      checkManagedHook("post-commit", firing),
       checkManagedHook("post-rewrite"),
+      checkHookFiring(firing),
       ...backend,
       await checkFeedbackCapability(),
     ],
