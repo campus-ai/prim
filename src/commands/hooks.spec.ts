@@ -81,6 +81,7 @@ vi.mock("../lib/confirmation.js", async (importOriginal) => {
 
 vi.mock("../lib/hook-runtime.js", () => ({
   stageHookRuntime: vi.fn(),
+  inspectGitHookEntrypoint: vi.fn(() => "ready"),
   hookRuntimePaths: vi.fn(() => ({ gitHookEntrypoint: "/home/u/.config/prim/prim-git-hook-v1" })),
 }));
 
@@ -128,7 +129,7 @@ import {
   uninstallGitHookAtPath,
   uninstallProjectGitHook,
 } from "../lib/git-hooks.js";
-import { stageHookRuntime } from "../lib/hook-runtime.js";
+import { inspectGitHookEntrypoint, stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
   PRIM_BLOCK_END,
@@ -824,6 +825,16 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     );
     expect(setCalls()).toHaveLength(0);
     expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("never swaps prim's global hooks for inert ones while the runtime is missing", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(refreshOwnedGlobalHooks()).toBe(false);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("not staged"));
+    errSpy.mockRestore();
   });
 
   it.each([

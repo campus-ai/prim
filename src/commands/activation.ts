@@ -15,6 +15,7 @@ import {
   MANAGED_GIT_HOOK_NAMES,
   type ManagedGitHookName,
   ensureEffectiveGitHook,
+  externalHookRemedy,
 } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
@@ -42,10 +43,15 @@ function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, s
     try {
       const result = ensureEffectiveGitHook(hookName, root, { context: "explicit" });
       if (result.outcome === "external") {
-        // A shared hooks dir runs in every repository using it: enable never
-        // edits one on its own.
+        // A hooks dir outside the repository may run for other repositories
+        // too: enable never edits one on its own.
         throw new Error(
-          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; wire it with \`prim hooks install --scope user --global-hooks-path\` or place \`prim hooks snippet ${hookName}\` yourself`,
+          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; ${externalHookRemedy(hookName, root)}`,
+        );
+      }
+      if (result.outcome === "kept") {
+        process.stderr.write(
+          `[prim] kept the working pre-v1 ${hookName} hook at ${result.path}, outside the repository; to upgrade it, ${externalHookRemedy(hookName, root)}\n`,
         );
       }
       if (result.outcome === "runtime_missing") {

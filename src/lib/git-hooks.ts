@@ -171,6 +171,7 @@ export type ManagedHookInspection = EffectiveManagedHook & {
     | "missing_block"
     | "stale_block"
     | "unreachable_block"
+    | "misplaced_block"
     | "husky_dispatcher_missing"
     | "husky_dispatcher_invalid"
     | "unsupported_interpreter"
@@ -191,6 +192,8 @@ export type EnsureHookResult = {
    * - `skipped`: repair-only, and the file carries no prim block to repair.
    * - `runtime_missing`: replacing a working pre-v1 block would leave it inert
    *   until the hook runtime is staged.
+   * - `kept`: a working pre-v1 block in a file prim may not write (outside the
+   *   repository) was left as it is; it still captures.
    * - `manual`: prim.gitHooks=manual.
    */
   outcome:
@@ -201,10 +204,17 @@ export type EnsureHookResult = {
     | "external"
     | "skipped"
     | "runtime_missing"
+    | "kept"
     | "manual";
 };
 
-export type UninstallHookResult = { path: string; changed: boolean; removedFile: boolean };
+export type UninstallHookResult = {
+  path: string;
+  changed: boolean;
+  removedFile: boolean;
+  /** The file lives outside the repository (a shared hooks dir): left alone. */
+  skipped?: "external";
+};
 
 /** Read prim.gitHooks from the repository (all scopes) or the global config. */
 export function gitHooksMode(options: { cwd?: string; global?: boolean } = {}): GitHooksMode {
@@ -341,6 +351,24 @@ export function primGitHooksDirectory(): string | undefined {
   }
 }
 
+/** Roots of this repository's other worktrees (linked worktrees may nest). */
+function otherWorktreeRoots(gitRoot: string): string[] {
+  try {
+    const self = realpathLoose(gitRoot);
+    return execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: gitRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    })
+      .split("\n")
+      .flatMap((line) => (line.startsWith("worktree ") ? [realpathLoose(line.slice(9))] : []))
+      .filter((root) => root !== self);
+  } catch {
+    return [];
+  }
+}
+
 function hookLocation(
   hookPath: string,
   dirs: { gitRoot: string; gitDir: string; commonDir: string },
@@ -351,8 +379,53 @@ function hookLocation(
   }
   const primDir = primGitHooksDirectory();
   if (primDir !== undefined && isWithin(path, realpathLoose(primDir))) return "prim";
-  if (isWithin(path, realpathLoose(dirs.gitRoot))) return "worktree";
-  return "external";
+  const root = realpathLoose(dirs.gitRoot);
+  if (!isWithin(path, root)) return "external";
+  // A linked worktree nested inside this one has tracked files of its own.
+  const nested = otherWorktreeRoots(dirs.gitRoot).filter((other) => isWithin(other, root));
+  return nested.some((other) => isWithin(path, other)) ? "external" : "worktree";
+}
+
+/** Which git config scope sets core.hooksPath for this repository, if any. */
+export function hooksPathScope(
+  cwd: string,
+): "local" | "worktree" | "global" | "system" | "command" | undefined {
+  try {
+    const scope = execFileSync("git", ["config", "--show-scope", "--get", "core.hooksPath"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    }).split("\t")[0];
+    return scope === "local" ||
+      scope === "worktree" ||
+      scope === "global" ||
+      scope === "system" ||
+      scope === "command"
+      ? scope
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What to do about a hook prim may not write because it lives outside the
+ * repository, which depends on who configured that location.
+ */
+export function externalHookRemedy(hookName: ManagedGitHookName, cwd: string): string {
+  const snippet = `place \`prim hooks snippet ${hookName}\` there yourself`;
+  switch (hooksPathScope(cwd)) {
+    case "global":
+      return `your global core.hooksPath runs every repository's hooks: ${snippet}, or have prim add it with \`prim hooks install --scope user\``;
+    case "system":
+      return `the system core.hooksPath is shared by every user on this machine: ${snippet}, or ask its owner`;
+    case "local":
+    case "worktree":
+      return `this repository's core.hooksPath points outside it: ${snippet}, or point core.hooksPath inside the repository`;
+    default:
+      return snippet;
+  }
 }
 
 function safeGitPath(root: string, value: string): string {
@@ -367,8 +440,6 @@ function safeGitPath(root: string, value: string): string {
   }
   return isAbsolute(value) ? resolve(value) : resolve(root, value);
 }
-
-/** Resolve the destination Git actually invokes, including worktrees/overrides. */
 
 /** Resolve the destination Git actually invokes, including worktrees/overrides. */
 export function resolveEffectiveGitHook(
@@ -526,9 +597,28 @@ function blockRange(content: Buffer, spec: ManagedHookSpec): BlockRange {
   return { kind: "stale", start, end };
 }
 
+const COMMAND_SEPARATOR_RE = /;|&&|\|\||\||\(|\b(?:then|do|else)\b/u;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=\S*$/u;
+const COMMAND_PREFIXES = new Set(["exec", "command", "env", "nohup"]);
+
+/**
+ * Whether `line` runs `command` as a command word (`cmd`, `"$HOME/…/cmd"`,
+ * `VAR=1 exec cmd`), as opposed to mentioning it in an argument or a comment.
+ */
 function invokesCommand(line: string, command: string): boolean {
-  const escaped = command.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp(`(?:^|[\\s;&|(/"'])${escaped}(?=$|[\\s;&|)"'])`, "u").test(line);
+  const code = line.replace(/(?:^|\s)#.*$/u, "");
+  return code.split(COMMAND_SEPARATOR_RE).some((segment) => {
+    const words = segment.trim().split(/\s+/u);
+    let index = 0;
+    while (
+      index < words.length &&
+      (ASSIGNMENT_RE.test(words[index] ?? "") || COMMAND_PREFIXES.has(words[index] ?? ""))
+    ) {
+      index += 1;
+    }
+    const word = (words[index] ?? "").replace(/^["']|["']$/gu, "");
+    return word === command || word.endsWith(`/${command}`);
+  });
 }
 
 /**
@@ -861,7 +951,10 @@ function ensureTarget(
   const next = mergedContent(existing, target.kind === "husky_v9", spec, policy.relocate);
   if (existing && next.content.equals(existing)) return skip("unchanged");
   if (!policy.writable(target.location)) {
-    return skip(target.location === "worktree" ? "deferred" : "external");
+    if (target.location === "worktree") return skip("deferred");
+    // A pre-v1 block outside the repository still captures; leaving it is
+    // not a failure, only a missed upgrade.
+    return skip(next.migrates ? "kept" : "external");
   }
   // A pre-v1 invocation still captures on its own; a v1 block does nothing
   // until the entrypoint is staged. Never trade working capture for an inert one.
@@ -982,6 +1075,7 @@ export function inspectEffectiveGitHook(
     );
   }
   const userWired = range.kind === "absent" && isUserWired(content, spec);
+  const preferred = blockInsertionPoint(content, target.kind === "husky_v9", spec);
   const current = range.kind === "current" || range.kind === "newer" || userWired;
   const reason: ManagedHookInspection["reason"] =
     range.kind === "absent" && !userWired
@@ -990,11 +1084,13 @@ export function inspectEffectiveGitHook(
         ? "stale_block"
         : range.kind !== "absent" && terminatesBefore(content, insertion, range.start)
           ? "unreachable_block"
-          : !executable
-            ? "not_executable"
-            : base.entrypoint !== "ready"
-              ? "entrypoint_missing"
-              : undefined;
+          : range.kind !== "absent" && range.start < preferred
+            ? "misplaced_block"
+            : !executable
+              ? "not_executable"
+              : base.entrypoint !== "ready"
+                ? "entrypoint_missing"
+                : undefined;
   return {
     ...base,
     covered: reason === undefined,
@@ -1022,15 +1118,6 @@ function projectHooksPathIsConfigured(gitRoot: string): boolean {
   return false;
 }
 
-/**
- * Remove only this checkout's post-commit installation.
- *
- * An inherited global/system core.hooksPath is shared by every repository and
- * must be left to `hooks uninstall --scope user`. Its dispatcher chains to the
- * repository's common .git/hooks directory, which is the project artifact a
- * migration should remove.
- */
-
 /** Remove only Prim's block, deleting the file only when Prim created it. */
 export function uninstallEffectiveGitHook(
   hookName: ManagedGitHookName,
@@ -1052,6 +1139,11 @@ export function uninstallProjectGitHook(
   cwd: string = process.cwd(),
 ): UninstallHookResult {
   const target = projectGitHookTarget(hookName, cwd);
+  // Install never writes a shared hooks dir on this repository's behalf, so
+  // uninstall never strips one either.
+  if (target.location === "external") {
+    return { path: target.hookPath, changed: false, removedFile: false, skipped: "external" };
+  }
   return uninstallTarget(target, managedHookSpec(hookName));
 }
 

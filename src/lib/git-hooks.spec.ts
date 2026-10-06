@@ -21,6 +21,7 @@ import { stageFakeGitHookRuntime } from "./git-hook-runtime.testing.js";
 import {
   ensureEffectiveGitHook,
   ensureGitHookAtPath,
+  externalHookRemedy,
   inspectEffectiveGitHook,
   managedHookBlock,
   resolveEffectiveGitHook,
@@ -1127,5 +1128,128 @@ describe("recognizing prim in a hook file", () => {
     expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("stale_block");
     ensureEffectiveGitHook("post-commit", root, { context: "ambient" });
     expect(readFileSync(path, "utf8")).toBe(`#!/bin/sh\n${managedHookBlock("post-commit")}\n`);
+  });
+});
+
+describe("round-two review regressions", () => {
+  function globalConfig(): string {
+    const path = join(temp("rr-global"), "config");
+    writeFileSync(path, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", path);
+    return path;
+  }
+
+  it("names a remedy that fits where core.hooksPath is configured", () => {
+    const local = repository("remedy-local");
+    git(local, "config", "--local", "core.hooksPath", temp("remedy-local-hooks"));
+    expect(externalHookRemedy("post-commit", local)).toContain(
+      "this repository's core.hooksPath points outside it",
+    );
+    expect(externalHookRemedy("post-commit", local)).not.toContain("--scope user");
+
+    globalConfig();
+    const global = repository("remedy-global");
+    git(global, "config", "--global", "core.hooksPath", temp("remedy-global-hooks"));
+    expect(externalHookRemedy("post-commit", global)).toContain("prim hooks install --scope user");
+  });
+
+  it("keeps a working pre-v1 block in a shared dir instead of failing", () => {
+    globalConfig();
+    const root = repository("kept-legacy");
+    const hooks = temp("kept-legacy-hooks");
+    git(root, "config", "--global", "core.hooksPath", hooks);
+    const path = join(hooks, "post-commit");
+    const legacy = `#!/bin/sh\n${legacyInlineHookBlock("post-commit")}\n`;
+    writeFileSync(path, legacy, { mode: 0o755 });
+
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("kept");
+    expect(readFileSync(path, "utf8")).toBe(legacy);
+    expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
+      location: "external",
+      reason: "stale_block",
+    });
+  });
+
+  it("treats a hook inside a nested linked worktree as another worktree's", () => {
+    const root = repository("nested-main");
+    writeFileSync(join(root, "README.md"), "x\n");
+    git(root, "add", "README.md");
+    git(root, "commit", "-qm", "base");
+    const nested = join(root, ".worktrees", "wt");
+    git(root, "worktree", "add", "-qb", "nested", nested);
+    mkdirSync(join(nested, ".githooks"));
+    git(root, "config", "--local", "core.hooksPath", join(nested, ".githooks"));
+
+    expect(inspectEffectiveGitHook("post-commit", root).location).toBe("external");
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("external");
+  });
+
+  it("flags a block above husky.sh as misplaced, without failing coverage logic", () => {
+    const root = repository("misplaced-husky");
+    mkdirSync(join(root, ".husky", "_"), { recursive: true });
+    writeFileSync(join(root, ".husky", "_", "husky.sh"), "");
+    git(root, "config", "--local", "core.hooksPath", ".husky");
+    writeFileSync(
+      join(root, ".husky", "post-commit"),
+      `#!/usr/bin/env sh\n${managedHookBlock("post-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n`,
+      { mode: 0o755 },
+    );
+    expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
+      covered: false,
+      reason: "misplaced_block",
+    });
+  });
+
+  it.each([
+    ["a trailing comment", "npm test # prim-pre-commit"],
+    ["an echo string", 'echo "prim-pre-commit is disabled"'],
+    ["a quoted argument", "grep -q prim-pre-commit .git/hooks/pre-commit"],
+  ])("does not mistake %s for the user's own wiring", (_label, line) => {
+    const root = repository("not-user-wired");
+    const path = join(root, ".git", "hooks", "pre-commit");
+    writeFileSync(path, `#!/bin/sh\n${line}\n`, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("pre-commit", root).reason).toBe("missing_block");
+  });
+
+  it.each([
+    ["a bare call", "prim-pre-commit || true"],
+    ["a path call after env", 'FOO=1 exec "$HOME/.config/prim/prim-git-hook-v1" pre-commit "$@"'],
+  ])("recognizes %s as the user's own wiring", (_label, line) => {
+    const root = repository("user-wired-forms");
+    const path = join(root, ".git", "hooks", "pre-commit");
+    writeFileSync(path, `#!/bin/sh\n${line}\n`, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("pre-commit", root)).toMatchObject({ wiring: "user" });
+  });
+
+  it.each([
+    [
+      "a deleted newline",
+      (block: string) => block.replace('"${prim_rewrite_stdin}"\nfi', '"${prim_rewrite_stdin}" fi'),
+    ],
+    [
+      "respaced quoted text",
+      (block: string) => block.replace("prim_absolute() {", "prim_absolute()  {"),
+    ],
+  ])("treats %s inside a block as a change", (_label, edit) => {
+    const root = repository("hand-edit");
+    const path = join(root, ".git", "hooks", "post-rewrite");
+    const edited = edit(managedHookBlock("post-rewrite"));
+    expect(edited).not.toBe(managedHookBlock("post-rewrite"));
+    writeFileSync(path, `#!/bin/sh\n${edited}\n`, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("post-rewrite", root).reason).toBe("stale_block");
+  });
+
+  it("never strips a shared hooks dir on project uninstall", () => {
+    const root = repository("uninstall-shared");
+    const shared = temp("uninstall-shared-hooks");
+    git(root, "config", "--local", "core.hooksPath", shared);
+    const path = join(shared, "post-commit");
+    const content = `#!/bin/sh\n${managedHookBlock("post-commit")}\nteam\n`;
+    writeFileSync(path, content, { mode: 0o755 });
+    expect(uninstallProjectGitHook("post-commit", root)).toMatchObject({
+      changed: false,
+      skipped: "external",
+    });
+    expect(readFileSync(path, "utf8")).toBe(content);
   });
 });

@@ -61,6 +61,7 @@ import {
 import {
   type ManagedGitHookName,
   type ManagedHookInspection,
+  externalHookRemedy,
   inspectEffectiveGitHook,
 } from "../lib/git-hooks.js";
 import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
@@ -606,9 +607,10 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
     case "missing_block":
     case "stale_block":
     case "unreachable_block":
+    case "misplaced_block":
       if (inspection.location === "prim") return "run `prim enable` to refresh prim's global hooks";
       if (inspection.location === "external") {
-        return `outside this repository — wire it with \`prim hooks install --scope user --global-hooks-path\` or \`prim hooks snippet ${inspection.hookName}\``;
+        return `outside this repository — ${externalHookRemedy(inspection.hookName, inspection.gitRoot)}`;
       }
       return "run `prim hooks install`";
     case "entrypoint_missing":
@@ -641,9 +643,14 @@ export function classifyManagedHook(
     };
   }
   const remedy = managedHookRemedy(inspection);
+  // Capture still works in these cases: a pre-v1 block prim may not upgrade
+  // (outside the repository), and a block that runs twice (above husky.sh).
+  const stillCaptures =
+    (reason === "stale_block" && inspection.location === "external") ||
+    reason === "misplaced_block";
   return {
     name: hookName,
-    status: hookName === "pre-commit" ? "warn" : "fail",
+    status: hookName === "pre-commit" || stillCaptures ? "warn" : "fail",
     detail: `${reason}${remedy ? ` · ${remedy}` : ""} · ${inspection.hookPath}`,
   };
 }
