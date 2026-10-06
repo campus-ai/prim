@@ -242,7 +242,9 @@ function detectProjectConflicts(agent: SetupAgent, run: RunFn): string[] {
     if (
       preCommit &&
       existsSync(preCommit) &&
-      readFileSync(preCommit, "utf-8").includes("prim-pre-commit")
+      /prim-pre-commit|prim-managed-hook|# >>> prim pre-commit hook >>>/u.test(
+        readFileSync(preCommit, "utf-8"),
+      )
     ) {
       conflicts.push(CONFLICT_HOOKS);
     }

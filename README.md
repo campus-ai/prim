@@ -321,15 +321,30 @@ authorizes one retry for the named decision.
 ### Hooks
 
 ```bash
-prim hooks install     # Install git hooks (pre-commit decision check + post-commit capture)
-prim hooks uninstall   # Remove the prim git hooks
+prim hooks install                # Install git hooks (pre-commit check + post-commit/post-rewrite capture)
+prim hooks script post-commit     # Print a hook script's path (STDOUT) and its wiring block (STDERR)
+prim hooks uninstall              # Remove the prim git hooks
 ```
 
 The pre-commit hook checks staged files against the live decision graph
-(warn-only — it never blocks the commit). The post-commit hook records each
-commit as a capture boundary for classification. Supports
-[Husky](https://typicode.github.io/husky/) — `prim hooks install` detects Husky
-and offers to install into `.husky/`.
+(warn-only — it never blocks the commit). The post-commit and post-rewrite
+hooks record each commit and amend/rebase as capture boundaries for
+classification. Supports [Husky](https://typicode.github.io/husky/) —
+`prim hooks install` detects Husky and offers to install into `.husky/`.
+
+The hook logic lives in prim-owned scripts under
+`~/.config/prim/git-hook-scripts/` (`pre-commit`, `post-commit`,
+`post-rewrite`), refreshed on every install, `prim enable`, and agent session.
+Hook files only receive a short block, appended at the end, that sources the
+script; it never changes across releases, is shellcheck/shfmt-clean, and is a
+no-op on machines without prim. A hook that `exit`s or `exec`s before the block
+never reaches it — move the block earlier if so.
+
+To wire the scripts yourself (lefthook, a custom Husky layout, …), run
+`git config prim.gitHooks manual` (or `--global`): prim then never touches hook
+files, and `prim doctor` reports the hooks as `manual` instead of failing.
+Source the script from a hook (`prim hooks script <hook>` prints the block), or
+run it directly; post-rewrite needs Git's stdin.
 
 ### Presence statusline
 

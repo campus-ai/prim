@@ -15,16 +15,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { packageVersion, pinnedNpxCommand } from "./bin-path.js";
+import { primConfigDirectory } from "./paths.js";
 import {
   PRIM_POST_COMMIT_BLOCK_END,
   PRIM_POST_COMMIT_BLOCK_START,
   ensureEffectivePostCommitHook,
   ensurePostCommitHookAtPath,
+  gitHookScript,
+  gitHookScriptPath,
   inspectEffectivePostCommitHook,
+  managedHookBlock,
   postCommitHookBlock,
   resolveEffectivePostCommitHook,
   uninstallEffectivePostCommitHook,
   uninstallProjectPostCommitHook,
+  writeGitHookScripts,
 } from "./post-commit-hook.js";
 
 const roots: string[] = [];
@@ -104,9 +109,17 @@ function repository(name: string): string {
   return root;
 }
 
+// The block a release before git-hook scripts inlined (version-pinned).
+const LEGACY_INLINE_BLOCK = `${PRIM_POST_COMMIT_BLOCK_START}
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+  npx --yes --ignore-scripts -p @primitive.ai/prim@0.1.0-alpha.93 prim-post-commit
+fi
+${PRIM_POST_COMMIT_BLOCK_END}`;
+
 beforeEach(() => {
   vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
   vi.stubEnv("GIT_CONFIG_SYSTEM", "/dev/null");
+  vi.stubEnv("PRIM_CONFIG_DIR", temp("config"));
 });
 
 afterEach(() => {
@@ -202,11 +215,8 @@ describe("effective post-commit hook", () => {
     git(root, "config", "--local", "core.hooksPath", ".husky/_");
 
     expect(() => ensureEffectivePostCommitHook(root)).not.toThrow();
-    expect(readFileSync(join(root, ".husky", "post-commit"), "utf8")).toMatch(
-      /^# >>> prim post-commit hook >>>/u,
-    );
-    expect(readFileSync(join(root, ".husky", "post-commit"), "utf8")).toContain(
-      "printf 'foreign husky\\n'",
+    expect(readFileSync(join(root, ".husky", "post-commit"), "utf8")).toBe(
+      `printf 'foreign husky\\n'\n${postCommitHookBlock()}\n`,
     );
     expect(inspectEffectivePostCommitHook(root)).toMatchObject({
       covered: true,
@@ -267,15 +277,30 @@ describe("effective post-commit hook", () => {
     ).toEqual(foreign);
     expect(lstatSync(path).mode & 0o777).toBe(0o740);
 
-    const stale = installed
-      .toString("utf8")
-      .replace("prim_post_commit_ran=0", "prim_post_commit_ran=obsolete");
+    const stale = installed.toString("utf8").replace(postCommitHookBlock(), LEGACY_INLINE_BLOCK);
     writeFileSync(path, stale, { mode: 0o740 });
     ensureEffectivePostCommitHook(root);
     const refreshed = readFileSync(path, "utf8");
-    expect(refreshed).toContain("prim_post_commit_ran=0");
-    expect(refreshed).not.toContain("obsolete");
+    expect(refreshed).toBe(installed.toString("utf8"));
     expect(refreshed.replace(`${postCommitHookBlock()}\n`, "")).toBe(foreign.toString("utf8"));
+  });
+
+  it("replaces a pre-script inline block once, in place, then never rewrites it", () => {
+    const root = repository("migrate-inline");
+    const path = join(root, ".git", "hooks", "post-commit");
+    const head = "#!/bin/sh\n";
+    const tail = "printf 'foreign tail\\n'\n";
+    writeFileSync(path, `${head}${LEGACY_INLINE_BLOCK}\n${tail}`, { mode: 0o755 });
+    expect(inspectEffectivePostCommitHook(root)).toMatchObject({
+      covered: false,
+      reason: "stale_block",
+    });
+
+    expect(ensureEffectivePostCommitHook(root).changed).toBe(true);
+    const migrated = readFileSync(path, "utf8");
+    expect(migrated).toBe(`${head}${postCommitHookBlock()}\n${tail}`);
+    expect(ensureEffectivePostCommitHook(root).changed).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(migrated);
   });
 
   it("rejects malformed markers, binary files, symlinks, and missing Husky dispatchers", () => {
@@ -326,38 +351,60 @@ describe("effective post-commit hook", () => {
   it.each([
     ["exit", "#!/bin/sh\nprintf foreign\nexit 0\n"],
     ["exec", '#!/bin/sh\nexec other-hook "$@"\n'],
-    ["return", "#!/bin/sh\nreturn 0\n"],
-  ])("positions Prim before foreign %s control flow", (_label, source) => {
-    const root = repository("foreign-control-flow");
+    ["no trailing newline", "#!/bin/sh\nprintf foreign"],
+  ])("appends after foreign content (%s) and uninstalls cleanly", (_label, source) => {
+    const root = repository("foreign-append");
     const path = join(root, ".git", "hooks", "post-commit");
     writeFileSync(path, source, { mode: 0o755 });
 
     ensureEffectivePostCommitHook(root);
-    const installed = readFileSync(path, "utf8");
-    expect(installed.indexOf(PRIM_POST_COMMIT_BLOCK_START)).toBe("#!/bin/sh\n".length);
-    expect(installed.indexOf(PRIM_POST_COMMIT_BLOCK_END)).toBeLessThan(
-      installed.indexOf(source.split("\n")[1] ?? "missing"),
-    );
+    const separator = source.endsWith("\n") ? "" : "\n";
+    expect(readFileSync(path, "utf8")).toBe(`${source}${separator}${postCommitHookBlock()}\n`);
     expect(inspectEffectivePostCommitHook(root).covered).toBe(true);
 
     uninstallEffectivePostCommitHook(root);
-    expect(readFileSync(path, "utf8")).toBe(source);
+    expect(readFileSync(path, "utf8")).toBe(`${source}${separator}`);
   });
 
-  it("repairs a current but late block by moving it immediately after the shebang", () => {
+  it("accepts a current block anywhere and never moves it", () => {
     const root = repository("late-block");
     const path = join(root, ".git", "hooks", "post-commit");
-    const foreign = "printf foreign\nexit 0\n";
-    writeFileSync(path, `#!/bin/sh\n${foreign}${postCommitHookBlock()}\n`, { mode: 0o755 });
+    const content = `#!/bin/sh\nprintf foreign\n${postCommitHookBlock()}\nprintf after\n`;
+    writeFileSync(path, content, { mode: 0o755 });
+    writeGitHookScripts();
 
+    expect(inspectEffectivePostCommitHook(root).covered).toBe(true);
+    expect(ensureEffectivePostCommitHook(root).changed).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(content);
+  });
+
+  it("leaves hook files untouched and reports manual under prim.gitHooks=manual", () => {
+    const root = repository("manual");
+    const path = join(root, ".git", "hooks", "post-commit");
+    const source = "#!/bin/sh\nprintf foreign\n";
+    writeFileSync(path, source, { mode: 0o755 });
+    git(root, "config", "--local", "prim.gitHooks", "manual");
+
+    expect(ensureEffectivePostCommitHook(root)).toMatchObject({ changed: false, manual: true });
+    expect(readFileSync(path, "utf8")).toBe(source);
+    expect(readFileSync(gitHookScriptPath("post-commit"), "utf8")).toBe(
+      gitHookScript("post-commit"),
+    );
     expect(inspectEffectivePostCommitHook(root)).toMatchObject({
       covered: false,
-      reason: "unreachable_block",
+      reason: "manual",
     });
+  });
+
+  it("reports script_missing when the sourced script is absent", () => {
+    const root = repository("script-missing");
     ensureEffectivePostCommitHook(root);
-    const repaired = readFileSync(path, "utf8");
-    expect(repaired.indexOf(PRIM_POST_COMMIT_BLOCK_START)).toBe("#!/bin/sh\n".length);
-    expect(repaired).toContain(foreign);
+    expect(inspectEffectivePostCommitHook(root).covered).toBe(true);
+    rmSync(gitHookScriptPath("post-commit"));
+    expect(inspectEffectivePostCommitHook(root)).toMatchObject({
+      covered: false,
+      reason: "script_missing",
+    });
   });
 
   it("publishes rewrites atomically without leaving temporary files", () => {
@@ -652,29 +699,76 @@ printf 'foreign tail\\n'
     expect(readFileSync(path, "utf8")).toBe(foreign);
   });
 
-  it("keeps the portable block free of checkout-specific absolute paths", () => {
+  it("keeps the wired block version-stable and free of absolute paths", () => {
     const root = repository("portable");
-    expect(postCommitHookBlock()).not.toContain(root);
-    expect(postCommitHookBlock()).toContain(pinnedNpxCommand("prim-post-commit"));
-    expect(postCommitHookBlock()).toContain(`@primitive.ai/prim@${packageVersion()}`);
-    expect(postCommitHookBlock()).toContain("--ignore-scripts");
-    expect(postCommitHookBlock()).not.toContain("@latest");
-    expect(postCommitHookBlock()).toContain("prim-post-commit");
-    expect(postCommitHookBlock()).toContain(
-      "prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null)",
+    for (const hook of ["pre-commit", "post-commit", "post-rewrite"] as const) {
+      const block = managedHookBlock(hook);
+      expect(block).not.toContain(root);
+      expect(block).not.toContain(String(packageVersion()));
+      expect(block).not.toContain(process.execPath);
+      expect(block).toContain(`/git-hook-scripts/${hook}"`);
+    }
+  });
+
+  it.each([
+    ["PRIM_CONFIG_DIR", { PRIM_CONFIG_DIR: "/opt/prim-config", HOME: "/home/u" }],
+    ["XDG_CONFIG_HOME", { XDG_CONFIG_HOME: "/xdg", HOME: "/home/u" }],
+    ["HOME", { HOME: "/home/u" }],
+  ])("resolves the sourced script like primConfigDirectory (%s)", (_label, env) => {
+    const block = managedHookBlock("post-commit");
+    const assignment = block.split("\n").find((line) => line.startsWith("prim_hook=")) ?? "";
+    const resolved = execFileSync("/bin/sh", ["-c", `${assignment}\nprintf %s "$prim_hook"`], {
+      env: { PATH: process.env.PATH, ...env },
+      encoding: "utf8",
+    });
+    expect(resolved).toBe(
+      join(primConfigDirectory({ env, homeDir: env.HOME }), "git-hook-scripts", "post-commit"),
     );
-    expect(postCommitHookBlock()).toContain(
+  });
+
+  it("is a silent no-op where the script is absent", () => {
+    const result = execFileSync(
+      "/bin/sh",
+      ["-eu", "-c", `${managedHookBlock("post-commit")}\nprintf done`],
+      {
+        env: { PATH: process.env.PATH, PRIM_CONFIG_DIR: temp("empty-config") },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    expect(result).toBe("done");
+  });
+
+  it("writes gated, executable scripts idempotently", () => {
+    writeGitHookScripts();
+    const path = gitHookScriptPath("pre-commit");
+    const before = lstatSync(path);
+    writeGitHookScripts();
+    expect(lstatSync(path).mtimeMs).toBe(before.mtimeMs);
+    for (const hook of ["pre-commit", "post-commit", "post-rewrite"] as const) {
+      const script = readFileSync(gitHookScriptPath(hook), "utf8");
+      expect(lstatSync(gitHookScriptPath(hook)).mode & 0o777).toBe(0o755);
+      expect(script).toBe(gitHookScript(hook));
+      expect(script).toContain('if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]');
+      expect(script).not.toMatch(/^\s*exit\b/mu);
+    }
+  });
+
+  it("keeps the post-commit script free of checkout-specific absolute paths", () => {
+    const root = repository("portable-script");
+    const script = gitHookScript("post-commit");
+    expect(script).not.toContain(root);
+    expect(script).toContain(pinnedNpxCommand("prim-post-commit"));
+    expect(script).toContain(`@primitive.ai/prim@${packageVersion()}`);
+    expect(script).toContain("--ignore-scripts");
+    expect(script).not.toContain("@latest");
+    expect(script).toContain("prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null)");
+    expect(script).toContain(
       'export PRIM_COMMIT_SHA="$prim_commit_sha" PRIM_COMMIT_BRANCH="$prim_commit_branch"',
     );
-    expect(postCommitHookBlock()).toContain(
-      'PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"',
-    );
-    expect(postCommitHookBlock()).toContain(
-      'mktemp "${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX"',
-    );
-    expect(postCommitHookBlock()).toContain(
-      '"$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &',
-    );
-    expect(postCommitHookBlock()).not.toContain("./node_modules/.bin/prim-post-commit");
+    expect(script).toContain('PRIM_COMMIT_OBSERVED_FILE="$prim_commit_observed_file"');
+    expect(script).toContain('mktemp "${TMPDIR:-/tmp}/prim-post-commit-observed.XXXXXXXX"');
+    expect(script).toContain('"$prim_node" "$prim_entry" ) </dev/null >/dev/null 2>&1 &');
+    expect(script).not.toContain("./node_modules/.bin/prim-post-commit");
   });
 });

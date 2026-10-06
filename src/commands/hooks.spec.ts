@@ -52,14 +52,17 @@ vi.mock("../lib/post-commit-hook.js", () => ({
     changed: true,
     kind: "direct",
   })),
-  postCommitHookBlock: vi.fn(
-    () =>
-      '# >>> prim post-commit hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  prim-post-commit\nfi\n# <<< prim post-commit hook <<<',
+  GIT_HOOK_SCRIPT_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
+  managedHookBlock: vi.fn(
+    (hook: string) =>
+      `# >>> prim ${hook} hook >>>\nprim_hook="\${PRIM_CONFIG_DIR:-\${XDG_CONFIG_HOME:-\${HOME:-}/.config}/prim}/git-hook-scripts/${hook}"\n# shellcheck source=/dev/null\ntest ! -f "\${prim_hook}" || . "\${prim_hook}"\nunset prim_hook\n# <<< prim ${hook} hook <<<`,
   ),
-  postRewriteHookBlock: vi.fn(
-    () =>
-      '# >>> prim post-rewrite hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  exec < "$prim_rewrite_pairs_file"\n  prim-post-rewrite\nfi\n# <<< prim post-rewrite hook <<<',
-  ),
+  gitHookScript: vi.fn((hook: string) => `#!/bin/sh\n# prim ${hook} script\n`),
+  gitHookScriptPath: vi.fn((hook: string) => `/fake/config/prim/git-hook-scripts/${hook}`),
+  gitHookScriptsDirectory: vi.fn(() => "/fake/config/prim/git-hook-scripts"),
+  gitHooksManual: vi.fn(() => false),
+  writeGitHookScripts: vi.fn(),
+  removeGitHookScripts: vi.fn(),
   uninstallProjectPostCommitHook: vi.fn(() => ({
     path: "/fake/root/.git/hooks/post-commit",
     changed: true,
@@ -112,8 +115,12 @@ import {
   ensureEffectivePostRewriteHook,
   ensurePostCommitHookAtPath,
   ensurePostRewriteHookAtPath,
+  gitHooksManual,
+  managedHookBlock,
+  removeGitHookScripts,
   uninstallProjectPostCommitHook,
   uninstallProjectPostRewriteHook,
+  writeGitHookScripts,
 } from "../lib/post-commit-hook.js";
 import {
   PRIM_BLOCK_END,
@@ -144,6 +151,9 @@ const mockedEnsurePostCommitHookAtPath = vi.mocked(ensurePostCommitHookAtPath);
 const mockedEnsurePostRewriteHookAtPath = vi.mocked(ensurePostRewriteHookAtPath);
 const mockedUninstallProjectPostCommitHook = vi.mocked(uninstallProjectPostCommitHook);
 const mockedUninstallProjectPostRewriteHook = vi.mocked(uninstallProjectPostRewriteHook);
+const mockedGitHooksManual = vi.mocked(gitHooksManual);
+const mockedWriteGitHookScripts = vi.mocked(writeGitHookScripts);
+const mockedRemoveGitHookScripts = vi.mocked(removeGitHookScripts);
 
 // core.hooksPath read for a given config level; `git config <level> --get …`.
 const isGet = (args: readonly string[], level: string): boolean =>
@@ -355,10 +365,9 @@ describe("installToHusky", () => {
     installToHusky("/repo");
 
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    const written = mockedWriteFileSync.mock.calls[0][1] as string;
-    expect(written).toContain(existingContent);
-    expect(written).toContain(PRIM_BLOCK_START);
-    expect(written).toContain("prim-pre-commit");
+    expect(mockedWriteFileSync.mock.calls[0][1]).toBe(
+      `${existingContent}\n${managedHookBlock("pre-commit")}\n`,
+    );
   });
 
   it("refreshes a stale marked block when prim is already installed", () => {
@@ -370,7 +379,9 @@ describe("installToHusky", () => {
     installToHusky("/repo");
 
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    expect(String(mockedWriteFileSync.mock.calls[0][1])).toContain("prim-pre-commit");
+    expect(mockedWriteFileSync.mock.calls[0][1]).toBe(
+      `#!/bin/sh\n${managedHookBlock("pre-commit")}\n`,
+    );
   });
 });
 
@@ -407,7 +418,8 @@ describe("installToDotGit", () => {
     expect(mockedWriteFileSync).toHaveBeenCalledOnce();
     const [path, content, opts] = mockedWriteFileSync.mock.calls[0];
     expect(path).toBe("/repo/.git/hooks/pre-commit");
-    expect(content).toContain("prim-pre-commit");
+    expect(content).toContain("prim-managed-hook");
+    expect(content).toContain(managedHookBlock("pre-commit"));
     expect(opts).toEqual({ mode: 0o755 });
   });
 
@@ -592,34 +604,27 @@ describe("installGlobalHooks (user scope)", () => {
     const pre = byPath.get(join(PRIM_GIT_HOOKS_DIR, "pre-commit")) ?? "";
     const post = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-commit")) ?? "";
     const rewrite = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-rewrite")) ?? "";
-    // Opt-in gate: prim runs only where prim.active is true.
-    expect(pre).toContain("git config --get prim.active");
     // --git-common-dir is NOT core.hooksPath-aware, so the chain never points at
     // this script; --git-path would be self-referential and must not appear.
     expect(pre).toContain("git rev-parse --git-common-dir");
     expect(pre).not.toContain("--git-path");
     expect(pre).toContain('"$repo_hook" "$@" || exit $?'); // a repo pre-commit can still block
-    expect(pre).toContain("} || true"); // prim never breaks a commit
-    expect(pre).toContain("[ -x '/opt/prim/node' ]");
-    expect(pre).toContain("@primitive.ai/prim@0.1.0-alpha.55 prim-pre-commit");
-    expect(pre).not.toContain("command -v");
-    expect(pre).not.toContain("./node_modules");
-    expect(pre).not.toMatch(/@latest|@primitive\.ai\/prim\s/);
     expect(post).toContain('"$repo_hook" "$@" || true'); // post-commit cannot block
-    expect(rewrite).toContain('exec < "$prim_rewrite_pairs_file"');
     expect(rewrite).toContain('"$repo_hook" "$@" || true');
+    // Each hook sources its version-stable block (the scripts gate on
+    // prim.active); post-rewrite sources first so stdin is re-armed for the chain.
+    for (const [hook, script] of [
+      ["pre-commit", pre],
+      ["post-commit", post],
+      ["post-rewrite", rewrite],
+    ] as const) {
+      expect(script).toContain(managedHookBlock(hook));
+      expect(script).not.toMatch(/@primitive\.ai\/prim@/);
+    }
     expect(rewrite.indexOf("# >>> prim post-rewrite hook >>>")).toBeLessThan(
       rewrite.indexOf("# prim global post-rewrite hook"),
     );
-    // STRUCTURAL: the prim invocation must be NESTED inside the gate — between
-    // the `prim.active` check and the chain — not merely present somewhere.
-    // Independent `toContain`s would pass on an ungated invocation (the H2 bug).
-    const gateAt = pre.indexOf("git config --get prim.active");
-    const binAt = pre.indexOf("prim-pre-commit");
-    const chainAt = pre.indexOf("common_dir=");
-    expect(gateAt).toBeGreaterThan(-1);
-    expect(binAt).toBeGreaterThan(gateAt); // invocation is after the gate opens
-    expect(binAt).toBeLessThan(chainAt); // and before the chain — i.e. inside the gate
+    expect(pre.indexOf(PRIM_BLOCK_START)).toBeLessThan(pre.indexOf("common_dir="));
   });
 
   it("does not chain a project-managed post-rewrite hook after a user-scope migration", async () => {
@@ -668,6 +673,7 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
       actualChildProcess.execFileSync(globalHook, ["rebase"], {
         env: {
           ...process.env,
+          PRIM_CONFIG_DIR: directory,
           PATH: `${binDirectory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
           PRIM_TEST_COMMON_DIR: join(directory, "common"),
           PRIM_TEST_REPO_CHAIN_LOG: chainLog,
@@ -783,11 +789,22 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     const pre = mockedWriteFileSync.mock.calls.find(
       (c) => String(c[0]) === join(existing, "pre-commit"),
     )?.[1] as string;
-    expect(pre).toContain(PRIM_BLOCK_START); // a marker block, not the standalone script
-    expect(pre).toContain("prim-pre-commit");
-    // H2 fix: the coexist-append block is GATED too, so user scope stays opt-in
-    // even when appended into a foreign core.hooksPath dir.
-    expect(pre).toContain("git config --get prim.active");
+    // A version-stable block sourcing the (prim.active-gated) script, not the
+    // standalone global script.
+    expect(pre).toContain(managedHookBlock("pre-commit"));
+    expect(pre).not.toContain("common_dir=");
+  });
+
+  it("leaves hook files and the pointer alone under prim.gitHooks=manual", () => {
+    mockedGitHooksManual.mockReturnValue(true);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    installGlobalHooks();
+    expect(mockedWriteGitHookScripts).toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
+    errSpy.mockRestore();
   });
 
   it("expands a leading ~ in the existing global hooksPath before writing", () => {
@@ -823,6 +840,57 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
   });
 });
 
+describe("hooks install (project scope) manual mode", () => {
+  it("refreshes scripts but never touches hook files", async () => {
+    mockedGitHooksManual.mockReturnValue(true);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    program.option("-y, --yes").exitOverride();
+    registerHooksCommands(program);
+    await program.parseAsync(["hooks", "install", "--target=husky"], { from: "user" });
+    expect(mockedWriteGitHookScripts).toHaveBeenCalled();
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsureEffectivePostCommitHook).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
+    errSpy.mockRestore();
+  });
+});
+
+describe("hooks script", () => {
+  async function run(...args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const program = new Command().exitOverride();
+      registerHooksCommands(program);
+      await program.parseAsync(["hooks", "script", ...args], { from: "user" });
+      return {
+        stdout: stdout.mock.calls.map((c) => String(c[0])).join(""),
+        stderr: stderr.mock.calls.map((c) => String(c[0])).join(""),
+      };
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  }
+
+  it("refreshes the script, prints its path on STDOUT and the wiring block on STDERR", async () => {
+    const { stdout, stderr } = await run("post-commit");
+    expect(mockedWriteGitHookScripts).toHaveBeenCalled();
+    expect(stdout).toBe("/fake/config/prim/git-hook-scripts/post-commit\n");
+    expect(stderr).toBe(`${managedHookBlock("post-commit")}\n`);
+  });
+
+  it("prints the script body with --print", async () => {
+    const { stdout } = await run("post-rewrite", "--print");
+    expect(stdout).toBe("#!/bin/sh\n# prim post-rewrite script\n");
+  });
+
+  it("rejects an unknown hook", async () => {
+    await expect(run("pre-push")).rejects.toMatchObject({ code: "commander.invalidArgument" });
+  });
+});
+
 describe("uninstallGlobalHooks (user scope)", () => {
   it("removes prim scripts and unsets core.hooksPath when it is still ours", () => {
     stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
@@ -852,6 +920,35 @@ describe("uninstallGlobalHooks (user scope)", () => {
       ["config", "--global", "--unset", "core.hooksPath"],
       expect.objectContaining({ timeout: 1_000 }),
     );
+    expect(mockedRemoveGitHookScripts).toHaveBeenCalled();
+  });
+
+  it("recognizes owned post-commit/post-rewrite files that inline an older block", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    installGlobalHooks();
+    const older = new Map(
+      ["post-commit", "post-rewrite"].map((hook) => {
+        const current = String(
+          mockedWriteFileSync.mock.calls.find(
+            ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, hook),
+          )?.[1] ?? "",
+        );
+        const inline = `# >>> prim ${hook} hook >>>\nnpx --yes -p @primitive.ai/prim@0.1.0-alpha.93 prim-${hook}\n# <<< prim ${hook} hook <<<`;
+        return [
+          join(PRIM_GIT_HOOKS_DIR, hook),
+          current.replace(managedHookBlock(hook as "post-commit"), inline),
+        ];
+      }),
+    );
+    mockedReaddirSync.mockReturnValue(["post-commit", "post-rewrite"]);
+    mockedReadFileSync.mockImplementation((path) => older.get(String(path)) ?? "");
+    mockedUnlinkSync.mockClear();
+
+    uninstallGlobalHooks();
+
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(PRIM_GIT_HOOKS_DIR, "post-commit"));
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(PRIM_GIT_HOOKS_DIR, "post-rewrite"));
   });
 
   it("fails closed without unsetting core.hooksPath when Prim's directory has a foreign entry", () => {
@@ -910,9 +1007,14 @@ describe("uninstallGlobalHooks (user scope)", () => {
         ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "pre-commit"),
       )?.[1] ?? "",
     );
-    const older = current
-      .replaceAll("/opt/prim/", "/old/prim/")
-      .replace("@primitive.ai/prim@0.1.0-alpha.55", "@primitive.ai/prim@0.1.0-alpha.54");
+    // Releases before git-hook scripts inlined a gated, version-pinned shim.
+    const older = current.replace(
+      managedHookBlock("pre-commit"),
+      `if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/prim-pre-commit.js' ]; then '/old/prim/node' '/old/prim/prim-pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
+fi`,
+    );
+    expect(older).not.toBe(current);
     mockedReaddirSync.mockReturnValue(["pre-commit"]);
     mockedReadFileSync.mockReturnValue(older);
     mockedExecFileSync.mockClear();

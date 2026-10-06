@@ -11,14 +11,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pinnedNpxCommand } from "./bin-path.js";
 import {
   PRIM_POST_REWRITE_BLOCK_END,
   PRIM_POST_REWRITE_BLOCK_START,
   ensurePostRewriteHookAtPath,
+  gitHookScript,
   postRewriteHookBlock,
   uninstallPostRewriteHookAtPath,
+  writeGitHookScripts,
 } from "./post-commit-hook.js";
 
 const temporaryDirectories: string[] = [];
@@ -64,6 +66,7 @@ function initializedRepository(): HookRepo {
   git(root, ["config", "commit.gpgsign", "false"]);
   git(root, ["config", "prim.active", "true"]);
   git(root, ["config", "core.hooksPath", ".git/hooks"]);
+  writeGitHookScripts();
   const cacheHome = temporaryDirectory("prim-post-rewrite-cache-");
   const binDir = join(cacheHome, "prim", "bin");
   mkdirSync(binDir, { recursive: true });
@@ -142,7 +145,12 @@ function expectLauncherFilesRemoved(repo: HookRepo): void {
   expect(readdirSync(repo.tempDir)).toEqual([]);
 }
 
+beforeEach(() => {
+  vi.stubEnv("PRIM_CONFIG_DIR", temporaryDirectory("prim-post-rewrite-config-"));
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -150,9 +158,11 @@ afterEach(() => {
 
 describe("post-rewrite managed hook", () => {
   it("captures synchronously, re-arms stdin, and launches through every fail-soft branch", () => {
-    const block = postRewriteHookBlock();
-    expect(block).toContain(PRIM_POST_REWRITE_BLOCK_START);
-    expect(block).toContain(PRIM_POST_REWRITE_BLOCK_END);
+    expect(postRewriteHookBlock()).toContain(PRIM_POST_REWRITE_BLOCK_START);
+    expect(postRewriteHookBlock()).toContain(PRIM_POST_REWRITE_BLOCK_END);
+    // The block sources the script, so its `exec <` re-arms the hook's own stdin.
+    expect(postRewriteHookBlock()).toContain('. "${prim_hook}"');
+    const block = gitHookScript("post-rewrite");
     expect(block).toContain('case "$1" in amend|rebase)');
     expect(block).toContain('cat > "$prim_rewrite_pairs_file"');
     expect(block).toContain('exec < "$prim_rewrite_pairs_file"');
@@ -168,7 +178,7 @@ describe("post-rewrite managed hook", () => {
     expect(block).toContain("rm -f");
   });
 
-  it("merges idempotently after the shebang and removes only its own created scaffold", () => {
+  it("merges idempotently and removes only its own created scaffold", () => {
     const directory = temporaryDirectory("prim-post-rewrite-engine-");
     const path = join(directory, "post-rewrite");
     const first = ensurePostRewriteHookAtPath(path);

@@ -230,10 +230,10 @@ user` where noted, then `prim enable` in each repo you want captured.
    with the explicit `--no-daemon` opt-out; otherwise a failed health check makes
    setup incomplete.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
-   pre-commit decision check plus a post-commit capture boundary. Add `--scope
-   user` to install one global `core.hooksPath` covering every repo (the hooks
-   fire everywhere but only act where activated — see step 7). Separate from the
-   session hooks in step 3.
+   pre-commit decision check plus post-commit and post-rewrite capture boundaries.
+   Add `--scope user` to install one global `core.hooksPath` covering every repo
+   (the hooks fire everywhere but only act where activated — see step 7).
+   Separate from the session hooks in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
    (claude/cursor/codex/hermes). Teaches you to work with the decision graph. For
    **claude** it installs a skills-directory plugin at `<repo>/.claude/skills/prim/`

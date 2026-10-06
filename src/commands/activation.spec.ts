@@ -117,6 +117,23 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
+  it("enables under prim.gitHooks=manual and says the hook files were left untouched", async () => {
+    inRepo("/repo");
+    vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
+      path: "/repo/.husky/post-commit",
+      changed: false,
+      kind: "husky_v9",
+      manual: true,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it("refreshes both owned global hooks before checking effective coverage", async () => {
     inRepo("/repo");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

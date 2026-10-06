@@ -871,6 +871,22 @@ describe("effective post-commit diagnostics", () => {
       detail: expect.stringContaining("not_executable"),
     });
   });
+
+  it("fails when the sourced script is missing", () => {
+    expect(
+      classifyPostCommitHook({ ...inspection, covered: false, reason: "script_missing" }),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining("script_missing") });
+  });
+
+  it("warns, rather than fails, under prim.gitHooks=manual", () => {
+    expect(
+      classifyPostCommitHook({ ...inspection, covered: false, current: false, reason: "manual" }),
+    ).toMatchObject({
+      name: "post-commit",
+      status: "warn",
+      detail: expect.stringContaining("prim hooks script post-commit"),
+    });
+  });
 });
 
 describe("effective post-rewrite diagnostics", () => {

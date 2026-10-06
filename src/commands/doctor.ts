@@ -610,6 +610,13 @@ export function classifyManagedHook(
       detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
     };
   }
+  if (inspection.reason === "manual") {
+    return {
+      name: hookName,
+      status: "warn",
+      detail: `manual (prim.gitHooks=manual) · wire via \`prim hooks script ${hookName}\` · ${inspection.hookPath}`,
+    };
+  }
   return {
     name: hookName,
     status: "fail",

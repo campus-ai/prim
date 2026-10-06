@@ -11,14 +11,18 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmdirSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { atomicWriteFile } from "./atomic-file.js";
 import { GIT_HOOK_CACHE_SHELL_DIR, GIT_HOOK_CACHE_TTL_MINUTES } from "./bin-cache.js";
-import { pinnedNpxCommand } from "./bin-path.js";
+import { pinnedHookCommand, pinnedNpxCommand } from "./bin-path.js";
 import { gitToplevel } from "./git.js";
+import { primConfigDirectory } from "./paths.js";
 
 export const PRIM_POST_COMMIT_BLOCK_START = "# >>> prim post-commit hook >>>";
 export const PRIM_POST_COMMIT_BLOCK_END = "# <<< prim post-commit hook <<<";
@@ -60,8 +64,12 @@ const HUSKY_V9_RUNTIME_HASHES = new Set([
   "70200b200ca709b0622784f93839a5b2872333a917a09afddefd7dc2d8cdc680",
 ]);
 
+export const GIT_HOOK_SCRIPT_NAMES = ["pre-commit", "post-commit", "post-rewrite"] as const;
+export type GitHookScriptName = (typeof GIT_HOOK_SCRIPT_NAMES)[number];
+const GIT_HOOK_SCRIPTS_DIR_NAME = "git-hook-scripts";
+
 export type ManagedHookSpec = {
-  hookName: string;
+  hookName: GitHookScriptName;
   blockStart: string;
   blockEnd: string;
   createdMark: string;
@@ -90,8 +98,9 @@ export type ManagedHookInspection = EffectiveManagedHook & {
     | "husky_dispatcher_missing"
     | "husky_dispatcher_invalid"
     | "unsupported_interpreter"
-    | "unreachable_block"
-    | "not_executable";
+    | "not_executable"
+    | "script_missing"
+    | "manual";
 };
 
 export type EffectivePostCommitHook = EffectiveManagedHook;
@@ -99,13 +108,11 @@ export type PostCommitHookInspection = ManagedHookInspection;
 export type EffectivePostRewriteHook = EffectiveManagedHook;
 export type PostRewriteHookInspection = ManagedHookInspection;
 
-function currentPostCommitBlock(): string {
-  // This block is intentionally machine-independent. It uses the cache warmed
-  // by SessionStart first, then the exact package version that installed it.
-  // Every invocation is fail-soft and the block itself never exits the
-  // surrounding foreign hook.
-  return `${PRIM_POST_COMMIT_BLOCK_START}
-if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+function postCommitScriptBody(): string {
+  // It uses the cache warmed by SessionStart first, then the exact package
+  // version that wrote the script. Every invocation is fail-soft and the body
+  // never exits, because the managed block sources it into a foreign hook.
+  return `if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   prim_commit_sha=$(git rev-parse --verify HEAD 2>/dev/null) || prim_commit_sha=
   case "$prim_commit_sha" in *[!0-9a-f]*|"") prim_commit_sha= ;; esac
   case "\${#prim_commit_sha}" in 40|64) ;; *) prim_commit_sha= ;; esac
@@ -132,23 +139,17 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
     unset prim_cache_dir prim_post_commit_ran prim_node prim_entry prim_commit_branch prim_commit_observed_file
   fi
   unset prim_commit_sha
-fi
-${PRIM_POST_COMMIT_BLOCK_END}`;
-}
-
-export function postCommitHookBlock(): string {
-  return currentPostCommitBlock();
+fi`;
 }
 
 /**
  * Capture post-rewrite stdin before detaching the Node driver. Reopening the
- * private pairs file on fd 0 is load-bearing: any foreign hook body after
- * Prim's block still receives Git's original rewrite mapping even after the
- * detached driver unlinks the pathname.
+ * private pairs file on fd 0 is load-bearing: the managed block sources this
+ * body, so any foreign hook body after it still receives Git's original
+ * rewrite mapping even after the detached driver unlinks the pathname.
  */
-export function postRewriteHookBlock(): string {
-  return `${PRIM_POST_REWRITE_BLOCK_START}
-if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+function postRewriteScriptBody(): string {
+  return `if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
   case "$1" in amend|rebase) prim_rewrite_source="$1" ;; *) prim_rewrite_source= ;; esac
   if [ -n "$prim_rewrite_source" ]; then
     prim_rewrite_pairs_file=$(mktemp "\${TMPDIR:-/tmp}/prim-post-rewrite-pairs.XXXXXXXX" 2>/dev/null) || prim_rewrite_pairs_file=
@@ -185,8 +186,112 @@ if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
     fi
   fi
   unset prim_rewrite_source
-fi
-${PRIM_POST_REWRITE_BLOCK_END}`;
+fi`;
+}
+
+function preCommitScriptBody(): string {
+  return `if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+  { ${pinnedHookCommand("prim-pre-commit")}; } || true
+fi`;
+}
+
+const GIT_HOOK_SCRIPT_BODIES: Record<GitHookScriptName, () => string> = {
+  "pre-commit": preCommitScriptBody,
+  "post-commit": postCommitScriptBody,
+  "post-rewrite": postRewriteScriptBody,
+};
+
+function gitHookScriptHeader(hook: GitHookScriptName): string {
+  // SC2030/SC2031: the detached launchers export into their own subshell on purpose.
+  return `#!/bin/sh\n# prim ${hook} script — managed by prim; regenerated automatically, do not edit.\n# shellcheck disable=SC2030,SC2031\n`;
+}
+
+export function gitHookScriptsDirectory(): string {
+  return join(primConfigDirectory(), GIT_HOOK_SCRIPTS_DIR_NAME);
+}
+
+export function gitHookScriptPath(hook: GitHookScriptName): string {
+  return join(gitHookScriptsDirectory(), hook);
+}
+
+/**
+ * The prim-owned script a managed block sources. It lives outside every
+ * repository, so it may pin machine paths and the exact package version and
+ * be refreshed freely without touching a user's hook file.
+ */
+export function gitHookScript(hook: GitHookScriptName): string {
+  return `${gitHookScriptHeader(hook)}${GIT_HOOK_SCRIPT_BODIES[hook]()}\n`;
+}
+
+/** Write each prim-owned git hook script whose content changed. */
+export function writeGitHookScripts(): void {
+  for (const hook of GIT_HOOK_SCRIPT_NAMES) {
+    const path = gitHookScriptPath(hook);
+    const next = gitHookScript(hook);
+    let current: string | undefined;
+    try {
+      current = readFileSync(path, "utf8");
+    } catch {
+      // Missing (or unreadable) scripts are rewritten below.
+    }
+    if (current !== next) atomicWriteFile(path, next, { mode: 0o755, ensureParent: true });
+  }
+}
+
+/** Remove only prim-written scripts, which turns every managed block inert. */
+export function removeGitHookScripts(): void {
+  for (const hook of GIT_HOOK_SCRIPT_NAMES) {
+    const path = gitHookScriptPath(hook);
+    try {
+      if (readFileSync(path, "utf8").startsWith(gitHookScriptHeader(hook))) unlinkSync(path);
+    } catch {
+      // Already absent.
+    }
+  }
+  try {
+    rmdirSync(gitHookScriptsDirectory());
+  } catch {
+    // Absent, or holds files prim did not write.
+  }
+}
+
+/**
+ * The version-stable block wired into a user's hook file. It sources the
+ * prim-owned script (a no-op where prim is not installed), so its bytes never
+ * change across releases and it stays shellcheck- and shfmt-clean.
+ */
+export function managedHookBlock(hook: GitHookScriptName): string {
+  return `# >>> prim ${hook} hook >>>
+prim_hook="\${PRIM_CONFIG_DIR:-\${XDG_CONFIG_HOME:-\${HOME:-}/.config}/prim}/${GIT_HOOK_SCRIPTS_DIR_NAME}/${hook}"
+# shellcheck source=/dev/null
+test ! -f "\${prim_hook}" || . "\${prim_hook}"
+unset prim_hook
+# <<< prim ${hook} hook <<<`;
+}
+
+export function postCommitHookBlock(): string {
+  return managedHookBlock("post-commit");
+}
+
+export function postRewriteHookBlock(): string {
+  return managedHookBlock("post-rewrite");
+}
+
+/** Whether the user opted out of automatic hook-file wiring (prim.gitHooks=manual). */
+export function gitHooksManual(options: { cwd?: string; global?: boolean } = {}): boolean {
+  try {
+    const scope = options.global ? ["--global"] : [];
+    return (
+      execFileSync("git", ["config", ...scope, "--get", "prim.gitHooks"], {
+        cwd: options.cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: GIT_TIMEOUT_MS,
+      }).trim() === "manual"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export const POST_COMMIT_MANAGED_HOOK: ManagedHookSpec = {
@@ -494,22 +599,15 @@ function mergedContent(
       return Buffer.concat([createdScaffold(spec), tail]);
     }
   }
-  const shebangEnd = shellInsertionPoint(existing, allowShebangless, spec);
-  if (range.kind === "current" && range.start === shebangEnd) return existing;
-  let withoutBlock = existing;
-  if (range.kind !== "absent") {
-    const suffix = existing.subarray(range.end);
-    withoutBlock = Buffer.concat([
-      existing.subarray(0, range.start),
-      range.start === shebangEnd && suffix.at(0) === 10 ? suffix.subarray(1) : suffix,
-    ]);
+  // Validate the interpreter only: the block is appended, never moved, and a
+  // stale (pre-script) block is replaced in place exactly once.
+  shellInsertionPoint(existing, allowShebangless, spec);
+  if (range.kind === "current") return existing;
+  if (range.kind === "stale") {
+    return Buffer.concat([existing.subarray(0, range.start), block, existing.subarray(range.end)]);
   }
-  return Buffer.concat([
-    withoutBlock.subarray(0, shebangEnd),
-    block,
-    Buffer.from("\n"),
-    withoutBlock.subarray(shebangEnd),
-  ]);
+  const separator = existing.length === 0 || existing.at(-1) === 10 ? "" : "\n";
+  return Buffer.concat([existing, Buffer.from(separator), block, Buffer.from("\n")]);
 }
 
 function errorCode(error: unknown): unknown {
@@ -605,23 +703,30 @@ function unlinkHookUnchanged(
   unlinkSync(path);
 }
 
-/** Merge or refresh only Prim's marked block, preserving every foreign byte. */
-export function ensureEffectivePostCommitHook(cwd: string = process.cwd()): {
+type EnsureEffectiveResult = {
   path: string;
   changed: boolean;
-  kind: EffectivePostCommitHook["kind"];
-} {
-  const target = resolveEffectivePostCommitHook(cwd);
-  return ensureTarget(target, POST_COMMIT_MANAGED_HOOK);
+  kind: EffectiveManagedHook["kind"];
+  /** prim.gitHooks=manual: the hook file was left untouched. */
+  manual?: true;
+};
+
+/** Merge or refresh only Prim's marked block, preserving every foreign byte. */
+export function ensureEffectivePostCommitHook(cwd: string = process.cwd()): EnsureEffectiveResult {
+  return ensureEffectiveManagedHook(POST_COMMIT_MANAGED_HOOK, cwd);
 }
 
-export function ensureEffectivePostRewriteHook(cwd: string = process.cwd()): {
-  path: string;
-  changed: boolean;
-  kind: EffectivePostRewriteHook["kind"];
-} {
-  const target = resolveEffectivePostRewriteHook(cwd);
-  return ensureTarget(target, POST_REWRITE_MANAGED_HOOK);
+export function ensureEffectivePostRewriteHook(cwd: string = process.cwd()): EnsureEffectiveResult {
+  return ensureEffectiveManagedHook(POST_REWRITE_MANAGED_HOOK, cwd);
+}
+
+function ensureEffectiveManagedHook(spec: ManagedHookSpec, cwd: string): EnsureEffectiveResult {
+  const target = resolveEffectiveManagedHook(spec, cwd);
+  writeGitHookScripts();
+  if (gitHooksManual({ cwd: target.gitRoot })) {
+    return { path: target.hookPath, changed: false, kind: target.kind, manual: true };
+  }
+  return ensureTarget(target, spec);
 }
 
 function ensureTarget(
@@ -644,9 +749,8 @@ function ensureTarget(
       ? Buffer.from(initialContent)
       : mergedContent(existing, target.kind === "husky_v9", spec);
   if (!existing && initialContent !== undefined) {
-    const shebangEnd = shellInsertionPoint(next, target.kind === "husky_v9", spec);
-    const range = blockRange(next, spec);
-    if (range.kind !== "current" || range.start !== shebangEnd) {
+    shellInsertionPoint(next, target.kind === "husky_v9", spec);
+    if (blockRange(next, spec).kind !== "current") {
       throw new Error(`invalid initial Prim ${spec.hookName} scaffold`);
     }
   }
@@ -716,6 +820,21 @@ export function inspectEffectivePostRewriteHook(
 }
 
 function inspectEffectiveManagedHook(spec: ManagedHookSpec, cwd: string): ManagedHookInspection {
+  const inspection = inspectManagedHookTarget(spec, cwd);
+  return !inspection.covered && gitHooksManual({ cwd: inspection.gitRoot })
+    ? { ...inspection, reason: "manual" }
+    : inspection;
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function inspectManagedHookTarget(spec: ManagedHookSpec, cwd: string): ManagedHookInspection {
   const target = resolveEffectiveManagedHook(spec, cwd);
   try {
     assertUsableHuskyDispatcher(target, spec);
@@ -757,23 +876,21 @@ function inspectEffectiveManagedHook(spec: ManagedHookSpec, cwd: string): Manage
   const executable = target.kind === "husky_v9" || (stat.mode & 0o100) !== 0;
   try {
     const content = readHookFile(target.hookPath);
-    const shebangEnd = shellInsertionPoint(content, target.kind === "husky_v9", spec);
-    const range = blockRange(content, spec);
-    const positioned = range.kind !== "absent" && range.start === shebangEnd;
-    const current = range.kind === "current" && positioned;
+    shellInsertionPoint(content, target.kind === "husky_v9", spec);
+    const current = blockRange(content, spec).kind === "current";
+    const scriptReady = isRegularFile(gitHookScriptPath(spec.hookName));
     return {
       ...target,
-      covered: current && executable,
+      covered: current && executable && scriptReady,
       executable,
       current,
-      reason:
-        range.kind === "current" && !positioned
-          ? "unreachable_block"
-          : !current
-            ? "stale_block"
-            : executable
-              ? undefined
-              : "not_executable",
+      reason: !current
+        ? "stale_block"
+        : !executable
+          ? "not_executable"
+          : !scriptReady
+            ? "script_missing"
+            : undefined,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -962,7 +1079,7 @@ function uninstallTarget(
   }
   const next = Buffer.concat([
     existing.subarray(0, range.start),
-    range.start === shebangEnd && suffix.at(0) === 10 ? suffix.subarray(1) : suffix,
+    suffix.at(0) === 10 ? suffix.subarray(1) : suffix,
   ]);
   rewriteHookAtomically(target.hookPath, next, existing, spec, stat);
   return { path: target.hookPath, changed: true, removedFile: false };

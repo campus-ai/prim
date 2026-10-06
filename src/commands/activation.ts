@@ -69,7 +69,13 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     let postRewriteHook: string | undefined;
     if (active) {
       refreshOwnedGlobalHooks();
-      postCommitHook = ensureEffectivePostCommitHook(root).path;
+      const postCommit = ensureEffectivePostCommitHook(root);
+      postCommitHook = postCommit.path;
+      if (postCommit.manual) {
+        process.stderr.write(
+          "[prim] prim.gitHooks=manual: hook files left untouched; see `prim hooks script <hook>`\n",
+        );
+      }
       try {
         postRewriteHook = ensureEffectivePostRewriteHook(root).path;
       } catch (error) {

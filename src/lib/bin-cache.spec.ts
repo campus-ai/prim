@@ -26,7 +26,7 @@ import {
   warmBinCache,
 } from "./bin-cache.js";
 import { binFile } from "./bin-path.js";
-import { postCommitHookBlock, postRewriteHookBlock } from "./post-commit-hook.js";
+import { gitHookScript } from "./post-commit-hook.js";
 
 const ENV_KEYS = ["XDG_CACHE_HOME", "HOME", "PRIM_BIN_CACHE"] as const;
 
@@ -90,7 +90,7 @@ describe("binCacheDir", () => {
   });
 
   it("keeps both live Git hook readers coupled to the canonical dir and TTL", () => {
-    for (const block of [postCommitHookBlock(), postRewriteHookBlock()]) {
+    for (const block of [gitHookScript("post-commit"), gitHookScript("post-rewrite")]) {
       expect(block).toContain(`prim_cache_dir="${GIT_HOOK_CACHE_SHELL_DIR}"`);
       expect(block).toContain(`-mmin "-\${PRIM_BIN_CACHE_TTL_MIN:-${GIT_HOOK_CACHE_TTL_MINUTES}}"`);
     }

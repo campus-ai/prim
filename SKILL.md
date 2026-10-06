@@ -223,7 +223,7 @@ With the daemon running (`npx --yes @primitive.ai/prim daemon start`), `npx --ye
 
 ## The git hooks
 
-`npx --yes @primitive.ai/prim hooks install` installs two git hooks:
+`npx --yes @primitive.ai/prim hooks install` installs three git hooks:
 
 ```
 npx --yes @primitive.ai/prim hooks install                       # auto-detects Husky and prompts
@@ -234,8 +234,11 @@ npx --yes @primitive.ai/prim hooks uninstall
 
 - **pre-commit** -- checks staged files against the live decision graph and prints any active decisions that reference them to stderr. It is **warn-only**: failures (auth, network, backend) or matches never block the commit; a successful `git commit` doesn't prove the check ran clean. When the check can't complete it says so ("not verified" / "truncated") rather than implying all-clear.
 - **post-commit** -- records each commit as a capture boundary so the server can classify the surrounding work into decisions. It never blocks and runs in the background.
+- **post-rewrite** -- records amend/rebase rewrites the same way, in the background.
 
-Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` only removes the `.git/hooks` copies — if a hook was installed into `.husky/`, remove the prim block from that file manually. To suppress the hooks for one commit, use `git commit --no-verify`.
+Each hook file only gets a short, version-stable block (appended at the end) that sources a prim-owned script in `~/.config/prim/git-hook-scripts/`; `npx --yes @primitive.ai/prim hooks script post-commit` prints a script's path and that block. If the user wires the scripts themselves (`git config prim.gitHooks manual`), prim never edits their hook files and doctor reports the hooks as `manual`.
+
+Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` removes prim's blocks from `.git/hooks` and `.husky/` alike, leaving the rest of each hook untouched. To suppress the hooks for one commit, use `git commit --no-verify`.
 
 These git hooks are separate from the **session hooks** (`claude install` / `cursor install` / `codex install` / `hermes install`) that drive in-session capture (and Conflict Gates, when enabled).
 
