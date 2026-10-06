@@ -47,6 +47,7 @@ vi.mock("../lib/git-hooks.js", async (importOriginal) => {
     ),
     ensureGitHookAtPath: vi.fn((hookName: string, path: string) => ensured(hookName, path)),
     gitHooksMode: vi.fn(() => "auto"),
+    hasCurrentHookBlock: vi.fn(() => false),
     projectGitHookTarget: vi.fn((hookName: string, root: string) => ({
       gitRoot: root,
       hooksDir: `${root}/.git/hooks`,
@@ -122,6 +123,7 @@ import {
   ensureEffectiveGitHook,
   ensureGitHookAtPath,
   gitHooksMode,
+  hasCurrentHookBlock,
   managedHookBlock,
   projectGitHookTarget,
   projectHooksDir,
@@ -1149,14 +1151,29 @@ describe("hooks install --scope user consent", () => {
     expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
   });
 
-  it("rejects --global-hooks-path outside user scope", async () => {
+  it("rejects --global-hooks-path outside user scope as a usage error, like setup", async () => {
     const program = new Command();
     program.exitOverride();
     registerHooksCommands(program);
-    await expect(
-      program.parseAsync(["hooks", "install", "--global-hooks-path"], { from: "user" }),
-    ).rejects.toThrow(/only with --scope user/);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await program.parseAsync(["hooks", "install", "--global-hooks-path"], { from: "user" });
+    expect(process.exitCode).toBe(2);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("only with --scope user"));
     expect(mockedEnsureEffectiveGitHook).not.toHaveBeenCalled();
+    process.exitCode = undefined;
+    errSpy.mockRestore();
+  });
+
+  it("neither prompts nor reports unwired after a consented install into a foreign dir", async () => {
+    tty();
+    stubHooksPath({ global: "/Users/example/.config/git/hooks" });
+    vi.mocked(hasCurrentHookBlock).mockReturnValue(true);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await install(["--yes"]);
+    expect(askConfirmation).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already present"));
+    logSpy.mockRestore();
   });
 
   it("does not prompt when the pointer is already prim's", async () => {

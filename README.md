@@ -75,7 +75,7 @@ Install the Primitive CLI and activate passive decision capture for this reposit
 ```
 
 That single command runs the whole install and current-repository activation in one
-process (auth → session hooks → daemon → git hooks → skill → welcome). The detailed
+process (auth → session hooks → daemon → skill → activate this repository and wire its git hooks → welcome). The detailed
 step-by-step the agent follows — and the manual fallback — live in
 [`setup.md`](./setup.md).
 
@@ -327,7 +327,7 @@ authorizes one retry for the named decision.
 
 ```bash
 prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
-prim hooks install --scope user --global-hooks-path  # Route every repository through prim
+prim hooks install --scope user --global-hooks-path  # Route every repository through prim (exits 3 if it installs nothing, with the reason on STDERR)
 prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
 prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```
