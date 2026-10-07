@@ -353,11 +353,12 @@ after the `husky.sh` line, so it runs once and honors `HUSKY=0`. `prim doctor`
 only reports; it never rewrites a hook.
 
 To wire the hooks yourself (lefthook, a custom Husky layout, …), run
-`git config prim.gitHooks manual` (or `--global`): prim then never writes a hook
-file, and `prim doctor` reports what it finds as a warning. Paste the block from
-`prim hooks snippet <hook>`, or have your hook manager run
-`~/.config/prim/prim-git-hook-v1 <hook> "$@"` (post-rewrite also needs Git's
-stdin).
+`git config prim.gitHooks manual` (or `--global`) first: prim then never writes
+a hook file. That setting is the only signal prim honors. It does not guess
+from a hook that already mentions prim, so without it, `prim enable` adds its
+block. Paste the block from `prim hooks snippet <hook>`, or have your hook
+manager run `~/.config/prim/prim-git-hook-v1 <hook> "$@"` (post-rewrite also
+needs Git's stdin).
 
 ### Presence statusline
 

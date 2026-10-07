@@ -184,3 +184,29 @@ export function isLegacyOwnedGlobalHook(content: string, hookName: ManagedGitHoo
 export function legacyInlineHookBlock(hookName: "post-commit" | "post-rewrite"): string {
   return hookName === "post-commit" ? legacyPostCommitBlock() : legacyPostRewriteBlock();
 }
+
+/**
+ * Whether `block` (start marker through end marker) is a pre-v1 block prim
+ * wrote, exactly, modulo its pinned version. Such a block still captures on
+ * its own, so it may be kept where prim may not upgrade it; anything else in
+ * prim's markers (edited, emptied, stubbed out) proves nothing.
+ */
+export function isRecognizedLegacyBlock(hookName: ManagedGitHookName, block: string): boolean {
+  if (hookName === "pre-commit") {
+    const { start, end } = blockMarkers(PRE_COMMIT);
+    const lines = block.split("\n");
+    if (lines[0] !== start || lines.at(-1) !== end) return false;
+    const body = lines.slice(1, -1);
+    const gated =
+      body.length === 3 &&
+      body[0] === 'if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then' &&
+      body[2] === "fi";
+    const invocation = gated ? body[1] : body.length === 1 ? body[0] : undefined;
+    if (!invocation?.startsWith("{ ") || !invocation.endsWith("; } || true")) return false;
+    return commandMatchesBin(invocation.slice(2, -"; } || true".length), PRE_COMMIT.binName);
+  }
+  const expected = legacyInlineHookBlock(hookName);
+  const normalize = (text: string) =>
+    text.replace(PINNED_PACKAGE_VERSION_RE, "@primitive.ai/prim@<version>");
+  return normalize(block) === normalize(expected);
+}
