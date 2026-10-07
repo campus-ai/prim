@@ -530,7 +530,8 @@ export function planIsMachineWide(plan: GlobalHooksPlan): boolean {
 // Setting the pointer, or editing the hooks in someone else's global dir,
 // changes every repository on the machine, so both need `machineWide`
 // consent; refreshing prim's own dir does not. Every outcome is reported, so
-// callers can tell a skip from an install, and nothing is staged on a skip.
+// callers can tell a skip from an install. A skip stages the hook runtime only
+// if it was missing (prim's own dir, never a hook file).
 export function installGlobalHooks(
   opts: { force?: boolean; machineWide?: boolean } = {},
 ): GlobalHooksInstallOutcome {

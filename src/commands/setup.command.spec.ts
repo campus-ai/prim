@@ -825,6 +825,9 @@ describe("a repository that sets its own core.hooksPath", () => {
       execFileSync("git", ["config", "--local", "core.hooksPath", ".husky"], { cwd: root });
       expect(enableWiresRepository(root)).toBe(true);
       expect(enableWiresRepository(null)).toBeUndefined();
+      execFileSync("git", ["config", "--local", "prim.gitHooks", "manual"], { cwd: root });
+      expect(enableWiresRepository(root)).toBeUndefined();
+      execFileSync("git", ["config", "--local", "--unset", "prim.gitHooks"], { cwd: root });
       const system = setupGitHooksNote(
         { action: "system_declined", system: "/etc/git/hooks" },
         true,
@@ -856,7 +859,7 @@ describe("a repository that sets its own core.hooksPath", () => {
       const hooksNote = note.mock.calls
         .map(([text]) => String(text))
         .find((text) => text.startsWith("git hooks ·"));
-      expect(hooksNote).toContain("sets its own core.hooksPath, so `prim enable` wires it");
+      expect(hooksNote).toContain("from inside it, so `prim enable` wires it");
       expect(hooksNote).not.toContain("cannot wire this repository");
     } finally {
       vi.mocked(gitToplevel).mockRestore();

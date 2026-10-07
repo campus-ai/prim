@@ -27,7 +27,7 @@ import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_p
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
-import { resolveEffectiveGitHook } from "../lib/git-hooks.js";
+import { gitHooksMode, resolveEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
@@ -256,6 +256,8 @@ export function projectHooksConflict(
 export function enableWiresRepository(root: string | null | undefined): boolean | undefined {
   if (!root) return undefined;
   try {
+    // Manual mode: enable writes no hook file, so it wires nothing.
+    if (gitHooksMode({ cwd: root }) === "manual") return undefined;
     return resolveEffectiveGitHook("post-commit", root).location !== "external";
   } catch {
     return undefined;
@@ -264,13 +266,14 @@ export function enableWiresRepository(root: string | null | undefined): boolean 
 
 /** Setup's trail line for git hooks at user scope, without --global-hooks-path. */
 export function setupGitHooksNote(plan: GlobalHooksPlan, wiresThisRepository?: boolean): string {
-  // A repository that sets its own core.hooksPath (Husky does) never runs the
-  // global or system hooks dir: `prim enable` wires it without any consent.
+  // A repository whose hooks Git runs from inside it (Husky's own
+  // core.hooksPath, say) never runs the shared dir: `prim enable` wires it
+  // without any consent.
   if (wiresThisRepository === true && plan.action === "add_to_dir") {
-    return `git hooks · this repository sets its own core.hooksPath, so \`prim enable\` wires it; other repositories run ${plan.global}, which prim edits only with --global-hooks-path, after asking the user`;
+    return `git hooks · Git runs this repository's hooks from inside it, so \`prim enable\` wires it; other repositories may run ${plan.global}, which prim edits only with --global-hooks-path, after asking the user`;
   }
   if (wiresThisRepository === true && plan.action === "system_declined") {
-    return `git hooks · this repository sets its own core.hooksPath, so \`prim enable\` wires it; other repositories run the system hooks dir ${plan.system}, which prim never edits`;
+    return `git hooks · Git runs this repository's hooks from inside it, so \`prim enable\` wires it; other repositories may run the system hooks dir ${plan.system}, which prim never edits`;
   }
   switch (plan.action) {
     case "refresh":

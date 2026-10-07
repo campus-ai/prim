@@ -258,6 +258,14 @@ export function isLegacyOwnedGlobalHook(content: string, hookName: ManagedGitHoo
   if (!spec) return false;
   const expected = legacyGlobalHookScript(spec);
   if (content === expected) return true;
+  // alpha.35–56 gated the PATH/node_modules/npx ladder instead of a pinned call.
+  if (
+    spec === PRE_COMMIT &&
+    content ===
+      expected.replace(gatedShim(spec.binName), `${PRE_COMMIT_GATE}\n${LADDER_ALPHA_35}\nfi`)
+  ) {
+    return true;
+  }
   const normalized = normalizeOwnedGlobalHook(content, hookName);
   return normalized !== null && normalized === normalizeOwnedGlobalHook(expected, hookName);
 }
