@@ -824,6 +824,19 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     expect(setCalls()).toHaveLength(0); // pointer left untouched
   });
 
+  it("adds nothing to a foreign global hooks dir while the runtime is missing", () => {
+    stubHooksPath({ global: join(homedir(), ".config", "git", "hooks") });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(installGlobalHooks()).toBe(false);
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Added"));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("not staged yet"));
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
   it("expands a leading ~ in the existing global hooksPath before writing", () => {
     stubHooksPath({ global: "~/.config/git/hooks" });
     installGlobalHooks();

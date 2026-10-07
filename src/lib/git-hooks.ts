@@ -52,6 +52,7 @@ import {
   hookBlockContractVersion,
   managedHookBlock,
 } from "./git-hook-contract.js";
+import { isRecognizedLegacyBlock } from "./git-hook-legacy.js";
 import { gitToplevel } from "./git.js";
 import { type GitHookEntrypointState, inspectGitHookEntrypoint } from "./hook-runtime.js";
 import { primConfigDirectory } from "./paths.js";
@@ -102,8 +103,6 @@ export type ManagedHookSpec = {
   blockStart: string;
   blockEnd: string;
   createdMark: string;
-  /** A bin whose bare mention means the user already wired this hook. */
-  userWiredBin?: string;
 };
 
 function managedHookSpecFor(hookName: ManagedGitHookName): ManagedHookSpec {
@@ -113,7 +112,6 @@ function managedHookSpecFor(hookName: ManagedGitHookName): ManagedHookSpec {
     blockStart: start,
     blockEnd: end,
     createdMark: `prim-created-${hookName}-hook`,
-    ...(hookName === "pre-commit" ? { userWiredBin: "prim-pre-commit" } : {}),
   };
 }
 
@@ -160,8 +158,6 @@ export type ManagedHookInspection = EffectiveManagedHook & {
   covered: boolean;
   executable: boolean;
   current: boolean;
-  /** How the hook reaches prim: prim's block, or the user's own call. */
-  wiring?: "block" | "user";
   entrypoint: GitHookEntrypointState;
   reason?:
     | "missing"
@@ -170,6 +166,7 @@ export type ManagedHookInspection = EffectiveManagedHook & {
     | "unsafe_target"
     | "missing_block"
     | "stale_block"
+    | "legacy_block"
     | "unreachable_block"
     | "misplaced_block"
     | "husky_dispatcher_missing"
@@ -597,50 +594,10 @@ function blockRange(content: Buffer, spec: ManagedHookSpec): BlockRange {
   return { kind: "stale", start, end };
 }
 
-const COMMAND_SEPARATOR_RE = /;|&&|\|\||\||\(|\b(?:then|do|else)\b/u;
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=\S*$/u;
-const COMMAND_PREFIXES = new Set(["exec", "command", "env", "nohup"]);
-
-/**
- * Whether `line` runs `command` as a command word (`cmd`, `"$HOME/…/cmd"`,
- * `VAR=1 exec cmd`), as opposed to mentioning it in an argument or a comment.
- */
-function invokesCommand(line: string, command: string): boolean {
-  const code = line.replace(/(?:^|\s)#.*$/u, "");
-  return code.split(COMMAND_SEPARATOR_RE).some((segment) => {
-    const words = segment.trim().split(/\s+/u);
-    let index = 0;
-    while (
-      index < words.length &&
-      (ASSIGNMENT_RE.test(words[index] ?? "") || COMMAND_PREFIXES.has(words[index] ?? ""))
-    ) {
-      index += 1;
-    }
-    const word = (words[index] ?? "").replace(/^["']|["']$/gu, "");
-    return word === command || word.endsWith(`/${command}`);
-  });
-}
-
-/**
- * The user calls prim from this hook themselves, outside any managed block:
- * a command line (not a comment) that runs the entrypoint or the hook's bin.
- */
-function isUserWired(content: Buffer, spec: ManagedHookSpec): boolean {
-  return content
-    .toString("utf8")
-    .split("\n")
-    .some((raw) => {
-      const line = raw.trim();
-      if (line === "" || line.startsWith("#")) return false;
-      return (
-        invokesCommand(line, GIT_HOOK_ENTRYPOINT_NAME) ||
-        (spec.userWiredBin !== undefined && invokesCommand(line, spec.userWiredBin))
-      );
-    });
-}
-
 // Husky v8 hooks source `_/husky.sh`, which re-runs the file in a child shell
-// and exits. Code above that line runs twice and ignores HUSKY=0.
+// and exits. Code above that line runs twice and ignores HUSKY=0. Husky v9
+// keeps a `husky.sh` stub that only prints a deprecation notice, so the line
+// matters only where the runtime is v8's.
 const HUSKY_V8_SOURCE_RE =
   /^\.[ \t]+"\$\(dirname(?:[ \t]+--)?[ \t]+"\$0"\)\/_\/husky\.sh"[ \t]*$/mu;
 
@@ -653,14 +610,31 @@ function blockInsertionPoint(
   content: Buffer,
   allowShebangless: boolean,
   spec: ManagedHookSpec,
+  huskyV8: boolean,
 ): number {
   const shebangEnd = shellInsertionPoint(content, allowShebangless, spec);
+  if (!huskyV8) return shebangEnd;
   const rest = content.subarray(shebangEnd).toString("utf8");
   const match = HUSKY_V8_SOURCE_RE.exec(rest);
   if (!match) return shebangEnd;
   const lineEnd = match.index + match[0].length;
   const afterLine = rest[lineEnd] === "\n" ? lineEnd + 1 : lineEnd;
   return shebangEnd + Buffer.byteLength(rest.slice(0, afterLine), "utf8");
+}
+
+/** Whether the hook's `_/husky.sh` is Husky v8's runtime, which re-runs the hook. */
+function isHuskyV8Hook(hookPath: string): boolean {
+  try {
+    const runtime = join(dirname(hookPath), "_", "husky.sh");
+    const stat = lstatSync(runtime);
+    return (
+      stat.isFile() &&
+      stat.size <= MAX_HOOK_BYTES &&
+      readFileSync(runtime, "utf8").includes("husky_skip_init")
+    );
+  } catch {
+    return false;
+  }
 }
 
 const TERMINAL_LINE_RE = /^(?:exit|return)(?:\s|;|$)/u;
@@ -715,6 +689,7 @@ function migratedLegacyContent(
   existing: Buffer,
   allowShebangless: boolean,
   spec: ManagedHookSpec,
+  huskyV8: boolean,
 ): Buffer | undefined {
   const text = existing.toString("utf8");
   if (spec.hookName === "pre-commit" && isOwnedStandalonePreCommit(text)) {
@@ -736,7 +711,7 @@ function migratedLegacyContent(
     ]);
     return insertBlock(
       withoutLegacyGate,
-      blockInsertionPoint(withoutLegacyGate, allowShebangless, spec),
+      blockInsertionPoint(withoutLegacyGate, allowShebangless, spec, huskyV8),
       spec,
     );
   }
@@ -768,11 +743,12 @@ function mergedContent(
   allowShebangless: boolean,
   spec: ManagedHookSpec,
   relocate: boolean,
+  huskyV8: boolean,
 ): Merge {
   if (!existing) return { content: createdScaffold(spec), migrates: false };
   const range = blockRange(existing, spec);
   if (range.kind === "absent") {
-    const migrated = migratedLegacyContent(existing, allowShebangless, spec);
+    const migrated = migratedLegacyContent(existing, allowShebangless, spec, huskyV8);
     if (migrated) return { content: migrated, migrates: true };
   } else if (range.kind !== "newer") {
     const oldCreated = oldCreatedPrefixes(spec).some(
@@ -789,15 +765,15 @@ function mergedContent(
     }
   }
   const shebangEnd = shellInsertionPoint(existing, allowShebangless, spec);
-  const insertion = blockInsertionPoint(existing, allowShebangless, spec);
+  const insertion = blockInsertionPoint(existing, allowShebangless, spec, huskyV8);
   switch (range.kind) {
     case "newer":
       return { content: existing, migrates: false };
     case "absent":
-      return {
-        content: isUserWired(existing, spec) ? existing : insertBlock(existing, insertion, spec),
-        migrates: false,
-      };
+      // Without prim's markers there is nothing of prim's here. A user who
+      // wires prim by hand says so with prim.gitHooks=manual; prim does not
+      // guess from what the file mentions.
+      return { content: insertBlock(existing, insertion, spec), migrates: false };
     case "current":
     case "stale": {
       const misplaced =
@@ -805,7 +781,11 @@ function mergedContent(
       if (relocate && misplaced) {
         const without = withoutRange(existing, range.start, range.end);
         return {
-          content: insertBlock(without, blockInsertionPoint(without, allowShebangless, spec), spec),
+          content: insertBlock(
+            without,
+            blockInsertionPoint(without, allowShebangless, spec, huskyV8),
+            spec,
+          ),
           migrates: range.kind === "stale",
         };
       }
@@ -916,6 +896,29 @@ function unlinkHookUnchanged(
   unlinkSync(path);
 }
 
+/**
+ * Whether the hook file carries a pre-v1 block prim wrote (recognized exactly,
+ * modulo version), in a place it still runs: before any top-level exit/exec,
+ * in a file Git can execute.
+ */
+function workingLegacyBlock(
+  content: Buffer,
+  target: EffectiveManagedHook,
+  spec: ManagedHookSpec,
+): boolean {
+  try {
+    const range = blockRange(content, spec);
+    if (range.kind !== "stale") return false;
+    const block = content.subarray(range.start, range.end).toString("utf8");
+    const from = shellInsertionPoint(content, target.kind === "husky_v9", spec);
+    return (
+      isRecognizedLegacyBlock(spec.hookName, block) && !terminatesBefore(content, from, range.start)
+    );
+  } catch {
+    return false;
+  }
+}
+
 type WritePolicy = {
   /** Whether this caller may write a file at the target's location. */
   writable: (location: HookLocation) => boolean;
@@ -948,13 +951,14 @@ function ensureTarget(
   if (policy.repairOnly && (!existing || blockRange(existing, spec).kind === "absent")) {
     return skip("skipped");
   }
-  const next = mergedContent(existing, target.kind === "husky_v9", spec, policy.relocate);
+  const huskyV8 = isHuskyV8Hook(target.hookPath);
+  const next = mergedContent(existing, target.kind === "husky_v9", spec, policy.relocate, huskyV8);
   if (existing && next.content.equals(existing)) return skip("unchanged");
   if (!policy.writable(target.location)) {
     if (target.location === "worktree") return skip("deferred");
-    // A pre-v1 block outside the repository still captures; leaving it is
-    // not a failure, only a missed upgrade.
-    return skip(next.migrates ? "kept" : "external");
+    // A pre-v1 block prim provably wrote, reachable and executable, still
+    // captures: leaving it is a missed upgrade, not a failure.
+    return skip(existing && workingLegacyBlock(existing, target, spec) ? "kept" : "external");
   }
   // A pre-v1 invocation still captures on its own; a v1 block does nothing
   // until the entrypoint is staged. Never trade working capture for an inert one.
@@ -1074,29 +1078,33 @@ export function inspectEffectiveGitHook(
       executable,
     );
   }
-  const userWired = range.kind === "absent" && isUserWired(content, spec);
-  const preferred = blockInsertionPoint(content, target.kind === "husky_v9", spec);
-  const current = range.kind === "current" || range.kind === "newer" || userWired;
+  const huskyV8 = isHuskyV8Hook(target.hookPath);
+  const preferred = blockInsertionPoint(content, target.kind === "husky_v9", spec, huskyV8);
+  const current = range.kind === "current" || range.kind === "newer";
+  const legacy = range.kind === "stale" && workingLegacyBlock(content, target, spec);
+  // Real failures first; `legacy_block` (still captures, without the runtime)
+  // and `misplaced_block` (runs twice) are the only warnings.
   const reason: ManagedHookInspection["reason"] =
-    range.kind === "absent" && !userWired
+    range.kind === "absent"
       ? "missing_block"
-      : range.kind === "stale"
+      : range.kind === "stale" && !legacy
         ? "stale_block"
-        : range.kind !== "absent" && terminatesBefore(content, insertion, range.start)
+        : terminatesBefore(content, insertion, range.start)
           ? "unreachable_block"
-          : range.kind !== "absent" && range.start < preferred
-            ? "misplaced_block"
-            : !executable
-              ? "not_executable"
+          : !executable
+            ? "not_executable"
+            : legacy
+              ? "legacy_block"
               : base.entrypoint !== "ready"
                 ? "entrypoint_missing"
-                : undefined;
+                : range.start < preferred
+                  ? "misplaced_block"
+                  : undefined;
   return {
     ...base,
     covered: reason === undefined,
     executable,
     current,
-    ...(current ? { wiring: userWired ? ("user" as const) : ("block" as const) } : {}),
     ...(reason ? { reason } : {}),
   };
 }

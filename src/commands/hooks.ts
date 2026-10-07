@@ -312,7 +312,7 @@ function assertOwnedHooksDirectorySafeToRemove(): string[] {
 function writeOwnHooks(): boolean {
   if (inspectGitHookEntrypoint() !== "ready") {
     console.error(
-      `[prim] left prim's global hooks in ${PRIM_GIT_HOOKS_DIR} as they are: the hook runtime they run is not staged (run an agent install, or \`prim enable\` from an installed prim).`,
+      `[prim] did not write prim's global hooks in ${PRIM_GIT_HOOKS_DIR}: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
     );
     return false;
   }
@@ -499,10 +499,16 @@ export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
   }
   // Coexist: a global core.hooksPath already points elsewhere — add prim's
   // block into that dir and leave the pointer untouched.
-  const dir = expandTilde(global);
-  for (const spec of HOOKS) {
-    appendPrimBlock(resolve(dir, spec.hookName), spec);
+  // Blocks written without a staged runtime do nothing: refuse rather than
+  // report hooks that cannot capture.
+  if (inspectGitHookEntrypoint() !== "ready") {
+    console.error(
+      `[prim] did not add prim's hooks to ${global}: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
+    );
+    return false;
   }
+  const dir = expandTilde(global);
+  for (const spec of HOOKS) appendPrimBlock(resolve(dir, spec.hookName), spec);
   console.log(`Added prim hooks into existing core.hooksPath dir ${global} (pointer unchanged).`);
   return true;
 }
