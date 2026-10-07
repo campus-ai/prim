@@ -75,6 +75,8 @@ vi.mock("../lib/git-hooks.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/commit-heartbeat.js", () => ({ recordHooksWired: vi.fn() }));
+
 vi.mock("../lib/confirmation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/confirmation.js")>();
   return { ...actual, askConfirmation: vi.fn() };
@@ -118,6 +120,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation } from "../lib/confirmation.js";
 import {
   ensureEffectiveGitHook,
@@ -463,6 +466,37 @@ describe("hooks install action", () => {
     });
     expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.git/hooks/${hook}`));
     expect(stageHookRuntime).toHaveBeenCalledTimes(1);
+    // An inactive checkout never runs prim, so no expectation starts yet.
+    expect(recordHooksWired).not.toHaveBeenCalled();
+  });
+
+  it("lets only a post-commit change reset doctor's expectation", async () => {
+    mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
+      if (args.join(" ") === "config --get prim.active") return "true\n";
+      if (args[0] !== "rev-parse") return "";
+      if (args.includes("--git-common-dir")) return ".git\n";
+      return "/fake/root\n";
+    }) as typeof execFileSync);
+    mockedEnsureGitHookAtPath.mockImplementation((hookName, path) => ({
+      hookName,
+      path,
+      changed: hookName === "pre-commit",
+      kind: "direct",
+      outcome: hookName === "pre-commit" ? "created" : "unchanged",
+    }));
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root", { onlyIfAbsent: true });
+  });
+
+  it("starts doctor's expectation only in an active checkout", async () => {
+    mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
+      if (args.join(" ") === "config --get prim.active") return "true\n";
+      if (args[0] !== "rev-parse") return "";
+      if (args.includes("--git-common-dir")) return ".git\n";
+      return "/fake/root\n";
+    }) as typeof execFileSync);
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(recordHooksWired).toHaveBeenCalledWith("/fake/root", { onlyIfAbsent: false });
   });
 
   it("wires all three hooks where Git runs them when no Husky choice is needed", async () => {

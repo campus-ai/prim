@@ -15,6 +15,7 @@ import {
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { bindRepository, resolveRepositoryBinding } from "../lib/repository-binding.js";
@@ -61,6 +62,10 @@ vi.mock("../lib/git.js", () => ({
   githubRepositoryFullName: vi.fn(),
   gitToplevel: vi.fn(),
   resolveRepositoryContext: vi.fn(() => ({ repoRoot: "/repo" })),
+}));
+vi.mock("../lib/commit-heartbeat.js", () => ({
+  clearHooksWired: vi.fn(),
+  recordHooksWired: vi.fn(),
 }));
 vi.mock("../lib/git-hooks.js", () => ({
   MANAGED_GIT_HOOK_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
@@ -685,6 +690,48 @@ describe("processSessionStart", () => {
     await processSessionStart(ENVELOPE, "codex");
 
     expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
+  });
+
+  it("starts doctor's expectation once for a checkout whose post-commit is wired", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    await processSessionStart(ENVELOPE, "codex");
+    expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+  });
+
+  it("starts the expectation in manual mode too: the user's wiring must reach prim", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => ({
+      ...hookResult(hookName),
+      outcome: "manual",
+    }));
+    await processSessionStart(ENVELOPE, "codex");
+    expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+  });
+
+  it("drops doctor's expectation wherever prim is off, however it was turned off", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+    vi.mocked(repoActiveFlag).mockReturnValue("false");
+    await processSessionStart(ENVELOPE, "claude");
+    expect(clearHooksWired).toHaveBeenCalledWith("/repo");
+    expect(recordHooksWired).not.toHaveBeenCalled();
+    expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
+  });
+
+  it("keeps the expectation when prim.active cannot be read (a git timeout reads as unset)", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+    vi.mocked(repoActiveFlag).mockReturnValue(undefined);
+    await processSessionStart(ENVELOPE, "claude");
+    expect(clearHooksWired).not.toHaveBeenCalled();
+  });
+
+  it("starts no expectation when post-commit was left unwired", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => ({
+      ...hookResult(hookName),
+      outcome: "deferred",
+    }));
+    await processSessionStart(ENVELOPE, "codex");
+    expect(recordHooksWired).not.toHaveBeenCalled();
   });
 
   it("keeps SessionStart fail-soft when effective hook repair fails", async () => {

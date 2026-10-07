@@ -353,6 +353,18 @@ its terminal prompt. In a Husky v8 hook the block goes
 after the `husky.sh` line, so it runs once and honors `HUSKY=0`. `prim doctor`
 only reports; it never rewrites a hook.
 
+`prim doctor` also checks evidence rather than file contents: each post-commit
+run that reaches prim leaves a stamp in the checkout's git dir, and doctor's
+`hook-fired` check fails when a local commit made since the hooks were wired
+never reached prim. That catches an `exit` before prim's block, hand wiring
+that broke, or a git client whose environment cannot find prim. The check
+applies in manual mode too: once a repository is enabled, doctor expects your
+own wiring to reach prim. `prim disable` ends the expectation, so commits made
+while disabled are never judged. Turning prim off with `git config prim.active
+false` directly ends it too, once an agent session starts while it is off; if
+doctor still flags a commit made while it was off, run `prim disable` then
+`prim enable`.
+
 To wire the hooks yourself (lefthook, a custom Husky layout, …), run
 `git config prim.gitHooks manual` (or `--global`) first: prim then never writes
 a hook file. That setting is the only signal prim honors. It does not guess

@@ -4,6 +4,7 @@ import { resolveOrg } from "../binding.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { recordPostCommitFired } from "../lib/commit-heartbeat.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
@@ -22,6 +23,7 @@ vi.mock("../lib/activation.js", () => ({
   repoSyncId: vi.fn(),
 }));
 vi.mock("../lib/collect-scope.js", () => ({ cachedCollectScopeAdmits: vi.fn() }));
+vi.mock("../lib/commit-heartbeat.js", () => ({ recordPostCommitFired: vi.fn() }));
 vi.mock("../lib/git.js", () => ({
   githubRepositoryFullName: vi.fn(),
   resolveRepositoryContext: vi.fn(),
@@ -227,9 +229,12 @@ describe("runPostCommit", () => {
 
   it("does no capture work when its repository is inactive", () => {
     mockedIsRepoActiveForCapture.mockReturnValue(false);
+    vi.stubEnv("PRIM_COMMIT_SHA", "a".repeat(40));
 
     runPostCommit();
 
+    // The run still counts as evidence that Git reached prim.
+    expect(recordPostCommitFired).toHaveBeenCalledWith(expect.any(String), "a".repeat(40));
     expect(mockedExecFileSync).toHaveBeenCalledTimes(1);
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       "git",

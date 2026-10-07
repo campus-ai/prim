@@ -11,6 +11,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
@@ -45,7 +46,17 @@ type ActiveProject = { root: string; binding?: RepositoryBindingResult };
 async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
   try {
     const root = gitToplevel(cwd);
-    if (!root || !isRepoActiveForCapture(cwd)) return null;
+    if (!root) return null;
+    if (!isRepoActiveForCapture(cwd)) {
+      // However prim was turned off here (`prim disable`, or a raw `git config
+      // prim.active false`), commits from now on are not expected to reach
+      // prim: drop the expectation so a later raw re-enable never has doctor
+      // judge commits made meanwhile. The next active session starts a new one.
+      // Only an explicit false counts: a git error or timeout reads as unset,
+      // and must never erase evidence of a real failure.
+      if (repoActiveFlag(root) === "false") clearHooksWired(root);
+      return null;
+    }
     let shellGateActive = repoActiveFlag(root) === "true";
     if (!shellGateActive) {
       try {
@@ -67,10 +78,19 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
           // Capture hooks are wired here, as before; the pre-commit check
           // (a synchronous network call) only ever gets wired explicitly, so
           // here it is refreshed where prim already put it, never added.
-          ensureEffectiveGitHook(hookName, root, {
+          const result = ensureEffectiveGitHook(hookName, root, {
             context: "ambient",
             repairOnly: hookName === "pre-commit",
           });
+          // A checkout wired before doctor's evidence check existed (or a new
+          // linked worktree) has no expectation yet: start one here, once.
+          if (
+            hookName === "post-commit" &&
+            // Manual mode: the user's own wiring is expected to reach prim too.
+            ["created", "updated", "unchanged", "manual"].includes(result.outcome)
+          ) {
+            recordHooksWired(root, { onlyIfAbsent: true });
+          }
         } catch {
           // SessionStart is fail-soft; doctor reports an uncovered/malformed hook.
         }
