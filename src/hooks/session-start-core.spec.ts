@@ -710,10 +710,18 @@ describe("processSessionStart", () => {
 
   it("drops doctor's expectation wherever prim is off, however it was turned off", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+    vi.mocked(repoActiveFlag).mockReturnValue("false");
     await processSessionStart(ENVELOPE, "claude");
     expect(clearHooksWired).toHaveBeenCalledWith("/repo");
     expect(recordHooksWired).not.toHaveBeenCalled();
     expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
+  });
+
+  it("keeps the expectation when prim.active cannot be read (a git timeout reads as unset)", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+    vi.mocked(repoActiveFlag).mockReturnValue(undefined);
+    await processSessionStart(ENVELOPE, "claude");
+    expect(clearHooksWired).not.toHaveBeenCalled();
   });
 
   it("starts no expectation when post-commit was left unwired", async () => {

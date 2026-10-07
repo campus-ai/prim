@@ -52,7 +52,9 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
       // prim.active false`), commits from now on are not expected to reach
       // prim: drop the expectation so a later raw re-enable never has doctor
       // judge commits made meanwhile. The next active session starts a new one.
-      clearHooksWired(root);
+      // Only an explicit false counts: a git error or timeout reads as unset,
+      // and must never erase evidence of a real failure.
+      if (repoActiveFlag(root) === "false") clearHooksWired(root);
       return null;
     }
     let shellGateActive = repoActiveFlag(root) === "true";
