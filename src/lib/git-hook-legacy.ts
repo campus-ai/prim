@@ -1,13 +1,15 @@
-import { GIT_HOOK_CACHE_SHELL_DIR, GIT_HOOK_CACHE_TTL_MINUTES } from "./bin-cache.js";
 /**
  * Frozen recognition data for Git hook forms written before the v1 contract.
  *
- * Releases up to 0.1.0-alpha.93 inlined a version-pinned block into hook files
- * and into prim's own global hooks. Nothing here is ever written again; these
- * generators exist only so an older prim-owned global hook still proves its
- * ownership and stays removable after an upgrade. Do not edit the templates.
+ * Releases up to 0.1.0-alpha.93 wrote whole pre-commit files and inlined
+ * blocks into hook files and into prim's own global hooks. Nothing here is
+ * ever written again; these templates exist only so what an older release
+ * wrote still proves its ownership, migrates once, and stays removable after
+ * an upgrade. Each is copied from the release that wrote it: do not edit.
  */
-import { commandMatchesBin, pinnedHookCommand, pinnedNpxCommand } from "./bin-path.js";
+import { isAbsolute } from "node:path";
+import { GIT_HOOK_CACHE_SHELL_DIR, GIT_HOOK_CACHE_TTL_MINUTES } from "./bin-cache.js";
+import { pinnedHookCommand, pinnedNpxCommand } from "./bin-path.js";
 import type { ManagedGitHookName } from "./git-hook-contract.js";
 
 const PRIM_MANAGED_MARK = "prim-managed-hook";
@@ -146,6 +148,92 @@ exit 0
 `;
 }
 
+const PRE_COMMIT_GATE = 'if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then';
+
+/** alpha.2–56: resolve prim-pre-commit on PATH, then node_modules, then npx. */
+function preCommitLadder(fallback: string, failSoft: boolean): string {
+  const soft = failSoft ? " || true" : "";
+  return `if command -v prim-pre-commit >/dev/null 2>&1; then
+  prim-pre-commit${soft}
+elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
+  ./node_modules/.bin/prim-pre-commit${soft}
+else
+  ${fallback} 2>/dev/null || true
+fi`;
+}
+
+const LADDER_ALPHA_2 = preCommitLadder("npx --yes @primitive.ai/prim pre-commit-hook", false);
+const LADDER_ALPHA_9 = preCommitLadder("npx --yes -p @primitive.ai/prim prim-pre-commit", false);
+const LADDER_ALPHA_35 = preCommitLadder("npx --yes -p @primitive.ai/prim prim-pre-commit", true);
+
+const PINNED_NPX_PRE_COMMIT = String.raw`npx --yes(?: --ignore-scripts)? -p @primitive\.ai/prim@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)? prim-pre-commit`;
+/** alpha.57–93: `{ <pinned command>; } || true`, pinned to a version and often to a Node path. */
+const PINNED_PRE_COMMIT_RE = new RegExp(
+  String.raw`^\{ (?:${PINNED_NPX_PRE_COMMIT}|if \[ -x (?<node>'.*') \] && \[ -f (?<entry>'.*') \]; then \k<node> \k<entry>; else ${PINNED_NPX_PRE_COMMIT}; fi); \} \|\| true$`,
+  "u",
+);
+const SHELL_QUOTED_RE = /^'(?:[^']|'"'"')*'$/u;
+
+/** The absolute path in a single-quoted word a pinned invocation embeds. */
+export function decodePinnedPath(token: string | undefined): string | undefined {
+  if (!token || !SHELL_QUOTED_RE.test(token)) return undefined;
+  const value = token.slice(1, -1).replaceAll(`'"'"'`, "'");
+  if (!isAbsolute(value) || value.includes("\0") || value.includes("\n") || value.includes("\r")) {
+    return undefined;
+  }
+  return value;
+}
+
+function isPinnedPreCommitInvocation(line: string): boolean {
+  const match = PINNED_PRE_COMMIT_RE.exec(line);
+  if (!match) return false;
+  if (match.groups?.node === undefined) return true;
+  return Boolean(
+    decodePinnedPath(match.groups.node) &&
+      decodePinnedPath(match.groups.entry)?.endsWith("/dist/hooks/pre-commit.js"),
+  );
+}
+
+/** A pre-commit invocation some release wrote, ungated or gated as it was. */
+function isLegacyPreCommitBody(body: string): boolean {
+  if (body === LADDER_ALPHA_2 || body === LADDER_ALPHA_9 || body === LADDER_ALPHA_35) return true;
+  if (isPinnedPreCommitInvocation(body)) return true;
+  // The gated form (alpha.35+, user-scope coexist blocks).
+  const prefix = `${PRE_COMMIT_GATE}\n`;
+  if (!body.startsWith(prefix) || !body.endsWith("\nfi")) return false;
+  const inner = body.slice(prefix.length, -"\nfi".length);
+  return inner === LADDER_ALPHA_35 || isPinnedPreCommitInvocation(inner);
+}
+
+/**
+ * Whether `content` is a whole `.git/hooks/pre-commit` an earlier `prim hooks
+ * install` wrote, byte for byte modulo its pinned version and paths. Such a
+ * file is prim's alone: an upgrade replaces it and uninstall deletes it.
+ */
+export function isLegacyOwnedPreCommitScript(content: string): boolean {
+  const original = (ladder: string) => `#!/bin/sh
+# prim pre-commit hook — auto-syncs affected specs on commit
+# Installed by: prim hooks install
+
+# Find the nearest node_modules/.bin with prim, or use npx
+${ladder}
+`;
+  // alpha.2–8 and alpha.9–17.
+  if (content === original(LADDER_ALPHA_2) || content === original(LADDER_ALPHA_9)) return true;
+  // alpha.18–34.
+  if (
+    content ===
+    `#!/bin/sh\n# prim pre-commit hook — installed by: prim hooks install\n\n${LADDER_ALPHA_9}\n`
+  ) {
+    return true;
+  }
+  // alpha.35–56, then alpha.57–93 with a pinned invocation.
+  const prefix = `#!/bin/sh\n# prim pre-commit hook — installed by: prim hooks install (${PRIM_MANAGED_MARK})\n\n`;
+  if (!content.startsWith(prefix) || !content.endsWith("\n")) return false;
+  const body = content.slice(prefix.length, -1);
+  return body === LADDER_ALPHA_35 || isPinnedPreCommitInvocation(body);
+}
+
 const PINNED_PACKAGE_VERSION_RE =
   /@primitive\.ai\/prim@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/gu;
 
@@ -156,10 +244,8 @@ function normalizeOwnedGlobalHook(content: string, hookName: string): string | n
       line.startsWith("{ ") && line.endsWith("; } || true") ? [index] : [],
     );
     if (invocationIndexes.length !== 1) return null;
-    const invocationIndex = invocationIndexes[0];
-    const line = lines[invocationIndex];
-    const command = line.slice(2, -"; } || true".length);
-    if (!commandMatchesBin(command, PRE_COMMIT.binName)) return null;
+    const invocationIndex = invocationIndexes[0] as number;
+    if (!isPinnedPreCommitInvocation(lines[invocationIndex] as string)) return null;
     lines[invocationIndex] = "{ <recognized Prim pre-commit invocation>; } || true";
     return lines.join("\n");
   }
@@ -194,16 +280,10 @@ export function legacyInlineHookBlock(hookName: "post-commit" | "post-rewrite"):
 export function isRecognizedLegacyBlock(hookName: ManagedGitHookName, block: string): boolean {
   if (hookName === "pre-commit") {
     const { start, end } = blockMarkers(PRE_COMMIT);
-    const lines = block.split("\n");
-    if (lines[0] !== start || lines.at(-1) !== end) return false;
-    const body = lines.slice(1, -1);
-    const gated =
-      body.length === 3 &&
-      body[0] === 'if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then' &&
-      body[2] === "fi";
-    const invocation = gated ? body[1] : body.length === 1 ? body[0] : undefined;
-    if (!invocation?.startsWith("{ ") || !invocation.endsWith("; } || true")) return false;
-    return commandMatchesBin(invocation.slice(2, -"; } || true".length), PRE_COMMIT.binName);
+    const prefix = `${start}\n`;
+    const suffix = `\n${end}`;
+    if (!block.startsWith(prefix) || !block.endsWith(suffix)) return false;
+    return isLegacyPreCommitBody(block.slice(prefix.length, -suffix.length));
   }
   const expected = legacyInlineHookBlock(hookName);
   const normalize = (text: string) =>

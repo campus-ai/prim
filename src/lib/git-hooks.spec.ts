@@ -1306,3 +1306,181 @@ describe("round-three review regressions", () => {
     expect(readFileSync(path, "utf8")).toBe(content);
   });
 });
+
+describe("round-four review regressions", () => {
+  // Every whole `.git/hooks/pre-commit` a release wrote, copied from history.
+  const ladder = (
+    fallback: string,
+    soft: string,
+  ) => `if command -v prim-pre-commit >/dev/null 2>&1; then
+  prim-pre-commit${soft}
+elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
+  ./node_modules/.bin/prim-pre-commit${soft}
+else
+  ${fallback} 2>/dev/null || true
+fi`;
+  const original = (fallback: string) => `#!/bin/sh
+# prim pre-commit hook — auto-syncs affected specs on commit
+# Installed by: prim hooks install
+
+# Find the nearest node_modules/.bin with prim, or use npx
+${ladder(fallback, "")}
+`;
+  const MANAGED_HEADER =
+    "# prim pre-commit hook — installed by: prim hooks install (prim-managed-hook)";
+  const WRAPPED_PRE_COMMIT =
+    "{ if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/dist/hooks/pre-commit.js' ]; then '/opt/prim/node' '/opt/prim/dist/hooks/pre-commit.js'; else npx --yes --ignore-scripts -p @primitive.ai/prim@0.1.0-alpha.93 prim-pre-commit; fi; } || true";
+  const OWNED_PRE_COMMIT: [string, string][] = [
+    ["alpha.2", original("npx --yes @primitive.ai/prim pre-commit-hook")],
+    ["alpha.9", original("npx --yes -p @primitive.ai/prim prim-pre-commit")],
+    [
+      "alpha.18",
+      `#!/bin/sh\n# prim pre-commit hook — installed by: prim hooks install\n\n${ladder("npx --yes -p @primitive.ai/prim prim-pre-commit", "")}\n`,
+    ],
+    [
+      "alpha.35",
+      `#!/bin/sh\n${MANAGED_HEADER}\n\n${ladder("npx --yes -p @primitive.ai/prim prim-pre-commit", " || true")}\n`,
+    ],
+    [
+      "alpha.57",
+      `#!/bin/sh\n${MANAGED_HEADER}\n\n{ npx --yes -p @primitive.ai/prim@0.1.0-alpha.57 prim-pre-commit; } || true\n`,
+    ],
+    ["alpha.93", `#!/bin/sh\n${MANAGED_HEADER}\n\n${WRAPPED_PRE_COMMIT}\n`],
+  ];
+
+  it.each(OWNED_PRE_COMMIT)(
+    "replaces the %s pre-commit wholesale, so a commit runs prim once, and uninstall removes it",
+    (_release, content) => {
+      const root = repository("owned-pre-commit");
+      git(root, "config", "prim.active", "true");
+      const path = join(root, ".git", "hooks", "pre-commit");
+      writeFileSync(path, content, { mode: 0o755 });
+      const log = join(temp("owned-pre-commit-log"), "runs");
+      stageFakeGitHookRuntime(configDir, {
+        "prim-pre-commit": `printf 'run\\n' >> '${log}'\n`,
+      });
+
+      expect(ensureEffectiveGitHook("pre-commit", root).outcome).toBe("updated");
+      expect(readFileSync(path, "utf8")).toBe(
+        `#!/bin/sh\n${managedHookBlock("pre-commit")}\n# prim-created-pre-commit-hook\n`,
+      );
+      git(root, "commit", "-q", "--allow-empty", "-m", "one");
+      expect(readFileSync(log, "utf8")).toBe("run\n");
+      expect(uninstallEffectiveGitHook("pre-commit", root).removedFile).toBe(true);
+    },
+  );
+
+  it.each([
+    [
+      "with an extra argument",
+      "{ npx --yes -p @primitive.ai/prim@0.1.0-alpha.60 prim-pre-commit --all; } || true",
+    ],
+    ["calling a bare bin", "{ prim-pre-commit; } || true"],
+    ["followed by user code", `${WRAPPED_PRE_COMMIT}\nnpm test`],
+  ])("never claims a pre-commit file %s under prim's old header", (_label, body) => {
+    const root = repository("not-owned-pre-commit");
+    const path = join(root, ".git", "hooks", "pre-commit");
+    const content = `#!/bin/sh\n${MANAGED_HEADER}\n\n${body}\n`;
+    writeFileSync(path, content, { mode: 0o755 });
+    ensureEffectiveGitHook("pre-commit", root);
+    expect(readFileSync(path, "utf8")).toBe(
+      `#!/bin/sh\n${managedHookBlock("pre-commit")}\n${content.slice("#!/bin/sh\n".length)}`,
+    );
+  });
+
+  function sharedPreCommit(name: string, content: string): { root: string; path: string } {
+    const globalConfig = join(temp(`${name}-global`), "config");
+    writeFileSync(globalConfig, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    const root = repository(name);
+    const hooks = temp(`${name}-hooks`);
+    git(root, "config", "--global", "core.hooksPath", hooks);
+    const path = join(hooks, "pre-commit");
+    writeFileSync(path, content, { mode: 0o755 });
+    return { root, path };
+  }
+  const { start, end } = blockMarkers("pre-commit");
+  const GATE = 'if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then';
+
+  it.each([
+    ["the alpha.2 ladder", ladder("npx --yes @primitive.ai/prim pre-commit-hook", "")],
+    [
+      "the alpha.35 gated ladder",
+      `${GATE}\n${ladder("npx --yes -p @primitive.ai/prim prim-pre-commit", " || true")}\nfi`,
+    ],
+    ["a gated pinned invocation", `${GATE}\n${WRAPPED_PRE_COMMIT}\nfi`],
+  ])("keeps a pre-commit block prim wrote exactly: %s", (_label, body) => {
+    const content = `#!/bin/sh\n${start}\n${body}\n${end}\nnpm test\n`;
+    const { root, path } = sharedPreCommit("kept-pre-commit", content);
+    expect(ensureEffectiveGitHook("pre-commit", root).outcome).toBe("kept");
+    expect(readFileSync(path, "utf8")).toBe(content);
+    expect(inspectEffectiveGitHook("pre-commit", root).reason).toBe("legacy_block");
+  });
+
+  it.each([
+    ["a bare bin", "{ prim-pre-commit; } || true"],
+    [
+      "a hand-edited pinned call",
+      WRAPPED_PRE_COMMIT.replace("prim-pre-commit;", "prim-pre-commit --all;"),
+    ],
+  ])("does not vouch for %s between prim's pre-commit markers", (_label, body) => {
+    const content = `#!/bin/sh\n${start}\n${body}\n${end}\n`;
+    const { root } = sharedPreCommit("not-kept-pre-commit", content);
+    expect(ensureEffectiveGitHook("pre-commit", root).outcome).toBe("external");
+    expect(inspectEffectiveGitHook("pre-commit", root).reason).toBe("stale_block");
+  });
+
+  it.each([
+    ["an indented exit", 'if [ -n "$CI" ]; then\n  exit 0\nfi\n'],
+    ["an exit after &&", '[ -n "$CI" ] && exit 0\n'],
+    ["an exec in a function", "run() { exec npm test; }\nrun\n"],
+  ])("does not vouch for a legacy block behind %s", (_label, guard) => {
+    const content = `#!/bin/sh\n${guard}${legacyInlineHookBlock("post-commit")}\n`;
+    const globalConfig = join(temp("conditional-exit-global"), "config");
+    writeFileSync(globalConfig, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    const root = repository("conditional-exit");
+    const hooks = temp("conditional-exit-hooks");
+    git(root, "config", "--global", "core.hooksPath", hooks);
+    writeFileSync(join(hooks, "post-commit"), content, { mode: 0o755 });
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("external");
+    expect(inspectEffectiveGitHook("post-commit", root).reason).not.toBe("legacy_block");
+  });
+
+  describe("a Husky v8 checkout before `husky install` created _/husky.sh", () => {
+    const V8_HOOK = '#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n\nnpx lint-staged\n';
+    function freshClone(husky: string): { root: string; path: string } {
+      const root = repository("husky-v8-fresh");
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ devDependencies: { husky } }, null, 2),
+      );
+      mkdirSync(join(root, ".husky"));
+      const path = join(root, ".husky", "pre-commit");
+      writeFileSync(path, V8_HOOK, { mode: 0o755 });
+      git(root, "config", "--local", "core.hooksPath", ".husky");
+      return { root, path };
+    }
+
+    it("places the block after husky.sh when package.json declares Husky 8", () => {
+      const { root, path } = freshClone("^8.0.3");
+      ensureEffectiveGitHook("pre-commit", root);
+      const wired = `#!/usr/bin/env sh\n. "$(dirname -- "$0")/_/husky.sh"\n${managedHookBlock("pre-commit")}\n\nnpx lint-staged\n`;
+      expect(readFileSync(path, "utf8")).toBe(wired);
+
+      // Then `npm install` runs `husky install`: nothing moves.
+      mkdirSync(join(root, ".husky", "_"));
+      writeFileSync(join(root, ".husky", "_", "husky.sh"), HUSKY_V8_SH);
+      expect(inspectEffectiveGitHook("pre-commit", root)).toMatchObject({ covered: true });
+      expect(ensureEffectiveGitHook("pre-commit", root).changed).toBe(false);
+    });
+
+    it("keeps the block after the shebang when package.json declares Husky 9", () => {
+      const { root, path } = freshClone("^9.1.7");
+      ensureEffectiveGitHook("pre-commit", root);
+      expect(readFileSync(path, "utf8")).toBe(
+        `#!/usr/bin/env sh\n${managedHookBlock("pre-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n\nnpx lint-staged\n`,
+      );
+    });
+  });
+});

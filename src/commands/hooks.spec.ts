@@ -98,7 +98,7 @@ vi.mock("../lib/bin-path.js", async (importOriginal) => {
     ),
     pinnedHookCommand: vi.fn(
       (bin: string) =>
-        `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/${bin}.js' ]; then '/opt/prim/node' '/opt/prim/${bin}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
+        `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js' ]; then '/opt/prim/node' '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
     ),
     pinnedNpxCommand: vi.fn(
       (bin: string) => `npx --yes --ignore-scripts -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}`,
@@ -1000,7 +1000,7 @@ describe("uninstallGlobalHooks (user scope)", () => {
 # 'git config --global prim.active true' (every repo). Chains to the repo's own
 # hook regardless, so inactive repos are unaffected.
 if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
-{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/prim-pre-commit.js' ]; then '/old/prim/node' '/old/prim/prim-pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
+{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/dist/hooks/pre-commit.js' ]; then '/old/prim/node' '/old/prim/dist/hooks/pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
 fi
 common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
 repo_hook="$common_dir/hooks/pre-commit"
