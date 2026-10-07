@@ -11,7 +11,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
-import { recordHooksWired } from "../lib/commit-heartbeat.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
@@ -46,7 +46,15 @@ type ActiveProject = { root: string; binding?: RepositoryBindingResult };
 async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
   try {
     const root = gitToplevel(cwd);
-    if (!root || !isRepoActiveForCapture(cwd)) return null;
+    if (!root) return null;
+    if (!isRepoActiveForCapture(cwd)) {
+      // However prim was turned off here (`prim disable`, or a raw `git config
+      // prim.active false`), commits from now on are not expected to reach
+      // prim: drop the expectation so a later raw re-enable never has doctor
+      // judge commits made meanwhile. The next active session starts a new one.
+      clearHooksWired(root);
+      return null;
+    }
     let shellGateActive = repoActiveFlag(root) === "true";
     if (!shellGateActive) {
       try {

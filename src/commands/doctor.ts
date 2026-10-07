@@ -713,7 +713,7 @@ export function classifyHookFiring(firing: PostCommitFiring, now: number = Date.
         status: "fail",
         detail: `post-commit never reached prim for the commit made ${minutesAgo(firing.commitAt, now)}${
           firing.firedAt === undefined ? "" : ` (last run ${minutesAgo(firing.firedAt, now)})`
-        } · likely an exit/exec before prim's block, hooks turned off for that commit (HUSKY=0, a core.hooksPath override), or a git client without prim's environment · fix the cause, then commit to re-check`,
+        } · likely an exit/exec before prim's block, hooks turned off for that commit (HUSKY=0, a core.hooksPath override), or a git client without prim's environment · fix the cause, then commit to re-check · if prim was off for that commit (set with \`git config prim.active\` directly), run \`prim disable\` then \`prim enable\` to restart the check`,
       };
   }
 }

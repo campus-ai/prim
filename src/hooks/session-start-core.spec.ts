@@ -15,7 +15,7 @@ import {
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
-import { recordHooksWired } from "../lib/commit-heartbeat.js";
+import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { bindRepository, resolveRepositoryBinding } from "../lib/repository-binding.js";
@@ -63,7 +63,10 @@ vi.mock("../lib/git.js", () => ({
   gitToplevel: vi.fn(),
   resolveRepositoryContext: vi.fn(() => ({ repoRoot: "/repo" })),
 }));
-vi.mock("../lib/commit-heartbeat.js", () => ({ recordHooksWired: vi.fn() }));
+vi.mock("../lib/commit-heartbeat.js", () => ({
+  clearHooksWired: vi.fn(),
+  recordHooksWired: vi.fn(),
+}));
 vi.mock("../lib/git-hooks.js", () => ({
   MANAGED_GIT_HOOK_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
   ensureEffectiveGitHook: vi.fn(),
@@ -703,6 +706,14 @@ describe("processSessionStart", () => {
     }));
     await processSessionStart(ENVELOPE, "codex");
     expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+  });
+
+  it("drops doctor's expectation wherever prim is off, however it was turned off", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
+    await processSessionStart(ENVELOPE, "claude");
+    expect(clearHooksWired).toHaveBeenCalledWith("/repo");
+    expect(recordHooksWired).not.toHaveBeenCalled();
+    expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
   });
 
   it("starts no expectation when post-commit was left unwired", async () => {

@@ -360,7 +360,10 @@ never reached prim. That catches an `exit` before prim's block, hand wiring
 that broke, or a git client whose environment cannot find prim. The check
 applies in manual mode too: once a repository is enabled, doctor expects your
 own wiring to reach prim. `prim disable` ends the expectation, so commits made
-while disabled are never judged.
+while disabled are never judged. Turning prim off with `git config prim.active
+false` directly ends it too, once an agent session starts while it is off; if
+doctor still flags a commit made while it was off, run `prim disable` then
+`prim enable`.
 
 To wire the hooks yourself (lefthook, a custom Husky layout, …), run
 `git config prim.gitHooks manual` (or `--global`) first: prim then never writes
