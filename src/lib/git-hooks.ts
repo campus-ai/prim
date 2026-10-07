@@ -41,7 +41,6 @@ import {
 } from "node:fs";
 import type { Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { commandMatchesBin } from "./bin-path.js";
 import {
   GIT_HOOK_CONTRACT_VERSION,
   GIT_HOOK_ENTRYPOINT_NAME,
@@ -52,7 +51,11 @@ import {
   hookBlockContractVersion,
   managedHookBlock,
 } from "./git-hook-contract.js";
-import { isRecognizedLegacyBlock } from "./git-hook-legacy.js";
+import {
+  decodePinnedPath,
+  isLegacyOwnedPreCommitScript,
+  isRecognizedLegacyBlock,
+} from "./git-hook-legacy.js";
 import { gitToplevel } from "./git.js";
 import { type GitHookEntrypointState, inspectGitHookEntrypoint } from "./hook-runtime.js";
 import { primConfigDirectory } from "./paths.js";
@@ -66,8 +69,6 @@ const LEGACY_PRIM_OWNED_HEADER =
   "# prim post-commit hook — installed by: prim hooks install (prim-managed-hook)";
 const LEGACY_GLOBAL_OWNED_HEADER =
   "# prim global post-commit hook (core.hooksPath) — managed by prim; do not edit.";
-const LEGACY_PRE_COMMIT_OWNED_HEADER =
-  "# prim pre-commit hook — installed by: prim hooks install (prim-managed-hook)";
 
 const MAX_HOOK_BYTES = 1_048_576;
 const GIT_TIMEOUT_MS = 1_000;
@@ -251,17 +252,6 @@ fi
 
 const PINNED_INVOCATION_RE =
   /^\{ if \[ -x (?<node>'.*') \] && \[ -f (?<entry>'.*') \]; then \k<node> \k<entry>; else npx --yes -p @primitive\.ai\/prim@(?<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?) prim-post-commit; fi; \} \|\| true$/u;
-const SHELL_QUOTED_RE = /^'(?:[^']|'"'"')*'$/u;
-
-function decodePinnedPath(token: string | undefined): string | undefined {
-  if (!token || !SHELL_QUOTED_RE.test(token)) return undefined;
-  const value = token.slice(1, -1).replaceAll(`'"'"'`, "'");
-  if (!isAbsolute(value) || value.includes("\0") || value.includes("\n") || value.includes("\r")) {
-    return undefined;
-  }
-  return value;
-}
-
 function isPinnedInvocation(value: string): boolean {
   const match = PINNED_INVOCATION_RE.exec(value);
   const node = decodePinnedPath(match?.groups?.node);
@@ -309,13 +299,7 @@ function oldCreatedPrefixes(spec: ManagedHookSpec): Buffer[] {
 
 /** A pre-commit file an earlier `prim hooks install` wrote and owns entirely. */
 export function isOwnedStandalonePreCommit(content: string): boolean {
-  if (content === "#!/bin/sh\nprim-pre-commit\n") return true;
-  const prefix = `#!/bin/sh\n${LEGACY_PRE_COMMIT_OWNED_HEADER}\n\n`;
-  const suffix = "; } || true\n";
-  if (!content.startsWith(prefix) || !content.endsWith(suffix)) return false;
-  const body = content.slice(prefix.length, -suffix.length);
-  if (!body.startsWith("{ ") || /[\r\n]/u.test(body)) return false;
-  return commandMatchesBin(body.slice(2), "prim-pre-commit");
+  return content === "#!/bin/sh\nprim-pre-commit\n" || isLegacyOwnedPreCommitScript(content);
 }
 
 /** Resolve symlinks through the deepest existing ancestor of `path`. */
@@ -622,19 +606,54 @@ function blockInsertionPoint(
   return shebangEnd + Buffer.byteLength(rest.slice(0, afterLine), "utf8");
 }
 
-/** Whether the hook's `_/husky.sh` is Husky v8's runtime, which re-runs the hook. */
+const HUSKY_SPEC_MAJOR_RE = /^\s*(?:[~^]|[<>]?=?)?\s*v?([0-9]+)(?:[.\s]|$)/u;
+
+/**
+ * The major version of Husky the nearest package.json above `dir` declares,
+ * stopping at the repository root. Undefined when none or not a plain range.
+ */
+function declaredHuskyMajor(dir: string): number | undefined {
+  for (let current = resolve(dir); ; ) {
+    const manifest = join(current, "package.json");
+    if (existsSync(manifest)) {
+      try {
+        if (lstatSync(manifest).size > MAX_HOOK_BYTES) return undefined;
+        const parsed = JSON.parse(readFileSync(manifest, "utf8")) as {
+          dependencies?: Record<string, unknown>;
+          devDependencies?: Record<string, unknown>;
+        };
+        const range = parsed.devDependencies?.husky ?? parsed.dependencies?.husky;
+        const major = typeof range === "string" ? HUSKY_SPEC_MAJOR_RE.exec(range)?.[1] : undefined;
+        return major === undefined ? undefined : Number(major);
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current || existsSync(join(current, ".git"))) return undefined;
+    current = parent;
+  }
+}
+
+/**
+ * Whether the hook's Husky is v8, whose `_/husky.sh` re-runs the hook. The
+ * runtime decides when present. A fresh clone (or `git clean -X`) has none
+ * until `husky install` runs, so then the declared husky dependency decides.
+ */
 function isHuskyV8Hook(hookPath: string): boolean {
+  const runtime = join(dirname(hookPath), "_", "husky.sh");
   try {
-    const runtime = join(dirname(hookPath), "_", "husky.sh");
     const stat = lstatSync(runtime);
     return (
       stat.isFile() &&
       stat.size <= MAX_HOOK_BYTES &&
       readFileSync(runtime, "utf8").includes("husky_skip_init")
     );
-  } catch {
-    return false;
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") return false;
   }
+  const major = declaredHuskyMajor(dirname(dirname(hookPath)));
+  return major !== undefined && major <= 8;
 }
 
 const TERMINAL_LINE_RE = /^(?:exit|return)(?:\s|;|$)/u;
@@ -665,6 +684,23 @@ function isReplacingExec(line: string): boolean {
 function terminatesBefore(content: Buffer, from: number, offset: number): boolean {
   const lines = content.subarray(from, offset).toString("utf8").split("\n");
   return lines.some((line) => TERMINAL_LINE_RE.test(line) || isReplacingExec(line));
+}
+
+/**
+ * Whether anything between `from` and `offset` may end the hook: an
+ * `exit`/`exec`/`return` at any depth or after any separator, so including a
+ * conditional one. Used where prim would vouch for a block it cannot upgrade;
+ * a false positive there costs a warning, a false negative a silent gap.
+ */
+function mayTerminateBefore(content: Buffer, from: number, offset: number): boolean {
+  return content
+    .subarray(from, offset)
+    .toString("utf8")
+    .split(/\n|;|&&|\|\||\||[{(]|\b(?:then|do|else)\b/u)
+    .some((part) => {
+      const command = part.trim();
+      return TERMINAL_LINE_RE.test(command) || isReplacingExec(command);
+    });
 }
 
 function withoutRange(content: Buffer, start: number, end: number): Buffer {
@@ -898,8 +934,8 @@ function unlinkHookUnchanged(
 
 /**
  * Whether the hook file carries a pre-v1 block prim wrote (recognized exactly,
- * modulo version), in a place it still runs: before any top-level exit/exec,
- * in a file Git can execute.
+ * modulo version), in a place it surely runs: before any exit/exec/return,
+ * conditional or not.
  */
 function workingLegacyBlock(
   content: Buffer,
@@ -912,7 +948,8 @@ function workingLegacyBlock(
     const block = content.subarray(range.start, range.end).toString("utf8");
     const from = shellInsertionPoint(content, target.kind === "husky_v9", spec);
     return (
-      isRecognizedLegacyBlock(spec.hookName, block) && !terminatesBefore(content, from, range.start)
+      isRecognizedLegacyBlock(spec.hookName, block) &&
+      !mayTerminateBefore(content, from, range.start)
     );
   } catch {
     return false;
