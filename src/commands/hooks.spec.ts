@@ -100,7 +100,7 @@ vi.mock("../lib/bin-path.js", async (importOriginal) => {
     ),
     pinnedHookCommand: vi.fn(
       (bin: string) =>
-        `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/${bin}.js' ]; then '/opt/prim/node' '/opt/prim/${bin}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
+        `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js' ]; then '/opt/prim/node' '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
     ),
     pinnedNpxCommand: vi.fn(
       (bin: string) => `npx --yes --ignore-scripts -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}`,
@@ -1034,7 +1034,7 @@ describe("uninstallGlobalHooks (user scope)", () => {
 # 'git config --global prim.active true' (every repo). Chains to the repo's own
 # hook regardless, so inactive repos are unaffected.
 if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
-{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/prim-pre-commit.js' ]; then '/old/prim/node' '/old/prim/prim-pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
+{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/dist/hooks/pre-commit.js' ]; then '/old/prim/node' '/old/prim/dist/hooks/pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
 fi
 common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
 repo_hook="$common_dir/hooks/pre-commit"
@@ -1178,13 +1178,41 @@ describe("hooks install --scope user consent", () => {
     process.exitCode = undefined;
   });
 
-  it("does not call inert hooks present: exits 3 when the runtime is missing", async () => {
+  it("does not call inert hooks present: fails when the runtime is missing", async () => {
     stubHooksPath({ global: "/Users/example/.config/git/hooks" });
     vi.mocked(hasCurrentHookBlock).mockReturnValue(true);
     vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
     await install([], ["--global-hooks-path"]);
-    expect(process.exitCode).toBe(EXIT_GLOBAL_HOOKS_NOT_INSTALLED);
+    expect(process.exitCode).toBe(1);
     expect(stageHookRuntime).toHaveBeenCalled();
+    process.exitCode = undefined;
+  });
+
+  it.each([
+    ["setting the pointer", {}],
+    ["adding to a foreign global dir", { global: "/Users/example/.config/git/hooks" }],
+  ])(
+    "never asks consent for %s while the runtime is missing, and fails with or without the flag",
+    async (_label, paths) => {
+      for (const extra of [[], ["--global-hooks-path"]]) {
+        tty();
+        stubHooksPath(paths);
+        vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+        await install([], extra);
+        expect(askConfirmation).not.toHaveBeenCalled();
+        expect(setCalls()).toHaveLength(0);
+        expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(1);
+        process.exitCode = undefined;
+      }
+    },
+  );
+
+  it("fails a refresh of prim's own global hooks while the runtime is missing", async () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    await install();
+    expect(process.exitCode).toBe(1);
     process.exitCode = undefined;
   });
 

@@ -27,6 +27,7 @@ import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_p
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { resolveEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
@@ -246,8 +247,31 @@ export function projectHooksConflict(
   return globalHooksActive && preCommit !== undefined && preCommitRunsPrim(preCommit);
 }
 
+/**
+ * Whether `prim enable` can wire the repository at `root`: Git runs its hooks
+ * from a place prim may write (the repository's own hooks, a hooks dir inside
+ * it, or prim's dir), not a dir that other repositories share. Undefined
+ * outside a repository.
+ */
+export function enableWiresRepository(root: string | null | undefined): boolean | undefined {
+  if (!root) return undefined;
+  try {
+    return resolveEffectiveGitHook("post-commit", root).location !== "external";
+  } catch {
+    return undefined;
+  }
+}
+
 /** Setup's trail line for git hooks at user scope, without --global-hooks-path. */
-export function setupGitHooksNote(plan: GlobalHooksPlan): string {
+export function setupGitHooksNote(plan: GlobalHooksPlan, wiresThisRepository?: boolean): string {
+  // A repository that sets its own core.hooksPath (Husky does) never runs the
+  // global or system hooks dir: `prim enable` wires it without any consent.
+  if (wiresThisRepository === true && plan.action === "add_to_dir") {
+    return `git hooks · this repository sets its own core.hooksPath, so \`prim enable\` wires it; other repositories run ${plan.global}, which prim edits only with --global-hooks-path, after asking the user`;
+  }
+  if (wiresThisRepository === true && plan.action === "system_declined") {
+    return `git hooks · this repository sets its own core.hooksPath, so \`prim enable\` wires it; other repositories run the system hooks dir ${plan.system}, which prim never edits`;
+  }
   switch (plan.action) {
     case "refresh":
       return "git hooks · prim's global hooks stay active; `prim enable` refreshes them";
@@ -540,7 +564,7 @@ export function registerSetupCommand(
       }
 
       if (scope === "user" && !opts.globalHooksPath) {
-        note(setupGitHooksNote(planGlobalHooks()));
+        note(setupGitHooksNote(planGlobalHooks(), enableWiresRepository(gitToplevel())));
       }
 
       // N+1 · Migrate — with the (default) user scope, a lingering PROJECT-scoped

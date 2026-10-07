@@ -8,7 +8,7 @@
  * below; only thin glue (the typo-check, the inferred-agent note) rides along.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
   SETUP_DAEMON_DRAINS_ENV,
   SETUP_ORCHESTRATOR_ENV,
   detectAgent,
+  enableWiresRepository,
   parseSetupAuthStatus,
   planCleanupUninstalls,
   planSetupSteps,
@@ -795,6 +796,73 @@ describe("setup's global-hooks step status", () => {
     const { note, parse } = setupWith(0, ["setup", "--agent", "codex", "--no-daemon"]);
     await parse();
     expect(note).toHaveBeenCalledWith(expect.stringContaining("prim's global hooks stay active"));
+  });
+});
+
+describe("a repository that sets its own core.hooksPath", () => {
+  function repoWithSharedGlobalHooks(): { root: string; cleanup: () => void } {
+    const base = mkdtempSync(join(tmpdir(), "prim-setup-local-hooks-"));
+    const root = join(base, "repo");
+    const globalConfig = join(base, "gitconfig");
+    writeFileSync(globalConfig, `[core]\n\thooksPath = ${join(base, "shared-hooks")}\n`);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    vi.stubEnv("GIT_CONFIG_SYSTEM", "/dev/null");
+    vi.stubEnv("PRIM_CONFIG_DIR", join(base, "prim"));
+    execFileSync("git", ["init", "-q", root]);
+    return {
+      root,
+      cleanup: () => {
+        vi.unstubAllEnvs();
+        rmSync(base, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("is wired by `prim enable`, while one that runs the shared global dir is not", () => {
+    const { root, cleanup } = repoWithSharedGlobalHooks();
+    try {
+      expect(enableWiresRepository(root)).toBe(false);
+      execFileSync("git", ["config", "--local", "core.hooksPath", ".husky"], { cwd: root });
+      expect(enableWiresRepository(root)).toBe(true);
+      expect(enableWiresRepository(null)).toBeUndefined();
+      const system = setupGitHooksNote(
+        { action: "system_declined", system: "/etc/git/hooks" },
+        true,
+      );
+      expect(system).toContain("`prim enable` wires it");
+      expect(system).toContain("which prim never edits");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("gets a setup note that asks for no consent", async () => {
+    const { root, cleanup } = repoWithSharedGlobalHooks();
+    try {
+      execFileSync("git", ["config", "--local", "core.hooksPath", ".husky"], { cwd: root });
+      vi.mocked(gitToplevel).mockReturnValue(root);
+      vi.mocked(planGlobalHooks).mockReturnValue({ action: "add_to_dir", global: "/shared" });
+      const note = vi.fn();
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) =>
+          args[0] === "auth" && args[1] === "status"
+            ? { code: 0, stdout: '{"status":"valid"}' }
+            : { code: 0, stdout: "{}" },
+        note,
+        exit: vi.fn(),
+      });
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon"], { from: "user" });
+      const hooksNote = note.mock.calls
+        .map(([text]) => String(text))
+        .find((text) => text.startsWith("git hooks ·"));
+      expect(hooksNote).toContain("sets its own core.hooksPath, so `prim enable` wires it");
+      expect(hooksNote).not.toContain("cannot wire this repository");
+    } finally {
+      vi.mocked(gitToplevel).mockRestore();
+      vi.mocked(planGlobalHooks).mockReturnValue({ action: "set_pointer" });
+      cleanup();
+    }
   });
 });
 

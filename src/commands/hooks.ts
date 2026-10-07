@@ -569,6 +569,14 @@ export function installGlobalHooks(
     case "add_to_dir":
       break;
   }
+  // Without a staged runtime the hooks would do nothing: fail before anyone
+  // is asked to consent to them.
+  if (!hookRuntimeReady()) {
+    console.error(
+      `[prim] did not install prim's global hooks: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
+    );
+    return "runtime_missing";
+  }
   if (!opts.machineWide) {
     console.error(
       plan.action === "set_pointer"
@@ -582,14 +590,7 @@ export function installGlobalHooks(
   stageGitHookRuntime();
   if (plan.action === "add_to_dir") {
     // Coexist: a global core.hooksPath already points elsewhere — add prim's
-    // block into that dir and leave the pointer untouched. Blocks written
-    // without a staged runtime do nothing: refuse rather than report them.
-    if (inspectGitHookEntrypoint() !== "ready") {
-      console.error(
-        `[prim] did not add prim's hooks to ${plan.global}: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
-      );
-      return "runtime_missing";
-    }
+    // block into that dir and leave the pointer untouched.
     const dir = expandTilde(plan.global);
     for (const spec of HOOKS) {
       appendPrimBlock(resolve(dir, spec.hookName), spec);
@@ -615,8 +616,9 @@ export function installGlobalHooks(
   return "installed";
 }
 
-/** Stage the hook runtime if possible, and report whether the entrypoint is ready. */
+/** Whether the entrypoint is ready, staging the hook runtime only if it is not. */
 function hookRuntimeReady(): boolean {
+  if (inspectGitHookEntrypoint() === "ready") return true;
   stageGitHookRuntime();
   return inspectGitHookEntrypoint() === "ready";
 }
@@ -632,7 +634,8 @@ async function consentToMachineWideHooks(
   flag: boolean | undefined,
   nonInteractive: boolean,
 ): Promise<boolean> {
-  if (!planIsMachineWide(plan)) return false;
+  // Never ask for a change that cannot be carried out.
+  if (!planIsMachineWide(plan) || !hookRuntimeReady()) return false;
   if (flag) return true;
   if (nonInteractive || !process.stdin.isTTY) return false;
   return askConfirmation(
@@ -794,12 +797,13 @@ export function registerHooksCommands(program: Command) {
         const globals = command.optsWithGlobals();
         const nonInteractive = isNonInteractive(globals);
         // User scope is repo-agnostic — a global core.hooksPath, no gitRoot and
-        // no --target (husky/git-hooks are per-repo concepts). Every outcome
-        // short of a write (no consent, a system hooksPath without --force,
-        // manual mode) is a legitimate config, not a failure: installGlobalHooks
-        // prints the reason and the remedy on STDERR. The command exits 0,
-        // except with --global-hooks-path: asked for global hooks and given
-        // none, it exits EXIT_GLOBAL_HOOKS_NOT_INSTALLED (3).
+        // no --target (husky/git-hooks are per-repo concepts). A missing hook
+        // runtime is a failure (exit 1). Every other outcome short of a write
+        // (no consent, a system hooksPath without --force, manual mode) is a
+        // legitimate config: installGlobalHooks prints the reason and the
+        // remedy on STDERR, and the command exits 0, except with
+        // --global-hooks-path: asked for global hooks and given none, it exits
+        // EXIT_GLOBAL_HOOKS_NOT_INSTALLED (3).
         if (opts.scope === "user") {
           const plan = planGlobalHooks({ force: opts.force });
           const outcome = installGlobalHooks({
@@ -812,7 +816,9 @@ export function registerHooksCommands(program: Command) {
           });
           // Asked for global hooks explicitly and got none: say so in the exit
           // code too, so `prim setup` reports the step as skipped, not ok.
-          if (opts.globalHooksPath && !INSTALLED_OUTCOMES.has(outcome)) {
+          if (outcome === "runtime_missing") {
+            process.exitCode = 1;
+          } else if (opts.globalHooksPath && !INSTALLED_OUTCOMES.has(outcome)) {
             process.exitCode = EXIT_GLOBAL_HOOKS_NOT_INSTALLED;
           }
           return;
