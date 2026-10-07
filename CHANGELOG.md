@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.94](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.93...v0.1.0-alpha.94) (2026-10-07)
+
+
+### Features
+
+* **doctor:** check that post-commit actually reaches prim ([#340](https://github.com/campus-ai/prim/issues/340)) ([c1037f3](https://github.com/campus-ai/prim/commit/c1037f3a8ed470176dee76a9093b6e2ee91e7fc2))
+
+
+### Bug Fixes
+
+* **hooks:** ask before routing every repository through prim ([#339](https://github.com/campus-ai/prim/issues/339)) ([8f09337](https://github.com/campus-ai/prim/commit/8f09337528804370872fa4a48ac2ad56d96d4303))
+* **hooks:** wire git hooks through the version-stable launcher ([#338](https://github.com/campus-ai/prim/issues/338)) ([0f57951](https://github.com/campus-ai/prim/commit/0f5795103480d9fcb131d43724bed6e7b048168a))
+
 ## [0.1.0-alpha.93](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.92...v0.1.0-alpha.93) (2026-10-05)
 
 
