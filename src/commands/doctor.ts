@@ -612,6 +612,7 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
     case "missing":
     case "missing_block":
     case "stale_block":
+    case "legacy_block":
     case "unreachable_block":
     case "misplaced_block":
       if (inspection.location === "prim") return "run `prim enable` to refresh prim's global hooks";
@@ -632,11 +633,10 @@ export function classifyManagedHook(
   firing?: PostCommitFiring,
 ): Check {
   if (inspection.covered) {
-    const wiring = inspection.wiring === "user" ? " · wired by user" : "";
     return {
       name: hookName,
       status: "ok",
-      detail: `effective and executable · ${inspection.kind}${wiring} · ${inspection.hookPath}`,
+      detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
     };
   }
   const reason = inspection.reason ?? "uncovered";
@@ -659,11 +659,10 @@ export function classifyManagedHook(
     };
   }
   const remedy = managedHookRemedy(inspection);
-  // Capture still works in these cases: a pre-v1 block prim may not upgrade
-  // (outside the repository), and a block that runs twice (above husky.sh).
-  const stillCaptures =
-    (reason === "stale_block" && inspection.location === "external") ||
-    reason === "misplaced_block";
+  // Capture still works in exactly two cases: a recognized pre-v1 block that is
+  // reachable and executable, and a block that runs twice (above husky.sh).
+  // The inspection reports either only after every real failure is ruled out.
+  const stillCaptures = reason === "legacy_block" || reason === "misplaced_block";
   return {
     name: hookName,
     status: hookName === "pre-commit" || stillCaptures ? "warn" : "fail",

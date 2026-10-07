@@ -868,9 +868,13 @@ describe("effective post-commit diagnostics", () => {
   });
 
   it.each([
-    ["a working pre-v1 block prim may not upgrade", "external", "stale_block"],
+    ["a working pre-v1 block prim may not upgrade", "external", "legacy_block"],
     ["a block that runs twice above husky.sh", "worktree", "misplaced_block"],
   ] as const)("warns rather than fails for %s", (_label, location, reason) => {
+    // An unrecognized or edited block in prim's markers proves nothing and fails.
+    expect(
+      classifyManagedHook("post-commit", { ...uncovered, location, reason: "stale_block" }).status,
+    ).toBe("fail");
     expect(classifyManagedHook("post-commit", { ...uncovered, location, reason })).toMatchObject({
       status: "warn",
     });
@@ -882,13 +886,6 @@ describe("effective post-commit diagnostics", () => {
     ).toMatchObject({
       status: "warn",
       detail: expect.stringContaining("prim hooks snippet post-commit"),
-    });
-  });
-
-  it("passes a hook the user wired to the entrypoint themselves", () => {
-    expect(classifyManagedHook("post-commit", { ...inspection, wiring: "user" })).toMatchObject({
-      status: "ok",
-      detail: expect.stringContaining("wired by user"),
     });
   });
 

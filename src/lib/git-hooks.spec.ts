@@ -282,7 +282,7 @@ describe("effective post-commit hook", () => {
     writeFileSync(path, stale, { mode: 0o740 });
     expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
       covered: false,
-      reason: "stale_block",
+      reason: "legacy_block",
     });
     ensureEffectiveGitHook("post-commit", root);
     const refreshed = readFileSync(path, "utf8");
@@ -734,7 +734,7 @@ describe("v1 hook wiring contract", () => {
       "deferred",
     );
     expect(readFileSync(path, "utf8")).toBe(legacy);
-    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("stale_block");
+    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("legacy_block");
 
     expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("updated");
     expect(readFileSync(path, "utf8")).toBe(
@@ -786,18 +786,16 @@ describe("v1 hook wiring contract", () => {
     expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({ covered: true });
   });
 
-  it("leaves a hook that calls the entrypoint itself alone and reports it as user-wired", () => {
-    const root = repository("user-wired");
+  it("adds its block even where a hook already calls prim; manual mode is how to opt out", () => {
+    const root = repository("hand-wired");
     const path = join(root, ".git", "hooks", "post-commit");
     const own = `#!/bin/sh\n"$HOME/.config/prim/${GIT_HOOK_ENTRYPOINT_NAME}" post-commit "$@"\n`;
     writeFileSync(path, own, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("missing_block");
 
-    expect(ensureEffectiveGitHook("post-commit", root).changed).toBe(false);
+    git(root, "config", "--local", "prim.gitHooks", "manual");
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("manual");
     expect(readFileSync(path, "utf8")).toBe(own);
-    expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
-      covered: true,
-      wiring: "user",
-    });
   });
 
   it("reports an unstaged entrypoint instead of claiming coverage", () => {
@@ -1166,7 +1164,7 @@ describe("round-two review regressions", () => {
     expect(readFileSync(path, "utf8")).toBe(legacy);
     expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({
       location: "external",
-      reason: "stale_block",
+      reason: "legacy_block",
     });
   });
 
@@ -1187,7 +1185,7 @@ describe("round-two review regressions", () => {
   it("flags a block above husky.sh as misplaced, without failing coverage logic", () => {
     const root = repository("misplaced-husky");
     mkdirSync(join(root, ".husky", "_"), { recursive: true });
-    writeFileSync(join(root, ".husky", "_", "husky.sh"), "");
+    writeFileSync(join(root, ".husky", "_", "husky.sh"), HUSKY_V8_SH);
     git(root, "config", "--local", "core.hooksPath", ".husky");
     writeFileSync(
       join(root, ".husky", "post-commit"),
@@ -1209,16 +1207,6 @@ describe("round-two review regressions", () => {
     const path = join(root, ".git", "hooks", "pre-commit");
     writeFileSync(path, `#!/bin/sh\n${line}\n`, { mode: 0o755 });
     expect(inspectEffectiveGitHook("pre-commit", root).reason).toBe("missing_block");
-  });
-
-  it.each([
-    ["a bare call", "prim-pre-commit || true"],
-    ["a path call after env", 'FOO=1 exec "$HOME/.config/prim/prim-git-hook-v1" pre-commit "$@"'],
-  ])("recognizes %s as the user's own wiring", (_label, line) => {
-    const root = repository("user-wired-forms");
-    const path = join(root, ".git", "hooks", "pre-commit");
-    writeFileSync(path, `#!/bin/sh\n${line}\n`, { mode: 0o755 });
-    expect(inspectEffectiveGitHook("pre-commit", root)).toMatchObject({ wiring: "user" });
   });
 
   it.each([
@@ -1250,6 +1238,71 @@ describe("round-two review regressions", () => {
       changed: false,
       skipped: "external",
     });
+    expect(readFileSync(path, "utf8")).toBe(content);
+  });
+});
+
+describe("round-three review regressions", () => {
+  function sharedLegacy(
+    name: string,
+    content: string,
+    mode = 0o755,
+  ): { root: string; path: string } {
+    const globalConfig = join(temp(`${name}-global`), "config");
+    writeFileSync(globalConfig, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    const root = repository(name);
+    const hooks = temp(`${name}-hooks`);
+    git(root, "config", "--global", "core.hooksPath", hooks);
+    const path = join(hooks, "post-commit");
+    writeFileSync(path, content, { mode });
+    return { root, path };
+  }
+  const { start, end } = blockMarkers("post-commit");
+
+  it.each([
+    ["behind an exit", `#!/bin/sh\nexit 0\n${legacyInlineHookBlock("post-commit")}\n`],
+    [
+      "stubbed out under a v1 header",
+      `#!/bin/sh\n${start}\n# prim git hook v1: x\nexit 0\n${end}\n`,
+    ],
+    ["with empty markers", `#!/bin/sh\n${start}\n${end}\n`],
+  ])("keeps only a working legacy block, not one %s", (_label, content) => {
+    const { root, path } = sharedLegacy("not-kept", content);
+    expect(ensureEffectiveGitHook("post-commit", root).outcome).toBe("external");
+    expect(readFileSync(path, "utf8")).toBe(content);
+    expect(inspectEffectiveGitHook("post-commit", root).reason).not.toBe("legacy_block");
+  });
+
+  it("reports a non-executable hook as broken, never as a misplaced warning", () => {
+    const root = repository("misplaced-not-executable");
+    mkdirSync(join(root, ".husky", "_"), { recursive: true });
+    writeFileSync(join(root, ".husky", "_", "husky.sh"), HUSKY_V8_SH);
+    git(root, "config", "--local", "core.hooksPath", ".husky");
+    writeFileSync(
+      join(root, ".husky", "post-commit"),
+      `#!/usr/bin/env sh\n${managedHookBlock("post-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n`,
+      { mode: 0o644 },
+    );
+    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("not_executable");
+    chmodSync(join(root, ".husky", "post-commit"), 0o755);
+    rmSync(join(configDir, GIT_HOOK_ENTRYPOINT_NAME));
+    expect(inspectEffectiveGitHook("post-commit", root).reason).toBe("entrypoint_missing");
+  });
+
+  it("ignores a husky.sh line whose runtime is Husky v9's stub", () => {
+    const root = repository("husky-v9-stub");
+    mkdirSync(join(root, ".husky", "_"), { recursive: true });
+    writeFileSync(
+      join(root, ".husky", "_", "husky.sh"),
+      'echo "husky - DEPRECATED\n\nPlease remove the following two lines from $0:"\n',
+    );
+    git(root, "config", "--local", "core.hooksPath", ".husky");
+    const path = join(root, ".husky", "post-commit");
+    const content = `#!/usr/bin/env sh\n${managedHookBlock("post-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n`;
+    writeFileSync(path, content, { mode: 0o755 });
+    expect(inspectEffectiveGitHook("post-commit", root)).toMatchObject({ covered: true });
+    expect(ensureEffectiveGitHook("post-commit", root).changed).toBe(false);
     expect(readFileSync(path, "utf8")).toBe(content);
   });
 });
