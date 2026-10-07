@@ -1434,6 +1434,7 @@ ${ladder(fallback, "")}
     ["an indented exit", 'if [ -n "$CI" ]; then\n  exit 0\nfi\n'],
     ["an exit after &&", '[ -n "$CI" ] && exit 0\n'],
     ["an exec in a function", "run() { exec npm test; }\nrun\n"],
+    ["an exit in a case arm", 'case "$1" in\n  --no-prim) exit 0 ;;\nesac\n'],
   ])("does not vouch for a legacy block behind %s", (_label, guard) => {
     const content = `#!/bin/sh\n${guard}${legacyInlineHookBlock("post-commit")}\n`;
     const globalConfig = join(temp("conditional-exit-global"), "config");
@@ -1475,12 +1476,15 @@ ${ladder(fallback, "")}
       expect(ensureEffectiveGitHook("pre-commit", root).changed).toBe(false);
     });
 
-    it("keeps the block after the shebang when package.json declares Husky 9", () => {
-      const { root, path } = freshClone("^9.1.7");
-      ensureEffectiveGitHook("pre-commit", root);
-      expect(readFileSync(path, "utf8")).toBe(
-        `#!/usr/bin/env sh\n${managedHookBlock("pre-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n\nnpx lint-staged\n`,
-      );
-    });
+    it.each(["^9.1.7", ">=8.0.0", "^8 || ^9"])(
+      "keeps the block after the shebang when package.json declares %s",
+      (husky) => {
+        const { root, path } = freshClone(husky);
+        ensureEffectiveGitHook("pre-commit", root);
+        expect(readFileSync(path, "utf8")).toBe(
+          `#!/usr/bin/env sh\n${managedHookBlock("pre-commit")}\n. "$(dirname -- "$0")/_/husky.sh"\n\nnpx lint-staged\n`,
+        );
+      },
+    );
   });
 });
