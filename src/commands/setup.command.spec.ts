@@ -805,6 +805,16 @@ describe("setupGitHooksNote", () => {
     expect(note).toContain("--global-hooks-path, after asking the user");
   });
 
+  it("never promises enable can wire through a system hooks path or in manual mode", () => {
+    const system = setupGitHooksNote({ action: "system_declined", system: "/etc/git/hooks" });
+    expect(system).toContain("cannot wire this repository");
+    expect(system).toContain("--global-hooks-path --force");
+    expect(system).not.toContain("untouched");
+    expect(setupGitHooksNote({ action: "manual", global: "" })).toContain(
+      "prim writes no hook files",
+    );
+  });
+
   it("does not claim git's global hooks are untouched when prim's are active", () => {
     expect(setupGitHooksNote({ action: "refresh" })).toContain("stay active");
     expect(setupGitHooksNote({ action: "set_pointer" })).toContain("untouched");

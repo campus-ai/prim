@@ -327,7 +327,7 @@ authorizes one retry for the named decision.
 
 ```bash
 prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
-prim hooks install --scope user --global-hooks-path  # Route every repository through prim (exits 3 if it installs nothing, with the reason on STDERR)
+prim hooks install --scope user --global-hooks-path  # Route every repository through prim (exits 3, with the reason on STDERR, if prim's global hooks are not in place afterwards)
 prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
 prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```
@@ -348,7 +348,8 @@ never move or rewrite a current block, reformatted or not. Agent session hooks
 only repair Git-private hook files under `.git` and prim's own hooks dir, and
 never add the pre-commit check. prim never edits a hooks dir outside the
 repository, such as a global `core.hooksPath` every repository shares, unless
-you run `prim hooks install --scope user --global-hooks-path`. In a Husky v8 hook the block goes
+you run `prim hooks install --scope user --global-hooks-path` or answer yes at
+its terminal prompt. In a Husky v8 hook the block goes
 after the `husky.sh` line, so it runs once and honors `HUSKY=0`. `prim doctor`
 only reports; it never rewrites a hook.
 

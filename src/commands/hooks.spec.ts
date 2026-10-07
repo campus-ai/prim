@@ -1144,6 +1144,40 @@ describe("hooks install --scope user consent", () => {
     process.exitCode = undefined;
   });
 
+  it("does not call inert hooks present: exits 3 when the runtime is missing", async () => {
+    stubHooksPath({ global: "/Users/example/.config/git/hooks" });
+    vi.mocked(hasCurrentHookBlock).mockReturnValue(true);
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    await install([], ["--global-hooks-path"]);
+    expect(process.exitCode).toBe(EXIT_GLOBAL_HOOKS_NOT_INSTALLED);
+    expect(stageHookRuntime).toHaveBeenCalled();
+    process.exitCode = undefined;
+  });
+
+  it("keeps --force in the remedy when it was given without consent", async () => {
+    stubHooksPath({ system: "/etc/git/hooks" });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive").exitOverride();
+    registerHooksCommands(program);
+    await program.parseAsync(["hooks", "install", "--scope", "user", "--force"], { from: "user" });
+    expect(setCalls()).toHaveLength(0);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("--global-hooks-path --force"));
+    expect(errSpy).not.toHaveBeenCalledWith(expect.stringContaining("`prim enable` wires"));
+    errSpy.mockRestore();
+  });
+
+  it("warns at the prompt that overriding a system hooks path silences its hooks", async () => {
+    tty();
+    stubHooksPath({ system: "/etc/git/hooks" });
+    vi.mocked(askConfirmation).mockResolvedValue(false);
+    await install([], ["--force"]);
+    expect(askConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("hooks stop firing"),
+      process.stderr,
+    );
+  });
+
   it("never asks a question manual mode would make moot", async () => {
     tty();
     vi.mocked(gitHooksMode).mockReturnValue("manual");

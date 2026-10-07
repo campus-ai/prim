@@ -255,6 +255,10 @@ export function setupGitHooksNote(plan: GlobalHooksPlan): string {
       return `git hooks · prim's hooks are already in your global hooks dir ${plan.global}`;
     case "add_to_dir":
       return `git hooks · your global core.hooksPath (${plan.global}) runs every repository's hooks, so \`prim enable\` cannot wire this repository without it; add prim there with --global-hooks-path, after asking the user`;
+    case "system_declined":
+      return `git hooks · the system core.hooksPath (${plan.system}) runs every repository's hooks, so \`prim enable\` cannot wire this repository: place \`prim hooks snippet <hook>\` there, or, after asking the user, run \`prim hooks install --scope user --global-hooks-path --force\` (its hooks stop firing)`;
+    case "manual":
+      return "git hooks · prim.gitHooks=manual: prim writes no hook files; wire them with `prim hooks snippet <hook>`";
     default:
       return "git hooks · wired per repository by `prim enable`; git's global hooks are untouched (opt in with --global-hooks-path)";
   }

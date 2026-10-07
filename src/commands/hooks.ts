@@ -543,7 +543,7 @@ export function installGlobalHooks(
       return "manual";
     case "system_declined":
       console.error(
-        `[prim] system core.hooksPath is set to ${plan.system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipping — re-run with --force to override it, or place \`prim hooks snippet <hook>\` in ${plan.system} yourself.`,
+        `[prim] system core.hooksPath is set to ${plan.system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipped. Either place \`prim hooks snippet <hook>\` in ${plan.system} yourself, or override it with \`prim hooks install --scope user --global-hooks-path --force\`. It changes every repository's hooks: an agent must ask the user before running it.`,
       );
       return "system_declined";
     case "refresh":
@@ -554,6 +554,13 @@ export function installGlobalHooks(
       );
       return "refreshed";
     case "present_in_dir":
+      // Present only counts if the blocks can run: they exec the entrypoint.
+      if (!hookRuntimeReady()) {
+        console.error(
+          `[prim] prim's hooks are in ${plan.global}, but the hook runtime they run is not staged, so they do nothing yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`), then retry.`,
+        );
+        return "runtime_missing";
+      }
       console.log(`Prim hooks already present in core.hooksPath dir ${plan.global}.`);
       return "present";
     case "set_pointer":
@@ -563,8 +570,10 @@ export function installGlobalHooks(
   if (!opts.machineWide) {
     console.error(
       plan.action === "set_pointer"
-        ? "[prim] Left git's global hooks alone: setting core.hooksPath would route every repository's hooks through prim. `prim enable` wires each repository you activate. To route every repository through prim instead, run `prim hooks install --scope user --global-hooks-path`. It changes every repository's hooks: an agent must ask the user before running it."
-        : `[prim] Left the hooks in ${plan.global} alone: every repository runs them, so prim edits them only with consent. Repositories that run hooks from there stay unwired until you run \`prim hooks install --scope user --global-hooks-path\`. It changes every repository's hooks: an agent must ask the user before running it.`,
+        ? plan.overridesSystem !== undefined
+          ? `[prim] Left git's global hooks alone: setting core.hooksPath would override the system core.hooksPath ${plan.overridesSystem} (its hooks stop firing) and route every repository's hooks through prim. To do that, run \`prim hooks install --scope user --global-hooks-path --force\`. It changes every repository's hooks: an agent must ask the user before running it.`
+          : "[prim] Left git's global hooks alone: setting core.hooksPath would route every repository's hooks through prim. `prim enable` wires each repository you activate. To route every repository through prim instead, run `prim hooks install --scope user --global-hooks-path`. It changes every repository's hooks: an agent must ask the user before running it."
+        : `[prim] Left the hooks in ${plan.global} alone: every repository runs them, so prim edits them only with consent. Repositories that run hooks from there lack prim's hooks until you run \`prim hooks install --scope user --global-hooks-path\`. It changes every repository's hooks: an agent must ask the user before running it.`,
     );
     return "not_requested";
   }
@@ -604,6 +613,12 @@ export function installGlobalHooks(
   return "installed";
 }
 
+/** Stage the hook runtime if possible, and report whether the entrypoint is ready. */
+function hookRuntimeReady(): boolean {
+  stageGitHookRuntime();
+  return inspectGitHookEntrypoint() === "ready";
+}
+
 /**
  * Consent for a machine-wide change: the dedicated flag, or a yes typed at a
  * terminal. Asked only when the plan would change something machine-wide. The
@@ -620,7 +635,9 @@ async function consentToMachineWideHooks(
   if (nonInteractive || !process.stdin.isTTY) return false;
   return askConfirmation(
     plan.action === "set_pointer"
-      ? "Set git's global core.hooksPath so every repository's hooks run through prim?"
+      ? plan.overridesSystem !== undefined
+        ? `Set git's global core.hooksPath so every repository's hooks run through prim? This overrides the system core.hooksPath ${plan.overridesSystem}, whose hooks stop firing.`
+        : "Set git's global core.hooksPath so every repository's hooks run through prim?"
       : `Add prim's hooks to ${plan.action === "add_to_dir" ? plan.global : "the global hooks dir"}, which every repository runs?`,
     process.stderr,
   );
