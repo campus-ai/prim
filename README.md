@@ -327,7 +327,7 @@ authorizes one retry for the named decision.
 
 ```bash
 prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
-prim hooks install --scope user --global-hooks-path  # Route every repository through prim (exits 3, with the reason on STDERR, if prim's global hooks are not in place afterwards)
+prim hooks install --scope user --global-hooks-path  # Route every repository through prim (exits 3, with the reason on STDERR, if it installs nothing; 1 if prim's hook runtime is not staged)
 prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
 prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```

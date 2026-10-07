@@ -1144,13 +1144,41 @@ describe("hooks install --scope user consent", () => {
     process.exitCode = undefined;
   });
 
-  it("does not call inert hooks present: exits 3 when the runtime is missing", async () => {
+  it("does not call inert hooks present: fails when the runtime is missing", async () => {
     stubHooksPath({ global: "/Users/example/.config/git/hooks" });
     vi.mocked(hasCurrentHookBlock).mockReturnValue(true);
     vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
     await install([], ["--global-hooks-path"]);
-    expect(process.exitCode).toBe(EXIT_GLOBAL_HOOKS_NOT_INSTALLED);
+    expect(process.exitCode).toBe(1);
     expect(stageHookRuntime).toHaveBeenCalled();
+    process.exitCode = undefined;
+  });
+
+  it.each([
+    ["setting the pointer", {}],
+    ["adding to a foreign global dir", { global: "/Users/example/.config/git/hooks" }],
+  ])(
+    "never asks consent for %s while the runtime is missing, and fails with or without the flag",
+    async (_label, paths) => {
+      for (const extra of [[], ["--global-hooks-path"]]) {
+        tty();
+        stubHooksPath(paths);
+        vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+        await install([], extra);
+        expect(askConfirmation).not.toHaveBeenCalled();
+        expect(setCalls()).toHaveLength(0);
+        expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(1);
+        process.exitCode = undefined;
+      }
+    },
+  );
+
+  it("fails a refresh of prim's own global hooks while the runtime is missing", async () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    await install();
+    expect(process.exitCode).toBe(1);
     process.exitCode = undefined;
   });
 
