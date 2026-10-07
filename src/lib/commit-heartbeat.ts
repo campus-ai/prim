@@ -8,9 +8,12 @@
  * checks the latest local commit in Git's own record, the HEAD reflog, against
  * those stamps by SHA.
  *
- * Stamps live beside the workspace id, in this checkout's git dir (`git
+ * Run stamps live beside the workspace id, in this checkout's git dir (`git
  * rev-parse --git-path prim/…`), so they are per worktree like the reflog they
- * are checked against, and never touch `.git/config` from a background hook.
+ * are checked against. The activation stamp, when doctor started expecting
+ * runs, lives once in the git common dir: `prim.active` is shared by every
+ * worktree, so enable and disable must move every worktree's expectation at
+ * once. Nothing here touches `.git/config` from a background hook.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
@@ -54,6 +57,18 @@ export type PostCommitFiring =
   | { state: "fired"; commitAt: number; firedAt: number }
   /** A local commit after the hooks were wired never reached prim. */
   | { state: "not_firing"; commitAt: number; firedAt?: number };
+
+/** `<git common dir>/<relative>`: shared by every worktree of the repository. */
+function commonPath(cwd: string, relative: string): string {
+  const value = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: GIT_TIMEOUT_MS,
+  }).replace(/\r?\n$/u, "");
+  if (value === "" || /[\0\r\n]/u.test(value)) throw new Error("Git returned an unsafe path");
+  return join(resolve(cwd, value), relative);
+}
 
 function gitPath(cwd: string, relative: string): string {
   const value = execFileSync("git", ["rev-parse", "--git-path", relative], {
@@ -133,16 +148,17 @@ export function recordPostCommitFired(
 }
 
 /**
- * Called when the hooks are (re)wired for an active checkout: from then on,
- * doctor expects every local commit to reach prim. `onlyIfAbsent` keeps an
- * existing expectation (a re-run that changed nothing proves nothing).
+ * Called when the hooks are (re)wired for an active repository: from then on,
+ * doctor expects every local commit, in every worktree, to reach prim.
+ * `onlyIfAbsent` keeps an existing expectation (a re-run that changed nothing
+ * proves nothing).
  */
 export function recordHooksWired(
   cwd: string,
   options: { now?: number; onlyIfAbsent?: boolean } = {},
 ): void {
   try {
-    const path = gitPath(cwd, WIRED_PATH);
+    const path = commonPath(cwd, WIRED_PATH);
     if (options.onlyIfAbsent && readStampAt(path) !== undefined) return;
     writeStamp(path, options.now ?? Date.now());
   } catch {
@@ -150,10 +166,10 @@ export function recordHooksWired(
   }
 }
 
-/** `prim disable`: commits are no longer expected to reach prim here. */
+/** `prim disable`: commits are no longer expected to reach prim, in any worktree. */
 export function clearHooksWired(cwd: string): void {
   try {
-    unlinkSync(gitPath(cwd, WIRED_PATH));
+    unlinkSync(commonPath(cwd, WIRED_PATH));
   } catch {
     // Absent already, or not a repository.
   }
@@ -207,7 +223,7 @@ export function inspectPostCommitFiring(cwd: string, now: number = Date.now()): 
   );
   let wiredAt: number | undefined;
   try {
-    wiredAt = readStampAt(gitPath(cwd, WIRED_PATH));
+    wiredAt = readStampAt(commonPath(cwd, WIRED_PATH));
   } catch {
     wiredAt = undefined;
   }
@@ -215,11 +231,14 @@ export function inspectPostCommitFiring(cwd: string, now: number = Date.now()): 
   // commits made while disabled are never judged.
   if (wiredAt === undefined) return { state: "unverified" };
   // The wiring stamp is compared strictly: a commit in that same second may
-  // have preceded activation, and a missed check beats a false failure. After
-  // a run prim saw, reflog times are whole seconds, so the same second counts.
+  // have preceded activation, and a missed check beats a false failure. A run
+  // prim saw counts only if it happened in the current activation (a run from
+  // before a disable says nothing about commits made while disabled); after
+  // one, reflog times are whole seconds, so the same second counts.
+  const firedSinceWired = lastFiredAt !== undefined && lastFiredAt >= wiredAt;
   const judged =
     commit.at > wiredAt ||
-    (lastFiredAt !== undefined && commit.at + REFLOG_RESOLUTION_MS > lastFiredAt);
+    (firedSinceWired && commit.at + REFLOG_RESOLUTION_MS > (lastFiredAt as number));
   if (judged) {
     return lastFiredAt === undefined
       ? { state: "not_firing", commitAt: commit.at }

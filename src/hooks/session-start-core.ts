@@ -76,7 +76,8 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
           // linked worktree) has no expectation yet: start one here, once.
           if (
             hookName === "post-commit" &&
-            ["created", "updated", "unchanged"].includes(result.outcome)
+            // Manual mode: the user's own wiring is expected to reach prim too.
+            ["created", "updated", "unchanged", "manual"].includes(result.outcome)
           ) {
             recordHooksWired(root, { onlyIfAbsent: true });
           }

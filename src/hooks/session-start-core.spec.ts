@@ -695,6 +695,16 @@ describe("processSessionStart", () => {
     expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
   });
 
+  it("starts the expectation in manual mode too: the user's wiring must reach prim", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => ({
+      ...hookResult(hookName),
+      outcome: "manual",
+    }));
+    await processSessionStart(ENVELOPE, "codex");
+    expect(recordHooksWired).toHaveBeenCalledWith("/repo", { onlyIfAbsent: true });
+  });
+
   it("starts no expectation when post-commit was left unwired", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => ({

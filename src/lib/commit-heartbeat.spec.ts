@@ -175,6 +175,40 @@ describe("post-commit firing evidence", () => {
     expect(inspectPostCommitFiring(root, later())).toEqual({ state: "unverified" });
   });
 
+  it("never judges commits made while disabled, after `prim enable` re-enables", () => {
+    const root = repository();
+    wiredEarlier(root);
+    recordPostCommitFired(root, commit(root, "one"), Date.now() - 5_000);
+    clearHooksWired(root); // prim disable
+    git(root, ["config", "prim.active", "false"]);
+    commit(root, "while disabled");
+    git(root, ["config", "prim.active", "true"]); // prim enable…
+    recordHooksWired(root); // …starts a fresh expectation
+    expect(inspectPostCommitFiring(root, later())).toEqual({ state: "unverified" });
+  });
+
+  it("moves every worktree's expectation at once, as prim.active is shared", () => {
+    const root = repository();
+    commit(root, "base");
+    const linked = join(temp("prim-heartbeat-shared-"), "wt");
+    git(root, ["worktree", "add", "-q", "-b", "shared", linked]);
+    wiredEarlier(root);
+    clearHooksWired(root); // prim disable, run in the main checkout
+    git(root, ["config", "prim.active", "false"]);
+    commit(linked, "in the worktree while disabled");
+    git(root, ["config", "prim.active", "true"]);
+    recordHooksWired(root); // prim enable, run in the main checkout
+    expect(inspectPostCommitFiring(linked, later())).toEqual({ state: "unverified" });
+
+    // Reflog times follow the committer date: place this commit clearly after
+    // the activation stamp rather than in the same second.
+    const after = new Date(Date.now() + 5_000).toISOString();
+    commit(linked, "in the worktree after enable", { ...process.env, GIT_COMMITTER_DATE: after });
+    expect(inspectPostCommitFiring(linked, later() + 5_000)).toMatchObject({
+      state: "not_firing",
+    });
+  });
+
   it("never fails a commit from the same second the hooks were wired", () => {
     const root = repository();
     commit(root, "just before enable");
