@@ -204,7 +204,7 @@ pass; the setup-specifics line is your close.
 ## Appendix — manual steps (fallback only)
 
 Prefer the one command above. Run these individually only if `setup` is
-unavailable. They mirror the steps `setup` runs, in order; each is idempotent.
+unavailable. They mirror the steps `setup` runs, in order (at the default user scope, setup skips step 5 unless asked for `--global-hooks-path`; step 7 wires this repo's hooks); each is idempotent.
 Note that running them separately means one approval per command — `setup` exists
 precisely to collapse those shell permission prompts to one. That is separate from
 the per-Decision approval required for each `decisions create` while passive capture
@@ -212,7 +212,9 @@ is inactive.
 
 `setup` defaults to `--scope user` (install once, for every repo) and activates
 the current repo. The commands below show the machine-wide flow: add `--scope
-user` where noted, then `prim enable` in each repo you want captured.
+user` where noted, then `prim enable` in each repo you want captured. Setup
+leaves git's global hooks alone unless the user asks for `setup
+--global-hooks-path`; never pass that flag on the user's behalf.
 
 1. **Pre-authorize** (Claude Code only): `npx --yes @primitive.ai/prim@latest claude preauth`
    — writes prim's allow-rule to `~/.claude/settings.json` so the remaining
@@ -231,9 +233,12 @@ user` where noted, then `prim enable` in each repo you want captured.
    setup incomplete.
 5. **Git hooks**: `npx --yes @primitive.ai/prim@latest hooks install`. A warn-only
    pre-commit decision check plus post-commit and post-rewrite capture
-   boundaries. Add `--scope user` to install one global `core.hooksPath`
-   covering every repo (the hooks fire everywhere but only act where activated —
-   see step 7). Separate from the session hooks in step 3.
+   boundaries. `prim enable` (step 7) wires the current repo by itself. Only if
+   the user asks for prim's hooks in every repo, add `--scope user
+   --global-hooks-path` to set one global `core.hooksPath` (the hooks then fire
+   everywhere but only act where activated). It changes every repository's
+   hooks, so `--yes` does not count as consent. Separate from the session hooks
+   in step 3.
 6. **Skill**: `npx --yes @primitive.ai/prim@latest skill install --agent <your agent>`
    (claude/cursor/codex/hermes). Teaches you to work with the decision graph. For
    **claude** it installs a skills-directory plugin at `<repo>/.claude/skills/prim/`

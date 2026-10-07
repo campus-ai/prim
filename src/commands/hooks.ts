@@ -51,6 +51,7 @@ import {
   ensureGitHookAtPath,
   externalHookRemedy,
   gitHooksMode,
+  hasCurrentHookBlock,
   isOwnedStandalonePreCommit,
   managedHookBlock,
   projectGitHookTarget,
@@ -450,67 +451,200 @@ export function uninstallProjectHooks(gitRoot: string): void {
   }
 }
 
+/** What a user-scope install did. Only a write changes Git config or hook files. */
+export type GlobalHooksInstallOutcome =
+  /** Set the global core.hooksPath to prim's hooks dir. */
+  | "installed"
+  /** The pointer was already prim's; rewrote prim's owned scripts. */
+  | "refreshed"
+  /** Added prim's block into the hooks in an existing global hooks dir. */
+  | "added"
+  /** A machine-wide change needed consent (--global-hooks-path) it did not get. */
+  | "not_requested"
+  /** A system core.hooksPath would have been shadowed, and --force was absent. */
+  | "system_declined"
+  /** prim.gitHooks=manual (global): prim writes no hook file. */
+  | "manual"
+  /** The hook runtime is not staged; prim's global hooks were left as they are. */
+  | "runtime_missing"
+  /** prim's blocks are already current in the existing global hooks dir. */
+  | "present";
+
+/** Whether git's global core.hooksPath already points at prim's own dir. */
+export function globalHooksPathIsPrims(): boolean {
+  return isOurHooksDir(gitConfigGet("--global"));
+}
+
+/**
+ * Exit code of `hooks install --scope user --global-hooks-path` when it was
+ * asked for global hooks but installed none, so `prim setup` can report the
+ * step as skipped instead of ok. The reason is on STDERR.
+ */
+export const EXIT_GLOBAL_HOOKS_NOT_INSTALLED = 3;
+
+const INSTALLED_OUTCOMES: ReadonlySet<GlobalHooksInstallOutcome> = new Set([
+  "installed",
+  "refreshed",
+  "added",
+  "present",
+]);
+
+/** What a user-scope install would change, decided before asking anyone. */
+export type GlobalHooksPlan =
+  | { action: "manual"; global: string }
+  | { action: "refresh" }
+  | { action: "system_declined"; system: string }
+  | { action: "set_pointer"; overridesSystem?: string }
+  | { action: "add_to_dir"; global: string }
+  | { action: "present_in_dir"; global: string };
+
+export function planGlobalHooks(opts: { force?: boolean } = {}): GlobalHooksPlan {
+  const global = gitConfigGet("--global");
+  if (gitHooksMode({ global: true }) === "manual") return { action: "manual", global };
+  if (isOurHooksDir(global)) return { action: "refresh" };
+  if (global !== "") {
+    // A consented install already put prim's block there: nothing to ask.
+    const dir = expandTilde(global);
+    return HOOKS.every((spec) => hasCurrentHookBlock(spec.hookName, resolve(dir, spec.hookName)))
+      ? { action: "present_in_dir", global }
+      : { action: "add_to_dir", global };
+  }
+  const system = gitConfigGet("--system");
+  if (system !== "" && !isOurHooksDir(system)) {
+    return opts.force
+      ? { action: "set_pointer", overridesSystem: system }
+      : { action: "system_declined", system };
+  }
+  return { action: "set_pointer" };
+}
+
+/** Whether carrying out `plan` changes hooks every repository on the machine runs. */
+export function planIsMachineWide(plan: GlobalHooksPlan): boolean {
+  return plan.action === "set_pointer" || plan.action === "add_to_dir";
+}
+
 // Install prim's git hooks at USER scope via a global core.hooksPath. Coexists
 // with an existing global hooksPath (adds into it) rather than clobbering.
-// Returns whether hooks were installed — false when it declines (system
-// hooksPath present without --force, or prim.gitHooks=manual) so callers can
-// report an honest skip.
-export function installGlobalHooks(opts: { force?: boolean } = {}): boolean {
-  stageGitHookRuntime();
-  const global = gitConfigGet("--global");
-  if (gitHooksMode({ global: true }) === "manual") {
-    console.error(
-      isOurHooksDir(global)
-        ? `[prim] prim.gitHooks=manual: left hook files alone, but prim's global hooks in ${PRIM_GIT_HOOKS_DIR} are still active. Run \`prim hooks uninstall --scope user\` to stop them.`
-        : "[prim] prim.gitHooks=manual: left hook files and core.hooksPath untouched. Wire prim yourself with `prim hooks snippet <hook>`.",
-    );
-    return false;
-  }
-  if (global === "") {
-    const system = gitConfigGet("--system");
-    if (system !== "" && !isOurHooksDir(system)) {
-      if (!opts.force) {
-        console.error(
-          `[prim] system core.hooksPath is set to ${system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipping — re-run with --force to override, or run per-repo \`prim hooks install\`.`,
-        );
-        return false;
-      }
+// Setting the pointer, or editing the hooks in someone else's global dir,
+// changes every repository on the machine, so both need `machineWide`
+// consent; refreshing prim's own dir does not. Every outcome is reported, so
+// callers can tell a skip from an install. A skip stages the hook runtime only
+// if it was missing (prim's own dir, never a hook file).
+export function installGlobalHooks(
+  opts: { force?: boolean; machineWide?: boolean } = {},
+): GlobalHooksInstallOutcome {
+  const plan = planGlobalHooks(opts);
+  switch (plan.action) {
+    case "manual":
       console.error(
-        `[prim] --force: overriding system core.hooksPath ${system}; its hooks will no longer fire (prim chains only to .git/hooks).`,
+        isOurHooksDir(plan.global)
+          ? `[prim] prim.gitHooks=manual: left hook files alone, but prim's global hooks in ${PRIM_GIT_HOOKS_DIR} are still active. Run \`prim hooks uninstall --scope user\` to stop them.`
+          : "[prim] prim.gitHooks=manual: left hook files and core.hooksPath untouched. Wire prim yourself with `prim hooks snippet <hook>`.",
       );
-    }
-    if (!writeOwnHooks()) return false;
-    execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
-      stdio: ["ignore", "ignore", "pipe"],
-      timeout: GIT_TIMEOUT_MS,
-    });
-    console.log(
-      `Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}. Repos are opt-in: run \`prim enable\` in each repo to capture, or \`git config --global prim.active true\` for all.`,
-    );
-    return true;
-  }
-  if (isOurHooksDir(global)) {
-    if (writeOwnHooks()) {
+      return "manual";
+    case "system_declined":
+      console.error(
+        `[prim] system core.hooksPath is set to ${plan.system}; a --global set would override it, and prim chains only to .git/hooks (not a system dir), so those hooks would stop firing. Skipped. Either place \`prim hooks snippet <hook>\` in ${plan.system} yourself, or override it with \`prim hooks install --scope user --global-hooks-path --force\`. It changes every repository's hooks: an agent must ask the user before running it.`,
+      );
+      return "system_declined";
+    case "refresh":
+      stageGitHookRuntime();
+      if (!writeOwnHooks()) return "runtime_missing";
       console.log(
         `Prim global git hooks already active (${PRIM_GIT_HOOKS_DIR}); refreshed scripts.`,
       );
-    }
-    return true;
+      return "refreshed";
+    case "present_in_dir":
+      // Present only counts if the blocks can run: they exec the entrypoint.
+      if (!hookRuntimeReady()) {
+        console.error(
+          `[prim] prim's hooks are in ${plan.global}, but the hook runtime they run is not staged, so they do nothing yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`), then retry.`,
+        );
+        return "runtime_missing";
+      }
+      console.log(`Prim hooks already present in core.hooksPath dir ${plan.global}.`);
+      return "present";
+    case "set_pointer":
+    case "add_to_dir":
+      break;
   }
-  // Coexist: a global core.hooksPath already points elsewhere — add prim's
-  // block into that dir and leave the pointer untouched.
-  // Blocks written without a staged runtime do nothing: refuse rather than
-  // report hooks that cannot capture.
-  if (inspectGitHookEntrypoint() !== "ready") {
+  // Without a staged runtime the hooks would do nothing: fail before anyone
+  // is asked to consent to them.
+  if (!hookRuntimeReady()) {
     console.error(
-      `[prim] did not add prim's hooks to ${global}: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
+      `[prim] did not install prim's global hooks: the hook runtime they run is not staged yet. Run \`prim setup\` (or an agent install such as \`prim claude install\`) first, then retry.`,
     );
-    return false;
+    return "runtime_missing";
   }
-  const dir = expandTilde(global);
-  for (const spec of HOOKS) appendPrimBlock(resolve(dir, spec.hookName), spec);
-  console.log(`Added prim hooks into existing core.hooksPath dir ${global} (pointer unchanged).`);
-  return true;
+  if (!opts.machineWide) {
+    console.error(
+      plan.action === "set_pointer"
+        ? plan.overridesSystem !== undefined
+          ? `[prim] Left git's global hooks alone: setting core.hooksPath would override the system core.hooksPath ${plan.overridesSystem} (its hooks stop firing) and route every repository's hooks through prim. To do that, run \`prim hooks install --scope user --global-hooks-path --force\`. It changes every repository's hooks: an agent must ask the user before running it.`
+          : "[prim] Left git's global hooks alone: setting core.hooksPath would route every repository's hooks through prim. `prim enable` wires each repository you activate. To route every repository through prim instead, run `prim hooks install --scope user --global-hooks-path`. It changes every repository's hooks: an agent must ask the user before running it."
+        : `[prim] Left the hooks in ${plan.global} alone: every repository runs them, so prim edits them only with consent. Repositories that run hooks from there lack prim's hooks until you run \`prim hooks install --scope user --global-hooks-path\`. It changes every repository's hooks: an agent must ask the user before running it.`,
+    );
+    return "not_requested";
+  }
+  stageGitHookRuntime();
+  if (plan.action === "add_to_dir") {
+    // Coexist: a global core.hooksPath already points elsewhere — add prim's
+    // block into that dir and leave the pointer untouched.
+    const dir = expandTilde(plan.global);
+    for (const spec of HOOKS) {
+      appendPrimBlock(resolve(dir, spec.hookName), spec);
+    }
+    console.log(
+      `Added prim hooks into existing core.hooksPath dir ${plan.global} (pointer unchanged).`,
+    );
+    return "added";
+  }
+  if (plan.overridesSystem !== undefined) {
+    console.error(
+      `[prim] --force: overriding system core.hooksPath ${plan.overridesSystem}; its hooks will no longer fire (prim chains only to .git/hooks).`,
+    );
+  }
+  if (!writeOwnHooks()) return "runtime_missing";
+  execFileSync("git", ["config", "--global", "core.hooksPath", PRIM_GIT_HOOKS_DIR], {
+    stdio: ["ignore", "ignore", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
+  });
+  console.log(
+    `Installed prim global git hooks; set core.hooksPath to ${PRIM_GIT_HOOKS_DIR}. Repos are opt-in: run \`prim enable\` in each repo to capture, or \`git config --global prim.active true\` for all.`,
+  );
+  return "installed";
+}
+
+/** Whether the entrypoint is ready, staging the hook runtime only if it is not. */
+function hookRuntimeReady(): boolean {
+  if (inspectGitHookEntrypoint() === "ready") return true;
+  stageGitHookRuntime();
+  return inspectGitHookEntrypoint() === "ready";
+}
+
+/**
+ * Consent for a machine-wide change: the dedicated flag, or a yes typed at a
+ * terminal. Asked only when the plan would change something machine-wide. The
+ * generic `--yes` never counts: an agent passes it to get past per-repository
+ * prompts, which is no answer to a question about every repository.
+ */
+async function consentToMachineWideHooks(
+  plan: GlobalHooksPlan,
+  flag: boolean | undefined,
+  nonInteractive: boolean,
+): Promise<boolean> {
+  // Never ask for a change that cannot be carried out.
+  if (!planIsMachineWide(plan) || !hookRuntimeReady()) return false;
+  if (flag) return true;
+  if (nonInteractive || !process.stdin.isTTY) return false;
+  return askConfirmation(
+    plan.action === "set_pointer"
+      ? plan.overridesSystem !== undefined
+        ? `Set git's global core.hooksPath so every repository's hooks run through prim? This overrides the system core.hooksPath ${plan.overridesSystem}, whose hooks stop firing.`
+        : "Set git's global core.hooksPath so every repository's hooks run through prim?"
+      : `Add prim's hooks to ${plan.action === "add_to_dir" ? plan.global : "the global hooks dir"}, which every repository runs?`,
+    process.stderr,
+  );
 }
 
 export function uninstallGlobalHooks(): void {
@@ -632,27 +766,59 @@ export function registerHooksCommands(program: Command) {
     .addOption(
       new Option(
         "--scope <scope>",
-        "project (default, this repo) or user (a global core.hooksPath capturing every repo)",
+        "project (default, this repo) or user (prim's global hooks; needs --global-hooks-path or a yes at a terminal to change git's global config)",
       ).choices(["project", "user"]),
     )
     .option("--force", "with --scope user, override a system-level core.hooksPath")
+    .option(
+      "--global-hooks-path",
+      "with --scope user, change git's global hooks so every repository runs prim's hooks",
+    )
     .action(
       async (
-        opts: { target?: "husky" | "git-hooks"; scope?: "project" | "user"; force?: boolean },
+        opts: {
+          target?: "husky" | "git-hooks";
+          scope?: "project" | "user";
+          force?: boolean;
+          globalHooksPath?: boolean;
+        },
         command: Command,
       ) => {
-        // User scope is repo-agnostic — a global core.hooksPath, no gitRoot and
-        // no --target (husky/git-hooks are per-repo concepts). A declined install
-        // (system hooksPath without --force) is a legitimate config, not a
-        // failure: installGlobalHooks already prints a loud STDERR warning with
-        // the remedy, so exit 0 and let `prim setup` complete rather than report
-        // an incomplete run for a benign case.
-        if (opts.scope === "user") {
-          installGlobalHooks({ force: opts.force });
-          return;
-        }
         const globals = command.optsWithGlobals();
         const nonInteractive = isNonInteractive(globals);
+        // User scope is repo-agnostic — a global core.hooksPath, no gitRoot and
+        // no --target (husky/git-hooks are per-repo concepts). A missing hook
+        // runtime is a failure (exit 1). Every other outcome short of a write
+        // (no consent, a system hooksPath without --force, manual mode) is a
+        // legitimate config: installGlobalHooks prints the reason and the
+        // remedy on STDERR, and the command exits 0, except with
+        // --global-hooks-path: asked for global hooks and given none, it exits
+        // EXIT_GLOBAL_HOOKS_NOT_INSTALLED (3).
+        if (opts.scope === "user") {
+          const plan = planGlobalHooks({ force: opts.force });
+          const outcome = installGlobalHooks({
+            force: opts.force,
+            machineWide: await consentToMachineWideHooks(
+              plan,
+              opts.globalHooksPath,
+              nonInteractive,
+            ),
+          });
+          // Asked for global hooks explicitly and got none: say so in the exit
+          // code too, so `prim setup` reports the step as skipped, not ok.
+          if (outcome === "runtime_missing") {
+            process.exitCode = 1;
+          } else if (opts.globalHooksPath && !INSTALLED_OUTCOMES.has(outcome)) {
+            process.exitCode = EXIT_GLOBAL_HOOKS_NOT_INSTALLED;
+          }
+          return;
+        }
+        if (opts.globalHooksPath) {
+          // A usage error, exit 2, as `prim setup` reports the same misuse.
+          console.error("[prim] --global-hooks-path applies only with --scope user");
+          process.exitCode = 2;
+          return;
+        }
         const gitRoot = getGitRoot();
         if (gitHooksMode({ cwd: gitRoot }) === "manual") {
           printManualNote(gitRoot);

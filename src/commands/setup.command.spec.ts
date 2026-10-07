@@ -8,22 +8,40 @@
  * below; only thin glue (the typo-check, the inferred-agent note) rides along.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
+import { gitToplevel } from "../lib/git.js";
+import { globalHooksPathIsPrims, planGlobalHooks } from "./hooks.js";
 import {
   SETUP_DAEMON_DRAINS_ENV,
   SETUP_ORCHESTRATOR_ENV,
   detectAgent,
+  enableWiresRepository,
   parseSetupAuthStatus,
   planCleanupUninstalls,
   planSetupSteps,
   preCommitRunsPrim,
+  projectHooksConflict,
   registerSetupCommand,
   resolveAgent,
+  setupGitHooksNote,
   setupStepSpawnOptions,
 } from "./setup.js";
 
+// Hermetic: never read the developer's real global git config.
+vi.mock("./hooks.js", () => ({
+  EXIT_GLOBAL_HOOKS_NOT_INSTALLED: 3,
+  globalHooksPathIsPrims: vi.fn(() => false),
+  planGlobalHooks: vi.fn(() => ({ action: "set_pointer" })),
+}));
+vi.mock("../lib/git.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/git.js")>();
+  return { ...actual, gitToplevel: vi.fn(actual.gitToplevel) };
+});
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawnSync: vi.fn(),
@@ -89,16 +107,11 @@ describe("planSetupSteps", () => {
     expect(optOut).toMatchObject({ args: ["daemon", "stop"], required: true });
   });
 
-  it("user scope: forwards --scope user to session, hooks, AND skill", () => {
+  it("user scope: forwards --scope user to session and skill, and leaves git's global hooks alone", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["claude", "install", "--scope", "user"]);
-    // The whole point of user scope: git hooks and the rules file go global too.
-    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
-      "hooks",
-      "install",
-      "--scope",
-      "user",
-    ]);
+    // A global core.hooksPath reroutes every repository; enable wires this one.
+    expect(steps.find((s) => s.key === "hooks")).toBeUndefined();
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
@@ -121,16 +134,26 @@ describe("planSetupSteps", () => {
     ]);
   });
 
-  it("hermes: session stays global-only (no scope flag), but hooks + skill still take --scope user", () => {
+  it("user scope: sets git's global hooks only with --global-hooks-path", () => {
+    const steps = planSetupSteps({
+      agent: "claude",
+      daemon: false,
+      scope: "user",
+      globalHooksPath: true,
+    });
+    expect(steps.find((s) => s.key === "hooks")).toMatchObject({
+      args: ["hooks", "install", "--scope", "user", "--global-hooks-path"],
+      required: true,
+    });
+    expect(steps.findIndex((s) => s.key === "hooks")).toBeLessThan(
+      steps.findIndex((s) => s.key === "enable"),
+    );
+  });
+
+  it("hermes: session stays global-only (no scope flag), but the skill still takes --scope user", () => {
     const steps = planSetupSteps({ agent: "hermes", daemon: false, scope: "user" });
     expect(steps[0].args).toEqual(["hermes", "install"]);
     expect(steps[0].label).toMatch(/hermes/i);
-    expect(steps.find((s) => s.key === "hooks")?.args).toEqual([
-      "hooks",
-      "install",
-      "--scope",
-      "user",
-    ]);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
       "install",
@@ -656,5 +679,260 @@ describe("preCommitRunsPrim", () => {
     expect(preCommitRunsPrim("#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n")).toBe(true);
     expect(preCommitRunsPrim("#!/bin/sh\nprim-pre-commit\n")).toBe(true);
     expect(preCommitRunsPrim("#!/bin/sh\nnpx lint-staged\n")).toBe(false);
+  });
+});
+
+describe("setup and git's global hooks", () => {
+  function runSetup(argv: string[]) {
+    const calls: string[][] = [];
+    const note = vi.fn();
+    const program = new Command();
+    program.option("-y, --yes").option("--non-interactive");
+    registerSetupCommand(program, {
+      run: (args) => {
+        calls.push(args);
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        return { code: 0, stdout: "{}" };
+      },
+      note,
+      exit: vi.fn(),
+    });
+    return { calls, note, parse: () => program.parseAsync(argv, { from: "user" }) };
+  }
+
+  it("never touches git's global hooks by default, even with --yes", async () => {
+    const { calls, note, parse } = runSetup(["--yes", "setup", "--agent", "codex", "--no-daemon"]);
+    await parse();
+    expect(calls.some((args) => args[0] === "hooks")).toBe(false);
+    expect(calls.some((args) => args.includes("--global-hooks-path"))).toBe(false);
+    expect(calls.some((args) => args[0] === "enable")).toBe(true);
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("--global-hooks-path"));
+  });
+
+  it("forwards --global-hooks-path as the only consent to a machine-wide change", async () => {
+    const { calls, parse } = runSetup([
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(calls).toContainEqual(["hooks", "install", "--scope", "user", "--global-hooks-path"]);
+  });
+});
+
+describe("projectHooksConflict", () => {
+  const prim = "#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n";
+  it("is a conflict only beside prim's global hooks", () => {
+    expect(projectHooksConflict(true, prim)).toBe(true);
+    expect(projectHooksConflict(false, prim)).toBe(false);
+    expect(projectHooksConflict(true, "#!/bin/sh\nnpm test\n")).toBe(false);
+    expect(projectHooksConflict(true, undefined)).toBe(false);
+  });
+});
+
+describe("setup's global-hooks step status", () => {
+  function setupWith(hooksCode: number, argv: string[]) {
+    const note = vi.fn();
+    const exit = vi.fn();
+    const program = new Command();
+    registerSetupCommand(program, {
+      run: (args) => {
+        if (args[0] === "auth" && args[1] === "status") {
+          return { code: 0, stdout: '{"status":"valid"}' };
+        }
+        if (args[0] === "hooks") return { code: hooksCode, stdout: "" };
+        return { code: 0, stdout: "{}" };
+      },
+      note,
+      exit,
+    });
+    return { note, exit, parse: () => program.parseAsync(argv, { from: "user" }) };
+  }
+
+  it("reports a declined global-hooks step as skipped, not ok", async () => {
+    const { note, exit, parse } = setupWith(3, [
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringMatching(/setup complete — .*hooks:skipped/u));
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("still fails setup when the global-hooks step fails outright", async () => {
+    const { note, parse } = setupWith(1, [
+      "setup",
+      "--agent",
+      "codex",
+      "--no-daemon",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringMatching(/failed: hooks/u));
+  });
+
+  it("rejects --global-hooks-path outside user scope", async () => {
+    const { exit, parse } = setupWith(0, [
+      "setup",
+      "--agent",
+      "codex",
+      "--scope",
+      "project",
+      "--global-hooks-path",
+    ]);
+    await parse();
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("tells users who already have prim's global hooks that they stay active", async () => {
+    vi.mocked(planGlobalHooks).mockReturnValueOnce({ action: "refresh" });
+    const { note, parse } = setupWith(0, ["setup", "--agent", "codex", "--no-daemon"]);
+    await parse();
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("prim's global hooks stay active"));
+  });
+});
+
+describe("a repository that sets its own core.hooksPath", () => {
+  function repoWithSharedGlobalHooks(): { root: string; cleanup: () => void } {
+    const base = mkdtempSync(join(tmpdir(), "prim-setup-local-hooks-"));
+    const root = join(base, "repo");
+    const globalConfig = join(base, "gitconfig");
+    writeFileSync(globalConfig, `[core]\n\thooksPath = ${join(base, "shared-hooks")}\n`);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+    vi.stubEnv("GIT_CONFIG_SYSTEM", "/dev/null");
+    vi.stubEnv("PRIM_CONFIG_DIR", join(base, "prim"));
+    execFileSync("git", ["init", "-q", root]);
+    return {
+      root,
+      cleanup: () => {
+        vi.unstubAllEnvs();
+        rmSync(base, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("is wired by `prim enable`, while one that runs the shared global dir is not", () => {
+    const { root, cleanup } = repoWithSharedGlobalHooks();
+    try {
+      expect(enableWiresRepository(root)).toBe(false);
+      execFileSync("git", ["config", "--local", "core.hooksPath", ".husky"], { cwd: root });
+      expect(enableWiresRepository(root)).toBe(true);
+      expect(enableWiresRepository(null)).toBeUndefined();
+      execFileSync("git", ["config", "--local", "prim.gitHooks", "manual"], { cwd: root });
+      expect(enableWiresRepository(root)).toBeUndefined();
+      execFileSync("git", ["config", "--local", "--unset", "prim.gitHooks"], { cwd: root });
+      const system = setupGitHooksNote(
+        { action: "system_declined", system: "/etc/git/hooks" },
+        true,
+      );
+      expect(system).toContain("`prim enable` wires it");
+      expect(system).toContain("which prim never edits");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("gets a setup note that asks for no consent", async () => {
+    const { root, cleanup } = repoWithSharedGlobalHooks();
+    try {
+      execFileSync("git", ["config", "--local", "core.hooksPath", ".husky"], { cwd: root });
+      vi.mocked(gitToplevel).mockReturnValue(root);
+      vi.mocked(planGlobalHooks).mockReturnValue({ action: "add_to_dir", global: "/shared" });
+      const note = vi.fn();
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) =>
+          args[0] === "auth" && args[1] === "status"
+            ? { code: 0, stdout: '{"status":"valid"}' }
+            : { code: 0, stdout: "{}" },
+        note,
+        exit: vi.fn(),
+      });
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon"], { from: "user" });
+      const hooksNote = note.mock.calls
+        .map(([text]) => String(text))
+        .find((text) => text.startsWith("git hooks ·"));
+      expect(hooksNote).toContain("from inside it, so `prim enable` wires it");
+      expect(hooksNote).not.toContain("cannot wire this repository");
+    } finally {
+      vi.mocked(gitToplevel).mockRestore();
+      vi.mocked(planGlobalHooks).mockReturnValue({ action: "set_pointer" });
+      cleanup();
+    }
+  });
+});
+
+describe("setupGitHooksNote", () => {
+  it("warns users whose global hooks dir prim may not edit that enable needs consent", () => {
+    const note = setupGitHooksNote({ action: "add_to_dir", global: "/home/u/.config/git/hooks" });
+    expect(note).toContain("/home/u/.config/git/hooks");
+    expect(note).toContain("--global-hooks-path, after asking the user");
+  });
+
+  it("never promises enable can wire through a system hooks path or in manual mode", () => {
+    const system = setupGitHooksNote({ action: "system_declined", system: "/etc/git/hooks" });
+    expect(system).toContain("cannot wire this repository");
+    expect(system).toContain("--global-hooks-path --force");
+    expect(system).not.toContain("untouched");
+    expect(setupGitHooksNote({ action: "manual", global: "" })).toContain(
+      "prim writes no hook files",
+    );
+  });
+
+  it("does not claim git's global hooks are untouched when prim's are active", () => {
+    expect(setupGitHooksNote({ action: "refresh" })).toContain("stay active");
+    expect(setupGitHooksNote({ action: "set_pointer" })).toContain("untouched");
+  });
+});
+
+describe("setup --migrate with prim's global hooks", () => {
+  it("removes a project pre-commit that would double-fire beside them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-migrate-"));
+    try {
+      mkdirSync(join(root, ".git", "hooks"), { recursive: true });
+      writeFileSync(
+        join(root, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\n# >>> prim pre-commit hook >>>\n…\n# <<< prim pre-commit hook <<<\n",
+      );
+      vi.mocked(gitToplevel).mockReturnValue(root);
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(true);
+      const calls: string[][] = [];
+      const program = new Command();
+      registerSetupCommand(program, {
+        run: (args) => {
+          calls.push(args);
+          if (args[0] === "auth" && args[1] === "status") {
+            return { code: 0, stdout: '{"status":"valid"}' };
+          }
+          return { code: 0, stdout: "{}" };
+        },
+        note: vi.fn(),
+        exit: vi.fn(),
+      });
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon", "--migrate"], {
+        from: "user",
+      });
+      expect(calls).toContainEqual(["hooks", "uninstall"]);
+
+      // Without prim's global hooks the same pre-commit is how the repo is
+      // wired, and migrate leaves it.
+      calls.length = 0;
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(false);
+      await program.parseAsync(["setup", "--agent", "codex", "--no-daemon", "--migrate"], {
+        from: "user",
+      });
+      expect(calls).not.toContainEqual(["hooks", "uninstall"]);
+    } finally {
+      vi.mocked(gitToplevel).mockRestore();
+      vi.mocked(globalHooksPathIsPrims).mockReturnValue(false);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

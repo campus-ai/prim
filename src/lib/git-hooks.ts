@@ -398,7 +398,7 @@ export function externalHookRemedy(hookName: ManagedGitHookName, cwd: string): s
   const snippet = `place \`prim hooks snippet ${hookName}\` there yourself`;
   switch (hooksPathScope(cwd)) {
     case "global":
-      return `your global core.hooksPath runs every repository's hooks: ${snippet}, or have prim add it with \`prim hooks install --scope user\``;
+      return `your global core.hooksPath runs every repository's hooks: ${snippet}, or have prim add it with \`prim hooks install --scope user --global-hooks-path\` (it changes every repository's hooks: an agent must ask the user first)`;
     case "system":
       return `the system core.hooksPath is shared by every user on this machine: ${snippet}, or ask its owner`;
     case "local":
@@ -1050,6 +1050,16 @@ function explicitTarget(hookPath: string, options: { husky?: boolean }): Effecti
     // The caller chose this exact file (a --target, or a consented global dir).
     location: "external",
   };
+}
+
+/** Whether `hookPath` already carries prim's current (or a later) block. */
+export function hasCurrentHookBlock(hookName: ManagedGitHookName, hookPath: string): boolean {
+  try {
+    const kind = blockRange(readHookFile(hookPath), managedHookSpec(hookName)).kind;
+    return kind === "current" || kind === "newer";
+  } catch {
+    return false;
+  }
 }
 
 /** Wire one managed hook into a file the caller chose and is authorized to write. */
