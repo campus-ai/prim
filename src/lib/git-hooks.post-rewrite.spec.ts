@@ -12,14 +12,17 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { pinnedNpxCommand } from "./bin-path.js";
 import {
-  PRIM_POST_REWRITE_BLOCK_END,
-  PRIM_POST_REWRITE_BLOCK_START,
-  ensurePostRewriteHookAtPath,
-  postRewriteHookBlock,
-  uninstallPostRewriteHookAtPath,
-} from "./post-commit-hook.js";
+  GIT_HOOK_ENTRYPOINT_CONTENT,
+  GIT_HOOK_ENTRYPOINT_NAME,
+  blockMarkers,
+} from "./git-hook-contract.js";
+import { stageFakeGitHookRuntime } from "./git-hook-runtime.testing.js";
+import { ensureGitHookAtPath, managedHookBlock, uninstallGitHookAtPath } from "./git-hooks.js";
+
+const { start: PRIM_POST_REWRITE_BLOCK_START, end: PRIM_POST_REWRITE_BLOCK_END } =
+  blockMarkers("post-rewrite");
+const postRewriteHookBlock = (): string => managedHookBlock("post-rewrite");
 
 const temporaryDirectories: string[] = [];
 
@@ -64,25 +67,16 @@ function initializedRepository(): HookRepo {
   git(root, ["config", "commit.gpgsign", "false"]);
   git(root, ["config", "prim.active", "true"]);
   git(root, ["config", "core.hooksPath", ".git/hooks"]);
-  const cacheHome = temporaryDirectory("prim-post-rewrite-cache-");
-  const binDir = join(cacheHome, "prim", "bin");
-  mkdirSync(binDir, { recursive: true });
-  const fakeDriver = join(cacheHome, "prim-post-rewrite");
-  writeFileSync(
-    fakeDriver,
-    `#!/bin/sh
-{
+  const configDir = temporaryDirectory("prim-post-rewrite-config-");
+  stageFakeGitHookRuntime(configDir, {
+    "prim-post-rewrite": `{
   printf 'source=%s\\nbranch=%s\\n' "$PRIM_REWRITE_SOURCE" "$PRIM_REWRITE_BRANCH"
   cat "$PRIM_REWRITE_PAIRS_FILE"
   printf '%s\\n' '<<<end>>>'
 } >> "$PRIM_TEST_DRIVER_CAPTURE"
 printf '%s\\n' "$PRIM_REWRITE_PAIRS_FILE" >> "$PRIM_TEST_PAIRS_PATH_LOG"
 `,
-    { mode: 0o755 },
-  );
-  chmodSync(fakeDriver, 0o755);
-  writeFileSync(join(binDir, "node"), "/bin/sh\n");
-  writeFileSync(join(binDir, "prim-post-rewrite"), `${fakeDriver}\n`);
+  });
   const capturePath = join(root, "rewrite-capture.txt");
   const pairsPathLog = join(root, "rewrite-pairs-paths.txt");
   const tempDir = join(root, "hook-tmp");
@@ -94,8 +88,7 @@ printf '%s\\n' "$PRIM_REWRITE_PAIRS_FILE" >> "$PRIM_TEST_PAIRS_PATH_LOG"
     tempDir,
     env: {
       ...process.env,
-      PRIM_BIN_CACHE: "1",
-      XDG_CACHE_HOME: cacheHome,
+      PRIM_CONFIG_DIR: configDir,
       PRIM_TEST_DRIVER_CAPTURE: capturePath,
       PRIM_TEST_PAIRS_PATH_LOG: pairsPathLog,
       TMPDIR: tempDir,
@@ -149,36 +142,37 @@ afterEach(() => {
 });
 
 describe("post-rewrite managed hook", () => {
-  it("captures synchronously, re-arms stdin, and launches through every fail-soft branch", () => {
+  it("snapshots stdin, feeds the entrypoint from it, and re-arms the hook's stdin", () => {
     const block = postRewriteHookBlock();
     expect(block).toContain(PRIM_POST_REWRITE_BLOCK_START);
     expect(block).toContain(PRIM_POST_REWRITE_BLOCK_END);
-    expect(block).toContain('case "$1" in amend|rebase)');
-    expect(block).toContain('cat > "$prim_rewrite_pairs_file"');
-    expect(block).toContain('exec < "$prim_rewrite_pairs_file"');
-    expect(block.indexOf('exec < "$prim_rewrite_pairs_file"')).toBeLessThan(
-      block.indexOf("prim_post_rewrite_ran"),
+    expect(block).toContain('cat >"${prim_rewrite_stdin}"');
+    expect(block).toContain(
+      `${GIT_HOOK_ENTRYPOINT_NAME} post-rewrite "$@" <"\${prim_rewrite_stdin}" || :`,
     );
-    expect(block).toContain("chmod 600");
-    expect(block).toContain('"$prim_cache_dir/prim-post-rewrite"');
-    expect(block).toContain(pinnedNpxCommand("prim-post-rewrite"));
-    expect(block).toContain("--ignore-scripts");
-    expect(block).not.toContain("@latest");
-    expect(block).not.toContain("./node_modules/.bin/prim-post-rewrite");
-    expect(block).toContain("rm -f");
+    expect(block.indexOf(`${GIT_HOOK_ENTRYPOINT_NAME} post-rewrite`)).toBeLessThan(
+      block.indexOf('exec <"${prim_rewrite_stdin}"'),
+    );
+    expect(block).toContain('rm -f "${prim_rewrite_stdin}"');
+    // The entrypoint owns the private pairs file the detached driver reads.
+    expect(GIT_HOOK_ENTRYPOINT_CONTENT).toContain('case "${1-}" in amend | rebase)');
+    expect(GIT_HOOK_ENTRYPOINT_CONTENT).toContain(
+      'mktemp "${TMPDIR:-/tmp}/prim-post-rewrite-pairs.XXXXXXXX"',
+    );
+    expect(GIT_HOOK_ENTRYPOINT_CONTENT).toContain('chmod 600 "$prim_pairs"');
   });
 
   it("merges idempotently after the shebang and removes only its own created scaffold", () => {
     const directory = temporaryDirectory("prim-post-rewrite-engine-");
     const path = join(directory, "post-rewrite");
-    const first = ensurePostRewriteHookAtPath(path);
+    const first = ensureGitHookAtPath("post-rewrite", path);
     expect(first).toMatchObject({ changed: true, kind: "direct" });
     const installed = readFileSync(path, "utf8");
     expect(installed).toBe(
       `#!/bin/sh\n${postRewriteHookBlock()}\n# prim-created-post-rewrite-hook\n`,
     );
-    expect(ensurePostRewriteHookAtPath(path).changed).toBe(false);
-    expect(uninstallPostRewriteHookAtPath(path)).toMatchObject({
+    expect(ensureGitHookAtPath("post-rewrite", path).changed).toBe(false);
+    expect(uninstallGitHookAtPath("post-rewrite", path)).toMatchObject({
       changed: true,
       removedFile: true,
     });
@@ -196,7 +190,7 @@ foreign-tool "$@"
 `;
     writeFileSync(path, legacyPostCommit, { mode: 0o755 });
 
-    ensurePostRewriteHookAtPath(path);
+    ensureGitHookAtPath("post-rewrite", path);
 
     const installed = readFileSync(path, "utf8");
     expect(installed).toContain(postRewriteHookBlock());
@@ -219,6 +213,26 @@ foreign-tool "$@"
     expect(readFileSync(foreignCapture, "utf8")).toBe(pairs);
     expect(waitForCapture(repo)).toContain(pairs);
     expectLauncherFilesRemoved(repo);
+  });
+
+  it("re-arms stdin for later code even where prim is not installed", () => {
+    const repo = initializedRepository();
+    const foreignCapture = join(repo.root, "foreign-capture.txt");
+    installRewriteHook(repo, 'cat > "$PRIM_TEST_FOREIGN_CAPTURE"\n');
+    const pairs = `${"a".repeat(40)} ${"b".repeat(40)}\n`;
+    execFileSync(join(repo.root, ".git", "hooks", "post-rewrite"), ["amend"], {
+      cwd: repo.root,
+      env: {
+        ...repo.env,
+        PRIM_CONFIG_DIR: temporaryDirectory("prim-post-rewrite-empty-config-"),
+        PRIM_TEST_FOREIGN_CAPTURE: foreignCapture,
+      },
+      input: pairs,
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    expect(readFileSync(foreignCapture, "utf8")).toBe(pairs);
+    expect(existsSync(repo.capturePath)).toBe(false);
+    expect(readdirSync(repo.tempDir)).toEqual([]);
   });
 
   it("passes stdin through unchanged without launching in an inactive repository", () => {

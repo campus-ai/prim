@@ -31,69 +31,74 @@ vi.mock("node:fs", () => ({
   })),
 }));
 
-vi.mock("../lib/post-commit-hook.js", () => ({
-  ensureEffectivePostCommitHook: vi.fn(() => ({
-    path: "/fake/root/.git/hooks/post-commit",
-    changed: true,
-    kind: "direct",
-  })),
-  ensureEffectivePostRewriteHook: vi.fn(() => ({
-    path: "/fake/root/.git/hooks/post-rewrite",
-    changed: true,
-    kind: "direct",
-  })),
-  ensurePostCommitHookAtPath: vi.fn((path: string) => ({
+vi.mock("../lib/git-hooks.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/git-hooks.js")>();
+  const ensured = (hookName: string, path: string) => ({
+    hookName,
     path,
     changed: true,
     kind: "direct",
-  })),
-  ensurePostRewriteHookAtPath: vi.fn((path: string) => ({
-    path,
-    changed: true,
-    kind: "direct",
-  })),
-  postCommitHookBlock: vi.fn(
-    () =>
-      '# >>> prim post-commit hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  prim-post-commit\nfi\n# <<< prim post-commit hook <<<',
-  ),
-  postRewriteHookBlock: vi.fn(
-    () =>
-      '# >>> prim post-rewrite hook >>>\nif [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then\n  exec < "$prim_rewrite_pairs_file"\n  prim-post-rewrite\nfi\n# <<< prim post-rewrite hook <<<',
-  ),
-  uninstallProjectPostCommitHook: vi.fn(() => ({
-    path: "/fake/root/.git/hooks/post-commit",
-    changed: true,
-    removedFile: true,
-  })),
-  uninstallProjectPostRewriteHook: vi.fn(() => ({
-    path: "/fake/root/.git/hooks/post-rewrite",
-    changed: true,
-    removedFile: true,
-  })),
-  uninstallPostCommitHookAtPath: vi.fn((path: string) => ({
-    path,
-    changed: true,
-    removedFile: false,
-  })),
-  uninstallPostRewriteHookAtPath: vi.fn((path: string) => ({
-    path,
-    changed: true,
-    removedFile: false,
-  })),
+    outcome: "created",
+  });
+  return {
+    ...actual,
+    ensureEffectiveGitHook: vi.fn((hookName: string, root: string) =>
+      ensured(hookName, `${root}/.git/hooks/${hookName}`),
+    ),
+    ensureGitHookAtPath: vi.fn((hookName: string, path: string) => ensured(hookName, path)),
+    gitHooksMode: vi.fn(() => "auto"),
+    projectGitHookTarget: vi.fn((hookName: string, root: string) => ({
+      gitRoot: root,
+      hooksDir: `${root}/.git/hooks`,
+      hookPath: `${root}/.git/hooks/${hookName}`,
+      kind: "direct",
+      location: "repository",
+    })),
+    resolveEffectiveGitHook: vi.fn((hookName: string, root: string) => ({
+      gitRoot: root,
+      hooksDir: `${root}/.git/hooks`,
+      hookPath: `${root}/.git/hooks/${hookName}`,
+      kind: "direct",
+      location: "repository",
+    })),
+    uninstallGitHookAtPath: vi.fn((_hookName: string, path: string) => ({
+      path,
+      changed: true,
+      removedFile: false,
+    })),
+    uninstallProjectGitHook: vi.fn((hookName: string, root: string) => ({
+      path: `${root}/.git/hooks/${hookName}`,
+      changed: true,
+      removedFile: true,
+    })),
+  };
+});
+
+vi.mock("../lib/hook-runtime.js", () => ({
+  stageHookRuntime: vi.fn(),
+  inspectGitHookEntrypoint: vi.fn(() => "ready"),
+  hookRuntimePaths: vi.fn(() => ({ gitHookEntrypoint: "/home/u/.config/prim/prim-git-hook-v1" })),
 }));
 
-vi.mock("../lib/bin-path.js", () => ({
-  commandMatchesBin: vi.fn(
-    (command: string | undefined, bin: string) =>
-      typeof command === "string" &&
-      (command.trim() === bin ||
-        (command.includes("-p @primitive.ai/prim@") && command.includes(bin))),
-  ),
-  pinnedHookCommand: vi.fn(
-    (bin: string) =>
-      `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/${bin}.js' ]; then '/opt/prim/node' '/opt/prim/${bin}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
-  ),
-}));
+vi.mock("../lib/bin-path.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/bin-path.js")>();
+  return {
+    ...actual,
+    commandMatchesBin: vi.fn(
+      (command: string | undefined, bin: string) =>
+        typeof command === "string" &&
+        (command.trim() === bin ||
+          (command.includes("-p @primitive.ai/prim@") && command.includes(bin))),
+    ),
+    pinnedHookCommand: vi.fn(
+      (bin: string) =>
+        `if [ -x '/opt/prim/node' ] && [ -f '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js' ]; then '/opt/prim/node' '/opt/prim/dist/hooks/${bin.slice("prim-".length)}.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}; fi`,
+    ),
+    pinnedNpxCommand: vi.fn(
+      (bin: string) => `npx --yes --ignore-scripts -p @primitive.ai/prim@0.1.0-alpha.55 ${bin}`,
+    ),
+  };
+});
 
 import { execFileSync } from "node:child_process";
 import {
@@ -108,23 +113,23 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  ensureEffectivePostCommitHook,
-  ensureEffectivePostRewriteHook,
-  ensurePostCommitHookAtPath,
-  ensurePostRewriteHookAtPath,
-  uninstallProjectPostCommitHook,
-  uninstallProjectPostRewriteHook,
-} from "../lib/post-commit-hook.js";
+  ensureEffectiveGitHook,
+  ensureGitHookAtPath,
+  gitHooksMode,
+  managedHookBlock,
+  projectGitHookTarget,
+  projectHooksDir,
+  resolveEffectiveGitHook,
+  uninstallGitHookAtPath,
+  uninstallProjectGitHook,
+} from "../lib/git-hooks.js";
+import { inspectGitHookEntrypoint, stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   PRIM_BLOCK_END,
   PRIM_BLOCK_START,
   PRIM_GIT_HOOKS_DIR,
-  containsPrimHook,
   detectHusky,
   installGlobalHooks,
-  installToDotGit,
-  installToHusky,
-  projectHooksDir,
   refreshOwnedGlobalHooks,
   registerHooksCommands,
   uninstallGlobalHooks,
@@ -138,12 +143,15 @@ const mockedWriteFileSync = vi.mocked(writeFileSync);
 const mockedMkdirSync = vi.mocked(mkdirSync);
 const mockedUnlinkSync = vi.mocked(unlinkSync);
 const mockedExecFileSync = vi.mocked(execFileSync);
-const mockedEnsureEffectivePostCommitHook = vi.mocked(ensureEffectivePostCommitHook);
-const mockedEnsureEffectivePostRewriteHook = vi.mocked(ensureEffectivePostRewriteHook);
-const mockedEnsurePostCommitHookAtPath = vi.mocked(ensurePostCommitHookAtPath);
-const mockedEnsurePostRewriteHookAtPath = vi.mocked(ensurePostRewriteHookAtPath);
-const mockedUninstallProjectPostCommitHook = vi.mocked(uninstallProjectPostCommitHook);
-const mockedUninstallProjectPostRewriteHook = vi.mocked(uninstallProjectPostRewriteHook);
+const mockedEnsureEffectiveGitHook = vi.mocked(ensureEffectiveGitHook);
+const mockedEnsureGitHookAtPath = vi.mocked(ensureGitHookAtPath);
+const mockedUninstallGitHookAtPath = vi.mocked(uninstallGitHookAtPath);
+const mockedUninstallProjectGitHook = vi.mocked(uninstallProjectGitHook);
+const EXPLICIT = { context: "explicit" };
+const HOOK_NAMES = ["pre-commit", "post-commit", "post-rewrite"] as const;
+
+/** Paths each managed hook was wired to, in call order. */
+const wiredPaths = (): string[] => mockedEnsureGitHookAtPath.mock.calls.map((call) => call[1]);
 
 // core.hooksPath read for a given config level; `git config <level> --get …`.
 const isGet = (args: readonly string[], level: string): boolean =>
@@ -188,8 +196,8 @@ describe("registerHooksCommands", () => {
 
     await program.parseAsync(["hooks", "uninstall"], { from: "user" });
 
-    expect(mockedUninstallProjectPostCommitHook).toHaveBeenCalledWith("/fake/root");
-    expect(mockedUninstallProjectPostRewriteHook).toHaveBeenCalledWith("/fake/root");
+    expect(mockedUninstallProjectGitHook).toHaveBeenCalledWith("post-commit", "/fake/root");
+    expect(mockedUninstallProjectGitHook).toHaveBeenCalledWith("post-rewrite", "/fake/root");
   });
 
   it("project uninstall removes pre-commit from a linked worktree's common Git directory", async () => {
@@ -205,9 +213,13 @@ describe("registerHooksCommands", () => {
 
     await program.parseAsync(["hooks", "uninstall"], { from: "user" });
 
-    expect(mockedUnlinkSync).toHaveBeenCalledWith("/fake/main/.git/hooks/pre-commit");
-    expect(mockedUninstallProjectPostCommitHook).toHaveBeenCalledWith("/fake/worktree");
-    expect(mockedUninstallProjectPostRewriteHook).toHaveBeenCalledWith("/fake/worktree");
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/main/.git/hooks/pre-commit",
+      { husky: false },
+    );
+    expect(mockedUninstallProjectGitHook).toHaveBeenCalledWith("post-commit", "/fake/worktree");
+    expect(mockedUninstallProjectGitHook).toHaveBeenCalledWith("post-rewrite", "/fake/worktree");
   });
 
   it("project uninstall recognizes an exact older pinned Prim pre-commit scaffold", async () => {
@@ -222,7 +234,11 @@ describe("registerHooksCommands", () => {
 
     await program.parseAsync(["hooks", "uninstall"], { from: "user" });
 
-    expect(mockedUnlinkSync).toHaveBeenCalledWith("/fake/root/.git/hooks/pre-commit");
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/root/.git/hooks/pre-commit",
+      { husky: false },
+    );
   });
 
   it("project uninstall strips only Prim's block from a Husky pre-commit hook", async () => {
@@ -235,13 +251,36 @@ describe("registerHooksCommands", () => {
 
     await program.parseAsync(["hooks", "uninstall"], { from: "user" });
 
-    expect(mockedUnlinkSync).not.toHaveBeenCalled();
-    expect(mockedWriteFileSync).toHaveBeenCalledWith(
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledTimes(1);
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
       "/fake/root/.husky/pre-commit",
-      expect.stringContaining("lint-staged"),
-      { mode: 0o755 },
+      { husky: true },
     );
-    expect(String(mockedWriteFileSync.mock.calls[0]?.[1])).not.toContain("prim-pre-commit");
+  });
+
+  it("project uninstall also removes pre-commit from a repo-local core.hooksPath", async () => {
+    vi.mocked(projectGitHookTarget).mockReturnValue({
+      gitRoot: "/fake/root",
+      hooksDir: "/fake/root/.githooks",
+      hookPath: "/fake/root/.githooks/pre-commit",
+      kind: "direct",
+      location: "worktree",
+    });
+    mockedExistsSync.mockImplementation((path) => path === "/fake/root/.githooks/pre-commit");
+    mockedReadFileSync.mockReturnValue(
+      `#!/bin/sh\nmake lint\n${PRIM_BLOCK_START}\n…\n${PRIM_BLOCK_END}\n`,
+    );
+    const program = new Command();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "uninstall"], { from: "user" });
+
+    expect(mockedUninstallGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/root/.githooks/pre-commit",
+      { husky: false },
+    );
   });
 
   it("project uninstall fails closed on an ambiguously modified Prim pre-commit hook", async () => {
@@ -254,10 +293,8 @@ describe("registerHooksCommands", () => {
       /ownership could not be proven/,
     );
 
-    expect(mockedUnlinkSync).not.toHaveBeenCalled();
-    expect(mockedWriteFileSync).not.toHaveBeenCalled();
-    expect(mockedUninstallProjectPostCommitHook).not.toHaveBeenCalled();
-    expect(mockedUninstallProjectPostRewriteHook).not.toHaveBeenCalled();
+    expect(mockedUninstallGitHookAtPath).not.toHaveBeenCalled();
+    expect(mockedUninstallProjectGitHook).not.toHaveBeenCalled();
   });
 });
 
@@ -309,76 +346,10 @@ describe("detectHusky", () => {
 });
 
 // ---------------------------------------------------------------------------
-// containsPrimHook
+// projectHooksDir
 // ---------------------------------------------------------------------------
 
-describe("containsPrimHook", () => {
-  it("returns true when content includes prim-pre-commit", () => {
-    expect(containsPrimHook("some\nprim-pre-commit\nstuff")).toBe(true);
-  });
-
-  it("returns true when content includes block markers", () => {
-    expect(containsPrimHook(`${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}`)).toBe(true);
-  });
-
-  it("returns false on empty string", () => {
-    expect(containsPrimHook("")).toBe(false);
-  });
-
-  it("returns false when prim is not mentioned", () => {
-    expect(containsPrimHook("#!/bin/sh\nlint-staged")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// installToHusky
-// ---------------------------------------------------------------------------
-
-describe("installToHusky", () => {
-  it("creates new .husky/pre-commit when file does not exist", () => {
-    installToHusky("/repo");
-
-    expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    const [path, content, opts] = mockedWriteFileSync.mock.calls[0];
-    expect(path).toBe("/repo/.husky/pre-commit");
-    expect(content).toContain("#!/bin/sh");
-    expect(content).toContain(PRIM_BLOCK_START);
-    expect(content).toContain(PRIM_BLOCK_END);
-    expect(opts).toEqual({ mode: 0o755 });
-  });
-
-  it("appends prim block to existing .husky/pre-commit", () => {
-    const existingContent = "#!/bin/sh\nlint-staged\n";
-    mockedExistsSync.mockReturnValue(true);
-    mockedReadFileSync.mockReturnValue(existingContent);
-
-    installToHusky("/repo");
-
-    expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    const written = mockedWriteFileSync.mock.calls[0][1] as string;
-    expect(written).toContain(existingContent);
-    expect(written).toContain(PRIM_BLOCK_START);
-    expect(written).toContain("prim-pre-commit");
-  });
-
-  it("refreshes a stale marked block when prim is already installed", () => {
-    mockedExistsSync.mockReturnValue(true);
-    mockedReadFileSync.mockReturnValue(
-      `#!/bin/sh\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
-    );
-
-    installToHusky("/repo");
-
-    expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    expect(String(mockedWriteFileSync.mock.calls[0][1])).toContain("prim-pre-commit");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// installToDotGit
-// ---------------------------------------------------------------------------
-
-describe("installToDotGit", () => {
+describe("projectHooksDir", () => {
   it("resolves the common hooks directory for a linked worktree", () => {
     mockedExecFileSync.mockImplementation(((_cmd: string, args: string[]): string => {
       if (args.includes("--git-common-dir")) return "/repo/.git\n";
@@ -391,49 +362,6 @@ describe("installToDotGit", () => {
       ["rev-parse", "--git-common-dir"],
       expect.objectContaining({ cwd: "/repo-worktree" }),
     );
-  });
-
-  it("creates .git/hooks/ directory if missing", () => {
-    installToDotGit("/repo");
-
-    expect(mockedMkdirSync).toHaveBeenCalledWith("/repo/.git/hooks", {
-      recursive: true,
-    });
-  });
-
-  it("writes hook when no pre-commit exists", () => {
-    installToDotGit("/repo");
-
-    expect(mockedWriteFileSync).toHaveBeenCalledOnce();
-    const [path, content, opts] = mockedWriteFileSync.mock.calls[0];
-    expect(path).toBe("/repo/.git/hooks/pre-commit");
-    expect(content).toContain("prim-pre-commit");
-    expect(opts).toEqual({ mode: 0o755 });
-  });
-
-  it("reports already installed when existing hook contains prim-pre-commit", () => {
-    mockedExistsSync.mockImplementation(
-      (p) => p === "/repo/.git/hooks" || p === "/repo/.git/hooks/pre-commit",
-    );
-    mockedReadFileSync.mockReturnValue("#!/bin/sh\nprim-pre-commit\n");
-
-    installToDotGit("/repo");
-
-    expect(mockedWriteFileSync).not.toHaveBeenCalled();
-  });
-
-  it("refuses to overwrite non-prim existing hook", () => {
-    mockedExistsSync.mockImplementation(
-      (p) => p === "/repo/.git/hooks" || p === "/repo/.git/hooks/pre-commit",
-    );
-    mockedReadFileSync.mockReturnValue("#!/bin/sh\nlint-staged\n");
-
-    const logSpy = vi.spyOn(console, "log");
-    installToDotGit("/repo");
-
-    expect(mockedWriteFileSync).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already exists"));
-    logSpy.mockRestore();
   });
 });
 
@@ -465,7 +393,12 @@ describe("hooks install action", () => {
   it("--yes installs to .husky when Husky is detected", async () => {
     mockedExistsSync.mockImplementation(huskyDetected);
     await buildProgram().parseAsync(["hooks", "install", "--yes"], { from: "user" });
-    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.husky/pre-commit");
+    expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.husky/${hook}`));
+    expect(mockedEnsureGitHookAtPath).toHaveBeenCalledWith(
+      "pre-commit",
+      "/fake/root/.husky/pre-commit",
+      { husky: true },
+    );
   });
 
   it("--non-interactive throws when Husky is detected", async () => {
@@ -473,12 +406,13 @@ describe("hooks install action", () => {
     await expect(
       buildProgram().parseAsync(["hooks", "install", "--non-interactive"], { from: "user" }),
     ).rejects.toThrow(/--non-interactive set/);
-    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(mockedEnsureEffectiveGitHook).not.toHaveBeenCalled();
   });
 
   it("--target=husky bypasses Husky detection", async () => {
     await buildProgram().parseAsync(["hooks", "install", "--target=husky"], { from: "user" });
-    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.husky/pre-commit");
+    expect(wiredPaths()[0]).toBe("/fake/root/.husky/pre-commit");
   });
 
   it("--target=git-hooks installs to .git/hooks even in non-TTY without warning", async () => {
@@ -486,8 +420,22 @@ describe("hooks install action", () => {
     Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
-    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/root/.git/hooks/pre-commit");
+    expect(wiredPaths()[0]).toBe("/fake/root/.git/hooks/pre-commit");
     expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("warns when the chosen directory is not where Git runs hooks", async () => {
+    vi.mocked(resolveEffectiveGitHook).mockReturnValue({
+      gitRoot: "/fake/root",
+      hooksDir: "/fake/root/.husky/_",
+      hookPath: "/fake/root/.husky/pre-commit",
+      kind: "husky_v9",
+      location: "worktree",
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("will not fire"));
     errSpy.mockRestore();
   });
 
@@ -497,32 +445,80 @@ describe("hooks install action", () => {
     await expect(buildProgram().parseAsync(["hooks", "install"], { from: "user" })).rejects.toThrow(
       /--non-interactive set/,
     );
-    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
   });
 
   it("installs pre-commit, post-commit, and post-rewrite hooks to .git/hooks", async () => {
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
       from: "user",
     });
-    const paths = mockedWriteFileSync.mock.calls.map((c) => c[0]);
-    expect(paths).toContain("/fake/root/.git/hooks/pre-commit");
-    expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/root");
-    expect(mockedEnsureEffectivePostRewriteHook).toHaveBeenCalledWith("/fake/root");
+    expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.git/hooks/${hook}`));
+    expect(stageHookRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires all three hooks where Git runs them when no Husky choice is needed", async () => {
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(mockedEnsureEffectiveGitHook.mock.calls.map((call) => call[0])).toEqual([...HOOK_NAMES]);
+    for (const hook of HOOK_NAMES) {
+      expect(mockedEnsureEffectiveGitHook).toHaveBeenCalledWith(hook, "/fake/root", EXPLICIT);
+    }
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("wires an active Husky repo where Git runs hooks, without prompting", async () => {
+    mockedExistsSync.mockImplementation(huskyDetected);
+    vi.mocked(resolveEffectiveGitHook).mockReturnValue({
+      gitRoot: "/fake/root",
+      hooksDir: "/fake/root/.husky/_",
+      hookPath: "/fake/root/.husky/pre-commit",
+      kind: "husky_v9",
+      location: "worktree",
+    });
+    await buildProgram().parseAsync(["hooks", "install", "--non-interactive"], { from: "user" });
+    expect(mockedEnsureEffectiveGitHook).toHaveBeenCalledTimes(3);
   });
 
   it("keeps install fail-soft when only post-rewrite dispatcher coverage is unavailable", async () => {
-    mockedEnsureEffectivePostRewriteHook.mockImplementation(() => {
-      throw new Error("Husky post-rewrite dispatcher is missing");
+    mockedEnsureGitHookAtPath.mockImplementation((hookName, path) => {
+      if (hookName === "post-rewrite") throw new Error("Husky post-rewrite dispatcher is missing");
+      return { hookName, path, changed: true, kind: "direct", outcome: "created" };
     });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await buildProgram().parseAsync(["hooks", "install", "--target=husky"], { from: "user" });
 
-    expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/root");
+    expect(wiredPaths()).toContain("/fake/root/.husky/post-commit");
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("post-rewrite hook coverage is degraded"),
     );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim hooks snippet post-rewrite"));
     errSpy.mockRestore();
+  });
+
+  it("leaves a hook outside the repository alone and fails when it is post-commit", async () => {
+    mockedEnsureEffectiveGitHook.mockImplementation((hookName) => ({
+      hookName,
+      path: `/home/u/.config/git/hooks/${hookName}`,
+      changed: false,
+      kind: "direct",
+      outcome: "external",
+    }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    errSpy.mockRestore();
+  });
+
+  it("fails the install when post-commit capture cannot be wired", async () => {
+    mockedEnsureEffectiveGitHook.mockImplementation((hookName) => {
+      if (hookName === "post-commit") throw new Error("malformed Prim post-commit markers");
+      return { hookName, path: "/p", changed: false, kind: "direct", outcome: "unchanged" };
+    });
+    await expect(buildProgram().parseAsync(["hooks", "install"], { from: "user" })).rejects.toThrow(
+      /malformed/,
+    );
   });
 
   it("installs from a linked worktree without treating its .git file as a directory", async () => {
@@ -531,14 +527,29 @@ describe("hooks install action", () => {
       if (args.includes("--git-common-dir")) return "/fake/main/.git\n";
       return "/fake/worktree\n";
     }) as typeof execFileSync);
+    vi.mocked(resolveEffectiveGitHook).mockReturnValue({
+      gitRoot: "/fake/worktree",
+      hooksDir: "/fake/main/.git/hooks",
+      hookPath: "/fake/main/.git/hooks/pre-commit",
+      kind: "direct",
+      location: "repository",
+    });
 
     await buildProgram().parseAsync(["hooks", "install", "--target=git-hooks"], {
       from: "user",
     });
 
-    expect(mockedWriteFileSync.mock.calls[0][0]).toBe("/fake/main/.git/hooks/pre-commit");
-    expect(mockedEnsureEffectivePostCommitHook).toHaveBeenCalledWith("/fake/worktree");
-    expect(mockedEnsureEffectivePostRewriteHook).toHaveBeenCalledWith("/fake/worktree");
+    expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/main/.git/hooks/${hook}`));
+  });
+
+  it("writes no hook file under prim.gitHooks=manual", async () => {
+    vi.mocked(gitHooksMode).mockReturnValue("manual");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(mockedEnsureEffectiveGitHook).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
+    errSpy.mockRestore();
   });
 
   it("does not activate an unbound repo after a project install", async () => {
@@ -550,6 +561,34 @@ describe("hooks install action", () => {
         (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
       ),
     ).toBe(false);
+  });
+});
+
+describe("hooks snippet", () => {
+  it("prints the wiring block on STDOUT and guidance on STDERR without writing", async () => {
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const program = new Command().exitOverride();
+    registerHooksCommands(program);
+
+    await program.parseAsync(["hooks", "snippet", "post-rewrite"], { from: "user" });
+
+    expect(out).toHaveBeenCalledWith(`${managedHookBlock("post-rewrite")}\n`);
+    expect(String(err.mock.calls[0]?.[0])).toContain("/home/u/.config/prim/prim-git-hook-v1");
+    expect(String(err.mock.calls[0]?.[0])).toContain("re-arms stdin");
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    out.mockRestore();
+    err.mockRestore();
+  });
+
+  it("rejects an unknown hook", async () => {
+    const program = new Command().exitOverride();
+    program.configureOutput({ writeErr: () => {} });
+    registerHooksCommands(program);
+    await expect(
+      program.parseAsync(["hooks", "snippet", "pre-push"], { from: "user" }),
+    ).rejects.toThrow();
   });
 });
 
@@ -592,34 +631,27 @@ describe("installGlobalHooks (user scope)", () => {
     const pre = byPath.get(join(PRIM_GIT_HOOKS_DIR, "pre-commit")) ?? "";
     const post = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-commit")) ?? "";
     const rewrite = byPath.get(join(PRIM_GIT_HOOKS_DIR, "post-rewrite")) ?? "";
-    // Opt-in gate: prim runs only where prim.active is true.
-    expect(pre).toContain("git config --get prim.active");
-    // --git-common-dir is NOT core.hooksPath-aware, so the chain never points at
-    // this script; --git-path would be self-referential and must not appear.
-    expect(pre).toContain("git rev-parse --git-common-dir");
-    expect(pre).not.toContain("--git-path");
+    for (const [hook, script] of [
+      ["pre-commit", pre],
+      ["post-commit", post],
+      ["post-rewrite", rewrite],
+    ] as const) {
+      // The frozen v1 block runs first; it gates on prim.active in the
+      // entrypoint and never fails the hook. No version or machine path.
+      expect(script.startsWith(`#!/bin/sh\n${managedHookBlock(hook)}\n`)).toBe(true);
+      expect(script).not.toMatch(/@primitive\.ai\/prim@|\/opt\/prim|\bnpx\b|command -v/u);
+      // --git-common-dir is NOT core.hooksPath-aware, so the chain never points
+      // at this script; --git-path would be self-referential and must not appear.
+      expect(script).toContain("git rev-parse --git-common-dir");
+      expect(script).not.toContain("--git-path");
+      expect(script.indexOf("# <<< prim")).toBeLessThan(script.indexOf("common_dir="));
+    }
     expect(pre).toContain('"$repo_hook" "$@" || exit $?'); // a repo pre-commit can still block
-    expect(pre).toContain("} || true"); // prim never breaks a commit
-    expect(pre).toContain("[ -x '/opt/prim/node' ]");
-    expect(pre).toContain("@primitive.ai/prim@0.1.0-alpha.55 prim-pre-commit");
-    expect(pre).not.toContain("command -v");
-    expect(pre).not.toContain("./node_modules");
-    expect(pre).not.toMatch(/@latest|@primitive\.ai\/prim\s/);
+    // A repo pre-commit is always chained: it may enforce checks of its own.
+    expect(pre).not.toContain("grep -Fq");
     expect(post).toContain('"$repo_hook" "$@" || true'); // post-commit cannot block
-    expect(rewrite).toContain('exec < "$prim_rewrite_pairs_file"');
+    expect(rewrite).toContain('exec <"${prim_rewrite_stdin}"');
     expect(rewrite).toContain('"$repo_hook" "$@" || true');
-    expect(rewrite.indexOf("# >>> prim post-rewrite hook >>>")).toBeLessThan(
-      rewrite.indexOf("# prim global post-rewrite hook"),
-    );
-    // STRUCTURAL: the prim invocation must be NESTED inside the gate — between
-    // the `prim.active` check and the chain — not merely present somewhere.
-    // Independent `toContain`s would pass on an ungated invocation (the H2 bug).
-    const gateAt = pre.indexOf("git config --get prim.active");
-    const binAt = pre.indexOf("prim-pre-commit");
-    const chainAt = pre.indexOf("common_dir=");
-    expect(gateAt).toBeGreaterThan(-1);
-    expect(binAt).toBeGreaterThan(gateAt); // invocation is after the gate opens
-    expect(binAt).toBeLessThan(chainAt); // and before the chain — i.e. inside the gate
   });
 
   it("does not chain a project-managed post-rewrite hook after a user-scope migration", async () => {
@@ -669,6 +701,7 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
         env: {
           ...process.env,
           PATH: `${binDirectory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+          PRIM_CONFIG_DIR: join(directory, "no-prim-config"),
           PRIM_TEST_COMMON_DIR: join(directory, "common"),
           PRIM_TEST_REPO_CHAIN_LOG: chainLog,
         },
@@ -736,7 +769,7 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
       expect.stringContaining("prim global post-commit hook"),
       { mode: 0o755 },
     );
-    expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
   });
 
   it("refreshes both managed hooks when the owned global files contain corrupt markers", () => {
@@ -757,8 +790,17 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
       { mode: 0o755 },
     );
     expect(setCalls()).toHaveLength(0);
-    expect(mockedEnsurePostCommitHookAtPath).not.toHaveBeenCalled();
-    expect(mockedEnsurePostRewriteHookAtPath).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+  });
+
+  it("never swaps prim's global hooks for inert ones while the runtime is missing", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(refreshOwnedGlobalHooks()).toBe(false);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("not staged"));
+    errSpy.mockRestore();
   });
 
   it.each([
@@ -775,33 +817,44 @@ touch "$PRIM_TEST_REPO_CHAIN_LOG"
     const existing = join(homedir(), ".config", "git", "hooks");
     stubHooksPath({ global: existing });
     installGlobalHooks();
-    const paths = mockedWriteFileSync.mock.calls.map((c) => String(c[0]));
-    expect(paths).toContain(join(existing, "pre-commit"));
-    expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalledWith(join(existing, "post-commit"));
-    expect(mockedEnsurePostRewriteHookAtPath).toHaveBeenCalledWith(join(existing, "post-rewrite"));
+    // Every hook goes through the one engine; the entrypoint the block execs
+    // gates on prim.active, so user scope stays opt-in in a foreign dir too.
+    expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => join(existing, hook)));
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
     expect(setCalls()).toHaveLength(0); // pointer left untouched
-    const pre = mockedWriteFileSync.mock.calls.find(
-      (c) => String(c[0]) === join(existing, "pre-commit"),
-    )?.[1] as string;
-    expect(pre).toContain(PRIM_BLOCK_START); // a marker block, not the standalone script
-    expect(pre).toContain("prim-pre-commit");
-    // H2 fix: the coexist-append block is GATED too, so user scope stays opt-in
-    // even when appended into a foreign core.hooksPath dir.
-    expect(pre).toContain("git config --get prim.active");
+  });
+
+  it("adds nothing to a foreign global hooks dir while the runtime is missing", () => {
+    stubHooksPath({ global: join(homedir(), ".config", "git", "hooks") });
+    vi.mocked(inspectGitHookEntrypoint).mockReturnValue("missing");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(installGlobalHooks()).toBe(false);
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Added"));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("not staged yet"));
+    errSpy.mockRestore();
+    logSpy.mockRestore();
   });
 
   it("expands a leading ~ in the existing global hooksPath before writing", () => {
     stubHooksPath({ global: "~/.config/git/hooks" });
     installGlobalHooks();
-    const paths = mockedWriteFileSync.mock.calls.map((c) => String(c[0]));
-    expect(paths).toContain(join(homedir(), ".config", "git", "hooks", "pre-commit"));
-    expect(paths.some((p) => p.includes("~"))).toBe(false); // no literal tilde reached fs
-    expect(mockedEnsurePostCommitHookAtPath).toHaveBeenCalledWith(
-      join(homedir(), ".config", "git", "hooks", "post-commit"),
+    expect(wiredPaths()).toEqual(
+      HOOK_NAMES.map((hook) => join(homedir(), ".config", "git", "hooks", hook)),
     );
-    expect(mockedEnsurePostRewriteHookAtPath).toHaveBeenCalledWith(
-      join(homedir(), ".config", "git", "hooks", "post-rewrite"),
-    );
+    expect(wiredPaths().some((p) => p.includes("~"))).toBe(false); // no literal tilde reached fs
+  });
+
+  it("leaves hook files and the pointer alone under a global prim.gitHooks=manual", () => {
+    vi.mocked(gitHooksMode).mockReturnValue("manual");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(installGlobalHooks()).toBe(false);
+    expect(mockedWriteFileSync).not.toHaveBeenCalled();
+    expect(mockedEnsureGitHookAtPath).not.toHaveBeenCalled();
+    expect(setCalls()).toHaveLength(0);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
+    errSpy.mockRestore();
   });
 
   it("does not override a system-level hooksPath without --force (returns false to signal the skip)", () => {
@@ -901,22 +954,60 @@ describe("uninstallGlobalHooks (user scope)", () => {
     expect(mockedUnlinkSync).not.toHaveBeenCalled();
   });
 
-  it("recognizes an exact global pre-commit scaffold with an older pinned invocation", () => {
+  it("recognizes the alpha.35–56 global pre-commit, which gated the resolution ladder", () => {
     stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
     mockedExistsSync.mockReturnValue(true);
-    installGlobalHooks();
-    const current = String(
-      mockedWriteFileSync.mock.calls.find(
-        ([path]) => String(path) === join(PRIM_GIT_HOOKS_DIR, "pre-commit"),
-      )?.[1] ?? "",
-    );
-    const older = current
-      .replaceAll("/opt/prim/", "/old/prim/")
-      .replace("@primitive.ai/prim@0.1.0-alpha.55", "@primitive.ai/prim@0.1.0-alpha.54");
+    const older = `#!/bin/sh
+# prim global pre-commit hook (core.hooksPath) — managed by prim; do not edit.
+# Install/uninstall: prim hooks install|uninstall --scope user
+# Runs prim only where activated — 'prim enable' (this repo) or
+# 'git config --global prim.active true' (every repo). Chains to the repo's own
+# hook regardless, so inactive repos are unaffected.
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+if command -v prim-pre-commit >/dev/null 2>&1; then
+  prim-pre-commit || true
+elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
+  ./node_modules/.bin/prim-pre-commit || true
+else
+  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
+fi
+fi
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+repo_hook="$common_dir/hooks/pre-commit"
+if [ -x "$repo_hook" ] && ! grep -q 'prim-managed-hook' "$repo_hook" 2>/dev/null; then
+  "$repo_hook" "$@" || exit $?
+fi
+exit 0
+`;
     mockedReaddirSync.mockReturnValue(["pre-commit"]);
     mockedReadFileSync.mockReturnValue(older);
-    mockedExecFileSync.mockClear();
-    mockedUnlinkSync.mockClear();
+
+    uninstallGlobalHooks();
+
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
+  });
+
+  it("recognizes an exact pre-v1 global pre-commit scaffold with an older pinned invocation", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    const older = `#!/bin/sh
+# prim global pre-commit hook (core.hooksPath) — managed by prim; do not edit.
+# Install/uninstall: prim hooks install|uninstall --scope user
+# Runs prim only where activated — 'prim enable' (this repo) or
+# 'git config --global prim.active true' (every repo). Chains to the repo's own
+# hook regardless, so inactive repos are unaffected.
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+{ if [ -x '/old/prim/node' ] && [ -f '/old/prim/dist/hooks/pre-commit.js' ]; then '/old/prim/node' '/old/prim/dist/hooks/pre-commit.js'; else npx --yes -p @primitive.ai/prim@0.1.0-alpha.54 prim-pre-commit; fi; } || true
+fi
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+repo_hook="$common_dir/hooks/pre-commit"
+if [ -x "$repo_hook" ] && ! grep -q 'prim-managed-hook' "$repo_hook" 2>/dev/null; then
+  "$repo_hook" "$@" || exit $?
+fi
+exit 0
+`;
+    mockedReaddirSync.mockReturnValue(["pre-commit"]);
+    mockedReadFileSync.mockReturnValue(older);
 
     uninstallGlobalHooks();
 
@@ -928,49 +1019,33 @@ describe("uninstallGlobalHooks (user scope)", () => {
     ).toBe(true);
   });
 
-  it("strips the prim block from a foreign hook that has other content, leaving the file + pointer", () => {
+  it("recognizes the current owned scripts it just wrote", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    expect(refreshOwnedGlobalHooks()).toBe(true);
+    const contentByPath = new Map(
+      mockedWriteFileSync.mock.calls.map((call) => [String(call[0]), String(call[1])]),
+    );
+    mockedReaddirSync.mockReturnValue(["pre-commit", "post-commit", "post-rewrite"]);
+    mockedReadFileSync.mockImplementation((path) => contentByPath.get(String(path)) ?? "");
+
+    uninstallGlobalHooks();
+
+    expect(mockedUnlinkSync).toHaveBeenCalledTimes(3);
+  });
+
+  it("strips prim's blocks from a foreign global hooks dir, leaving the files and the pointer", () => {
     const existing = join(homedir(), ".config", "git", "hooks");
     stubHooksPath({ global: existing });
-    mockedExistsSync.mockReturnValue(true);
-    // A foreign tool's hook with prim appended — stripping leaves the tool's line.
-    mockedReadFileSync.mockReturnValue(
-      `#!/bin/sh\nlint-staged\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
-    );
     uninstallGlobalHooks();
+    // The engine removes only prim's block, or a file prim provably created.
+    expect(mockedUninstallGitHookAtPath.mock.calls.map((call) => call.slice(0, 2))).toEqual(
+      HOOK_NAMES.map((hook) => [hook, join(existing, hook)]),
+    );
     const unsetCalls = mockedExecFileSync.mock.calls.filter((c) =>
       ((c[1] as string[] | undefined) ?? []).includes("--unset"),
     );
     expect(unsetCalls).toHaveLength(0); // pointer untouched
-    expect(mockedUnlinkSync).not.toHaveBeenCalled(); // file has other content — kept
-    const written = mockedWriteFileSync.mock.calls.map((c) => c[1] as string);
-    expect(written.some((w) => w.includes("lint-staged"))).toBe(true);
-    expect(written.every((w) => !w.includes("prim-pre-commit"))).toBe(true);
-  });
-
-  it("unlinks a prim-CREATED foreign hook (provenance marker + shebang only) instead of orphaning it", () => {
-    const existing = join(homedir(), ".config", "git", "hooks");
-    stubHooksPath({ global: existing });
-    mockedExistsSync.mockReturnValue(true);
-    // prim created this file (mergePrimBlock else-branch): shebang + provenance
-    // marker + prim block only.
-    mockedReadFileSync.mockReturnValue(
-      `#!/bin/sh\n# prim-created-hook\n\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
-    );
-    uninstallGlobalHooks();
-    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(existing, "pre-commit"));
-  });
-
-  it("does NOT unlink a user's shebang-only hook prim merely appended to (no provenance marker)", () => {
-    const existing = join(homedir(), ".config", "git", "hooks");
-    stubHooksPath({ global: existing });
-    mockedExistsSync.mockReturnValue(true);
-    // A user's own shebang-only hook prim appended to — NO prim-created marker.
-    mockedReadFileSync.mockReturnValue(
-      `#!/bin/sh\n${PRIM_BLOCK_START}\nprim-pre-commit\n${PRIM_BLOCK_END}\n`,
-    );
-    uninstallGlobalHooks();
-    expect(mockedUnlinkSync).not.toHaveBeenCalled(); // never delete a user's file
-    expect(mockedWriteFileSync).toHaveBeenCalled(); // block stripped, file kept
   });
 
   it("reports nothing to remove when no global hooksPath is set", () => {

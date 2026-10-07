@@ -15,11 +15,8 @@ import {
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
+import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
-import {
-  ensureEffectivePostCommitHook,
-  ensureEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
 import { bindRepository, resolveRepositoryBinding } from "../lib/repository-binding.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
@@ -65,10 +62,32 @@ vi.mock("../lib/git.js", () => ({
   gitToplevel: vi.fn(),
   resolveRepositoryContext: vi.fn(() => ({ repoRoot: "/repo" })),
 }));
-vi.mock("../lib/post-commit-hook.js", () => ({
-  ensureEffectivePostCommitHook: vi.fn(),
-  ensureEffectivePostRewriteHook: vi.fn(),
+vi.mock("../lib/git-hooks.js", () => ({
+  MANAGED_GIT_HOOK_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
+  ensureEffectiveGitHook: vi.fn(),
 }));
+
+// SessionStart wires the capture hooks but only refreshes an existing
+// pre-commit block: the synchronous decision check is wired explicitly.
+const AMBIENT = { context: "ambient", repairOnly: false };
+const AMBIENT_REPAIR_ONLY = { context: "ambient", repairOnly: true };
+
+function hookResult(hookName: EnsureHookResult["hookName"]): EnsureHookResult {
+  return {
+    hookName,
+    path: `/repo/.git/hooks/${hookName}`,
+    changed: false,
+    kind: "direct",
+    outcome: "unchanged",
+  };
+}
+
+function failPostCommitRepair(): void {
+  vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => {
+    if (hookName === "post-commit") throw new Error("malformed markers");
+    return hookResult(hookName);
+  });
+}
 vi.mock("../lib/repository-binding.js", () => ({
   bindRepository: vi.fn(),
   resolveRepositoryBinding: vi.fn(),
@@ -129,16 +148,7 @@ beforeEach(() => {
   vi.mocked(isRepoActiveForCapture).mockReturnValue(false);
   vi.mocked(fetchAndCacheCollectScope).mockResolvedValue({ kind: "unfetched" });
   vi.mocked(repoActiveFlag).mockReturnValue("true");
-  vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
-    path: "/repo/.git/hooks/post-commit",
-    changed: false,
-    kind: "direct",
-  });
-  vi.mocked(ensureEffectivePostRewriteHook).mockReturnValue({
-    path: "/repo/.git/hooks/post-rewrite",
-    changed: false,
-    kind: "direct",
-  });
+  vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => hookResult(hookName));
   vi.mocked(hasUsableCodexGuidance).mockReturnValue(false);
   vi.mocked(hasUsableCursorSkill).mockReturnValue(false);
   vi.mocked(gitToplevel).mockReturnValue("/repo");
@@ -216,8 +226,10 @@ describe("processSessionStart", () => {
       },
     });
     expect(isRepoActiveForCapture).toHaveBeenCalledWith("/repo");
-    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
-    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("pre-commit", "/repo", AMBIENT_REPAIR_ONLY);
+    for (const hookName of ["post-commit", "post-rewrite"]) {
+      expect(ensureEffectiveGitHook).toHaveBeenCalledWith(hookName, "/repo", AMBIENT);
+    }
     expect(gitToplevel).toHaveBeenCalledWith("/repo");
     expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", {
       includeProject: true,
@@ -612,7 +624,7 @@ describe("processSessionStart", () => {
 
     await processSessionStart(ENVELOPE, "codex");
 
-    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("post-commit", "/repo", AMBIENT);
     expect(bindRepository).toHaveBeenCalledWith(
       "/repo",
       expect.objectContaining({ quietRefresh: true }),
@@ -657,10 +669,9 @@ describe("processSessionStart", () => {
     await processSessionStart(ENVELOPE, "codex");
 
     expect(setRepoActive).toHaveBeenCalledWith("/repo", true);
-    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("post-commit", "/repo", AMBIENT);
     expect(vi.mocked(setRepoActive).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0] ??
-        Number.POSITIVE_INFINITY,
+      vi.mocked(ensureEffectiveGitHook).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 
@@ -673,14 +684,12 @@ describe("processSessionStart", () => {
 
     await processSessionStart(ENVELOPE, "codex");
 
-    expect(ensureEffectivePostCommitHook).not.toHaveBeenCalled();
+    expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
   });
 
   it("keeps SessionStart fail-soft when effective hook repair fails", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
-      throw new Error("malformed markers");
-    });
+    failPostCommitRepair();
 
     const result = await processSessionStart(ENVELOPE, "codex");
 
@@ -690,15 +699,13 @@ describe("processSessionStart", () => {
         additionalContext: CODEX_DOWN_REPORT,
       },
     });
-    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
-    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("post-commit", "/repo", AMBIENT);
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("post-rewrite", "/repo", AMBIENT);
   });
 
   it("repairs post-rewrite independently when post-commit refresh fails", async () => {
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
-      throw new Error("malformed markers");
-    });
+    failPostCommitRepair();
 
     const result = await processSessionStart(ENVELOPE, "codex");
 
@@ -708,7 +715,7 @@ describe("processSessionStart", () => {
         additionalContext: CODEX_DOWN_REPORT,
       },
     });
-    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
+    expect(ensureEffectiveGitHook).toHaveBeenCalledWith("post-rewrite", "/repo", AMBIENT);
   });
 
   it.each(["not json", "null", "[]", '"scalar"'])(

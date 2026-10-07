@@ -321,15 +321,38 @@ authorizes one retry for the named decision.
 ### Hooks
 
 ```bash
-prim hooks install     # Install git hooks (pre-commit decision check + post-commit capture)
-prim hooks uninstall   # Remove the prim git hooks
+prim hooks install                # Wire the pre-commit, post-commit, and post-rewrite hooks
+prim hooks snippet post-commit    # Print the block that wires one hook, to place by hand
+prim hooks uninstall              # Remove prim's blocks (and any hook file prim created)
 ```
 
 The pre-commit hook checks staged files against the live decision graph
-(warn-only — it never blocks the commit). The post-commit hook records each
-commit as a capture boundary for classification. Supports
-[Husky](https://typicode.github.io/husky/) — `prim hooks install` detects Husky
-and offers to install into `.husky/`.
+(warn-only — it never blocks the commit). The post-commit and post-rewrite hooks
+record each commit and each amend/rebase as capture boundaries for
+classification. All three act only in repos where prim is active (`prim enable`).
+Supports [Husky](https://typicode.github.io/husky/) — `prim hooks install`
+detects Husky and offers to install into `.husky/`.
+
+Each hook file gets one short block, inserted right after the shebang so it runs
+before any `exit` or `exec`. The block names no version and no machine path: it
+runs prim's staged entrypoint (`~/.config/prim/prim-git-hook-v1`) and does
+nothing on a machine without prim, so a tracked `.husky/*` file never changes
+across prim releases. `prim enable` and `prim hooks install` write it once and
+never move or rewrite a current block, reformatted or not. Agent session hooks
+only repair Git-private hook files under `.git` and prim's own hooks dir, and
+never add the pre-commit check. prim never edits a hooks dir outside the
+repository, such as a global `core.hooksPath` every repository shares, unless
+you run `prim hooks install --scope user`. In a Husky v8 hook the block goes
+after the `husky.sh` line, so it runs once and honors `HUSKY=0`. `prim doctor`
+only reports; it never rewrites a hook.
+
+To wire the hooks yourself (lefthook, a custom Husky layout, …), run
+`git config prim.gitHooks manual` (or `--global`) first: prim then never writes
+a hook file. That setting is the only signal prim honors. It does not guess
+from a hook that already mentions prim, so without it, `prim enable` adds its
+block. Paste the block from `prim hooks snippet <hook>`, or have your hook
+manager run `~/.config/prim/prim-git-hook-v1 <hook> "$@"` (post-rewrite also
+needs Git's stdin).
 
 ### Presence statusline
 

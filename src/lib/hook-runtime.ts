@@ -21,6 +21,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { atomicWriteFile, syncDirectory, syncFile } from "./atomic-file.js";
 import { STABLE_HOOK_LAUNCHER_NAME, packageRoot, packageVersion } from "./bin-path.js";
 import { withFileLockSync } from "./file-lock.js";
+import { GIT_HOOK_ENTRYPOINT_CONTENT, GIT_HOOK_ENTRYPOINT_NAME } from "./git-hook-contract.js";
 import { type PrimConfigDirectoryOptions, primConfigDirectory } from "./paths.js";
 import { compareSemver } from "./semver.js";
 
@@ -71,6 +72,8 @@ type HookRuntimeManifest = {
 export type HookRuntimePaths = {
   configDir: string;
   launcher: string;
+  /** Frozen Git hook entrypoint that managed hook blocks exec. */
+  gitHookEntrypoint: string;
   runtimeDir: string;
   releasesDir: string;
   current: string;
@@ -113,6 +116,7 @@ export function hookRuntimePaths(options: PrimConfigDirectoryOptions = {}): Hook
   return {
     configDir,
     launcher: join(configDir, STABLE_HOOK_LAUNCHER_NAME),
+    gitHookEntrypoint: join(configDir, GIT_HOOK_ENTRYPOINT_NAME),
     runtimeDir,
     releasesDir: join(runtimeDir, "releases"),
     current: join(runtimeDir, "current"),
@@ -602,6 +606,14 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
         mode: LAUNCHER_MODE,
       });
     }
+    // Frozen bytes, so an older stager rewriting it cannot downgrade anything.
+    const entrypointCurrent = gitHookEntrypointCurrent(paths);
+    if (!entrypointCurrent) {
+      atomicWriteFile(paths.gitHookEntrypoint, GIT_HOOK_ENTRYPOINT_CONTENT, {
+        ensureParent: true,
+        mode: LAUNCHER_MODE,
+      });
+    }
     if (!selectorCurrent) {
       // The selector is authority-bearing: make the entire immutable release
       // durable before a crash can expose its name to the stable launcher.
@@ -620,12 +632,55 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
     );
 
     return {
-      changed: !launcherCurrent || !selectorCurrent,
+      changed: !launcherCurrent || !entrypointCurrent || !selectorCurrent,
       releaseDir: finalRelease.dir,
       manifest: finalRelease.manifest,
       paths,
     };
   });
+}
+
+function gitHookEntrypointCurrent(paths: HookRuntimePaths): boolean {
+  try {
+    return readFileSync(paths.gitHookEntrypoint, "utf8") === GIT_HOOK_ENTRYPOINT_CONTENT;
+  } catch {
+    return false;
+  }
+}
+
+export type GitHookEntrypointState = "ready" | "missing" | "invalid";
+
+/**
+ * Whether a managed Git hook block on this machine reaches prim: the frozen
+ * entrypoint, the frozen launcher it execs, and a selected release. Read-only
+ * and cheap enough for hook inspection; doctor's hook-runtime check validates
+ * the selected release itself.
+ */
+export function inspectGitHookEntrypoint(
+  options: PrimConfigDirectoryOptions = {},
+): GitHookEntrypointState {
+  let paths: HookRuntimePaths;
+  try {
+    paths = hookRuntimePaths(options);
+  } catch {
+    return "invalid";
+  }
+  try {
+    const entrypoint = lstatIfPresent(paths.gitHookEntrypoint);
+    if (!entrypoint) return "missing";
+    if (
+      !entrypoint.isFile() ||
+      (Number(entrypoint.mode) & 0o100) === 0 ||
+      !gitHookEntrypointCurrent(paths) ||
+      readFileSync(paths.launcher, "utf8") !== STABLE_HOOK_LAUNCHER_CONTENT ||
+      !lstatIfPresent(paths.current)?.isFile()
+    ) {
+      return "invalid";
+    }
+    return "ready";
+  } catch {
+    return "invalid";
+  }
 }
 
 function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
@@ -639,6 +694,12 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
 }
 
 export function assertOwnedHookRuntime(paths: HookRuntimePaths): void {
+  const entrypoint = lstatIfPresent(paths.gitHookEntrypoint);
+  if (entrypoint && (!entrypoint.isFile() || !gitHookEntrypointCurrent(paths))) {
+    throw new Error(
+      `refusing to remove unrecognized Git hook entrypoint at ${paths.gitHookEntrypoint}`,
+    );
+  }
   const launcher = lstatIfPresent(paths.launcher);
   if (launcher) {
     if (
@@ -696,18 +757,22 @@ export function removeHookRuntime(
 ): RemoveHookRuntimeResult {
   const paths = hookRuntimePaths(options);
   const hadLauncher = lstatIfPresent(paths.launcher) !== undefined;
+  const hadEntrypoint = lstatIfPresent(paths.gitHookEntrypoint) !== undefined;
   const hadRuntime = lstatIfPresent(paths.runtimeDir) !== undefined;
-  if (!hadLauncher && !hadRuntime) return { changed: false, paths };
+  if (!hadLauncher && !hadEntrypoint && !hadRuntime) return { changed: false, paths };
 
   // Reject obvious foreign ownership before taking a lock inside the runtime.
   assertOwnedHookRuntime(paths);
   if (!hadRuntime) {
+    rmSync(paths.gitHookEntrypoint, { force: true });
     rmSync(paths.launcher, { force: true });
-    return { changed: hadLauncher, paths };
+    return { changed: true, paths };
   }
 
   withFileLockSync(paths.selectionLock, () => {
     assertOwnedHookRuntime(paths);
+    // The entrypoint goes first: every managed Git hook block becomes a no-op.
+    if (lstatIfPresent(paths.gitHookEntrypoint)) rmSync(paths.gitHookEntrypoint, { force: true });
     if (lstatIfPresent(paths.launcher)) rmSync(paths.launcher, { force: true });
     const quarantined = `${paths.runtimeDir}.uninstall-${String(process.pid)}-${randomBytes(8).toString("hex")}`;
     renameSync(paths.runtimeDir, quarantined);

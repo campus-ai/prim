@@ -4,14 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => ""),
 }));
-vi.mock("../lib/post-commit-hook.js", () => ({
-  ensureEffectivePostCommitHook: vi.fn(),
-  ensureEffectivePostRewriteHook: vi.fn(),
+vi.mock("../lib/git-hooks.js", () => ({
+  MANAGED_GIT_HOOK_NAMES: ["pre-commit", "post-commit", "post-rewrite"],
+  ensureEffectiveGitHook: vi.fn(),
+  externalHookRemedy: vi.fn(() => "place `prim hooks snippet post-commit` there yourself"),
 }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: vi.fn() }));
 vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: vi.fn() }));
 vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn(async () => null) }));
-vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
+vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn(), stageGitHookRuntime: vi.fn() }));
 // Keep the real isNonInteractive (env/flag ladder), stub only the TTY prompt.
 vi.mock("../lib/confirmation.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/confirmation.js")>();
@@ -23,14 +24,40 @@ import { execFileSync } from "node:child_process";
 import { daemonRequest } from "../daemon/client.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { askConfirmation } from "../lib/confirmation.js";
-import {
-  ensureEffectivePostCommitHook,
-  ensureEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
+import { type EnsureHookResult, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { bindRepository } from "../lib/repository-binding.js";
 import { registerActivationCommands } from "./activation.js";
 import { runGithubConnect } from "./github.js";
-import { refreshOwnedGlobalHooks } from "./hooks.js";
+import { refreshOwnedGlobalHooks, stageGitHookRuntime } from "./hooks.js";
+
+const EXPLICIT = { context: "explicit" };
+
+function hookResult(
+  hookName: EnsureHookResult["hookName"],
+  outcome: EnsureHookResult["outcome"] = "unchanged",
+): EnsureHookResult {
+  return {
+    hookName,
+    path: `/repo/.git/hooks/${hookName}`,
+    changed: false,
+    kind: "direct",
+    outcome,
+  };
+}
+
+function failHook(failing: EnsureHookResult["hookName"], message: string): void {
+  vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => {
+    if (hookName === failing) throw new Error(message);
+    return hookResult(hookName);
+  });
+}
+
+function hookCallOrder(hookName: string): number {
+  const index = vi
+    .mocked(ensureEffectiveGitHook)
+    .mock.calls.findIndex(([name]) => name === hookName);
+  return vi.mocked(ensureEffectiveGitHook).mock.invocationCallOrder[index] ?? Number.NaN;
+}
 
 const mockedExecFileSync = vi.mocked(execFileSync);
 
@@ -57,16 +84,7 @@ function buildProgram(): Command {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(ensureEffectivePostCommitHook).mockReturnValue({
-    path: "/repo/.git/hooks/post-commit",
-    changed: false,
-    kind: "direct",
-  });
-  vi.mocked(ensureEffectivePostRewriteHook).mockReturnValue({
-    path: "/repo/.git/hooks/post-rewrite",
-    changed: false,
-    kind: "direct",
-  });
+  vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) => hookResult(hookName));
   vi.mocked(bindRepository).mockResolvedValue({
     status: "connected",
     repoSyncId: "repoSync123",
@@ -97,9 +115,11 @@ describe("prim enable / disable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await buildProgram().parseAsync(["enable"], { from: "user" });
+    expect(stageGitHookRuntime).toHaveBeenCalledTimes(1);
     expect(refreshOwnedGlobalHooks).toHaveBeenCalledTimes(1);
-    expect(ensureEffectivePostCommitHook).toHaveBeenCalledWith("/repo");
-    expect(ensureEffectivePostRewriteHook).toHaveBeenCalledWith("/repo");
+    for (const hookName of ["pre-commit", "post-commit", "post-rewrite"]) {
+      expect(ensureEffectiveGitHook).toHaveBeenCalledWith(hookName, "/repo", EXPLICIT);
+    }
     expect(bindRepository).toHaveBeenCalledWith("/repo");
     expect(fetchAndCacheCollectScope).toHaveBeenCalledWith("/repo");
     expect(mockedExecFileSync).toHaveBeenCalledWith(
@@ -113,6 +133,7 @@ describe("prim enable / disable", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"bindingStatus": "connected"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postCommitHook"'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"postRewriteHook"'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"preCommitHook"'));
     logSpy.mockRestore();
     errSpy.mockRestore();
   });
@@ -124,12 +145,13 @@ describe("prim enable / disable", () => {
 
     await buildProgram().parseAsync(["enable"], { from: "user" });
 
+    expect(vi.mocked(stageGitHookRuntime).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(refreshOwnedGlobalHooks).mock.invocationCallOrder[0],
+    );
     expect(vi.mocked(refreshOwnedGlobalHooks).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0],
+      hookCallOrder("pre-commit"),
     );
-    expect(vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ensureEffectivePostRewriteHook).mock.invocationCallOrder[0],
-    );
+    expect(hookCallOrder("post-commit")).toBeLessThan(hookCallOrder("post-rewrite"));
     expect(bindRepository).toHaveBeenCalledWith("/repo");
     logSpy.mockRestore();
     errSpy.mockRestore();
@@ -182,7 +204,7 @@ describe("prim enable / disable", () => {
       (call) => (call[1] as string[]).join(" ") === "config --local prim.active true",
     );
     expect(activeWriteIndex).toBeGreaterThanOrEqual(0);
-    expect(vi.mocked(ensureEffectivePostCommitHook).mock.invocationCallOrder[0]).toBeLessThan(
+    expect(hookCallOrder("post-commit")).toBeLessThan(
       vi.mocked(bindRepository).mock.invocationCallOrder[0],
     );
     expect(vi.mocked(bindRepository).mock.invocationCallOrder[0]).toBeLessThan(
@@ -204,8 +226,7 @@ describe("prim enable / disable", () => {
     );
     expect(daemonRequest).toHaveBeenCalledWith("statusline_invalidate", {}, { timeoutMs: 250 });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": false'));
-    expect(ensureEffectivePostCommitHook).not.toHaveBeenCalled();
-    expect(ensureEffectivePostRewriteHook).not.toHaveBeenCalled();
+    expect(ensureEffectiveGitHook).not.toHaveBeenCalled();
     expect(bindRepository).not.toHaveBeenCalled();
     logSpy.mockRestore();
     errSpy.mockRestore();
@@ -229,9 +250,7 @@ describe("prim enable / disable", () => {
 
   it("never activates or reports success when effective hook repair fails", async () => {
     inRepo("/repo");
-    vi.mocked(ensureEffectivePostCommitHook).mockImplementation(() => {
-      throw new Error("malformed Prim hook markers");
-    });
+    failHook("post-commit", "malformed Prim hook markers");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -255,27 +274,80 @@ describe("prim enable / disable", () => {
     logSpy.mockRestore();
   });
 
-  it("enables with an explicit degradation when only post-rewrite coverage fails", async () => {
+  it.each([
+    ["post-rewrite", "postRewriteHook"],
+    ["pre-commit", "preCommitHook"],
+  ] as const)(
+    "enables with an explicit degradation when only %s coverage fails",
+    async (hookName, field) => {
+      inRepo("/repo");
+      failHook(hookName, `Husky ${hookName} dispatcher is missing`);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await buildProgram().parseAsync(["enable"], { from: "user" });
+
+      expect(bindRepository).toHaveBeenCalledWith("/repo");
+      expect(mockedExecFileSync).toHaveBeenCalledWith(
+        "git",
+        ["config", "--local", "prim.active", "true"],
+        expect.anything(),
+      );
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`${hookName} hook coverage is degraded`),
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining(`"${field}"`));
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    },
+  );
+
+  it("never edits a shared hooks dir: post-commit outside the repo fails enable", async () => {
     inRepo("/repo");
-    vi.mocked(ensureEffectivePostRewriteHook).mockImplementation(() => {
-      throw new Error("Husky post-rewrite dispatcher is missing");
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
+      hookResult(hookName, "external"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
     });
+    await expect(buildProgram().parseAsync(["enable"], { from: "user" })).rejects.toThrow(/exit 1/);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("outside the repository"));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim hooks snippet"));
+    expect(bindRepository).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("keeps enabling when a working pre-v1 block outside the repo is kept", async () => {
+    inRepo("/repo");
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
+      hookResult(hookName, "kept"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await buildProgram().parseAsync(["enable"], { from: "user" });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("kept the working pre-v1"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("reports manual wiring instead of writing hooks under prim.gitHooks=manual", async () => {
+    inRepo("/repo");
+    vi.mocked(ensureEffectiveGitHook).mockImplementation((hookName) =>
+      hookResult(hookName, "manual"),
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     await buildProgram().parseAsync(["enable"], { from: "user" });
 
-    expect(bindRepository).toHaveBeenCalledWith("/repo");
-    expect(mockedExecFileSync).toHaveBeenCalledWith(
-      "git",
-      ["config", "--local", "prim.active", "true"],
-      expect.anything(),
-    );
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("post-rewrite hook coverage is degraded"),
-    );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("prim.gitHooks=manual"));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"active": true'));
-    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('"postRewriteHook"'));
     logSpy.mockRestore();
     errSpy.mockRestore();
   });

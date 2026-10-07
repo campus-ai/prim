@@ -11,20 +11,69 @@ import { daemonRequest } from "../daemon/client.js";
 import { setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
-import { gitToplevel } from "../lib/git.js";
 import {
-  ensureEffectivePostCommitHook,
-  ensureEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
+  MANAGED_GIT_HOOK_NAMES,
+  type ManagedGitHookName,
+  ensureEffectiveGitHook,
+  externalHookRemedy,
+} from "../lib/git-hooks.js";
+import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 import { runGithubConnect } from "./github.js";
-import { refreshOwnedGlobalHooks } from "./hooks.js";
+import { refreshOwnedGlobalHooks, stageGitHookRuntime } from "./hooks.js";
 
 const CONNECT_PROMPT =
   "[prim] GitHub repo connection is required to enable repository-specific file attribution, Conflict Gate verification, and commit correlation. Start the GitHub App connection now?";
 const GITHUB_CONNECTION_REQUIRED =
   "GitHub repo connection is required before using Primitive in this repository. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation. Run `prim github connect` to complete it.";
+
+/**
+ * Wire all three managed hooks where Git runs them for this repository. This
+ * is an explicit command, so it may write a tracked `.husky/*` file — once:
+ * the block is version-stable and is never moved or rewritten when current.
+ * post-commit capture is required; pre-commit and post-rewrite degrade.
+ */
+function wireRepositoryHooks(root: string): Partial<Record<ManagedGitHookName, string>> {
+  stageGitHookRuntime();
+  refreshOwnedGlobalHooks();
+  const paths: Partial<Record<ManagedGitHookName, string>> = {};
+  let manual = false;
+  for (const hookName of MANAGED_GIT_HOOK_NAMES) {
+    try {
+      const result = ensureEffectiveGitHook(hookName, root, { context: "explicit" });
+      if (result.outcome === "external") {
+        // A hooks dir outside the repository may run for other repositories
+        // too: enable never edits one on its own.
+        throw new Error(
+          `Git runs this repository's ${hookName} hook from ${result.path}, outside the repository; ${externalHookRemedy(hookName, root)}`,
+        );
+      }
+      if (result.outcome === "kept") {
+        process.stderr.write(
+          `[prim] kept the working pre-v1 ${hookName} hook at ${result.path}, outside the repository; to upgrade it, ${externalHookRemedy(hookName, root)}\n`,
+        );
+      }
+      if (result.outcome === "runtime_missing") {
+        process.stderr.write(
+          `[prim] kept the working pre-v1 ${hookName} hook at ${result.path}; it is replaced once the hook runtime is staged\n`,
+        );
+      }
+      paths[hookName] = result.path;
+      manual ||= result.outcome === "manual";
+    } catch (error) {
+      if (hookName === "post-commit") throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[prim] ${hookName} hook coverage is degraded: ${detail}\n`);
+    }
+  }
+  if (manual) {
+    process.stderr.write(
+      "[prim] prim.gitHooks=manual: left hook files untouched; wire them with `prim hooks snippet <hook>`\n",
+    );
+  }
+  return paths;
+}
 
 /**
  * When a repo is enabled but unbound, offer to connect it now, reusing the
@@ -54,6 +103,18 @@ async function maybeConnectRepository(
   return undefined;
 }
 
+function hookPathFields(paths: Partial<Record<ManagedGitHookName, string>>): {
+  preCommitHook?: string;
+  postCommitHook?: string;
+  postRewriteHook?: string;
+} {
+  return {
+    ...(paths["pre-commit"] ? { preCommitHook: paths["pre-commit"] } : {}),
+    ...(paths["post-commit"] ? { postCommitHook: paths["post-commit"] } : {}),
+    ...(paths["post-rewrite"] ? { postRewriteHook: paths["post-rewrite"] } : {}),
+  };
+}
+
 async function applyActivation(active: boolean, globals: OptionValues = {}): Promise<void> {
   const root = gitToplevel();
   if (!root) {
@@ -65,17 +126,9 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
   let phase = active ? "post-commit hook coverage" : "local deactivation";
   try {
     let binding: RepositoryBindingResult | undefined;
-    let postCommitHook: string | undefined;
-    let postRewriteHook: string | undefined;
+    let hookPaths: Partial<Record<ManagedGitHookName, string>> = {};
     if (active) {
-      refreshOwnedGlobalHooks();
-      postCommitHook = ensureEffectivePostCommitHook(root).path;
-      try {
-        postRewriteHook = ensureEffectivePostRewriteHook(root).path;
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`[prim] post-rewrite hook coverage is degraded: ${detail}\n`);
-      }
+      hookPaths = wireRepositoryHooks(root);
       phase = "GitHub repo connection";
       binding = await bindRepository(root);
     }
@@ -88,8 +141,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
           repo: root,
           bindingStatus: binding.status,
           repositoryFullName: binding.repositoryFullName,
-          ...(postCommitHook ? { postCommitHook } : {}),
-          ...(postRewriteHook ? { postRewriteHook } : {}),
+          ...hookPathFields(hookPaths),
         });
         process.exitCode = 1;
         return;
@@ -117,8 +169,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
             ...(binding.status === "connected" ? { repoSyncId: binding.repoSyncId } : {}),
           }
         : {}),
-      ...(postCommitHook ? { postCommitHook } : {}),
-      ...(postRewriteHook ? { postRewriteHook } : {}),
+      ...hookPathFields(hookPaths),
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

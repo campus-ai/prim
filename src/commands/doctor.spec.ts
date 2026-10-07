@@ -10,7 +10,6 @@
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 import { stableHookCommand } from "../lib/bin-path.js";
-vi.mock("./hooks.js", () => ({ refreshOwnedGlobalHooks: vi.fn() }));
 
 import {
   applyInstall as applyClaudeInstall,
@@ -38,28 +37,20 @@ import {
   classifyPostCommitHook,
   classifyRepositoryBinding,
   diagnoseRegisteredHookRuntime,
-  refreshOwnedGlobalHooksForHealth,
   registerDoctorCommands,
 } from "./doctor.js";
-import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const ok = (name: string): Check => ({ name, status: "ok", detail: "" });
 const warn = (name: string): Check => ({ name, status: "warn", detail: "" });
 const fail = (name: string): Check => ({ name, status: "fail", detail: "" });
 
-describe("global hook health repair", () => {
-  it("refreshes Prim-owned hooks before health inspection", () => {
-    refreshOwnedGlobalHooksForHealth();
-
-    expect(refreshOwnedGlobalHooks).toHaveBeenCalledOnce();
-  });
-
-  it("preserves health diagnostics when repair fails", () => {
-    vi.mocked(refreshOwnedGlobalHooks).mockImplementation(() => {
-      throw new Error("unable to rewrite hooks");
-    });
-
-    expect(() => refreshOwnedGlobalHooksForHealth()).not.toThrow();
+describe("doctor stays read-only", () => {
+  it("does not depend on any command that writes hooks", async () => {
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const source = readFileSync(new URL("./doctor.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(
+      /from "\.\/hooks\.js"|refreshOwnedGlobalHooks|ensureEffectiveGitHook/u,
+    );
   });
 });
 
@@ -844,10 +835,68 @@ describe("effective post-commit diagnostics", () => {
     hooksDir: "/repo/.git/hooks",
     hookPath: "/repo/.git/hooks/post-commit",
     kind: "direct" as const,
+    location: "repository" as const,
+    hookName: "post-commit" as const,
+    mode: "auto" as const,
+    entrypoint: "ready" as const,
     covered: true,
     executable: true,
     current: true,
   };
+  const uncovered = { ...inspection, covered: false, current: false };
+
+  it.each([
+    ["missing_block", "run `prim hooks install`"],
+    ["stale_block", "run `prim hooks install`"],
+    ["unreachable_block", "run `prim hooks install`"],
+    ["entrypoint_missing", "run `prim enable` to stage the hook runtime"],
+  ] as const)("fails %s with the command that repairs it", (reason, remedy) => {
+    expect(classifyManagedHook("post-commit", { ...uncovered, reason })).toMatchObject({
+      status: "fail",
+      detail: `${reason} · ${remedy} · /repo/.git/hooks/post-commit`,
+    });
+  });
+
+  it.each([
+    ["prim", "run `prim enable` to refresh prim's global hooks"],
+    ["external", "outside this repository"],
+  ] as const)("names the remedy for a %s hook", (location, remedy) => {
+    expect(
+      classifyManagedHook("post-commit", { ...uncovered, location, reason: "missing_block" }),
+    ).toMatchObject({ status: "fail", detail: expect.stringContaining(remedy) });
+  });
+
+  it.each([
+    ["a working pre-v1 block prim may not upgrade", "external", "legacy_block"],
+    ["a block that runs twice above husky.sh", "worktree", "misplaced_block"],
+  ] as const)("warns rather than fails for %s", (_label, location, reason) => {
+    // An unrecognized or edited block in prim's markers proves nothing and fails.
+    expect(
+      classifyManagedHook("post-commit", { ...uncovered, location, reason: "stale_block" }).status,
+    ).toBe("fail");
+    expect(classifyManagedHook("post-commit", { ...uncovered, location, reason })).toMatchObject({
+      status: "warn",
+    });
+  });
+
+  it("reports manual wiring as a warning that names the snippet command", () => {
+    expect(
+      classifyManagedHook("post-commit", { ...uncovered, mode: "manual", reason: "missing" }),
+    ).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("prim hooks snippet post-commit"),
+    });
+  });
+
+  it("never fails doctor for the warn-only pre-commit check", () => {
+    expect(
+      classifyManagedHook("pre-commit", {
+        ...uncovered,
+        hookName: "pre-commit",
+        reason: "missing_block",
+      }),
+    ).toMatchObject({ name: "pre-commit", status: "warn" });
+  });
 
   it("passes only a current executable effective hook", () => {
     expect(classifyPostCommitHook(inspection)).toMatchObject({

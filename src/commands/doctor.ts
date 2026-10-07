@@ -58,12 +58,13 @@ import {
   deliveryBacklogSummary,
   formatPendingBacklog,
 } from "../lib/delivery-backlog.js";
-import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
+  type ManagedGitHookName,
   type ManagedHookInspection,
-  inspectEffectivePostCommitHook,
-  inspectEffectivePostRewriteHook,
-} from "../lib/post-commit-hook.js";
+  externalHookRemedy,
+  inspectEffectiveGitHook,
+} from "../lib/git-hooks.js";
+import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
 import {
   type RepositoryBindingResult,
   resolveRepositoryBinding,
@@ -85,7 +86,6 @@ import {
   inspectHookRuntimeResolutions as hermesHookRuntimeResolutions,
   performStatus as hermesStatus,
 } from "./hermes-install.js";
-import { refreshOwnedGlobalHooks } from "./hooks.js";
 
 const DAEMON_PROBE_TIMEOUT_MS = 500;
 const CONNECTIVITY_TIMEOUT_MS = 3_000;
@@ -599,8 +599,30 @@ export async function checkRepositoryBinding(): Promise<Check> {
   }
 }
 
+// The command that repairs an uncovered hook, by reason and by where the hook
+// lives. Doctor itself never writes: it only reports and names the remedy.
+function managedHookRemedy(inspection: ManagedHookInspection): string | undefined {
+  switch (inspection.reason) {
+    case "missing":
+    case "missing_block":
+    case "stale_block":
+    case "legacy_block":
+    case "unreachable_block":
+    case "misplaced_block":
+      if (inspection.location === "prim") return "run `prim enable` to refresh prim's global hooks";
+      if (inspection.location === "external") {
+        return `outside this repository — ${externalHookRemedy(inspection.hookName, inspection.gitRoot)}`;
+      }
+      return "run `prim hooks install`";
+    case "entrypoint_missing":
+      return "run `prim enable` to stage the hook runtime";
+    default:
+      return undefined;
+  }
+}
+
 export function classifyManagedHook(
-  hookName: "post-commit" | "post-rewrite",
+  hookName: ManagedGitHookName,
   inspection: ManagedHookInspection,
 ): Check {
   if (inspection.covered) {
@@ -610,10 +632,25 @@ export function classifyManagedHook(
       detail: `effective and executable · ${inspection.kind} · ${inspection.hookPath}`,
     };
   }
+  const reason = inspection.reason ?? "uncovered";
+  // Manual mode is the user's choice, not a fault: report what prim found
+  // without failing. pre-commit is a warn-only check, so it never fails doctor.
+  if (inspection.mode === "manual") {
+    return {
+      name: hookName,
+      status: "warn",
+      detail: `manual (prim.gitHooks=manual) · ${reason} · wire with \`prim hooks snippet ${hookName}\` · ${inspection.hookPath}`,
+    };
+  }
+  const remedy = managedHookRemedy(inspection);
+  // Capture still works in exactly two cases: a recognized pre-v1 block that is
+  // reachable and executable, and a block that runs twice (above husky.sh).
+  // The inspection reports either only after every real failure is ruled out.
+  const stillCaptures = reason === "legacy_block" || reason === "misplaced_block";
   return {
     name: hookName,
-    status: "fail",
-    detail: `${inspection.reason ?? "uncovered"} · ${inspection.hookPath}`,
+    status: hookName === "pre-commit" || stillCaptures ? "warn" : "fail",
+    detail: `${reason}${remedy ? ` · ${remedy}` : ""} · ${inspection.hookPath}`,
   };
 }
 
@@ -621,12 +658,9 @@ export function classifyPostCommitHook(inspection: ManagedHookInspection): Check
   return classifyManagedHook("post-commit", inspection);
 }
 
-function checkManagedHook(
-  hookName: "post-commit" | "post-rewrite",
-  inspect: () => ManagedHookInspection,
-): Check {
+function checkManagedHook(hookName: ManagedGitHookName): Check {
   try {
-    return classifyManagedHook(hookName, inspect());
+    return classifyManagedHook(hookName, inspectEffectiveGitHook(hookName));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
@@ -1026,19 +1060,6 @@ async function checkFeedbackCapability(): Promise<Check> {
 }
 
 /**
- * Repair stale Prim-owned global hooks before checking their effective coverage.
- * A failed repair is intentionally ignored here so the inspection below can
- * report the underlying hook problem to the user.
- */
-export function refreshOwnedGlobalHooksForHealth(): void {
-  try {
-    refreshOwnedGlobalHooks();
-  } catch {
-    // The managed-hook checks below retain the diagnostic when repair fails.
-  }
-}
-
-/**
  * The probes behind doctor's checks. Only the delivery checks depend on
  * DoctorOptions; the rest are grouped around them in display order.
  */
@@ -1048,7 +1069,6 @@ export type DoctorProbes = {
 };
 
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
-  refreshOwnedGlobalHooksForHealth();
   const backend = await checkBackend();
   return {
     before: [checkAuth()],
@@ -1058,8 +1078,9 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
       ...checkAgentHooks(),
       checkHookRuntime(),
       await checkRepositoryBinding(),
-      checkManagedHook("post-commit", inspectEffectivePostCommitHook),
-      checkManagedHook("post-rewrite", inspectEffectivePostRewriteHook),
+      checkManagedHook("pre-commit"),
+      checkManagedHook("post-commit"),
+      checkManagedHook("post-rewrite"),
       ...backend,
       await checkFeedbackCapability(),
     ],

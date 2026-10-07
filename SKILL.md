@@ -223,7 +223,7 @@ With the daemon running (`npx --yes @primitive.ai/prim daemon start`), `npx --ye
 
 ## The git hooks
 
-`npx --yes @primitive.ai/prim hooks install` installs two git hooks:
+`npx --yes @primitive.ai/prim hooks install` installs three git hooks:
 
 ```
 npx --yes @primitive.ai/prim hooks install                       # auto-detects Husky and prompts
@@ -234,8 +234,11 @@ npx --yes @primitive.ai/prim hooks uninstall
 
 - **pre-commit** -- checks staged files against the live decision graph and prints any active decisions that reference them to stderr. It is **warn-only**: failures (auth, network, backend) or matches never block the commit; a successful `git commit` doesn't prove the check ran clean. When the check can't complete it says so ("not verified" / "truncated") rather than implying all-clear.
 - **post-commit** -- records each commit as a capture boundary so the server can classify the surrounding work into decisions. It never blocks and runs in the background.
+- **post-rewrite** -- records amend/rebase rewrites the same way, in the background.
 
-Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` only removes the `.git/hooks` copies — if a hook was installed into `.husky/`, remove the prim block from that file manually. To suppress the hooks for one commit, use `git commit --no-verify`.
+All three act only where the repo is active (`prim enable`). Each hook file gets one version-stable block right after its shebang; `prim enable` and `hooks install` write it once and never rewrite a current block, while session hooks only repair Git-private files under `.git` (and never add the pre-commit check). prim never edits a hooks dir outside the repository, such as a shared global `core.hooksPath`, unless the user runs `hooks install --scope user`. If the user wires the hooks themselves, they must set `git config prim.gitHooks manual` (prim does not infer hand wiring from what a hook mentions); prim then never edits their hook files; `npx --yes @primitive.ai/prim hooks snippet <hook>` prints the block to place.
+
+Under `CI=1` (or with `--non-interactive`), `hooks install` fails fast in a Husky repo that Husky has not yet configured, unless `--yes` or `--target` is set; the error names both escapes. `hooks uninstall` removes prim's blocks from `.git/hooks` and `.husky/` alike and leaves the rest of each hook untouched. To suppress the hooks for one commit, use `git commit --no-verify`.
 
 These git hooks are separate from the **session hooks** (`claude install` / `cursor install` / `codex install` / `hermes install`) that drive in-session capture (and Conflict Gates, when enabled).
 
