@@ -39,6 +39,10 @@ describe("analyzeShellTargets", () => {
     "find src -type f -name '*.ts' -print",
     "find . -maxdepth 2 -newermt '2026-01-01' -print0",
     "rg needle src | head -n 5",
+    "head -100 README.md",
+    "tail -50 app.log",
+    "rg needle src | head -100",
+    "grep -rni needle src | grep -o needle",
   ])("recognizes a strictly parsed inspection command: %s", (source) => {
     expect(analyzeShellTargets(source)).toEqual({
       paths: [],
@@ -51,6 +55,8 @@ describe("analyzeShellTargets", () => {
     "git status --short",
     "git --no-pager diff --cached --name-only",
     "git -C repo log --oneline --max-count=10",
+    "git log --oneline -3",
+    "git log -1 --format='%h %s'",
     "git rev-parse --show-toplevel",
     "git ls-files --cached --exclude-standard",
     "git add -- src/a.ts",
