@@ -954,6 +954,39 @@ describe("uninstallGlobalHooks (user scope)", () => {
     expect(mockedUnlinkSync).not.toHaveBeenCalled();
   });
 
+  it("recognizes the alpha.35–56 global pre-commit, which gated the resolution ladder", () => {
+    stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
+    mockedExistsSync.mockReturnValue(true);
+    const older = `#!/bin/sh
+# prim global pre-commit hook (core.hooksPath) — managed by prim; do not edit.
+# Install/uninstall: prim hooks install|uninstall --scope user
+# Runs prim only where activated — 'prim enable' (this repo) or
+# 'git config --global prim.active true' (every repo). Chains to the repo's own
+# hook regardless, so inactive repos are unaffected.
+if [ "$(git config --get prim.active 2>/dev/null)" = "true" ]; then
+if command -v prim-pre-commit >/dev/null 2>&1; then
+  prim-pre-commit || true
+elif [ -f "./node_modules/.bin/prim-pre-commit" ]; then
+  ./node_modules/.bin/prim-pre-commit || true
+else
+  npx --yes -p @primitive.ai/prim prim-pre-commit 2>/dev/null || true
+fi
+fi
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+repo_hook="$common_dir/hooks/pre-commit"
+if [ -x "$repo_hook" ] && ! grep -q 'prim-managed-hook' "$repo_hook" 2>/dev/null; then
+  "$repo_hook" "$@" || exit $?
+fi
+exit 0
+`;
+    mockedReaddirSync.mockReturnValue(["pre-commit"]);
+    mockedReadFileSync.mockReturnValue(older);
+
+    uninstallGlobalHooks();
+
+    expect(mockedUnlinkSync).toHaveBeenCalledWith(join(PRIM_GIT_HOOKS_DIR, "pre-commit"));
+  });
+
   it("recognizes an exact pre-v1 global pre-commit scaffold with an older pinned invocation", () => {
     stubHooksPath({ global: PRIM_GIT_HOOKS_DIR });
     mockedExistsSync.mockReturnValue(true);

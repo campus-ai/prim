@@ -606,11 +606,14 @@ function blockInsertionPoint(
   return shebangEnd + Buffer.byteLength(rest.slice(0, afterLine), "utf8");
 }
 
-const HUSKY_SPEC_MAJOR_RE = /^\s*(?:[~^]|[<>]?=?)?\s*v?([0-9]+)(?:[.\s]|$)/u;
+// One version or one caret/tilde/x-range: anything else (`>=8`, `<9`,
+// `^8 || ^9`) does not name a single major, and is left undecided.
+const HUSKY_SPEC_MAJOR_RE =
+  /^\s*[~^]?=?\s*v?([0-9]+)(?:\.(?:[0-9]+|[xX*])){0,2}(?:-[0-9A-Za-z.-]+)?\s*$/u;
 
 /**
  * The major version of Husky the nearest package.json above `dir` declares,
- * stopping at the repository root. Undefined when none or not a plain range.
+ * stopping at the repository root. Undefined when none, or not a single major.
  */
 function declaredHuskyMajor(dir: string): number | undefined {
   for (let current = resolve(dir); ; ) {
@@ -696,7 +699,7 @@ function mayTerminateBefore(content: Buffer, from: number, offset: number): bool
   return content
     .subarray(from, offset)
     .toString("utf8")
-    .split(/\n|;|&&|\|\||\||[{(]|\b(?:then|do|else)\b/u)
+    .split(/\n|;|&&|\|\||\||[{()]|\b(?:then|do|else)\b/u)
     .some((part) => {
       const command = part.trim();
       return TERMINAL_LINE_RE.test(command) || isReplacingExec(command);
