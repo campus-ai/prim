@@ -60,14 +60,14 @@ describe("planSetupSteps", () => {
       "enable",
       "health",
     ]);
-    expect(steps[0].args).toEqual(["claude", "install"]);
+    expect(steps[0].args).toEqual(["claude", "install", "--scope", "project"]);
     // A requested daemon is required: --no-daemon is the explicit opt-out.
     expect(steps.filter((s) => !s.required).map((s) => s.key)).toEqual([]);
   });
 
   it("codex: session step targets the codex integration; skill targets AGENTS.md via --agent", () => {
     const steps = planSetupSteps({ agent: "codex", daemon: true, scope: "project" });
-    expect(steps[0].args).toEqual(["codex", "install"]);
+    expect(steps[0].args).toEqual(["codex", "install", "--scope", "project"]);
     expect(steps[0].label).toMatch(/codex/i);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
@@ -124,7 +124,7 @@ describe("planSetupSteps", () => {
 
   it("project scope: no --scope flag on any step", () => {
     const steps = planSetupSteps({ agent: "claude", daemon: false, scope: "project" });
-    expect(steps[0].args).toEqual(["claude", "install"]);
+    expect(steps[0].args).toEqual(["claude", "install", "--scope", "project"]);
     expect(steps.find((s) => s.key === "hooks")?.args).toEqual(["hooks", "install"]);
     expect(steps.find((s) => s.key === "skill")?.args).toEqual([
       "skill",
@@ -461,7 +461,7 @@ describe("registerSetupCommand", () => {
       ["auth", "status", "--json"],
       ["auth", "login"],
       ["auth", "status", "--json"],
-      ["codex", "install"],
+      ["codex", "install", "--scope", "project"],
       ["daemon", "stop"],
       ["hooks", "install"],
       ["skill", "install", "--agent", "codex"],

@@ -91,7 +91,7 @@ stays responsive:
 
 ### Codex only
 
-`setup --agent codex` installs the hooks into `.codex/hooks.json`, but Codex won't
+`setup --agent codex` installs the hooks into `~/.codex/hooks.json`, but Codex won't
 fire non-managed hooks until they're trusted. After setup, tell the user: "Run
 `/hooks` in Codex and trust the prim hooks — until you do, decision capture stays
 inert."
@@ -225,8 +225,10 @@ leaves git's global hooks alone unless the user asks for `setup
    (browser; blocks up to 2 min — run it in the background and surface the URL).
 3. **Session integration**: `npx --yes @primitive.ai/prim@latest claude install`
    (or `cursor install` / `codex install`). Wires the capture + presence hooks into
-   the repo's `.claude/settings.json` / `.cursor/hooks.json` / `.codex/hooks.json` (resolved from the git
+   the repo's `.claude/settings.json` / `.cursor/hooks.json` (resolved from the git
    root, so any subdirectory works). Add `--scope user` to install machine-wide.
+   `codex install` is machine-wide by default, so every worktree of an enabled repo
+   is captured; `--scope project` limits it to this checkout's `.codex/hooks.json`.
 4. **Daemon**: `npx --yes @primitive.ai/prim@latest daemon start`. It owns the
    continuous journal drain and powers the "team: N online" count. Skip it only
    with the explicit `--no-daemon` opt-out; otherwise a failed health check makes

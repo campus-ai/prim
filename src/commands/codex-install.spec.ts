@@ -199,8 +199,8 @@ describe("codex applyUninstall", () => {
 });
 
 describe("resolveScope", () => {
-  it("defaults to project when no --scope is given", () => {
-    expect(resolveScope(undefined)).toBe("project");
+  it("defaults to user when no --scope is given, so every worktree loads one trusted file", () => {
+    expect(resolveScope(undefined)).toBe("user");
   });
 
   it("honors an explicit project scope", () => {
