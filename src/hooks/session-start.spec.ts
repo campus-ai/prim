@@ -43,7 +43,7 @@ describe("SessionStart entrypoint", () => {
       '{"hook_event_name":"SessionStart"}',
       "claude_code",
     );
-    expect(warmBinCache).toHaveBeenCalledOnce();
+    expect(warmBinCache).not.toHaveBeenCalled();
     expect(handoffHookOutput).toHaveBeenCalledWith({}, acknowledge);
   });
 });

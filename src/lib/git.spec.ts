@@ -8,6 +8,7 @@ import {
   canonicalRepositoryPath,
   currentBranch,
   githubRepositoryFullName,
+  mainWorktreeRoot,
   normalizeOriginRemote,
   resolveRepositoryContext,
 } from "./git.js";
@@ -55,6 +56,30 @@ describe("githubRepositoryFullName", () => {
       "git@github.com:campus-ai/-repo.git",
     ]);
     expect(githubRepositoryFullName(root)).toBe("campus-ai/-repo");
+  });
+});
+
+describe("mainWorktreeRoot", () => {
+  it("names the main checkout from a linked worktree and nothing elsewhere", () => {
+    git(
+      root,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=Test",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
+    const linked = join(root, "linked");
+    git(root, "worktree", "add", "-q", linked);
+    const main = canonicalGitRoot(root);
+
+    expect(mainWorktreeRoot(linked)).toBe(main);
+    expect(mainWorktreeRoot(root)).toBeNull();
+    expect(mainWorktreeRoot(tmpdir())).toBeNull();
   });
 });
 

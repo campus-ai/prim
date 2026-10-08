@@ -293,30 +293,22 @@ describe("processSessionStart", () => {
     expect(resolveRepositoryBinding).not.toHaveBeenCalled();
   });
 
-  it("refreshes only user scope and requests a reload in an inactive repo", async () => {
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 1 });
-
+  it("leaves inactive repository hooks silent before refresh or presence", async () => {
     const result = await processSessionStart(ENVELOPE, "claude_code");
-
-    expect(result.output).toEqual({
-      hookSpecificOutput: { hookEventName: "SessionStart", reloadSkills: true },
-    });
-    expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", { includeProject: false });
+    expect(result.output).toEqual({});
+    expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(kickDaemonEnsure).not.toHaveBeenCalled();
+    expect(daemonRequest).not.toHaveBeenCalled();
   });
 
   it("never treats a non-repository cwd as active even when global activation is true", async () => {
     vi.mocked(gitToplevel).mockReturnValue(null);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
-    vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 0 });
-
     const result = await processSessionStart(ENVELOPE, "claude_code");
-
     expect(result.output).toEqual({});
-    expect(isRepoActiveForCapture).not.toHaveBeenCalled();
-    expect(refreshClaudePlugins).toHaveBeenCalledWith("/repo", { includeProject: false });
-    expect(getOrCreateWorkspaceId).not.toHaveBeenCalled();
-    expect(leaseDecisionFeedback).not.toHaveBeenCalled();
-    expect(resolveRepositoryBinding).not.toHaveBeenCalled();
+    expect(refreshClaudePlugins).not.toHaveBeenCalled();
+    expect(kickDaemonEnsure).not.toHaveBeenCalled();
+    expect(daemonRequest).not.toHaveBeenCalled();
   });
 
   it("stays silent when an active checkout's binding cannot be verified", async () => {
@@ -406,6 +398,7 @@ describe("processSessionStart", () => {
   });
 
   it("keeps a terminal auth notice as the only human-facing message while reloading", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(isSessionEnded).mockReturnValue(true);
     vi.mocked(refreshClaudePlugins).mockResolvedValue({ installed: 1, refreshed: 1 });
 
@@ -464,6 +457,7 @@ describe("processSessionStart", () => {
   });
 
   it("commits Codex context state only through the returned acknowledge", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(daemonRequest).mockImplementation(async (method) =>
       method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
     );
@@ -496,7 +490,7 @@ describe("processSessionStart", () => {
     });
   });
 
-  it("keeps presence only when the repository is inactive", async () => {
+  it("emits no presence when the repository is inactive", async () => {
     vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
     vi.mocked(daemonRequest).mockImplementation(async (method) =>
       method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
@@ -504,11 +498,13 @@ describe("processSessionStart", () => {
 
     const result = await processSessionStart(ENVELOPE, "codex");
 
-    expect(result.output.hookSpecificOutput?.additionalContext).toBe(CODEX_LIVE_REPORT);
+    expect(result.output).toEqual({});
+    expect(daemonRequest).not.toHaveBeenCalled();
+    expect(kickDaemonEnsure).not.toHaveBeenCalled();
     expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
   });
 
-  it("keeps presence only outside a Git repository", async () => {
+  it("emits no presence outside a Git repository", async () => {
     vi.mocked(gitToplevel).mockReturnValue(null);
     vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(hasUsableCodexGuidance).mockReturnValue(true);
@@ -518,7 +514,9 @@ describe("processSessionStart", () => {
 
     const result = await processSessionStart(ENVELOPE, "codex");
 
-    expect(result.output.hookSpecificOutput?.additionalContext).toBe(CODEX_LIVE_REPORT);
+    expect(result.output).toEqual({});
+    expect(daemonRequest).not.toHaveBeenCalled();
+    expect(kickDaemonEnsure).not.toHaveBeenCalled();
     expect(isRepoActiveForCapture).not.toHaveBeenCalled();
     expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
   });
@@ -564,6 +562,7 @@ describe("processSessionStart", () => {
       `primitive ${CODEX_VERSION} (daemon: live, Decision ingestion disabled · team: —)`,
     ],
   ])("renders a %s Codex status snapshot", async (_name, snapshot, expected) => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(daemonRequest).mockImplementation(async (method) =>
       method === "status_snapshot" ? snapshot : null,
     );
@@ -577,10 +576,11 @@ describe("processSessionStart", () => {
       },
     });
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
-    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).toHaveBeenCalled();
   });
 
   it("routes Codex terminal auth ahead of presence without a reload field", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(isSessionEnded).mockReturnValue(true);
     vi.mocked(daemonRequest).mockImplementation(async (method) =>
       method === "status_snapshot" ? { onlineCount: 3, presenceStale: false } : null,
@@ -595,11 +595,12 @@ describe("processSessionStart", () => {
       },
     });
     expect(refreshClaudePlugins).not.toHaveBeenCalled();
-    expect(hasUsableCodexGuidance).not.toHaveBeenCalled();
+    expect(hasUsableCodexGuidance).toHaveBeenCalled();
     expect(daemonRequest).toHaveBeenCalledOnce();
   });
 
   it("keeps Hermes observer-only, including under terminal auth", async () => {
+    vi.mocked(isRepoActiveForCapture).mockReturnValue(true);
     vi.mocked(isSessionEnded).mockReturnValue(true);
     const hermesEnvelope = JSON.stringify({
       hook_event_name: "on_session_start",

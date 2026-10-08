@@ -1,11 +1,14 @@
 /**
  * `prim codex install|uninstall|status` — manage the prim Codex integration
- * in `<repo>/.codex/hooks.json` by default — the repo's project hook layer that
- * Codex loads once it is trusted via `/hooks`
+ * in `~/.codex/hooks.json` by default — the user hook layer that Codex loads in
+ * every checkout once it is trusted via `/hooks`
  * (https://developers.openai.com/codex/hooks), which is what the trust notice on
- * install prompts. The project path is anchored at the git repository root (the
- * layer Codex reads), so it is stable no matter which subdirectory you run from.
- * `--scope user` writes the machine-global `~/.codex/hooks.json` instead.
+ * install prompts. Capture and the conflict gate stay inert until `prim enable`
+ * sets `prim.active`, which every linked worktree of the repo shares.
+ * `--scope project` writes `<repo>/.codex/hooks.json` instead, anchored at the
+ * git checkout root. Codex reads that file only from the checkout it was
+ * written to and trusts it by absolute path, so a project install covers that
+ * checkout only, not the repo's other worktrees.
  *
  * Codex's hook config shape is identical to Claude Code's nested
  * { hooks: { Event: [{ matcher, hooks: [{ type, command }] }] } }, so this
@@ -41,6 +44,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-path.js";
+import { mainWorktreeRoot } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ClaudeSettings,
@@ -266,15 +270,36 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
 }
 
-// Default is `project` — a bare `codex install` wires the integration into the
-// project you're setting up, not every repo on the machine. `--scope user`
-// opts into the machine-global install. Exported so the default is test-pinned.
+/**
+ * The main checkout's `.codex/hooks.json` when it registers prim hooks but this
+ * linked worktree loads none: Codex reads project hooks only from the checkout
+ * they live in, so sessions here go uncaptured (PRI-95). Null otherwise.
+ */
+export function uncoveredWorktreeHooks(status: {
+  user: ScopeStatus;
+  project: ScopeStatus;
+}): string | null {
+  if (status.user.present || status.project.present) return null;
+  const main = mainWorktreeRoot();
+  if (main === null) return null;
+  const path = join(main, ".codex", "hooks.json");
+  return hasAnyHookRegistration(readSettings(path)) ? path : null;
+}
+
+/** The fix for an uncovered worktree, shared by `codex status` and doctor. */
+export function uncoveredWorktreeAdvice(path: string): string {
+  return `prim Codex hooks in ${path} don't load in this worktree — run \`prim codex install\`, then \`prim codex uninstall --scope project\` in that checkout`;
+}
+
+// Default is `user`, matching `prim setup`: one trusted file that fires in
+// every worktree, gated per repo by `prim.active`. `--scope project` covers only
+// the current checkout. Exported so the default is test-pinned.
 export function resolveScope(input: string | undefined): Scope {
-  if (input === undefined || input === "project") {
-    return "project";
-  }
-  if (input === "user") {
+  if (input === undefined || input === "user") {
     return "user";
+  }
+  if (input === "project") {
+    return "project";
   }
   // Fail loud rather than silently writing the wrong hooks.json on a typo.
   console.error(`[prim] unknown --scope "${input}" (expected: user or project)`);
@@ -292,10 +317,10 @@ export function registerCodexCommands(program: Command): void {
 
   codex
     .command("install")
-    .description("Register the prim hooks in Codex's hooks.json (project scope by default)")
+    .description("Register the prim hooks in Codex's hooks.json (user scope by default)")
     .option(
       "--scope <scope>",
-      "project (default, the repo's .codex/hooks.json) or user (~/.codex/hooks.json)",
+      "user (default, ~/.codex/hooks.json) or project (this checkout's .codex/hooks.json)",
     )
     .option("--force", "Replace any drifted prim hook entries")
     .action((opts: { scope?: string; force?: boolean }) => {
@@ -315,7 +340,7 @@ export function registerCodexCommands(program: Command): void {
     .description("Remove all prim hooks from Codex's hooks.json")
     .option(
       "--scope <scope>",
-      "project (default, the repo's .codex/hooks.json) or user (~/.codex/hooks.json)",
+      "user (default, ~/.codex/hooks.json) or project (this checkout's .codex/hooks.json)",
     )
     .action((opts: { scope?: string }) => {
       const scope = resolveScope(opts.scope);
@@ -337,6 +362,9 @@ export function registerCodexCommands(program: Command): void {
       const line = (label: string, s: ScopeStatus): string =>
         `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
+      const uncovered = uncoveredWorktreeHooks(result);
+      if (uncovered !== null)
+        console.error(`[prim] warning: ${uncoveredWorktreeAdvice(uncovered)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });
 }

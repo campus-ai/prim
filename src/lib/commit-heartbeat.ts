@@ -18,6 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { Agent } from "../hooks/agent.js";
 import { repoActiveFlag } from "./activation.js";
 import { atomicWriteFile } from "./atomic-file.js";
 
@@ -100,6 +101,23 @@ function readStampAt(path: string): number | undefined {
     return typeof parsed.at === "number" && Number.isSafeInteger(parsed.at) && parsed.at > 0
       ? parsed.at
       : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Local evidence that a conversational event reached capture, not just a Git hook. */
+export function recordConversationCaptured(cwd: string, agent: Agent): void {
+  try {
+    writeStamp(gitPath(cwd, `prim/conversation-captured/${agent}`), Date.now());
+  } catch {
+    // Diagnostics must never prevent capture.
+  }
+}
+
+export function lastConversationCaptured(cwd: string, agent: Agent): number | undefined {
+  try {
+    return readStampAt(gitPath(cwd, `prim/conversation-captured/${agent}`));
   } catch {
     return undefined;
   }
