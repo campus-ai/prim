@@ -26,6 +26,32 @@ export function gitToplevel(cwd?: string): string | null {
   }
 }
 
+/**
+ * The main checkout's root when `cwd` is inside a linked worktree, or null in a
+ * main checkout, a bare or separated repository, or outside git.
+ */
+export function mainWorktreeRoot(cwd?: string): string | null {
+  try {
+    const [gitDir, commonDir] = execFileSync(
+      "git",
+      ["rev-parse", "--git-dir", "--git-common-dir"],
+      {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: GIT_TIMEOUT_MS,
+      },
+    )
+      .trim()
+      .split("\n")
+      .map((value) => resolve(cwd ?? process.cwd(), value));
+    if (gitDir === undefined || commonDir === undefined || gitDir === commonDir) return null;
+    return basename(commonDir) === ".git" ? dirname(commonDir) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type RepositoryIdentitySource = "origin" | "root_commit";
 
 export type RepositoryContext = {

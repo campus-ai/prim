@@ -694,6 +694,14 @@ describe("agent hook diagnostics", () => {
     ).toBe("ok");
   });
 
+  it("warns when a linked worktree loads none of its main checkout's Codex hooks", () => {
+    const absent = { present: false, gate: false, capture: false, complete: false };
+    expect(classifyCodexHooks([absent, absent], "/repo/.codex/hooks.json")).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("/repo/.codex/hooks.json"),
+    });
+  });
+
   it("reports Cursor lifecycle, missing footer, and preserved custom footer distinctly", () => {
     const project = { present: false, gate: false, capture: false, complete: false };
     expect(

@@ -83,6 +83,8 @@ import {
 import {
   inspectHookRuntimeResolutions as codexHookRuntimeResolutions,
   performStatus as codexStatus,
+  uncoveredWorktreeAdvice,
+  uncoveredWorktreeHooks,
 } from "./codex-install.js";
 import {
   inspectHookRuntimeResolutions as cursorHookRuntimeResolutions,
@@ -782,9 +784,19 @@ export function classifyClaudeHooks(statuses: readonly AgentHookSurface[]): Chec
   return { name: "feedback-hooks", status: "ok", detail: "complete Claude lifecycle ready" };
 }
 
-export function classifyCodexHooks(statuses: readonly AgentHookSurface[]): Check {
+export function classifyCodexHooks(
+  statuses: readonly AgentHookSurface[],
+  uncoveredWorktree: string | null = null,
+): Check {
   const installed = statuses.filter((status) => status.present);
   if (installed.length === 0) {
+    if (uncoveredWorktree !== null) {
+      return {
+        name: "codex-hooks",
+        status: "warn",
+        detail: uncoveredWorktreeAdvice(uncoveredWorktree),
+      };
+    }
     return { name: "codex-hooks", status: "ok", detail: "not installed" };
   }
   if (installed.some((status) => !status.complete)) {
@@ -861,7 +873,7 @@ function checkAgentHooks(): Check[] {
   const checks: Check[] = [];
   try {
     const status = codexStatus();
-    checks.push(classifyCodexHooks([status.project, status.user]));
+    checks.push(classifyCodexHooks([status.project, status.user], uncoveredWorktreeHooks(status)));
   } catch (error) {
     const detail = boundedHealthError(error instanceof Error ? error.message : String(error));
     checks.push({

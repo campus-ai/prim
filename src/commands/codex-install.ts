@@ -44,6 +44,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-path.js";
+import { mainWorktreeRoot } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ClaudeSettings,
@@ -269,6 +270,27 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
   return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
 }
 
+/**
+ * The main checkout's `.codex/hooks.json` when it registers prim hooks but this
+ * linked worktree loads none: Codex reads project hooks only from the checkout
+ * they live in, so sessions here go uncaptured (PRI-95). Null otherwise.
+ */
+export function uncoveredWorktreeHooks(status: {
+  user: ScopeStatus;
+  project: ScopeStatus;
+}): string | null {
+  if (status.user.present || status.project.present) return null;
+  const main = mainWorktreeRoot();
+  if (main === null) return null;
+  const path = join(main, ".codex", "hooks.json");
+  return hasAnyHookRegistration(readSettings(path)) ? path : null;
+}
+
+/** The fix for an uncovered worktree, shared by `codex status` and doctor. */
+export function uncoveredWorktreeAdvice(path: string): string {
+  return `prim Codex hooks in ${path} don't load in this worktree — run \`prim codex install\`, then \`prim codex uninstall --scope project\` in that checkout`;
+}
+
 // Default is `user`, matching `prim setup`: one trusted file that fires in
 // every worktree, gated per repo by `prim.active`. `--scope project` covers only
 // the current checkout. Exported so the default is test-pinned.
@@ -340,6 +362,9 @@ export function registerCodexCommands(program: Command): void {
       const line = (label: string, s: ScopeStatus): string =>
         `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
+      const uncovered = uncoveredWorktreeHooks(result);
+      if (uncovered !== null)
+        console.error(`[prim] warning: ${uncoveredWorktreeAdvice(uncovered)}`);
       console.log(JSON.stringify(result, null, JSON_INDENT));
     });
 }
