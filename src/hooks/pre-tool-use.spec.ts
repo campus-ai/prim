@@ -6,6 +6,10 @@
  * context preparer) are stubbed. Each test re-imports the module because the
  * entrypoint resolves its agent and runs main() at import time.
  */
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -468,5 +472,113 @@ describe("PreToolUse entrypoint (hermes)", () => {
     const advisory = stderr[0].slice(0, -1);
     expectTerminalSafePresentation(advisory);
     expect(advisory.length).toBeLessThanOrEqual("[primitive] ".length + 240);
+  });
+});
+
+describe("PreToolUse entrypoint (preflight failures)", () => {
+  const AUTH_REQUIRED =
+    "[primitive] decision check skipped — authentication required; run `prim auth login`; change was not verified";
+  const UNAVAILABLE =
+    "[primitive] decision check skipped — enforcement service unavailable; change was not verified";
+  let config: string;
+
+  function unauthorized(): Response {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+  }
+
+  function writeCredential(files: Record<string, string>): void {
+    for (const [name, value] of Object.entries(files)) {
+      writeFileSync(join(config, name), `${value}\n`);
+    }
+  }
+
+  // The four 401 sources run through the real client against a private
+  // credential directory; only the network is stubbed.
+  async function runAgainstClient(fetchMock = vi.fn()): Promise<Record<string, unknown>> {
+    vi.stubGlobal("fetch", fetchMock);
+    const actual = await vi.importActual<typeof import("./preflight-v3.js")>("./preflight-v3.js");
+    mocks.requestPreflight.mockImplementation(actual.requestPreflight);
+    return await runHook();
+  }
+
+  function expectUnverifiedAllow(output: Record<string, unknown>, message: string): void {
+    expect(output).toEqual({
+      systemMessage: message,
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        additionalContext: message,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    mocks.parseAgent.mockReturnValue("claude_code");
+    config = mkdtempSync(join(tmpdir(), "prim-pre-tool-use-"));
+    vi.stubEnv("PRIM_CONFIG_DIR", config);
+    vi.stubEnv("PRIM_API_URL", "https://api.example.test");
+    vi.stubEnv("PRIM_TOKEN", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    rmSync(config, { recursive: true, force: true });
+  });
+
+  it("asks for login when no credential is stored", async () => {
+    const fetchMock = vi.fn();
+
+    expectUnverifiedAllow(await runAgainstClient(fetchMock), AUTH_REQUIRED);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("asks for login when the session has ended", async () => {
+    writeCredential({
+      token: "expired-access",
+      refresh_token: "ended-refresh",
+      token_expires_at: "0",
+      refresh_terminal: createHash("sha256").update("ended-refresh").digest("hex"),
+    });
+    const fetchMock = vi.fn();
+
+    expectUnverifiedAllow(await runAgainstClient(fetchMock), AUTH_REQUIRED);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("asks for login when the server rejects the stored bearer", async () => {
+    writeCredential({ token: "rejected-access", refresh_token: "rejected-refresh" });
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        url.endsWith("/mcp/broker/refresh")
+          ? new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })
+          : unauthorized(),
+      ),
+    );
+
+    expectUnverifiedAllow(await runAgainstClient(fetchMock), AUTH_REQUIRED);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/cli/decisions/conflict-check",
+      expect.anything(),
+    );
+  });
+
+  it("names a rejected PRIM_TOKEN instead of asking for login", async () => {
+    vi.stubEnv("PRIM_TOKEN", "rejected-environment-token");
+    const fetchMock = vi.fn(() => Promise.resolve(unauthorized()));
+
+    expectUnverifiedAllow(
+      await runAgainstClient(fetchMock),
+      "[primitive] decision check skipped — PRIM_TOKEN was rejected; change was not verified",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a timeout", () => new DOMException("The operation timed out.", "TimeoutError")],
+    ["a server error", async () => new (await import("../client.js")).HttpError(503, "HTTP 503")],
+  ])("keeps %s as service unavailability", async (_case, failure) => {
+    mocks.requestPreflight.mockRejectedValue(await failure());
+
+    expectUnverifiedAllow(await runHook(), UNAVAILABLE);
   });
 });
