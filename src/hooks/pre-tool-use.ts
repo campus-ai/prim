@@ -29,6 +29,7 @@
  * request for the complete invocation and consumes the returned verdict.
  */
 
+import { HttpError, resolveAuthCredential } from "../client.js";
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
@@ -132,6 +133,18 @@ function hermesAdvisory(result: ConflictCheckResult, aggregate: ConflictVerdict)
   }
   const message = [...new Set(parts.filter(Boolean))].join("\n");
   return message.startsWith("[primitive]") ? message : message ? `[primitive] ${message}` : "";
+}
+
+// A 401 is a local credential problem with a known fix, not a service outage.
+// A rejected PRIM_TOKEN outranks the token file, so `prim auth login` can't fix it.
+function preflightFailure(error: unknown): string {
+  if (!(error instanceof HttpError && error.status === 401)) {
+    return "enforcement service unavailable; change was not verified";
+  }
+  if (resolveAuthCredential()?.source === "environment") {
+    return "PRIM_TOKEN was rejected; change was not verified";
+  }
+  return "authentication required; run `prim auth login`; change was not verified";
 }
 
 async function emitUnverified(message: string, envelope?: PreToolUseInput): Promise<void> {
@@ -257,8 +270,8 @@ async function main(): Promise<void> {
       return;
     }
     result = resultForPreflight(response);
-  } catch {
-    await emitUnverified("enforcement service unavailable; change was not verified", envelope);
+  } catch (error) {
+    await emitUnverified(preflightFailure(error), envelope);
     return;
   }
   const aggregate = demoteForMode(
