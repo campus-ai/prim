@@ -33,6 +33,7 @@ import {
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
+import { recordConversationCaptured } from "../lib/commit-heartbeat.js";
 import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
 import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
@@ -180,6 +181,7 @@ async function main(): Promise<void> {
       };
       const { orgId } = resolveOrg({ sessionId: move.sessionId, cwd });
       appendMove(move, orgId);
+      if (move.eventType === "UserPromptSubmit") recordConversationCaptured(cwd, agent);
       if (shouldFlushAfter(move.eventType, agent)) {
         spawnBackgroundFlush();
       }

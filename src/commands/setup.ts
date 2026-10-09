@@ -115,8 +115,11 @@ export function planSetupSteps(opts: {
   const scopeArgs = opts.scope === "user" ? ["--scope", "user"] : [];
   // Hermes config is global-only: it has no project/user layer, so don't
   // forward a scope flag (hermes install hard-errors on --scope project).
+  // Every other agent gets its scope explicitly: their install defaults differ.
   const sessionArgs =
-    opts.agent === "hermes" ? [opts.agent, "install"] : [opts.agent, "install", ...scopeArgs];
+    opts.agent === "hermes"
+      ? [opts.agent, "install"]
+      : [opts.agent, "install", "--scope", opts.scope];
   const steps: SetupStep[] = [
     {
       key: "session",

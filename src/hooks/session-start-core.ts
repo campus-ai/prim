@@ -10,6 +10,7 @@ import {
   renderFeedback,
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
+import { warmBinCache } from "../lib/bin-cache.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
@@ -160,6 +161,14 @@ export async function processSessionStart(
     return { output: buildHookOutput({}) };
   }
 
+  const cwd = envelope.cwd ?? process.cwd();
+  if (!gitToplevel(cwd) || !isRepoActiveForCapture(cwd)) {
+    // Preserve the local disable marker without starting presence or capture.
+    if (repoActiveFlag(cwd) === "false") clearHooksWired(cwd);
+    return { output: agent === "cursor" ? {} : buildHookOutput({}) };
+  }
+  warmBinCache();
+
   // Repair or start the supervised daemon once per agent session. Intentionally
   // detached: hook latency and output must never depend on launchctl or network
   // health, and `daemon ensure` honors an explicit stop.
@@ -173,7 +182,6 @@ export async function processSessionStart(
     { timeoutMs: DAEMON_TIMEOUT_MS },
   );
 
-  const cwd = envelope.cwd ?? process.cwd();
   let projectRoot: string | null = null;
   let active = false;
   let skillState = { installed: 0, refreshed: 0 };
