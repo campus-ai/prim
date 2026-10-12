@@ -276,7 +276,7 @@ async function verifiedPid(existing: RunningPid): Promise<StatusSnapshot | null>
  * with a pre-existing backlog could not start until the very drain only a
  * started daemon performs had finished. On a clean install ingestion starts
  * healthy with nothing queued, so that gate never proved delivery anyway;
- * doctor's server checks cover reachability, auth, and capture entitlement.
+ * doctor's server checks cover reachability, auth, and capture availability.
  * Only the ingestion cause is exempted — any other unhealthy aggregate still
  * fails closed.
  */

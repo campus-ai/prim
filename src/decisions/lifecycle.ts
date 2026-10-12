@@ -55,8 +55,6 @@ export type DecisionLifecycleFailureCode =
   | "invalid_replacement"
   | "decision_not_found"
   | "replacement_not_found"
-  | "feature_disabled"
-  | "feature_check_unavailable"
   | "unsupported_server"
   | "rejected"
   | "invalid_request"
@@ -125,8 +123,6 @@ const DECISION_NOT_FOUND_MESSAGE = "Decision not found";
 const REPLACEMENT_NOT_FOUND_MESSAGE = "Replacement decision not found";
 const SELF_REPLACEMENT_MESSAGE = "A decision cannot supersede itself";
 const OLD_SERVER_NOT_FOUND_MESSAGE = "Not found";
-const FEATURE_DISABLED_MESSAGE = "feature_disabled";
-const FEATURE_CHECK_UNAVAILABLE_MESSAGE = "feature_check_unavailable";
 const STAGE_NAME = "(?:draft|provisional|adopted|superseded|abandoned)";
 const IMMUTABLE_MESSAGE = new RegExp(
   `^An ${STAGE_NAME} decision is immutable — supersede it to change it$`,
@@ -223,12 +219,6 @@ function classifyHttpError(error: HttpError): DecisionLifecycleFailure {
   if (error.status === 403 && message === NOT_AUTHOR_MESSAGE) {
     return failure("not_author", DECISION_LIFECYCLE_EXIT.rejected, error.status);
   }
-  if (error.status === 403 && message === FEATURE_DISABLED_MESSAGE) {
-    return failure("feature_disabled", DECISION_LIFECYCLE_EXIT.rejected, error.status);
-  }
-  if (error.status === 503 && message === FEATURE_CHECK_UNAVAILABLE_MESSAGE) {
-    return failure("feature_check_unavailable", DECISION_LIFECYCLE_EXIT.server, error.status);
-  }
   if (error.status === 409 && message === AMBIGUOUS_MESSAGE) {
     return failure("ambiguous_identifier", DECISION_LIFECYCLE_EXIT.rejected, error.status);
   }
@@ -294,10 +284,6 @@ function formatFailureHuman(
       return `[prim] ${verb} rejected: Decision not found.`;
     case "replacement_not_found":
       return "[prim] supersede rejected: replacement Decision not found.";
-    case "feature_disabled":
-      return `[prim] ${verb} rejected: manual lifecycle actions are not enabled for this account.`;
-    case "feature_check_unavailable":
-      return `[prim] ${verb} unavailable: the server could not verify feature availability; retry shortly.`;
     case "unsupported_server":
       return `[prim] ${verb} unavailable: this Primitive server does not support this Decision lifecycle operation; upgrade the server before retrying.`;
     case "rejected":

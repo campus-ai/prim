@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 4,
+  "contractVersion": 5,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -870,20 +870,37 @@
       }
     },
     {
-      "name": "GitHub install-intent start feature-disabled error",
+      "name": "GitHub install-intent start unavailable error",
       "definition": "GitHubInstallIntentStartErrorResponse",
       "valid": true,
+      "value": {
+        "error": "github_connect_unavailable"
+      }
+    },
+    {
+      "name": "GitHub unavailable error rejects obsolete feature metadata",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": false,
+      "value": {
+        "error": "github_connect_unavailable",
+        "feature": "github-connect"
+      }
+    },
+    {
+      "name": "GitHub start rejects retired feature-disabled errors",
+      "definition": "GitHubInstallIntentStartErrorResponse",
+      "valid": false,
       "value": {
         "error": "feature_disabled",
         "feature": "github-connect"
       }
     },
     {
-      "name": "GitHub install-intent start unavailable error",
+      "name": "GitHub start rejects retired entitlement-check errors",
       "definition": "GitHubInstallIntentStartErrorResponse",
-      "valid": true,
+      "valid": false,
       "value": {
-        "error": "github_connect_unavailable",
+        "error": "feature_check_unavailable",
         "feature": "github-connect"
       }
     },
@@ -1463,15 +1480,6 @@
         "decisionId": "decision-1",
         "shortId": "0123abcd",
         "stage": "abandoned"
-      }
-    },
-    {
-      "name": "manual lifecycle feature-disabled error",
-      "definition": "CliErrorResponse",
-      "valid": true,
-      "value": {
-        "error": "feature_disabled",
-        "feature": "manual-lifecycle-actions"
       }
     },
     {

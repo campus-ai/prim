@@ -5,7 +5,7 @@
  * command, instead of forcing an operator to correlate `auth status`,
  * `daemon status`, `moves status`, and a filesystem listing by hand (the
  * ~20-minute archaeology the user study turned into). Checks auth, supervised
- * daemon health, durable queue age, stranded rotations, capture entitlement,
+ * daemon health, durable queue age, stranded rotations, capture availability,
  * decision-feedback readiness, then renders them
  * verdict-first on STDERR with machine-readable JSON on STDOUT, exiting
  * non-zero when a check is red so an agent or installer can gate on it.
@@ -138,7 +138,7 @@ export type DaemonDoctorSnapshot = {
 export type DoctorOptions = { backlogExpected?: boolean };
 
 export type MovesStatus = {
-  captureState: "enabled" | "disabled";
+  captureState: "enabled";
   latestIngestAt: number | null;
   latestClassificationAt: number | null;
   highWaterMark: number | null;
@@ -1063,7 +1063,7 @@ function parseMovesStatus(value: unknown): MovesStatus {
   const nullableNumber = (candidate: unknown): boolean =>
     candidate === null || (typeof candidate === "number" && Number.isFinite(candidate));
   if (
-    (status.captureState !== "enabled" && status.captureState !== "disabled") ||
+    status.captureState !== "enabled" ||
     !nullableNumber(status.latestIngestAt) ||
     !nullableNumber(status.latestClassificationAt) ||
     !nullableNumber(status.highWaterMark) ||
@@ -1088,14 +1088,11 @@ function parseMovesStatus(value: unknown): MovesStatus {
 }
 
 export function classifyMovesStatus(status: MovesStatus): Check[] {
-  const capture: Check =
-    status.captureState === "enabled"
-      ? { name: "capture", status: "ok", detail: "enabled; ingest endpoint durable" }
-      : {
-          name: "capture",
-          status: "fail",
-          detail: "disabled for the current organization; local Moves are retained",
-        };
+  const capture: Check = {
+    name: "capture",
+    status: "ok",
+    detail: "enabled; ingest endpoint durable",
+  };
   const correlation: Check | undefined =
     status.pendingCommitCorrelationCount === undefined
       ? undefined
@@ -1116,7 +1113,7 @@ export function classifyMovesStatus(status: MovesStatus): Check[] {
 async function checkBackend(): Promise<Check[]> {
   try {
     // Bypass the daemon so this independently verifies server reachability,
-    // auth, capture entitlement, and commit-correlation status.
+    // auth, capture availability, and commit-correlation status.
     const response = await getClient().get("/api/cli/moves/status", {
       signal: AbortSignal.timeout(CONNECTIVITY_TIMEOUT_MS),
     });

@@ -59,34 +59,33 @@ const MANUAL_LIFECYCLE_CASES = [
   },
 ] as const;
 
-const FEATURE_ERROR_CASES = [
+const LEGACY_ERROR_CASES = [
   {
     operation: "demote",
     invoke: demoteDecision,
     status: 403,
     message: "feature_disabled",
-    code: "feature_disabled",
+    code: "rejected",
     exitCode: DECISION_LIFECYCLE_EXIT.rejected,
-    human: "[prim] demote rejected: manual lifecycle actions are not enabled for this account.",
+    human: "[prim] demote rejected by the server.",
   },
   {
     operation: "withdraw",
     invoke: withdrawDecision,
     status: 503,
     message: "feature_check_unavailable",
-    code: "feature_check_unavailable",
+    code: "server_error",
     exitCode: DECISION_LIFECYCLE_EXIT.server,
-    human:
-      "[prim] withdraw unavailable: the server could not verify feature availability; retry shortly.",
+    human: "[prim] withdraw failed: the Primitive server could not complete the request.",
   },
   {
     operation: "publish",
     invoke: publishDecision,
     status: 403,
     message: "feature_disabled",
-    code: "feature_disabled",
+    code: "rejected",
     exitCode: DECISION_LIFECYCLE_EXIT.rejected,
-    human: "[prim] publish rejected: manual lifecycle actions are not enabled for this account.",
+    human: "[prim] publish rejected by the server.",
   },
 ] as const;
 
@@ -572,13 +571,11 @@ describe("Decision lifecycle error contract and exits", () => {
     expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-error-value");
   });
 
-  it.each(FEATURE_ERROR_CASES)(
-    "classifies $operation $message without reflecting the feature entitlement",
+  it.each(LEGACY_ERROR_CASES)(
+    "classifies legacy $operation $message as a generic failure",
     async ({ code, exitCode, human, invoke, message, operation, status }) => {
       const { dependencies, post, stderr, stdout } = harness();
-      post.mockRejectedValueOnce(
-        httpError(status, message, { feature: "manual-lifecycle-actions" }),
-      );
+      post.mockRejectedValueOnce(httpError(status, message, { feature: "retired-feature" }));
 
       const result = await invoke("decision-1", dependencies);
 
@@ -590,7 +587,7 @@ describe("Decision lifecycle error contract and exits", () => {
         status,
       });
       expect(stderr).toEqual([human]);
-      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("manual-lifecycle-actions");
+      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("retired-feature");
     },
   );
 
