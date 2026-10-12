@@ -163,11 +163,6 @@ function startDriftHeal(options: DaemonDriftHealOptions): boolean {
   const primEntry = options.primEntry === undefined ? binFile("prim") : options.primEntry;
   if (!primEntry) return false;
 
-  const attempt: DriftHealAttempt = {
-    attemptedAt: (options.nowMs ?? Date.now)(),
-    fromVersion: launcher.runtimeVersion,
-    toVersion,
-  };
   // Commands that start together (an agent running several at once) would
   // otherwise all find the window open and each spawn a child. The claim makes
   // checking and renewing the record one step, and it is never waited on: a
@@ -176,7 +171,14 @@ function startDriftHeal(options: DaemonDriftHealOptions): boolean {
   // starts either, because an unrecorded attempt cannot be rate limited.
   const claimed = withFileLockSync(
     daemonDriftHealClaimPath(paths),
-    () => claimAttempt(daemonDriftHealMarkerPath(paths), attempt),
+    () =>
+      // Sample after acquiring the claim: an earlier timestamp from a delayed
+      // command must not make the previous winner look like a clock rollback.
+      claimAttempt(daemonDriftHealMarkerPath(paths), {
+        attemptedAt: (options.nowMs ?? Date.now)(),
+        fromVersion: launcher.runtimeVersion,
+        toVersion,
+      }),
     { timeoutMs: 0, sleep: claimHeld },
   );
   if (!claimed) return false;
