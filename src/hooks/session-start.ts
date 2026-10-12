@@ -18,7 +18,6 @@
  * unavailable daemon state when it can identify the session.
  */
 
-import { warmBinCache } from "../lib/bin-cache.js";
 import { parseAgent } from "./agent.js";
 import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
 import { buildHookOutput, handoffHookOutput } from "./decision-feedback-core.js";
@@ -34,9 +33,6 @@ function emitOutput(output: object, acknowledge?: () => Promise<unknown>): Promi
 }
 
 async function main(): Promise<void> {
-  // Refresh from the exact running package once per session so later Git hook
-  // calls can bypass npx without introducing a mutable dist-tag execution.
-  warmBinCache();
   const agent = parseAgent(process.argv);
   let raw: string;
   try {

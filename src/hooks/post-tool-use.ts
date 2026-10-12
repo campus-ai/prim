@@ -122,6 +122,7 @@ async function emitWithAcknowledgment(
 
 async function emitCursorContext(envelope: PostToolUseEnvelope): Promise<void> {
   if (
+    !isRepoActiveForCapture(envelope.cwd ?? process.cwd()) ||
     typeof envelope.session_id !== "string" ||
     envelope.session_id.length === 0 ||
     typeof envelope.cwd !== "string" ||
@@ -246,7 +247,11 @@ async function main(): Promise<void> {
       await finish(agent, envelope);
       return;
     }
-    if (resolution.shellMutation === undefined && resolution.fileRefs.length === 0) {
+    if (
+      resolution.shellMutation === undefined &&
+      resolution.fileRefs.length === 0 &&
+      !resolution.targetCheckouts?.length
+    ) {
       await finish(agent, envelope);
       return;
     }

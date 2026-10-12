@@ -148,9 +148,12 @@ graph, and presence is reported. Each hook
 self-resolves the CLI at run time (PATH, then a local install, then
 `npx --yes @latest`), so it keeps working with no global install.
 
-Installs into the current project by default — the repo's `.claude/settings.json`,
-`.cursor/hooks.json`, or `.codex/hooks.json`, resolved from the git root (so any subdirectory works);
-pass `--scope user` to install machine-wide. Hermes is the exception: it reads
+Installs into the current project by default — the repo's `.claude/settings.json`
+or `.cursor/hooks.json`, resolved from the git root (so any subdirectory works);
+pass `--scope user` to install machine-wide. Codex defaults to user scope
+(`~/.codex/hooks.json`): Codex reads a project `.codex/hooks.json` only from the
+checkout it lives in and trusts it by absolute path, so a project install covers
+that checkout only, not the repo's other worktrees. Hermes is the exception: it reads
 shell hooks only from the global `~/.hermes/config.yaml`, so `prim hermes install`
 is always user-scoped — and prim merges in place, leaving the rest of that file
 (providers, models, your own hooks) untouched.
@@ -160,7 +163,7 @@ prim claude install                # Install Claude Code hooks (project scope; u
 prim claude install --scope user   # Install machine-wide instead
 prim cursor install                # Install native Cursor hooks (project scope)
 prim cursor install --scope user   # Install hooks, skill, and CLI footer machine-wide
-prim codex install                 # Install OpenAI Codex hooks (project scope)
+prim codex install                 # Install OpenAI Codex hooks (user scope; --scope project for this checkout only)
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 

@@ -11,6 +11,7 @@
  */
 
 import { daemonRequest } from "../daemon/client.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { parseAgent } from "./agent.js";
 import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
 import { readHookStdin } from "./hook-stdin.js";
@@ -20,6 +21,7 @@ const STDIN_TIMEOUT_MS = 1_000;
 const DAEMON_TIMEOUT_MS = 250;
 
 interface SessionEnvelope {
+  cwd?: string;
   session_id?: string;
   hook_event_name?: string;
 }
@@ -54,6 +56,10 @@ async function main(): Promise<void> {
     return;
   }
   if (typeof envelope.session_id !== "string" || envelope.session_id.length === 0) {
+    emit();
+    return;
+  }
+  if (!isRepoActiveForCapture(envelope.cwd ?? process.cwd())) {
     emit();
     return;
   }

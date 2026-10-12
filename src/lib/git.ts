@@ -26,6 +26,32 @@ export function gitToplevel(cwd?: string): string | null {
   }
 }
 
+/**
+ * The main checkout's root when `cwd` is inside a linked worktree, or null in a
+ * main checkout, a bare or separated repository, or outside git.
+ */
+export function mainWorktreeRoot(cwd?: string): string | null {
+  try {
+    const [gitDir, commonDir] = execFileSync(
+      "git",
+      ["rev-parse", "--git-dir", "--git-common-dir"],
+      {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: GIT_TIMEOUT_MS,
+      },
+    )
+      .trim()
+      .split("\n")
+      .map((value) => resolve(cwd ?? process.cwd(), value));
+    if (gitDir === undefined || commonDir === undefined || gitDir === commonDir) return null;
+    return basename(commonDir) === ".git" ? dirname(commonDir) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type RepositoryIdentitySource = "origin" | "root_commit";
 
 export type RepositoryContext = {
@@ -90,6 +116,37 @@ export function canonicalGitRoot(cwd: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A target outside cwd may belong to a sibling worktree, never an unrelated clone. */
+export function relatedWorktreeTarget(
+  path: string,
+  cwd: string,
+  origin: RepositoryContext,
+): RepositoryContext | null {
+  let parent = dirname(resolve(cwd, path));
+  while (true) {
+    try {
+      realpathSync.native(parent);
+      break;
+    } catch {
+      const next = dirname(parent);
+      if (next === parent) return null;
+      parent = next;
+    }
+  }
+  const target = resolveRepositoryContext(parent);
+  if (!target || !target.repoKey || target.repoKey !== origin.repoKey) return null;
+  const common = (root: string): string | undefined => {
+    const value = gitValue(root, ["rev-parse", "--git-common-dir"]);
+    try {
+      return value ? realpathSync.native(resolve(root, value)) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const originCommon = common(origin.repoRoot);
+  return originCommon && originCommon === common(target.repoRoot) ? target : null;
 }
 
 /**
