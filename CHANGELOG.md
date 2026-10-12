@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.95](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.94...v0.1.0-alpha.95) (2026-10-12)
+
+
+### Bug Fixes
+
+* **capture:** preserve worktree provenance and verify hook runs ([66cf82d](https://github.com/campus-ai/prim/commit/66cf82d73113dfae26314912025e97cc4cb96355))
+* **capture:** preserve worktree provenance and verify hook runs ([c41a78e](https://github.com/campus-ai/prim/commit/c41a78ed465bcef7cf649eefb5f5a129004837f1))
+* **daemon:** sample heal timestamps while holding the claim ([#349](https://github.com/campus-ai/prim/issues/349)) ([392fbca](https://github.com/campus-ai/prim/commit/392fbca05210ec355fa4527002e3f2a06414e2d6))
+* **hooks:** distinguish rejected credentials from outages ([52f9ca8](https://github.com/campus-ai/prim/commit/52f9ca89c4f7eeaf823f99cd5b4aafed8e44102a))
+* **hooks:** distinguish rejected credentials from outages ([a58ec65](https://github.com/campus-ai/prim/commit/a58ec654e388975b7bcfff2026cebad110808855))
+* **hooks:** parse numeric counts and grep inspection flags ([f96fc2c](https://github.com/campus-ai/prim/commit/f96fc2ced9050583df14fac5fe9b2bea0747189b))
+* **hooks:** parse numeric counts and grep inspection flags ([184b625](https://github.com/campus-ai/prim/commit/184b6256a9509b822f291685841dd997b6b11a59))
+
 ## [0.1.0-alpha.94](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.93...v0.1.0-alpha.94) (2026-10-07)
 
 
