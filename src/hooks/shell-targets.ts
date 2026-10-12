@@ -11,6 +11,7 @@ type OptionSpec = {
   longFlags?: ReadonlySet<string>;
   longValues?: ReadonlySet<string>;
   longOptionalValues?: ReadonlySet<string>;
+  numericCount?: true;
 };
 type ParsedOptions = {
   operands: string[];
@@ -34,7 +35,7 @@ const COMMAND_OPTIONS: Readonly<Record<string, OptionSpec>> = {
     longOptionalValues: set("--color"),
   },
   grep: {
-    shortFlags: "EFGHIPRTUVabcdhLlnqrsuvwxyZz",
+    shortFlags: "EFGHIPRTUVabcdhiLlnoqrsuvwxyZz",
     shortValues: "ABCDefm",
     longFlags: set(
       "--basic-regexp --binary-files-without-match --byte-offset --count --extended-regexp --files-with-matches --files-without-match --fixed-regexp --fixed-strings --help --ignore-case --initial-tab --invert-match --line-buffered --line-number --line-regexp --null --null-data --only-matching --perl-regexp --quiet --recursive --silent --unix-byte-offsets --version --with-filename --word-regexp",
@@ -45,12 +46,14 @@ const COMMAND_OPTIONS: Readonly<Record<string, OptionSpec>> = {
     longOptionalValues: set("--color"),
   },
   head: {
+    numericCount: true,
     shortFlags: "qvz",
     shortValues: "cn",
     longFlags: set("--help --quiet --verbose --version --zero-terminated"),
     longValues: set("--bytes --lines"),
   },
   tail: {
+    numericCount: true,
     shortFlags: "Fqsvz",
     shortValues: "cn",
     longFlags: set("--help --quiet --retry --silent --verbose --version --zero-terminated"),
@@ -76,6 +79,7 @@ const COMMAND_OPTIONS: Readonly<Record<string, OptionSpec>> = {
 };
 
 const GIT_INSPECTION_OPTIONS: OptionSpec = {
+  numericCount: true,
   shortFlags: "abcdfhiklmnprstuvwz",
   shortValues: "ABCGLMSU",
   longFlags: set(
@@ -226,6 +230,7 @@ function parseOptions(args: string[], spec: OptionSpec): ParsedOptions | undefin
       optionsEnded = true;
       continue;
     }
+    if (spec.numericCount && /^-\d+$/.test(arg)) continue;
     if (arg.startsWith("--")) {
       const separator = arg.indexOf("=");
       const option = separator === -1 ? arg : arg.slice(0, separator);
