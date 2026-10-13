@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.97](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.96...v0.1.0-alpha.97) (2026-10-13)
+
+
+### Bug Fixes
+
+* **contracts:** import staging GitHub installation URL support ([#353](https://github.com/campus-ai/prim/issues/353)) ([9b69c60](https://github.com/campus-ai/prim/commit/9b69c60ecbd086f06bf62d93fd7147d8b01619c4))
+
 ## [0.1.0-alpha.96](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.94...v0.1.0-alpha.96) (2026-10-13)
 
 ### Bug Fixes
