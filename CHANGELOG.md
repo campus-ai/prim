@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0-alpha.96](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.94...v0.1.0-alpha.96) (2026-10-13)
+
+### Bug Fixes
+
+* Remove retired lifecycle and capture entitlement errors and adopt canonical CLI contract v5, pinned to client revision `69d9dbf8430713e503f7d73ce86fcdaa8050c2c7` ([#351](https://github.com/campus-ai/prim/pull/351)).
+* Preserve worktree provenance and verify hook runs during capture ([#347](https://github.com/campus-ai/prim/pull/347)).
+* Sample daemon healing timestamps while holding the claim ([#349](https://github.com/campus-ai/prim/pull/349)).
+* Distinguish rejected hook credentials from temporary outages ([#346](https://github.com/campus-ai/prim/pull/346)).
+* Parse numeric shell counts and grep inspection flags correctly ([#345](https://github.com/campus-ai/prim/pull/345)).
+* Build the published npm artifact from the release tag.
+
 ## [0.1.0-alpha.95](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.94...v0.1.0-alpha.95) (2026-10-12)
 
 
