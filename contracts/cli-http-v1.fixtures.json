@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 5,
+  "contractVersion": 6,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -652,6 +652,48 @@
         "status": "pending",
         "intentId": "intent123",
         "browserUrl": "https://github.com/apps/primitive/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expiresAt": 1800000900000,
+        "pollAfterMs": 1000
+      }
+    },
+    {
+      "name": "GitHub install-intent staging start response",
+      "definition": "GitHubInstallIntentStartResponse",
+      "valid": true,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "status": "pending",
+        "intentId": "intent123",
+        "browserUrl": "https://github.com/apps/primitive-staging/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expiresAt": 1800000900000,
+        "pollAfterMs": 1000
+      }
+    },
+    {
+      "name": "GitHub install-intent start rejects another app",
+      "definition": "GitHubInstallIntentStartResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "status": "pending",
+        "intentId": "intent123",
+        "browserUrl": "https://github.com/apps/primitive-other/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expiresAt": 1800000900000,
+        "pollAfterMs": 1000
+      }
+    },
+    {
+      "name": "GitHub install-intent start rejects another host",
+      "definition": "GitHubInstallIntentStartResponse",
+      "valid": false,
+      "value": {
+        "protocolVersion": 1,
+        "mode": "install_intent_v1",
+        "status": "pending",
+        "intentId": "intent123",
+        "browserUrl": "https://github.com.example.com/apps/primitive/installations/new?state=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "expiresAt": 1800000900000,
         "pollAfterMs": 1000
       }
