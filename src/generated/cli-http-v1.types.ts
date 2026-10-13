@@ -131,6 +131,7 @@ export interface DecisionCreateRequest {
   repoSyncId?: string;
   scope?: {
     location?: {
+      mode?: "inherited" | "explicit";
       repository?: boolean;
       directories?: string[];
       globs?: string[];
@@ -172,6 +173,7 @@ export interface DecisionCreateResponse {
   createdAt: number;
   scope?: {
     location: {
+      mode?: "inherited" | "explicit";
       repository: boolean;
       directories: string[];
       globs: string[];
@@ -262,6 +264,7 @@ export interface DecisionDetailResponse {
   }[];
   scope: {
     location: {
+      mode?: "inherited" | "explicit";
       repository: boolean;
       directories: string[];
       globs: string[];
@@ -331,6 +334,7 @@ export interface DecisionRelateSuccessResponse {
 export interface DecisionRescopeRequest {
   id: string;
   location?: {
+    mode?: "inherited" | "explicit";
     repository?: boolean;
     directories?: string[];
     globs?: string[];
@@ -371,6 +375,7 @@ export type DecisionRescopeResponse =
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
       scope: {
         location: {
+          mode?: "inherited" | "explicit";
           repository: boolean;
           directories: string[];
           globs: string[];
@@ -412,6 +417,7 @@ export type DecisionRescopeResponse =
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
       scope: {
         location: {
+          mode?: "inherited" | "explicit";
           repository: boolean;
           directories: string[];
           globs: string[];
