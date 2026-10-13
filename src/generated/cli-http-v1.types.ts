@@ -635,12 +635,7 @@ export type GitHubInstallIntentStartErrorResponse =
       error: "interactive_workos_authority_required";
     }
   | {
-      error: "feature_disabled";
-      feature: "github-connect";
-    }
-  | {
-      error: "github_connect_unavailable" | "feature_check_unavailable";
-      feature: "github-connect";
+      error: "github_connect_unavailable";
     }
   | {
       error: "WorkOS identity authority is temporarily unavailable";
@@ -753,6 +748,14 @@ export interface MoveIngestRequest {
         eventType: string;
         payload?: unknown;
         env?: unknown;
+        repositoryContext?:
+          | {
+              kind: "repository_bound";
+              repoSyncId: string;
+            }
+          | {
+              kind: "non_repository";
+            };
         capturedOrganizationId: string;
         captureAuthorityKind: "workos" | "service_token";
         decisionLifecycleProtocolVersion: number;
@@ -769,6 +772,14 @@ export interface MoveIngestRequest {
         eventType: string;
         payload?: unknown;
         env?: unknown;
+        repositoryContext?:
+          | {
+              kind: "repository_bound";
+              repoSyncId: string;
+            }
+          | {
+              kind: "non_repository";
+            };
         capturedOrganizationId?: string;
         captureAuthorityKind?: "workos" | "service_token";
         decisionLifecycleProtocolVersion?: number;

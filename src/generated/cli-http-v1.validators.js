@@ -12362,7 +12362,7 @@ validate45.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
 export const isGitHubInstallIntentStartErrorResponse = validate46;
 const schema82 = {"$id":"urn:primitive:cli-http-v1:GitHubInstallIntentStartErrorResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse"};
-const schema83 = {"anyOf":[{"type":"object","properties":{"error":{"type":"string","const":"Unauthorized"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"interactive_workos_authority_required"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"feature_disabled"},"feature":{"type":"string","const":"github-connect"}},"required":["error","feature"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","enum":["github_connect_unavailable","feature_check_unavailable"]},"feature":{"type":"string","const":"github-connect"}},"required":["error","feature"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"WorkOS identity authority is temporarily unavailable"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"github_install_intent_conflict"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"github_install_intent_rate_limited"},"retryAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["error","retryAt"],"additionalProperties":false}]};
+const schema83 = {"anyOf":[{"type":"object","properties":{"error":{"type":"string","const":"Unauthorized"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"interactive_workos_authority_required"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"github_connect_unavailable"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"WorkOS identity authority is temporarily unavailable"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"github_install_intent_conflict"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"github_install_intent_rate_limited"},"retryAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["error","retryAt"],"additionalProperties":false}]};
 
 function validate46(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:GitHubInstallIntentStartErrorResponse" */;
@@ -12527,7 +12527,7 @@ const _errs12 = errors;
 if(errors === _errs12){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing2;
-if(((data.error === undefined) && (missing2 = "error")) || ((data.feature === undefined) && (missing2 = "feature"))){
+if((data.error === undefined) && (missing2 = "error")){
 const err10 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err10];
@@ -12540,7 +12540,7 @@ errors++;
 else {
 const _errs14 = errors;
 for(const key2 in data){
-if(!((key2 === "error") || (key2 === "feature"))){
+if(!(key2 === "error")){
 const err11 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err11];
@@ -12555,7 +12555,6 @@ break;
 if(_errs14 === errors){
 if(data.error !== undefined){
 let data2 = data.error;
-const _errs15 = errors;
 if(typeof data2 !== "string"){
 const err12 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
@@ -12566,8 +12565,8 @@ vErrors.push(err12);
 }
 errors++;
 }
-if("feature_disabled" !== data2){
-const err13 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/properties/error/const",keyword:"const",params:{allowedValue: "feature_disabled"},message:"must be equal to constant"};
+if("github_connect_unavailable" !== data2){
+const err13 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/properties/error/const",keyword:"const",params:{allowedValue: "github_connect_unavailable"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err13];
 }
@@ -12576,51 +12575,17 @@ vErrors.push(err13);
 }
 errors++;
 }
-var valid4 = _errs15 === errors;
+}
+}
+}
 }
 else {
-var valid4 = true;
-}
-if(valid4){
-if(data.feature !== undefined){
-let data3 = data.feature;
-const _errs17 = errors;
-if(typeof data3 !== "string"){
-const err14 = {instancePath:instancePath+"/feature",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/properties/feature/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err14 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err14];
 }
 else {
 vErrors.push(err14);
-}
-errors++;
-}
-if("github-connect" !== data3){
-const err15 = {instancePath:instancePath+"/feature",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/properties/feature/const",keyword:"const",params:{allowedValue: "github-connect"},message:"must be equal to constant"};
-if(vErrors === null){
-vErrors = [err15];
-}
-else {
-vErrors.push(err15);
-}
-errors++;
-}
-var valid4 = _errs17 === errors;
-}
-else {
-var valid4 = true;
-}
-}
-}
-}
-}
-else {
-const err16 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err16];
-}
-else {
-vErrors.push(err16);
 }
 errors++;
 }
@@ -12632,12 +12597,40 @@ if(props0 !== true){
 props0 = true;
 }
 }
-const _errs19 = errors;
-if(errors === _errs19){
+const _errs17 = errors;
+if(errors === _errs17){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing3;
-if(((data.error === undefined) && (missing3 = "error")) || ((data.feature === undefined) && (missing3 = "feature"))){
-const err17 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
+if((data.error === undefined) && (missing3 = "error")){
+const err15 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
+if(vErrors === null){
+vErrors = [err15];
+}
+else {
+vErrors.push(err15);
+}
+errors++;
+}
+else {
+const _errs19 = errors;
+for(const key3 in data){
+if(!(key3 === "error")){
+const err16 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err16];
+}
+else {
+vErrors.push(err16);
+}
+errors++;
+break;
+}
+}
+if(_errs19 === errors){
+if(data.error !== undefined){
+let data3 = data.error;
+if(typeof data3 !== "string"){
+const err17 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -12646,11 +12639,8 @@ vErrors.push(err17);
 }
 errors++;
 }
-else {
-const _errs21 = errors;
-for(const key3 in data){
-if(!((key3 === "error") || (key3 === "feature"))){
-const err18 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+if("WorkOS identity authority is temporarily unavailable" !== data3){
+const err18 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/error/const",keyword:"const",params:{allowedValue: "WorkOS identity authority is temporarily unavailable"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err18];
 }
@@ -12658,15 +12648,13 @@ else {
 vErrors.push(err18);
 }
 errors++;
-break;
 }
 }
-if(_errs21 === errors){
-if(data.error !== undefined){
-let data4 = data.error;
-const _errs22 = errors;
-if(typeof data4 !== "string"){
-const err19 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
+}
+}
+}
+else {
+const err19 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err19];
 }
@@ -12675,8 +12663,20 @@ vErrors.push(err19);
 }
 errors++;
 }
-if(!((data4 === "github_connect_unavailable") || (data4 === "feature_check_unavailable"))){
-const err20 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/error/enum",keyword:"enum",params:{allowedValues: schema83.anyOf[3].properties.error.enum},message:"must be equal to one of the allowed values"};
+}
+var _valid0 = _errs17 === errors;
+valid1 = valid1 || _valid0;
+if(_valid0){
+if(props0 !== true){
+props0 = true;
+}
+}
+const _errs22 = errors;
+if(errors === _errs22){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing4;
+if((data.error === undefined) && (missing4 = "error")){
+const err20 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -12685,17 +12685,11 @@ vErrors.push(err20);
 }
 errors++;
 }
-var valid5 = _errs22 === errors;
-}
 else {
-var valid5 = true;
-}
-if(valid5){
-if(data.feature !== undefined){
-let data5 = data.feature;
 const _errs24 = errors;
-if(typeof data5 !== "string"){
-const err21 = {instancePath:instancePath+"/feature",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/feature/type",keyword:"type",params:{type: "string"},message:"must be string"};
+for(const key4 in data){
+if(!(key4 === "error")){
+const err21 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err21];
 }
@@ -12703,9 +12697,14 @@ else {
 vErrors.push(err21);
 }
 errors++;
+break;
 }
-if("github-connect" !== data5){
-const err22 = {instancePath:instancePath+"/feature",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/properties/feature/const",keyword:"const",params:{allowedValue: "github-connect"},message:"must be equal to constant"};
+}
+if(_errs24 === errors){
+if(data.error !== undefined){
+let data4 = data.error;
+if(typeof data4 !== "string"){
+const err22 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err22];
 }
@@ -12714,17 +12713,8 @@ vErrors.push(err22);
 }
 errors++;
 }
-var valid5 = _errs24 === errors;
-}
-else {
-var valid5 = true;
-}
-}
-}
-}
-}
-else {
-const err23 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if("github_install_intent_conflict" !== data4){
+const err23 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/properties/error/const",keyword:"const",params:{allowedValue: "github_install_intent_conflict"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err23];
 }
@@ -12734,19 +12724,11 @@ vErrors.push(err23);
 errors++;
 }
 }
-var _valid0 = _errs19 === errors;
-valid1 = valid1 || _valid0;
-if(_valid0){
-if(props0 !== true){
-props0 = true;
 }
 }
-const _errs26 = errors;
-if(errors === _errs26){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing4;
-if((data.error === undefined) && (missing4 = "error")){
-const err24 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
+}
+else {
+const err24 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err24];
 }
@@ -12755,11 +12737,20 @@ vErrors.push(err24);
 }
 errors++;
 }
-else {
-const _errs28 = errors;
-for(const key4 in data){
-if(!(key4 === "error")){
-const err25 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+}
+var _valid0 = _errs22 === errors;
+valid1 = valid1 || _valid0;
+if(_valid0){
+if(props0 !== true){
+props0 = true;
+}
+}
+const _errs27 = errors;
+if(errors === _errs27){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing5;
+if(((data.error === undefined) && (missing5 = "error")) || ((data.retryAt === undefined) && (missing5 = "retryAt"))){
+const err25 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
 if(vErrors === null){
 vErrors = [err25];
 }
@@ -12767,14 +12758,12 @@ else {
 vErrors.push(err25);
 }
 errors++;
-break;
 }
-}
-if(_errs28 === errors){
-if(data.error !== undefined){
-let data6 = data.error;
-if(typeof data6 !== "string"){
-const err26 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
+else {
+const _errs29 = errors;
+for(const key5 in data){
+if(!((key5 === "error") || (key5 === "retryAt"))){
+const err26 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err26];
 }
@@ -12782,9 +12771,15 @@ else {
 vErrors.push(err26);
 }
 errors++;
+break;
 }
-if("WorkOS identity authority is temporarily unavailable" !== data6){
-const err27 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/properties/error/const",keyword:"const",params:{allowedValue: "WorkOS identity authority is temporarily unavailable"},message:"must be equal to constant"};
+}
+if(_errs29 === errors){
+if(data.error !== undefined){
+let data5 = data.error;
+const _errs30 = errors;
+if(typeof data5 !== "string"){
+const err27 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err27];
 }
@@ -12793,12 +12788,8 @@ vErrors.push(err27);
 }
 errors++;
 }
-}
-}
-}
-}
-else {
-const err28 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if("github_install_intent_rate_limited" !== data5){
+const err28 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/error/const",keyword:"const",params:{allowedValue: "github_install_intent_rate_limited"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err28];
 }
@@ -12807,20 +12798,17 @@ vErrors.push(err28);
 }
 errors++;
 }
+var valid7 = _errs30 === errors;
 }
-var _valid0 = _errs26 === errors;
-valid1 = valid1 || _valid0;
-if(_valid0){
-if(props0 !== true){
-props0 = true;
+else {
+var valid7 = true;
 }
-}
-const _errs31 = errors;
-if(errors === _errs31){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing5;
-if((data.error === undefined) && (missing5 = "error")){
-const err29 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
+if(valid7){
+if(data.retryAt !== undefined){
+let data6 = data.retryAt;
+const _errs32 = errors;
+if(!(((typeof data6 == "number") && (!(data6 % 1) && !isNaN(data6))) && (isFinite(data6)))){
+const err29 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/retryAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err29];
 }
@@ -12829,11 +12817,10 @@ vErrors.push(err29);
 }
 errors++;
 }
-else {
-const _errs33 = errors;
-for(const key5 in data){
-if(!(key5 === "error")){
-const err30 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
+if(errors === _errs32){
+if((typeof data6 == "number") && (isFinite(data6))){
+if(data6 > 9007199254740991 || isNaN(data6)){
+const err30 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/retryAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
 if(vErrors === null){
 vErrors = [err30];
 }
@@ -12841,14 +12828,10 @@ else {
 vErrors.push(err30);
 }
 errors++;
-break;
 }
-}
-if(_errs33 === errors){
-if(data.error !== undefined){
-let data7 = data.error;
-if(typeof data7 !== "string"){
-const err31 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
+else {
+if(data6 < 0 || isNaN(data6)){
+const err31 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/retryAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
 if(vErrors === null){
 vErrors = [err31];
 }
@@ -12857,8 +12840,20 @@ vErrors.push(err31);
 }
 errors++;
 }
-if("github_install_intent_conflict" !== data7){
-const err32 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/properties/error/const",keyword:"const",params:{allowedValue: "github_install_intent_conflict"},message:"must be equal to constant"};
+}
+}
+}
+var valid7 = _errs32 === errors;
+}
+else {
+var valid7 = true;
+}
+}
+}
+}
+}
+else {
+const err32 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err32];
 }
@@ -12868,146 +12863,7 @@ vErrors.push(err32);
 errors++;
 }
 }
-}
-}
-}
-else {
-const err33 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/5/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err33];
-}
-else {
-vErrors.push(err33);
-}
-errors++;
-}
-}
-var _valid0 = _errs31 === errors;
-valid1 = valid1 || _valid0;
-if(_valid0){
-if(props0 !== true){
-props0 = true;
-}
-}
-const _errs36 = errors;
-if(errors === _errs36){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing6;
-if(((data.error === undefined) && (missing6 = "error")) || ((data.retryAt === undefined) && (missing6 = "retryAt"))){
-const err34 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
-if(vErrors === null){
-vErrors = [err34];
-}
-else {
-vErrors.push(err34);
-}
-errors++;
-}
-else {
-const _errs38 = errors;
-for(const key6 in data){
-if(!((key6 === "error") || (key6 === "retryAt"))){
-const err35 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
-if(vErrors === null){
-vErrors = [err35];
-}
-else {
-vErrors.push(err35);
-}
-errors++;
-break;
-}
-}
-if(_errs38 === errors){
-if(data.error !== undefined){
-let data8 = data.error;
-const _errs39 = errors;
-if(typeof data8 !== "string"){
-const err36 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err36];
-}
-else {
-vErrors.push(err36);
-}
-errors++;
-}
-if("github_install_intent_rate_limited" !== data8){
-const err37 = {instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/properties/error/const",keyword:"const",params:{allowedValue: "github_install_intent_rate_limited"},message:"must be equal to constant"};
-if(vErrors === null){
-vErrors = [err37];
-}
-else {
-vErrors.push(err37);
-}
-errors++;
-}
-var valid8 = _errs39 === errors;
-}
-else {
-var valid8 = true;
-}
-if(valid8){
-if(data.retryAt !== undefined){
-let data9 = data.retryAt;
-const _errs41 = errors;
-if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
-const err38 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/properties/retryAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err38];
-}
-else {
-vErrors.push(err38);
-}
-errors++;
-}
-if(errors === _errs41){
-if((typeof data9 == "number") && (isFinite(data9))){
-if(data9 > 9007199254740991 || isNaN(data9)){
-const err39 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/properties/retryAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
-if(vErrors === null){
-vErrors = [err39];
-}
-else {
-vErrors.push(err39);
-}
-errors++;
-}
-else {
-if(data9 < 0 || isNaN(data9)){
-const err40 = {instancePath:instancePath+"/retryAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/properties/retryAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"};
-if(vErrors === null){
-vErrors = [err40];
-}
-else {
-vErrors.push(err40);
-}
-errors++;
-}
-}
-}
-}
-var valid8 = _errs41 === errors;
-}
-else {
-var valid8 = true;
-}
-}
-}
-}
-}
-else {
-const err41 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf/6/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err41];
-}
-else {
-vErrors.push(err41);
-}
-errors++;
-}
-}
-var _valid0 = _errs36 === errors;
+var _valid0 = _errs27 === errors;
 valid1 = valid1 || _valid0;
 if(_valid0){
 if(props0 !== true){
@@ -13015,12 +12871,12 @@ props0 = true;
 }
 }
 if(!valid1){
-const err42 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err33 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartErrorResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err42];
+vErrors = [err33];
 }
 else {
-vErrors.push(err42);
+vErrors.push(err33);
 }
 errors++;
 validate46.errors = vErrors;
@@ -15370,7 +15226,7 @@ validate50.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
 export const isMoveIngestRequest = validate51;
 const schema92 = {"$id":"urn:primitive:cli-http-v1:MoveIngestRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest"};
-const schema93 = {"type":"object","properties":{"batch":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","const":4}},"required":["moveId","capturedAt","sessionId","eventType","capturedOrganizationId","captureAuthorityKind","decisionLifecycleProtocolVersion","envelopeVersion"],"additionalProperties":{}},{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","exclusiveMaximum":4}},"required":["moveId","capturedAt","sessionId","eventType"],"additionalProperties":{}}]}}},"required":["batch"],"additionalProperties":{}};
+const schema93 = {"type":"object","properties":{"batch":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","const":4}},"required":["moveId","capturedAt","sessionId","eventType","capturedOrganizationId","captureAuthorityKind","decisionLifecycleProtocolVersion","envelopeVersion"],"additionalProperties":{}},{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","exclusiveMaximum":4}},"required":["moveId","capturedAt","sessionId","eventType"],"additionalProperties":{}}]}}},"required":["batch"],"additionalProperties":{}};
 const pattern8 = new RegExp("^[A-Za-z0-9_-]+$", "u");
 
 function validate51(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -15511,13 +15367,18 @@ else {
 var valid4 = true;
 }
 if(valid4){
-if(data1.capturedOrganizationId !== undefined){
-let data7 = data1.capturedOrganizationId;
+if(data1.repositoryContext !== undefined){
+let data7 = data1.repositoryContext;
 const _errs20 = errors;
-if(errors === _errs20){
-if(typeof data7 === "string"){
-if(func1(data7) > 128){
-const err6 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
+const _errs21 = errors;
+let valid5 = false;
+let passing0 = null;
+const _errs22 = errors;
+if(errors === _errs22){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+let missing2;
+if(((data7.kind === undefined) && (missing2 = "kind")) || ((data7.repoSyncId === undefined) && (missing2 = "repoSyncId"))){
+const err6 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err6];
 }
@@ -15527,8 +15388,10 @@ vErrors.push(err6);
 errors++;
 }
 else {
-if(func1(data7) < 1){
-const err7 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const _errs24 = errors;
+for(const key0 in data7){
+if(!((key0 === "kind") || (key0 === "repoSyncId"))){
+const err7 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -15536,10 +15399,15 @@ else {
 vErrors.push(err7);
 }
 errors++;
+break;
 }
-else {
-if(!pattern8.test(data7)){
-const err8 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
+}
+if(_errs24 === errors){
+if(data7.kind !== undefined){
+let data8 = data7.kind;
+const _errs25 = errors;
+if(typeof data8 !== "string"){
+const err8 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err8];
 }
@@ -15548,11 +15416,8 @@ vErrors.push(err8);
 }
 errors++;
 }
-}
-}
-}
-else {
-const err9 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if("repository_bound" !== data8){
+const err9 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "repository_bound"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err9];
 }
@@ -15561,18 +15426,19 @@ vErrors.push(err9);
 }
 errors++;
 }
-}
-var valid4 = _errs20 === errors;
+var valid6 = _errs25 === errors;
 }
 else {
-var valid4 = true;
+var valid6 = true;
 }
-if(valid4){
-if(data1.captureAuthorityKind !== undefined){
-let data8 = data1.captureAuthorityKind;
-const _errs22 = errors;
-if(typeof data8 !== "string"){
-const err10 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/captureAuthorityKind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(valid6){
+if(data7.repoSyncId !== undefined){
+let data9 = data7.repoSyncId;
+const _errs27 = errors;
+if(errors === _errs27){
+if(typeof data9 === "string"){
+if(func1(data9) > 128){
+const err10 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/properties/repoSyncId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
 if(vErrors === null){
 vErrors = [err10];
 }
@@ -15581,8 +15447,9 @@ vErrors.push(err10);
 }
 errors++;
 }
-if(!((data8 === "workos") || (data8 === "service_token"))){
-const err11 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/captureAuthorityKind/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.captureAuthorityKind.enum},message:"must be equal to one of the allowed values"};
+else {
+if(func1(data9) < 1){
+const err11 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/properties/repoSyncId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err11];
 }
@@ -15591,17 +15458,10 @@ vErrors.push(err11);
 }
 errors++;
 }
-var valid4 = _errs22 === errors;
+}
 }
 else {
-var valid4 = true;
-}
-if(valid4){
-if(data1.decisionLifecycleProtocolVersion !== undefined){
-let data9 = data1.decisionLifecycleProtocolVersion;
-const _errs24 = errors;
-if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
-const err12 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err12 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/properties/repoSyncId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err12];
 }
@@ -15610,10 +15470,18 @@ vErrors.push(err12);
 }
 errors++;
 }
-if(errors === _errs24){
-if((typeof data9 == "number") && (isFinite(data9))){
-if(data9 > 9007199254740991 || isNaN(data9)){
-const err13 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+}
+var valid6 = _errs27 === errors;
+}
+else {
+var valid6 = true;
+}
+}
+}
+}
+}
+else {
+const err13 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err13];
 }
@@ -15622,9 +15490,19 @@ vErrors.push(err13);
 }
 errors++;
 }
-else {
-if(data9 < 1 || isNaN(data9)){
-const err14 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+}
+var _valid1 = _errs22 === errors;
+if(_valid1){
+valid5 = true;
+passing0 = 0;
+var props0 = true;
+}
+const _errs29 = errors;
+if(errors === _errs29){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+let missing3;
+if((data7.kind === undefined) && (missing3 = "kind")){
+const err14 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/1/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
 if(vErrors === null){
 vErrors = [err14];
 }
@@ -15633,20 +15511,11 @@ vErrors.push(err14);
 }
 errors++;
 }
-}
-}
-}
-var valid4 = _errs24 === errors;
-}
 else {
-var valid4 = true;
-}
-if(valid4){
-if(data1.producer !== undefined){
-let data10 = data1.producer;
-const _errs26 = errors;
-if(typeof data10 !== "string"){
-const err15 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/producer/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const _errs31 = errors;
+for(const key1 in data7){
+if(!(key1 === "kind")){
+const err15 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err15];
 }
@@ -15654,9 +15523,14 @@ else {
 vErrors.push(err15);
 }
 errors++;
+break;
 }
-if(!((((data10 === "claude_code") || (data10 === "codex")) || (data10 === "cursor")) || (data10 === "hermes"))){
-const err16 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/producer/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.producer.enum},message:"must be equal to one of the allowed values"};
+}
+if(_errs31 === errors){
+if(data7.kind !== undefined){
+let data10 = data7.kind;
+if(typeof data10 !== "string"){
+const err16 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err16];
 }
@@ -15665,17 +15539,8 @@ vErrors.push(err16);
 }
 errors++;
 }
-var valid4 = _errs26 === errors;
-}
-else {
-var valid4 = true;
-}
-if(valid4){
-if(data1.toolOutcome !== undefined){
-let data11 = data1.toolOutcome;
-const _errs28 = errors;
-if(typeof data11 !== "string"){
-const err17 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/toolOutcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if("non_repository" !== data10){
+const err17 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "non_repository"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err17];
 }
@@ -15684,8 +15549,12 @@ vErrors.push(err17);
 }
 errors++;
 }
-if(!((((((data11 === "succeeded") || (data11 === "returned")) || (data11 === "failed")) || (data11 === "interrupted")) || (data11 === "prevented")) || (data11 === "unknown"))){
-const err18 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/toolOutcome/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.toolOutcome.enum},message:"must be equal to one of the allowed values"};
+}
+}
+}
+}
+else {
+const err18 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err18];
 }
@@ -15694,17 +15563,23 @@ vErrors.push(err18);
 }
 errors++;
 }
-var valid4 = _errs28 === errors;
+}
+var _valid1 = _errs29 === errors;
+if(_valid1 && valid5){
+valid5 = false;
+passing0 = [passing0, 1];
 }
 else {
-var valid4 = true;
+if(_valid1){
+valid5 = true;
+passing0 = 1;
+if(props0 !== true){
+props0 = true;
 }
-if(valid4){
-if(data1.envelopeVersion !== undefined){
-let data12 = data1.envelopeVersion;
-const _errs30 = errors;
-if(!((typeof data12 == "number") && (isFinite(data12)))){
-const err19 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/envelopeVersion/type",keyword:"type",params:{type: "number"},message:"must be number"};
+}
+}
+if(!valid5){
+const err19 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/repositoryContext/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
 vErrors = [err19];
 }
@@ -15713,8 +15588,30 @@ vErrors.push(err19);
 }
 errors++;
 }
-if(4 !== data12){
-const err20 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/envelopeVersion/const",keyword:"const",params:{allowedValue: 4},message:"must be equal to constant"};
+else {
+errors = _errs21;
+if(vErrors !== null){
+if(_errs21){
+vErrors.length = _errs21;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid4 = _errs20 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.capturedOrganizationId !== undefined){
+let data11 = data1.capturedOrganizationId;
+const _errs34 = errors;
+if(errors === _errs34){
+if(typeof data11 === "string"){
+if(func1(data11) > 128){
+const err20 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
 if(vErrors === null){
 vErrors = [err20];
 }
@@ -15723,7 +15620,204 @@ vErrors.push(err20);
 }
 errors++;
 }
-var valid4 = _errs30 === errors;
+else {
+if(func1(data11) < 1){
+const err21 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err21];
+}
+else {
+vErrors.push(err21);
+}
+errors++;
+}
+else {
+if(!pattern8.test(data11)){
+const err22 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err23 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err23];
+}
+else {
+vErrors.push(err23);
+}
+errors++;
+}
+}
+var valid4 = _errs34 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.captureAuthorityKind !== undefined){
+let data12 = data1.captureAuthorityKind;
+const _errs36 = errors;
+if(typeof data12 !== "string"){
+const err24 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/captureAuthorityKind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err24];
+}
+else {
+vErrors.push(err24);
+}
+errors++;
+}
+if(!((data12 === "workos") || (data12 === "service_token"))){
+const err25 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/captureAuthorityKind/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.captureAuthorityKind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err25];
+}
+else {
+vErrors.push(err25);
+}
+errors++;
+}
+var valid4 = _errs36 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.decisionLifecycleProtocolVersion !== undefined){
+let data13 = data1.decisionLifecycleProtocolVersion;
+const _errs38 = errors;
+if(!(((typeof data13 == "number") && (!(data13 % 1) && !isNaN(data13))) && (isFinite(data13)))){
+const err26 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err26];
+}
+else {
+vErrors.push(err26);
+}
+errors++;
+}
+if(errors === _errs38){
+if((typeof data13 == "number") && (isFinite(data13))){
+if(data13 > 9007199254740991 || isNaN(data13)){
+const err27 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+if(vErrors === null){
+vErrors = [err27];
+}
+else {
+vErrors.push(err27);
+}
+errors++;
+}
+else {
+if(data13 < 1 || isNaN(data13)){
+const err28 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err28];
+}
+else {
+vErrors.push(err28);
+}
+errors++;
+}
+}
+}
+}
+var valid4 = _errs38 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.producer !== undefined){
+let data14 = data1.producer;
+const _errs40 = errors;
+if(typeof data14 !== "string"){
+const err29 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/producer/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err29];
+}
+else {
+vErrors.push(err29);
+}
+errors++;
+}
+if(!((((data14 === "claude_code") || (data14 === "codex")) || (data14 === "cursor")) || (data14 === "hermes"))){
+const err30 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/producer/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.producer.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err30];
+}
+else {
+vErrors.push(err30);
+}
+errors++;
+}
+var valid4 = _errs40 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.toolOutcome !== undefined){
+let data15 = data1.toolOutcome;
+const _errs42 = errors;
+if(typeof data15 !== "string"){
+const err31 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/toolOutcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err31];
+}
+else {
+vErrors.push(err31);
+}
+errors++;
+}
+if(!((((((data15 === "succeeded") || (data15 === "returned")) || (data15 === "failed")) || (data15 === "interrupted")) || (data15 === "prevented")) || (data15 === "unknown"))){
+const err32 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/toolOutcome/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[0].properties.toolOutcome.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err32];
+}
+else {
+vErrors.push(err32);
+}
+errors++;
+}
+var valid4 = _errs42 === errors;
+}
+else {
+var valid4 = true;
+}
+if(valid4){
+if(data1.envelopeVersion !== undefined){
+let data16 = data1.envelopeVersion;
+const _errs44 = errors;
+if(!((typeof data16 == "number") && (isFinite(data16)))){
+const err33 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/envelopeVersion/type",keyword:"type",params:{type: "number"},message:"must be number"};
+if(vErrors === null){
+vErrors = [err33];
+}
+else {
+vErrors.push(err33);
+}
+errors++;
+}
+if(4 !== data16){
+const err34 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/envelopeVersion/const",keyword:"const",params:{allowedValue: 4},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err34];
+}
+else {
+vErrors.push(err34);
+}
+errors++;
+}
+var valid4 = _errs44 === errors;
 }
 else {
 var valid4 = true;
@@ -15740,231 +15834,9 @@ var valid4 = true;
 }
 }
 }
-else {
-const err21 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
-if(vErrors === null){
-vErrors = [err21];
 }
 else {
-vErrors.push(err21);
-}
-errors++;
-}
-}
-var _valid0 = _errs7 === errors;
-valid3 = valid3 || _valid0;
-if(_valid0){
-var props0 = true;
-}
-const _errs32 = errors;
-if(errors === _errs32){
-if(data1 && typeof data1 == "object" && !Array.isArray(data1)){
-let missing2;
-if(((((data1.moveId === undefined) && (missing2 = "moveId")) || ((data1.capturedAt === undefined) && (missing2 = "capturedAt"))) || ((data1.sessionId === undefined) && (missing2 = "sessionId"))) || ((data1.eventType === undefined) && (missing2 = "eventType"))){
-const err22 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
-if(vErrors === null){
-vErrors = [err22];
-}
-else {
-vErrors.push(err22);
-}
-errors++;
-}
-else {
-if(data1.moveId !== undefined){
-const _errs35 = errors;
-if(typeof data1.moveId !== "string"){
-const err23 = {instancePath:instancePath+"/batch/" + i0+"/moveId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/moveId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err23];
-}
-else {
-vErrors.push(err23);
-}
-errors++;
-}
-var valid5 = _errs35 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.capturedAt !== undefined){
-let data14 = data1.capturedAt;
-const _errs37 = errors;
-if(!((typeof data14 == "number") && (isFinite(data14)))){
-const err24 = {instancePath:instancePath+"/batch/" + i0+"/capturedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedAt/type",keyword:"type",params:{type: "number"},message:"must be number"};
-if(vErrors === null){
-vErrors = [err24];
-}
-else {
-vErrors.push(err24);
-}
-errors++;
-}
-var valid5 = _errs37 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.sessionId !== undefined){
-const _errs39 = errors;
-if(typeof data1.sessionId !== "string"){
-const err25 = {instancePath:instancePath+"/batch/" + i0+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/sessionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err25];
-}
-else {
-vErrors.push(err25);
-}
-errors++;
-}
-var valid5 = _errs39 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.invocationId !== undefined){
-const _errs41 = errors;
-if(typeof data1.invocationId !== "string"){
-const err26 = {instancePath:instancePath+"/batch/" + i0+"/invocationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/invocationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err26];
-}
-else {
-vErrors.push(err26);
-}
-errors++;
-}
-var valid5 = _errs41 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.eventType !== undefined){
-const _errs43 = errors;
-if(typeof data1.eventType !== "string"){
-const err27 = {instancePath:instancePath+"/batch/" + i0+"/eventType",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/eventType/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err27];
-}
-else {
-vErrors.push(err27);
-}
-errors++;
-}
-var valid5 = _errs43 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.capturedOrganizationId !== undefined){
-let data18 = data1.capturedOrganizationId;
-const _errs45 = errors;
-if(errors === _errs45){
-if(typeof data18 === "string"){
-if(func1(data18) > 128){
-const err28 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
-if(vErrors === null){
-vErrors = [err28];
-}
-else {
-vErrors.push(err28);
-}
-errors++;
-}
-else {
-if(func1(data18) < 1){
-const err29 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err29];
-}
-else {
-vErrors.push(err29);
-}
-errors++;
-}
-else {
-if(!pattern8.test(data18)){
-const err30 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
-if(vErrors === null){
-vErrors = [err30];
-}
-else {
-vErrors.push(err30);
-}
-errors++;
-}
-}
-}
-}
-else {
-const err31 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err31];
-}
-else {
-vErrors.push(err31);
-}
-errors++;
-}
-}
-var valid5 = _errs45 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.captureAuthorityKind !== undefined){
-let data19 = data1.captureAuthorityKind;
-const _errs47 = errors;
-if(typeof data19 !== "string"){
-const err32 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/captureAuthorityKind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err32];
-}
-else {
-vErrors.push(err32);
-}
-errors++;
-}
-if(!((data19 === "workos") || (data19 === "service_token"))){
-const err33 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/captureAuthorityKind/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.captureAuthorityKind.enum},message:"must be equal to one of the allowed values"};
-if(vErrors === null){
-vErrors = [err33];
-}
-else {
-vErrors.push(err33);
-}
-errors++;
-}
-var valid5 = _errs47 === errors;
-}
-else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.decisionLifecycleProtocolVersion !== undefined){
-let data20 = data1.decisionLifecycleProtocolVersion;
-const _errs49 = errors;
-if(!(((typeof data20 == "number") && (!(data20 % 1) && !isNaN(data20))) && (isFinite(data20)))){
-const err34 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
-if(vErrors === null){
-vErrors = [err34];
-}
-else {
-vErrors.push(err34);
-}
-errors++;
-}
-if(errors === _errs49){
-if((typeof data20 == "number") && (isFinite(data20))){
-if(data20 > 9007199254740991 || isNaN(data20)){
-const err35 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+const err35 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
 vErrors = [err35];
 }
@@ -15973,9 +15845,18 @@ vErrors.push(err35);
 }
 errors++;
 }
-else {
-if(data20 < 1 || isNaN(data20)){
-const err36 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+}
+var _valid0 = _errs7 === errors;
+valid3 = valid3 || _valid0;
+if(_valid0){
+var props1 = true;
+}
+const _errs46 = errors;
+if(errors === _errs46){
+if(data1 && typeof data1 == "object" && !Array.isArray(data1)){
+let missing4;
+if(((((data1.moveId === undefined) && (missing4 = "moveId")) || ((data1.capturedAt === undefined) && (missing4 = "capturedAt"))) || ((data1.sessionId === undefined) && (missing4 = "sessionId"))) || ((data1.eventType === undefined) && (missing4 = "eventType"))){
+const err36 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err36];
 }
@@ -15984,20 +15865,11 @@ vErrors.push(err36);
 }
 errors++;
 }
-}
-}
-}
-var valid5 = _errs49 === errors;
-}
 else {
-var valid5 = true;
-}
-if(valid5){
-if(data1.producer !== undefined){
-let data21 = data1.producer;
-const _errs51 = errors;
-if(typeof data21 !== "string"){
-const err37 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/producer/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(data1.moveId !== undefined){
+const _errs49 = errors;
+if(typeof data1.moveId !== "string"){
+const err37 = {instancePath:instancePath+"/batch/" + i0+"/moveId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/moveId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err37];
 }
@@ -16006,8 +15878,17 @@ vErrors.push(err37);
 }
 errors++;
 }
-if(!((((data21 === "claude_code") || (data21 === "codex")) || (data21 === "cursor")) || (data21 === "hermes"))){
-const err38 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/producer/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.producer.enum},message:"must be equal to one of the allowed values"};
+var valid8 = _errs49 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.capturedAt !== undefined){
+let data18 = data1.capturedAt;
+const _errs51 = errors;
+if(!((typeof data18 == "number") && (isFinite(data18)))){
+const err38 = {instancePath:instancePath+"/batch/" + i0+"/capturedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedAt/type",keyword:"type",params:{type: "number"},message:"must be number"};
 if(vErrors === null){
 vErrors = [err38];
 }
@@ -16016,17 +15897,16 @@ vErrors.push(err38);
 }
 errors++;
 }
-var valid5 = _errs51 === errors;
+var valid8 = _errs51 === errors;
 }
 else {
-var valid5 = true;
+var valid8 = true;
 }
-if(valid5){
-if(data1.toolOutcome !== undefined){
-let data22 = data1.toolOutcome;
+if(valid8){
+if(data1.sessionId !== undefined){
 const _errs53 = errors;
-if(typeof data22 !== "string"){
-const err39 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/toolOutcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(typeof data1.sessionId !== "string"){
+const err39 = {instancePath:instancePath+"/batch/" + i0+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/sessionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err39];
 }
@@ -16035,8 +15915,16 @@ vErrors.push(err39);
 }
 errors++;
 }
-if(!((((((data22 === "succeeded") || (data22 === "returned")) || (data22 === "failed")) || (data22 === "interrupted")) || (data22 === "prevented")) || (data22 === "unknown"))){
-const err40 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/toolOutcome/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.toolOutcome.enum},message:"must be equal to one of the allowed values"};
+var valid8 = _errs53 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.invocationId !== undefined){
+const _errs55 = errors;
+if(typeof data1.invocationId !== "string"){
+const err40 = {instancePath:instancePath+"/batch/" + i0+"/invocationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/invocationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err40];
 }
@@ -16045,19 +15933,16 @@ vErrors.push(err40);
 }
 errors++;
 }
-var valid5 = _errs53 === errors;
+var valid8 = _errs55 === errors;
 }
 else {
-var valid5 = true;
+var valid8 = true;
 }
-if(valid5){
-if(data1.envelopeVersion !== undefined){
-let data23 = data1.envelopeVersion;
-const _errs55 = errors;
-if(errors === _errs55){
-if((typeof data23 == "number") && (isFinite(data23))){
-if(data23 >= 4 || isNaN(data23)){
-const err41 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/envelopeVersion/exclusiveMaximum",keyword:"exclusiveMaximum",params:{comparison: "<", limit: 4},message:"must be < 4"};
+if(valid8){
+if(data1.eventType !== undefined){
+const _errs57 = errors;
+if(typeof data1.eventType !== "string"){
+const err41 = {instancePath:instancePath+"/batch/" + i0+"/eventType",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/eventType/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err41];
 }
@@ -16066,9 +15951,24 @@ vErrors.push(err41);
 }
 errors++;
 }
+var valid8 = _errs57 === errors;
 }
 else {
-const err42 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/envelopeVersion/type",keyword:"type",params:{type: "number"},message:"must be number"};
+var valid8 = true;
+}
+if(valid8){
+if(data1.repositoryContext !== undefined){
+let data22 = data1.repositoryContext;
+const _errs59 = errors;
+const _errs60 = errors;
+let valid9 = false;
+let passing1 = null;
+const _errs61 = errors;
+if(errors === _errs61){
+if(data22 && typeof data22 == "object" && !Array.isArray(data22)){
+let missing5;
+if(((data22.kind === undefined) && (missing5 = "kind")) || ((data22.repoSyncId === undefined) && (missing5 = "repoSyncId"))){
+const err42 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/required",keyword:"required",params:{missingProperty: missing5},message:"must have required property '"+missing5+"'"};
 if(vErrors === null){
 vErrors = [err42];
 }
@@ -16077,26 +15977,11 @@ vErrors.push(err42);
 }
 errors++;
 }
-}
-var valid5 = _errs55 === errors;
-}
 else {
-var valid5 = true;
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-}
-else {
-const err43 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const _errs63 = errors;
+for(const key2 in data22){
+if(!((key2 === "kind") || (key2 === "repoSyncId"))){
+const err43 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err43];
 }
@@ -16104,22 +15989,471 @@ else {
 vErrors.push(err43);
 }
 errors++;
+break;
 }
 }
-var _valid0 = _errs32 === errors;
-valid3 = valid3 || _valid0;
-if(_valid0){
-if(props0 !== true){
-props0 = true;
-}
-}
-if(!valid3){
-const err44 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(_errs63 === errors){
+if(data22.kind !== undefined){
+let data23 = data22.kind;
+const _errs64 = errors;
+if(typeof data23 !== "string"){
+const err44 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err44];
 }
 else {
 vErrors.push(err44);
+}
+errors++;
+}
+if("repository_bound" !== data23){
+const err45 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "repository_bound"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err45];
+}
+else {
+vErrors.push(err45);
+}
+errors++;
+}
+var valid10 = _errs64 === errors;
+}
+else {
+var valid10 = true;
+}
+if(valid10){
+if(data22.repoSyncId !== undefined){
+let data24 = data22.repoSyncId;
+const _errs66 = errors;
+if(errors === _errs66){
+if(typeof data24 === "string"){
+if(func1(data24) > 128){
+const err46 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/properties/repoSyncId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
+if(vErrors === null){
+vErrors = [err46];
+}
+else {
+vErrors.push(err46);
+}
+errors++;
+}
+else {
+if(func1(data24) < 1){
+const err47 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/properties/repoSyncId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err47];
+}
+else {
+vErrors.push(err47);
+}
+errors++;
+}
+}
+}
+else {
+const err48 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/properties/repoSyncId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err48];
+}
+else {
+vErrors.push(err48);
+}
+errors++;
+}
+}
+var valid10 = _errs66 === errors;
+}
+else {
+var valid10 = true;
+}
+}
+}
+}
+}
+else {
+const err49 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err49];
+}
+else {
+vErrors.push(err49);
+}
+errors++;
+}
+}
+var _valid2 = _errs61 === errors;
+if(_valid2){
+valid9 = true;
+passing1 = 0;
+var props2 = true;
+}
+const _errs68 = errors;
+if(errors === _errs68){
+if(data22 && typeof data22 == "object" && !Array.isArray(data22)){
+let missing6;
+if((data22.kind === undefined) && (missing6 = "kind")){
+const err50 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/1/required",keyword:"required",params:{missingProperty: missing6},message:"must have required property '"+missing6+"'"};
+if(vErrors === null){
+vErrors = [err50];
+}
+else {
+vErrors.push(err50);
+}
+errors++;
+}
+else {
+const _errs70 = errors;
+for(const key3 in data22){
+if(!(key3 === "kind")){
+const err51 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err51];
+}
+else {
+vErrors.push(err51);
+}
+errors++;
+break;
+}
+}
+if(_errs70 === errors){
+if(data22.kind !== undefined){
+let data25 = data22.kind;
+if(typeof data25 !== "string"){
+const err52 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err52];
+}
+else {
+vErrors.push(err52);
+}
+errors++;
+}
+if("non_repository" !== data25){
+const err53 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "non_repository"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err53];
+}
+else {
+vErrors.push(err53);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err54 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err54];
+}
+else {
+vErrors.push(err54);
+}
+errors++;
+}
+}
+var _valid2 = _errs68 === errors;
+if(_valid2 && valid9){
+valid9 = false;
+passing1 = [passing1, 1];
+}
+else {
+if(_valid2){
+valid9 = true;
+passing1 = 1;
+if(props2 !== true){
+props2 = true;
+}
+}
+}
+if(!valid9){
+const err55 = {instancePath:instancePath+"/batch/" + i0+"/repositoryContext",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/repositoryContext/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err55];
+}
+else {
+vErrors.push(err55);
+}
+errors++;
+}
+else {
+errors = _errs60;
+if(vErrors !== null){
+if(_errs60){
+vErrors.length = _errs60;
+}
+else {
+vErrors = null;
+}
+}
+}
+var valid8 = _errs59 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.capturedOrganizationId !== undefined){
+let data26 = data1.capturedOrganizationId;
+const _errs73 = errors;
+if(errors === _errs73){
+if(typeof data26 === "string"){
+if(func1(data26) > 128){
+const err56 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"};
+if(vErrors === null){
+vErrors = [err56];
+}
+else {
+vErrors.push(err56);
+}
+errors++;
+}
+else {
+if(func1(data26) < 1){
+const err57 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+if(vErrors === null){
+vErrors = [err57];
+}
+else {
+vErrors.push(err57);
+}
+errors++;
+}
+else {
+if(!pattern8.test(data26)){
+const err58 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
+if(vErrors === null){
+vErrors = [err58];
+}
+else {
+vErrors.push(err58);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err59 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err59];
+}
+else {
+vErrors.push(err59);
+}
+errors++;
+}
+}
+var valid8 = _errs73 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.captureAuthorityKind !== undefined){
+let data27 = data1.captureAuthorityKind;
+const _errs75 = errors;
+if(typeof data27 !== "string"){
+const err60 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/captureAuthorityKind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err60];
+}
+else {
+vErrors.push(err60);
+}
+errors++;
+}
+if(!((data27 === "workos") || (data27 === "service_token"))){
+const err61 = {instancePath:instancePath+"/batch/" + i0+"/captureAuthorityKind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/captureAuthorityKind/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.captureAuthorityKind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err61];
+}
+else {
+vErrors.push(err61);
+}
+errors++;
+}
+var valid8 = _errs75 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.decisionLifecycleProtocolVersion !== undefined){
+let data28 = data1.decisionLifecycleProtocolVersion;
+const _errs77 = errors;
+if(!(((typeof data28 == "number") && (!(data28 % 1) && !isNaN(data28))) && (isFinite(data28)))){
+const err62 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+if(vErrors === null){
+vErrors = [err62];
+}
+else {
+vErrors.push(err62);
+}
+errors++;
+}
+if(errors === _errs77){
+if((typeof data28 == "number") && (isFinite(data28))){
+if(data28 > 9007199254740991 || isNaN(data28)){
+const err63 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+if(vErrors === null){
+vErrors = [err63];
+}
+else {
+vErrors.push(err63);
+}
+errors++;
+}
+else {
+if(data28 < 1 || isNaN(data28)){
+const err64 = {instancePath:instancePath+"/batch/" + i0+"/decisionLifecycleProtocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/decisionLifecycleProtocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err64];
+}
+else {
+vErrors.push(err64);
+}
+errors++;
+}
+}
+}
+}
+var valid8 = _errs77 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.producer !== undefined){
+let data29 = data1.producer;
+const _errs79 = errors;
+if(typeof data29 !== "string"){
+const err65 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/producer/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err65];
+}
+else {
+vErrors.push(err65);
+}
+errors++;
+}
+if(!((((data29 === "claude_code") || (data29 === "codex")) || (data29 === "cursor")) || (data29 === "hermes"))){
+const err66 = {instancePath:instancePath+"/batch/" + i0+"/producer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/producer/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.producer.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err66];
+}
+else {
+vErrors.push(err66);
+}
+errors++;
+}
+var valid8 = _errs79 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.toolOutcome !== undefined){
+let data30 = data1.toolOutcome;
+const _errs81 = errors;
+if(typeof data30 !== "string"){
+const err67 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/toolOutcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err67];
+}
+else {
+vErrors.push(err67);
+}
+errors++;
+}
+if(!((((((data30 === "succeeded") || (data30 === "returned")) || (data30 === "failed")) || (data30 === "interrupted")) || (data30 === "prevented")) || (data30 === "unknown"))){
+const err68 = {instancePath:instancePath+"/batch/" + i0+"/toolOutcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/toolOutcome/enum",keyword:"enum",params:{allowedValues: schema93.properties.batch.items.anyOf[1].properties.toolOutcome.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err68];
+}
+else {
+vErrors.push(err68);
+}
+errors++;
+}
+var valid8 = _errs81 === errors;
+}
+else {
+var valid8 = true;
+}
+if(valid8){
+if(data1.envelopeVersion !== undefined){
+let data31 = data1.envelopeVersion;
+const _errs83 = errors;
+if(errors === _errs83){
+if((typeof data31 == "number") && (isFinite(data31))){
+if(data31 >= 4 || isNaN(data31)){
+const err69 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/envelopeVersion/exclusiveMaximum",keyword:"exclusiveMaximum",params:{comparison: "<", limit: 4},message:"must be < 4"};
+if(vErrors === null){
+vErrors = [err69];
+}
+else {
+vErrors.push(err69);
+}
+errors++;
+}
+}
+else {
+const err70 = {instancePath:instancePath+"/batch/" + i0+"/envelopeVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/envelopeVersion/type",keyword:"type",params:{type: "number"},message:"must be number"};
+if(vErrors === null){
+vErrors = [err70];
+}
+else {
+vErrors.push(err70);
+}
+errors++;
+}
+}
+var valid8 = _errs83 === errors;
+}
+else {
+var valid8 = true;
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+else {
+const err71 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err71];
+}
+else {
+vErrors.push(err71);
+}
+errors++;
+}
+}
+var _valid0 = _errs46 === errors;
+valid3 = valid3 || _valid0;
+if(_valid0){
+if(props1 !== true){
+props1 = true;
+}
+}
+if(!valid3){
+const err72 = {instancePath:instancePath+"/batch/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err72];
+}
+else {
+vErrors.push(err72);
 }
 errors++;
 validate51.errors = vErrors;
