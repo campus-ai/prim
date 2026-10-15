@@ -8,6 +8,12 @@ const { mockDaemonRequest } = vi.hoisted(() => ({
 vi.mock("../daemon/client.js", () => ({
   daemonRequest: mockDaemonRequest,
 }));
+vi.mock("../lib/activation.js", () => ({ repoSyncId: () => "repo-sync-1" }));
+vi.mock("../lib/git.js", () => ({
+  canonicalGitRoot: () => "/repo",
+  canonicalRepositoryPath: (file: string) => ({ ok: true, file }),
+  currentBranch: () => "main",
+}));
 
 import { checkAffectedDecisions, formatDecisionsWarning } from "./decisions-check.js";
 
@@ -44,7 +50,9 @@ describe("checkAffectedDecisions", () => {
 
     expect(mockDaemonRequest).toHaveBeenCalledWith(
       "decisions_affecting",
-      expect.objectContaining({ path: "/api/cli/decisions/affecting?files=src%2Fa.ts" }),
+      expect.objectContaining({
+        path: "/api/cli/decisions/affecting?repoSyncId=repo-sync-1&branch=main&files=src%2Fa.ts",
+      }),
       { timeoutMs: 250 },
     );
     expect(get).not.toHaveBeenCalled();
@@ -55,12 +63,14 @@ describe("checkAffectedDecisions", () => {
     const get = vi
       .fn()
       .mockResolvedValueOnce({
+        repoSyncId: "repo-sync-1",
         decisions: [
           { id: "d1", intent: "i", status: "active", classifiedAt: 1, matchedFiles: ["src/f0.ts"] },
         ],
         truncated: false,
       })
       .mockResolvedValueOnce({
+        repoSyncId: "repo-sync-1",
         decisions: [
           {
             id: "d1",

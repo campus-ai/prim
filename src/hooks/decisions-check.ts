@@ -17,6 +17,8 @@
  */
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
+import { repoSyncId } from "../lib/activation.js";
+import { canonicalGitRoot, canonicalRepositoryPath, currentBranch } from "../lib/git.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export interface ActiveDecisionSummary {
@@ -49,6 +51,7 @@ const defaultDeps: CheckDeps = { getClient };
 
 type AffectingResponse = {
   decisions: ActiveDecisionSummary[];
+  repoSyncId?: string;
   truncated?: boolean;
   unavailable?: string;
 };
@@ -61,18 +64,33 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-async function fetchAffecting(client: CliClient, batch: string[]): Promise<AffectingResponse> {
+async function fetchAffecting(
+  client: CliClient,
+  batch: string[],
+  repository: { repoSyncId: string; branch?: string },
+): Promise<AffectingResponse> {
   const params = new URLSearchParams();
+  params.set("repoSyncId", repository.repoSyncId);
+  if (repository.branch) params.set("branch", repository.branch);
   for (const file of batch) {
     params.append("files", file);
   }
   try {
-    return await daemonOrDirectGet<AffectingResponse>(
+    const response = await daemonOrDirectGet<AffectingResponse>(
       "decisions_affecting",
       `/api/cli/decisions/affecting?${params.toString()}`,
       client,
       DECISIONS_CHECK_TIMEOUT_MS,
     );
+    // An older service ignores repository context and can silently miss scopes.
+    if (response.repoSyncId !== repository.repoSyncId) {
+      return {
+        decisions: [],
+        truncated: response.truncated === true,
+        unavailable: response.unavailable ?? "service did not verify repository-scoped discovery",
+      };
+    }
+    return response;
   } catch (err) {
     // A loud failure (network, auth, or the server's 400 on a bad path) must
     // report UNKNOWN, never a silent all-clear. Warn-only: the caller still
@@ -89,9 +107,31 @@ export async function checkAffectedDecisions(
   if (filePaths.length === 0) {
     return { decisions: [], truncated: false };
   }
+  const cwd = process.cwd();
+  const root = canonicalGitRoot(cwd);
+  const binding = repoSyncId(cwd);
+  if (!root || !binding) {
+    return {
+      decisions: [],
+      truncated: false,
+      unavailable: "this checkout has no current Primitive repository binding; run prim enable",
+    };
+  }
+  const canonical = filePaths.map((file) =>
+    canonicalRepositoryPath(file, { repoRoot: root }, root),
+  );
+  if (canonical.some((path) => !path.ok)) {
+    return {
+      decisions: [],
+      truncated: false,
+      unavailable: "files must resolve inside this repository; use repository-relative paths",
+    };
+  }
+  const paths = [...new Set(canonical.flatMap((path) => (path.ok ? [path.file] : [])))];
+  const repository = { repoSyncId: binding, branch: currentBranch(cwd) };
   const client = deps.getClient();
   const responses = await Promise.all(
-    chunk(filePaths, MAX_FILES_PER_REQUEST).map((batch) => fetchAffecting(client, batch)),
+    chunk(paths, MAX_FILES_PER_REQUEST).map((batch) => fetchAffecting(client, batch, repository)),
   );
 
   const byId = new Map<string, ActiveDecisionSummary>();
@@ -146,7 +186,7 @@ export function formatDecisionsWarning(result: DecisionsCheckResult): string {
   }
   if (result.truncated) {
     lines.push(
-      "[prim] result truncated — more files than the server checks per request; not all decisions shown",
+      "[prim] result truncated — a discovery scan or result limit was reached; not all decisions shown",
     );
   }
   return lines.join("\n");

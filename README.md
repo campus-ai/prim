@@ -297,6 +297,15 @@ prim decisions unlink <child> --on <parent>  # Remove that dependency
 `<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
+`decisions check` uses the checkout's current Primitive repository binding and
+Git branch. Paths are relative to the repository root, including from a
+subdirectory; paths for files that do not exist yet are supported. Discovery
+includes exact file, directory, glob, and repository scopes and applies each
+Decision's effective window and audience. It does not run the Conflict Gate.
+Missing bindings, older servers that cannot confirm repository-scoped discovery,
+and bounded partial results report `unavailable` or `truncated`; they are not a
+verified empty result. Reconnect a missing or stale binding with `prim enable`.
+
 When passive capture is inactive in the current repo, an approved one-time create is:
 
 ```bash
