@@ -300,10 +300,10 @@ export function registerDecisionsCommands(program: Command): void {
 
   decisions
     .command("check")
-    .description("Look up active decisions that reference one or more file paths")
+    .description("Look up active decisions scoped to file paths in the connected repository")
     .requiredOption(
       "--files <files>",
-      "Comma-separated file paths to check against the Decision Graph (repeatable)",
+      "Comma-separated repository-relative paths to check against the Decision Graph (repeatable)",
       collectPaths,
     )
     .action(async (opts: { files: string[] }) => {
