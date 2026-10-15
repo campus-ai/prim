@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.98](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.97...v0.1.0-alpha.98) (2026-10-15)
+
+
+### Bug Fixes
+
+* **decisions:** bind file discovery to the current repository ([#355](https://github.com/campus-ai/prim/issues/355)) ([8550b69](https://github.com/campus-ai/prim/commit/8550b695089c91353e25f8beb361d5f05c6ddecf))
+
 ## [0.1.0-alpha.97](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.96...v0.1.0-alpha.97) (2026-10-13)
 
 
