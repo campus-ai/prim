@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.99](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.98...v0.1.0-alpha.99) (2026-10-16)
+
+
+### Bug Fixes
+
+* **ingest:** identify the uploader independently of captured moves ([#358](https://github.com/campus-ai/prim/issues/358)) ([478f01f](https://github.com/campus-ai/prim/commit/478f01f2dbb05406475d917b322a7d45d847c82f))
+
 ## [0.1.0-alpha.98](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.97...v0.1.0-alpha.98) (2026-10-15)
 
 
