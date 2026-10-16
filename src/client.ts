@@ -26,6 +26,7 @@ import {
   resolveAuthCredential,
 } from "./lib/credentials.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
+import { ingestUploaderHeaders } from "./lib/ingest-uploader.js";
 import { terminalSafeLine } from "./lib/terminal-safe.js";
 import {
   WORKOS_CONNECT_RESPONSE_MAX_BYTES,
@@ -747,7 +748,7 @@ function selectedCredential(): AuthCredential | undefined {
   return _cachedCredential;
 }
 
-function fetchWithToken(
+async function fetchWithToken(
   method: string,
   path: string,
   body: unknown,
@@ -760,6 +761,9 @@ function fetchWithToken(
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      ...(method === "POST" && path === "/api/cli/moves/ingest"
+        ? await ingestUploaderHeaders()
+        : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: options?.signal,

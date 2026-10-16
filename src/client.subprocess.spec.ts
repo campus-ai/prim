@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { type Server, createServer } from "node:http";
+import { type IncomingHttpHeaders, type Server, createServer } from "node:http";
 import { type Socket, createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,12 +58,16 @@ function daemonCaller(token: string, subject: string, organizationId: string): D
   };
 }
 
-function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Promise<ChildResult> {
-  const source = `
+function runClientProcess(
+  moduleUrl: string,
+  home: string,
+  apiUrl: string,
+  source = `
     import { getClient } from ${JSON.stringify(moduleUrl)};
     const result = await getClient().get("/api/cli/protected");
     process.stdout.write(JSON.stringify(result));
-  `;
+  `,
+): Promise<ChildResult> {
   const env = {
     ...process.env,
     HOME: home,
@@ -72,6 +76,8 @@ function runClientProcess(moduleUrl: string, home: string, apiUrl: string): Prom
     PRIM_API_URL: apiUrl,
   };
   env.PRIM_TOKEN = undefined;
+  // Ordinary CLI processes discover their version from their package.
+  env.PRIM_RUNTIME_VERSION = undefined;
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
@@ -160,6 +166,7 @@ function runDaemonProcess(
   // The daemon's 60s token-check interval, compressed by default so tests do
   // not wait on it. A test can stretch it to prove another path does the work.
   tokenCheckIntervalMs = 20,
+  runtimeVersion = "test",
 ): RunningChild {
   const source = `
     const nativeSetTimeout = globalThis.setTimeout;
@@ -173,7 +180,7 @@ function runDaemonProcess(
     USERPROFILE: home,
     PRIM_CONFIG_DIR: join(home, ".config", "prim"),
     PRIM_API_URL: apiUrl,
-    PRIM_RUNTIME_VERSION: "test",
+    PRIM_RUNTIME_VERSION: runtimeVersion,
   };
   env.PRIM_TOKEN = undefined;
   const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
@@ -351,6 +358,124 @@ describe("cross-process browser credential rotation", () => {
   }, 20_000);
 });
 
+describe("ingest uploader attribution over real HTTP", () => {
+  it("keeps uploader identity across retries and processes without attributing capture metadata", async () => {
+    const home = mkdtempSync(join(tmpdir(), "prim-uploader-e2e-"));
+    const config = join(home, ".config", "prim");
+    const bundleDir = join(home, "bundle");
+    const identityPath = join(config, "client_instance_id");
+    const uploaderVersion = "0.1.0-alpha.98";
+    const manifest = { name: "@primitive.ai/prim", version: uploaderVersion, bin: {} };
+    const requests: Array<{ path: string; headers: IncomingHttpHeaders; body: string }> = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      request.on("end", () => {
+        requests.push({ path: request.url ?? "", headers: request.headers, body });
+        if (request.url === "/mcp/broker/refresh") {
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(
+            JSON.stringify({
+              access_token: "fresh-access",
+              refresh_token: "fresh-refresh",
+              expires_in: 300,
+            }),
+          );
+          return;
+        }
+        const rejected = request.headers.authorization === "Bearer old-access";
+        response.writeHead(rejected ? 401 : 200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(rejected ? { error: "expired" } : { acknowledged: 1 }));
+      });
+    });
+    try {
+      mkdirSync(config, { recursive: true });
+      writeFileSync(join(config, "token"), "old-access\n");
+      writeFileSync(join(config, "refresh_token"), "old-refresh\n");
+      writeFileSync(join(config, "token_expires_at"), `${Date.now() + 300_000}\n`);
+      const port = await listen(server);
+      await build({
+        entry: [join(process.cwd(), "src/client.ts")],
+        format: ["esm"],
+        outDir: bundleDir,
+        platform: "node",
+        target: "node20",
+        splitting: false,
+        clean: true,
+        silent: true,
+      });
+      const moduleUrl = pathToFileURL(join(bundleDir, "client.js")).href;
+      const apiUrl = `http://127.0.0.1:${String(port)}`;
+      const manifestPath = join(bundleDir, "package.json");
+      const source = `
+        import { getClient, getPinnedClient } from ${JSON.stringify(moduleUrl)};
+        import { writeFileSync } from "node:fs";
+        // An in-place upgrade after process startup must not relabel this uploader.
+        writeFileSync(${JSON.stringify(manifestPath)}, ${JSON.stringify(JSON.stringify({ ...manifest, version: "9.9.9" }))});
+        const payload = { moves: [{ moveId: "replay", env: { cliVersion: "0.1.0-alpha.92" } }] };
+        await getClient().post("/api/cli/moves/ingest", payload);
+        await (await getPinnedClient()).post("/api/cli/moves/ingest", payload);
+        await getClient().get("/api/cli/protected");
+      `;
+      const run = async () => {
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+        const result = await runClientProcess(moduleUrl, home, apiUrl, source);
+        expect(result, result.stderr).toMatchObject({ code: 0, stdout: "" });
+      };
+      await run();
+      const id = readFileSync(identityPath, "utf8").trim();
+      expect(isClientInstanceId(id)).toBe(true);
+      expect(statSync(identityPath).mode & 0o777).toBe(0o600);
+      await run();
+      const uploads = requests.filter((request) => request.path === "/api/cli/moves/ingest");
+      expect(uploads).toHaveLength(5); // A 401 retry, then pinned and restarted uploaders.
+      for (const upload of uploads) {
+        expect(upload.headers["x-prim-uploader-version"]).toBe(uploaderVersion);
+        expect(upload.headers["x-prim-client-instance-id"]).toBe(id);
+        expect(JSON.parse(upload.body).moves[0].env.cliVersion).toBe("0.1.0-alpha.92");
+      }
+      for (const request of requests.filter(
+        (request) => request.path !== "/api/cli/moves/ingest",
+      )) {
+        expect(request.headers["x-prim-uploader-version"]).toBeUndefined();
+        expect(request.headers["x-prim-client-instance-id"]).toBeUndefined();
+      }
+
+      // A malformed identity must neither leak nor rotate, and cannot block delivery.
+      requests.length = 0;
+      writeFileSync(identityPath, "private-invalid-identity\n");
+      await run();
+      expect(readFileSync(identityPath, "utf8")).toBe("private-invalid-identity\n");
+      expect(requests.filter((request) => request.path === "/api/cli/moves/ingest")).toHaveLength(
+        2,
+      );
+      expect(
+        requests.every((request) => request.headers["x-prim-client-instance-id"] === undefined),
+      ).toBe(true);
+
+      // A live owner must not hold optional diagnostics for the default 30s lock timeout.
+      writeFileSync(identityPath, `${id}\n`);
+      const lock = join(config, "client-instance.lock");
+      mkdirSync(lock);
+      writeFileSync(
+        join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, nonce: "held", createdAt: Date.now() }),
+      );
+      requests.length = 0;
+      await run(); // Child timeout is 10s, so a default lock wait fails this E2E.
+      expect(
+        requests.every((request) => request.headers["x-prim-client-instance-id"] === undefined),
+      ).toBe(true);
+      expect(readFileSync(identityPath, "utf8").trim()).toBe(id);
+    } finally {
+      if (server.listening) await close(server);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
 describe("daemon terminal-auth lifecycle", () => {
   it("holds without network replay and automatically resumes after fresh login", async () => {
     const home = mkdtempSync(join(tmpdir(), "prim-daemon-reauth-"));
@@ -369,6 +494,7 @@ describe("daemon terminal-auth lifecycle", () => {
     let networkCalls = 0;
     const authorizations: Array<string | undefined> = [];
     const requestUrls: string[] = [];
+    const ingestHeaders: IncomingHttpHeaders[] = [];
     const organizationId = "org-local";
     const workosOrganizationId = "org-workos";
     const server = createServer((request, response) => {
@@ -397,6 +523,7 @@ describe("daemon terminal-auth lifecycle", () => {
         return;
       }
       if (request.method === "POST" && request.url === "/api/cli/moves/ingest") {
+        ingestHeaders.push(request.headers);
         request.resume();
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
@@ -465,7 +592,13 @@ describe("daemon terminal-auth lifecycle", () => {
         silent: true,
       });
       const moduleUrl = pathToFileURL(join(bundleDir, "server.js")).href;
-      daemon = runDaemonProcess(moduleUrl, home, `http://127.0.0.1:${String(port)}`);
+      daemon = runDaemonProcess(
+        moduleUrl,
+        home,
+        `http://127.0.0.1:${String(port)}`,
+        20,
+        "0.1.0-alpha.98",
+      );
       await eventually(
         () => existsSync(socketPath) && (statSync(socketPath).mode & 0o777) === 0o600,
         () => `daemon socket was not secured: ${daemon?.stderr() ?? ""}`,
@@ -505,6 +638,9 @@ describe("daemon terminal-auth lifecycle", () => {
       expect(resumed.needsReauth).toBe(false);
       expect(requestUrls).toContain("/api/cli/presence/heartbeat");
       expect(requestUrls).toContain("/api/cli/moves/ingest");
+      expect(ingestHeaders).toHaveLength(1);
+      expect(ingestHeaders[0]["x-prim-uploader-version"]).toBe("0.1.0-alpha.98");
+      expect(ingestHeaders[0]["x-prim-client-instance-id"]).toBe(persistedClientInstanceId);
       expect(authorizations.every((value) => value === "Bearer fresh-access")).toBe(true);
       expect(existsSync(pendingPath)).toBe(false);
       expect(daemon.stderr()).toContain("re-authentication detected");
