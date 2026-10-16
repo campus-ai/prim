@@ -424,6 +424,17 @@ long) hands them to a detached background `prim moves flush` and never waits for
 it. It starts none while a live daemon on the same version and deployment, with
 a healthy heartbeat and no recorded ingestion failure, already owns the drain.
 
+Move uploads include `X-Prim-Uploader-Version` (the uploader process's version)
+and `X-Prim-Client-Instance-Id` (the opaque installation ID also used by presence
+heartbeats). These let server traces distinguish the uploader from the version
+that originally captured a replayed move. The ID is stored in
+`client_instance_id` under the Prim config directory (`~/.config/prim` by default,
+or `PRIM_CONFIG_DIR` / `XDG_CONFIG_HOME/prim`). Compare that file with the trace's
+`uploaderClientInstanceId` to correlate an installation; it contains no hostname.
+If the identity cannot be read or created immediately, uploads omit that header
+and continue. Invalid stored identities are never silently replaced. Older
+clients remain unattributed until updated and their uploader process restarted.
+
 ### Skill
 
 ```bash
