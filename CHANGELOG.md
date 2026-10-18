@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.100](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.99...v0.1.0-alpha.100) (2026-10-18)
+
+
+### Features
+
+* **reconcile:** record explicit check-linked outcomes ([de32f22](https://github.com/campus-ai/prim/commit/de32f2297384044ca34a08bc0948d39a243ea67a))
+
 ## [0.1.0-alpha.99](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.98...v0.1.0-alpha.99) (2026-10-16)
 
 
