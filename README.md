@@ -332,8 +332,21 @@ would create a cycle (exit 2); an unresolved id exits 4.
 prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
 ```
 
-When Conflict Gates **Enforcement** is enabled for your organization, this command
-authorizes one retry for the named decision.
+Record what happened after resolving a specific conflict:
+
+```bash
+prim reconcile <id> --check <checkId> --outcome followed
+prim reconcile <id> --check <checkId> --outcome superseded
+```
+
+Use `followed` when you retained the Decision. Use `superseded` only after a
+replacement Decision has been persisted with `prim decisions supersede`.
+The conflict output supplies the check ID. Only the person whose edit was
+checked can resolve that check. Repeating the same outcome is safe; changing an
+already recorded outcome is rejected. These declarations do not issue a bypass.
+
+Without `--check` and `--outcome`, when Conflict Gates **Enforcement** is enabled
+for your organization, `prim reconcile <id>` authorizes one retry for the named decision.
 
 ### Hooks
 

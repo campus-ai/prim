@@ -91,6 +91,19 @@
         "$ref": "#/$defs/CliErrorResponse"
       }
     },
+    "reconcileResolution": {
+      "method": "POST",
+      "path": "/api/cli/reconcile/resolve",
+      "request": {
+        "$ref": "#/$defs/ReconcileResolutionRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/ReconcileResolutionResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
     "repositoryBind": {
       "method": "POST",
       "path": "/api/cli/repositories/bind",
@@ -2134,6 +2147,9 @@
         "truncated": {
           "type": "boolean"
         },
+        "repoSyncId": {
+          "type": "string"
+        },
         "unavailable": {
           "type": "string"
         }
@@ -3477,6 +3493,10 @@
           "type": "number",
           "const": 3
         },
+        "checkId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
         "verdict": {
           "type": "string",
           "enum": ["allow", "warn", "ask", "block", "unavailable"]
@@ -3554,6 +3574,61 @@
         "bypassed"
       ],
       "additionalProperties": {}
+    },
+    "ReconcileResolutionRequest": {
+      "type": "object",
+      "properties": {
+        "idOrShortId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "checkId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["followed", "superseded"]
+        }
+      },
+      "required": ["idOrShortId", "checkId", "outcome"],
+      "additionalProperties": false
+    },
+    "ReconcileResolutionResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "checkId": {
+          "type": "string"
+        },
+        "decisionId": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["followed", "superseded"]
+        },
+        "recordedAt": {
+          "type": "number"
+        },
+        "duplicate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "checkId",
+        "decisionId",
+        "outcome",
+        "recordedAt",
+        "duplicate"
+      ],
+      "additionalProperties": false
     },
     "RepositoryBindRequest": {
       "type": "object",

@@ -500,6 +500,7 @@
         "protocolVersion": 3,
         "verdict": "block",
         "reasonCode": "high_confidence_contradiction",
+        "checkId": "check-1",
         "message": "The proposed edit conflicts with a governing Decision.",
         "conflicts": [],
         "bypassed": [],
@@ -624,6 +625,48 @@
             "participation": "candidate"
           }
         ]
+      }
+    },
+    {
+      "name": "explicit followed resolution",
+      "definition": "ReconcileResolutionRequest",
+      "valid": true,
+      "value": {
+        "idOrShortId": "dec_0123abcd",
+        "checkId": "check-1",
+        "outcome": "followed"
+      }
+    },
+    {
+      "name": "resolution requires a check",
+      "definition": "ReconcileResolutionRequest",
+      "valid": false,
+      "value": {
+        "idOrShortId": "dec_0123abcd",
+        "outcome": "followed"
+      }
+    },
+    {
+      "name": "bypass is not a resolution",
+      "definition": "ReconcileResolutionRequest",
+      "valid": false,
+      "value": {
+        "idOrShortId": "dec_0123abcd",
+        "checkId": "check-1",
+        "outcome": "bypassed"
+      }
+    },
+    {
+      "name": "idempotent resolution response",
+      "definition": "ReconcileResolutionResponse",
+      "valid": true,
+      "value": {
+        "ok": true,
+        "decisionId": "decision-1",
+        "checkId": "check-1",
+        "outcome": "followed",
+        "recordedAt": 1700000000000,
+        "duplicate": true
       }
     },
     {
@@ -1192,6 +1235,7 @@
       "definition": "DecisionsAffectingResponse",
       "valid": true,
       "value": {
+        "repoSyncId": "repo-sync-1",
         "decisions": [
           {
             "id": "decision-1",
