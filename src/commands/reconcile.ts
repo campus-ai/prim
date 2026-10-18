@@ -1,5 +1,8 @@
 /**
  * `prim reconcile <idOrShortId> [--flag <conflictFlagId>] [--json]`
+ * `prim reconcile <idOrShortId> --check <checkId> --outcome followed|superseded`
+ *
+ * Check-linked outcomes record an explicit resolution without issuing a bypass.
  *
  * Mints a single-use, decision-scoped reconcile bypass for the calling user.
  * The bypass is NOT a token to present — it is consumed automatically as a
@@ -20,6 +23,7 @@
 
 import type { Command } from "commander";
 import { HttpError, getClient } from "../client.js";
+import { isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
 
 type IssueBypassOk = {
   ok: true;
@@ -37,6 +41,8 @@ type IssueBypassOk = {
 };
 
 type ReconcileOptions = {
+  check?: string;
+  outcome?: string;
   flag?: string;
   json?: boolean;
 };
@@ -90,6 +96,10 @@ export async function performReconcile(
   idOrShortId: string,
   opts: ReconcileOptions = {},
 ): Promise<void> {
+  if (opts.check !== undefined || opts.outcome !== undefined) {
+    await performResolution(idOrShortId, opts);
+    return;
+  }
   const client = getClient();
   const body: Record<string, string> = { idOrShortId };
   if (opts.flag) {
@@ -128,13 +138,53 @@ export async function performReconcile(
   process.exitCode = EXIT_SERVER;
 }
 
+async function performResolution(idOrShortId: string, opts: ReconcileOptions): Promise<void> {
+  if (!opts.check || !["followed", "superseded"].includes(opts.outcome ?? "") || opts.flag) {
+    process.stderr.write(
+      "[prim] resolution requires --check <checkId> and --outcome followed|superseded; --flag is for bypasses\n",
+    );
+    console.log(JSON.stringify({ ok: false, error: "invalid_resolution_arguments" }));
+    process.exitCode = EXIT_USAGE;
+    return;
+  }
+  try {
+    const response = await getClient().post("/api/cli/reconcile/resolve", {
+      idOrShortId,
+      checkId: opts.check,
+      outcome: opts.outcome,
+    });
+    if (
+      !isReconcileResolutionResponse(response) ||
+      response.checkId !== opts.check ||
+      response.outcome !== opts.outcome
+    ) {
+      process.stderr.write("[prim] resolution: malformed server response\n");
+      console.log(JSON.stringify({ ok: false, error: "malformed_response" }));
+      process.exitCode = EXIT_SERVER;
+      return;
+    }
+    console.log(JSON.stringify(response, null, 2));
+    process.stderr.write(`[prim] recorded ${opts.outcome} for check ${opts.check}\n`);
+  } catch (error) {
+    const status = error instanceof HttpError ? error.status : undefined;
+    process.stderr.write(`[prim] resolution failed${status ? ` (${status})` : ""}\n`);
+    console.log(JSON.stringify({ ok: false, status }));
+    process.exitCode = isDomainRejection(error) ? EXIT_USAGE : EXIT_SERVER;
+  }
+}
+
 export function registerReconcileCommands(program: Command): void {
   program
     .command("reconcile <idOrShortId>")
-    .description("Issue a single-use bypass for a decision flagged by Conflict Gates Enforcement")
+    .description("Record a resolution or issue a single-use bypass for Conflict Gates Enforcement")
     .option(
       "--flag <conflictFlagId>",
       "Specific flag id to bind the bypass to (default: the decision's latest unack'd flag)",
+    )
+    .option("--check <checkId>", "Original conflict check to resolve; does not issue a bypass")
+    .option(
+      "--outcome <outcome>",
+      "Confirmed resolution: followed or superseded (requires --check)",
     )
     .option("--json", "(reserved; STDOUT is always JSON)")
     .action(async (idOrShortId: string, opts: ReconcileOptions) => {

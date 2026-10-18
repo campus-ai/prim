@@ -121,6 +121,11 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
   ) {
     return null;
   }
+  if (
+    response.checkId !== undefined &&
+    (typeof response.checkId !== "string" || !DISCLOSED_DECISION_ID_RE.test(response.checkId))
+  )
+    return null;
   const disclosures = response.decisionDisclosures;
   if (disclosures !== undefined) {
     if (
@@ -190,7 +195,15 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
         : typeof decisionId === "string" && safe.test(decisionId)
           ? decisionId
           : undefined;
-    return id ? [`To reconcile, run: prim reconcile ${id}`] : [];
+    if (!id) return [];
+    return [
+      `To reconcile, run: prim reconcile ${id}`,
+      ...(response.checkId && safe.test(response.checkId)
+        ? [
+            `Check: ${response.checkId}. After resolving, record the confirmed outcome: prim reconcile ${id} --check ${response.checkId} --outcome followed (retained Decision), or --outcome superseded (after replacing it). A bypass alone is not a resolution.`,
+          ]
+        : []),
+    ];
   });
   const reason = [message, ...new Set(directives)].filter(Boolean).join("\n");
   const disclosureContext = decisionDisclosureContext(response);
@@ -198,8 +211,12 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
     verdict,
     conflicts: response.conflicts,
     reason,
-    additionalContext:
-      disclosureContext || (["warn", "ask", "block"].includes(response.verdict) ? reason : ""),
+    additionalContext: [
+      disclosureContext,
+      ["warn", "ask", "block"].includes(response.verdict) ? reason : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     truncated: false,
     unavailable: response.verdict === "unavailable" ? unavailable : undefined,
   };

@@ -484,6 +484,7 @@ export interface DecisionsAffectingResponse {
     [k: string]: unknown | undefined;
   }[];
   truncated: boolean;
+  repoSyncId?: string;
   unavailable?: string;
   [k: string]: unknown | undefined;
 }
@@ -817,6 +818,7 @@ export interface PreflightRequestV3 {
 
 export interface PreflightResponseV3 {
   protocolVersion: 3;
+  checkId?: string;
   verdict: "allow" | "warn" | "ask" | "block" | "unavailable";
   reasonCode: string;
   message: string;
@@ -1578,6 +1580,21 @@ export type PresenceHeartbeatResponse =
       unavailable: string;
       [k: string]: unknown | undefined;
     };
+
+export interface ReconcileResolutionRequest {
+  idOrShortId: string;
+  checkId: string;
+  outcome: "followed" | "superseded";
+}
+
+export interface ReconcileResolutionResponse {
+  ok: true;
+  checkId: string;
+  decisionId: string;
+  outcome: "followed" | "superseded";
+  recordedAt: number;
+  duplicate: boolean;
+}
 
 export interface RepositoryBindRequest {
   repositoryFullName: string;
