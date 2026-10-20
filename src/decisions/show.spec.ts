@@ -10,7 +10,7 @@
  * a pending confirmation_request flag, and the truncated partial flag.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliClient } from "../client.js";
 
 const { mockDaemonRequest } = vi.hoisted(() => ({
@@ -134,6 +134,11 @@ describe("fetchShow", () => {
 });
 
 describe("formatShowHuman", () => {
+  // Plain STDERR lines (no OSC 8), as an agent's Bash tool sees them; the
+  // terminal variants are covered once in decision-url.spec.ts.
+  beforeEach(() => vi.stubEnv("NO_COLOR", "1"));
+  afterEach(() => vi.unstubAllEnvs());
+
   it("verdicts the decision with intent, canonical stage, and area", () => {
     const out = formatShowHuman(DETAIL);
     expect(out).toContain("Update the AUTH_PROVIDER constant");

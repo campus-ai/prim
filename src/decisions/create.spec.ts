@@ -9,7 +9,7 @@
  * map to an exit code.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type CliClient, HttpError } from "../client.js";
 import {
   type CreateOutcome,
@@ -39,6 +39,11 @@ function clientWith(post: CliClient["post"]): CliClient {
 }
 
 describe("formatCreateHuman", () => {
+  // Plain STDERR lines (no OSC 8), as an agent's Bash tool sees them; the
+  // terminal variants are covered once in decision-url.spec.ts.
+  beforeEach(() => vi.stubEnv("NO_COLOR", "1"));
+  afterEach(() => vi.unstubAllEnvs());
+
   it("leads with the intent and its web URL, without the dec_ handle", () => {
     expect(formatCreateHuman(OUTCOME, "Adopt X over Y")).toBe(
       `[prim] created "Adopt X over Y" → ${WEB_URL}.`,

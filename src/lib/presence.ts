@@ -1,45 +1,9 @@
-import { DECISION_ORIGIN } from "./decision-url.js";
+import { decisionLink } from "./decision-url.js";
 import { stripControlChars } from "./terminal-safe.js";
 
 /** An online teammate, optionally annotated with the area of their most
  *  recent decision and its canonical web URL (both server-derived). */
 export type Teammate = { name: string; area?: string; decisionUrl?: string };
-
-/** Return a terminal-safe, production Primitive Decision URL, if valid. */
-function validDecisionUrl(value: string | undefined): string | undefined {
-  if (typeof value !== "string" || stripControlChars(value) !== value) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(value);
-    if (
-      url.origin !== DECISION_ORIGIN ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      !/^\/decisions\/[^/]+$/u.test(url.pathname)
-    ) {
-      return undefined;
-    }
-    return url.href;
-  } catch {
-    return undefined;
-  }
-}
-
-function decisionLink(label: string, decisionUrl: string | undefined, plain: boolean): string {
-  const url = validDecisionUrl(decisionUrl);
-  if (plain || !url) {
-    return label;
-  }
-  // Style the visible label blue + underlined — a web-style link — so it reads
-  // as clickable. Emitted unconditionally, like the OSC 8 escapes: Claude Code
-  // renders the statusline, so there is no TTY to gate on. The reset lands
-  // before the OSC 8 close, keeping the style off the ", " separator.
-  return `\x1b]8;;${url}\x07\x1b[34;4m${label}\x1b[0m\x1b]8;;\x07`;
-}
 
 /**
  * The shared truncation skeleton behind the presence formatters.

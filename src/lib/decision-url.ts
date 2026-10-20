@@ -1,3 +1,6 @@
+import { supportsColor } from "./ansi.js";
+import { stripControlChars } from "./terminal-safe.js";
+
 /** Origin of the Primitive web app that hosts Decision pages. */
 export const DECISION_ORIGIN = "https://app.getprimitive.ai";
 
@@ -11,10 +14,66 @@ export function decisionWebUrl(decisionId: string): string {
   return `${DECISION_ORIGIN}/decisions/${encodeURIComponent(decisionId)}`;
 }
 
+/** Return a terminal-safe, production Primitive Decision URL, if valid. */
+export function validDecisionUrl(value: string | undefined): string | undefined {
+  if (typeof value !== "string" || stripControlChars(value) !== value) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+    if (
+      url.origin !== DECISION_ORIGIN ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      !/^\/decisions\/[^/]+$/u.test(url.pathname)
+    ) {
+      return undefined;
+    }
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * A quoted, already terminal-safe headline pointing at its Decision, with the
- * full URL visible so agents can cite it.
+ * Wrap `label` in an OSC 8 hyperlink to a valid Decision URL, styled blue +
+ * underlined so it reads as clickable. `plain` (or an invalid URL) returns
+ * the bare label. Callers own the gating: the presence statusline links
+ * unconditionally (Claude Code renders it; there is no TTY to check), while
+ * CLI STDERR lines gate on {@link supportsDecisionHyperlinks}. The reset
+ * lands before the OSC 8 close, keeping the style off trailing separators.
+ */
+export function decisionLink(
+  label: string,
+  decisionUrl: string | undefined,
+  plain: boolean,
+): string {
+  const url = validDecisionUrl(decisionUrl);
+  if (plain || !url) {
+    return label;
+  }
+  return `\x1b]8;;${url}\x07\x1b[34;4m${label}\x1b[0m\x1b]8;;\x07`;
+}
+
+/**
+ * Whether a STDERR line may carry an OSC 8 link in place of the visible URL:
+ * an interactive terminal with color allowed, excluding Terminal.app, which
+ * ignores OSC 8 and would silently drop the link.
+ */
+export function supportsDecisionHyperlinks(): boolean {
+  return supportsColor() && process.env.TERM_PROGRAM !== "Apple_Terminal";
+}
+
+/**
+ * A quoted, already terminal-safe headline pointing at its Decision. On a
+ * hyperlink-capable TTY the headline itself is the link; everywhere else
+ * (agent Bash tools, pipes) the full URL stays visible so agents can cite it.
  */
 export function linkedHeadline(safeHeadline: string, decisionId: string): string {
-  return `"${safeHeadline}" → ${decisionWebUrl(decisionId)}`;
+  const url = decisionWebUrl(decisionId);
+  const quoted = `"${safeHeadline}"`;
+  return supportsDecisionHyperlinks() ? decisionLink(quoted, url, false) : `${quoted} → ${url}`;
 }

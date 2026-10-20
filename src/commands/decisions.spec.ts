@@ -81,6 +81,8 @@ describe("decisions create activation consent", () => {
     vi.resetAllMocks();
     vi.stubEnv("CI", "");
     vi.stubEnv("PRIM_NON_INTERACTIVE", "");
+    // Plain STDERR lines (no OSC 8), as an agent's Bash tool sees them.
+    vi.stubEnv("NO_COLOR", "1");
     process.exitCode = 0;
     mocks.fetchCreate.mockResolvedValue(OUTCOME);
     mocks.rescopeDecision.mockResolvedValue(0);
