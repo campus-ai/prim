@@ -1,10 +1,9 @@
+import { DECISION_ORIGIN } from "./decision-url.js";
 import { stripControlChars } from "./terminal-safe.js";
 
 /** An online teammate, optionally annotated with the area of their most
  *  recent decision and its canonical web URL (both server-derived). */
 export type Teammate = { name: string; area?: string; decisionUrl?: string };
-
-const DECISION_ORIGIN = "https://app.getprimitive.ai";
 
 /** Return a terminal-safe, production Primitive Decision URL, if valid. */
 function validDecisionUrl(value: string | undefined): string | undefined {

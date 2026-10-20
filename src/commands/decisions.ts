@@ -690,7 +690,7 @@ export function registerDecisionsCommands(program: Command): void {
         for (const warning of createScopeWarnings(request, outcome)) {
           console.error(terminalSafeLine(`[prim] create warning: ${warning}`));
         }
-        console.error(formatCreateHuman(outcome));
+        console.error(formatCreateHuman(outcome, request.intent));
         console.log(formatCreateJson(outcome));
       } catch (err) {
         if (err instanceof HttpError && err.status >= 400 && err.status < 500) {

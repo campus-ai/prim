@@ -10,14 +10,16 @@
  * and undefined optional fields are pruned so the server applies its
  * defaults (kind change, confidence and reversibility high).
  *
- * AX contract: STDOUT is machine-readable JSON (the created identity),
+ * AX contract: STDOUT is machine-readable JSON (the created identity plus
+ * its web URL, so an agent can hyperlink it without a `show` round trip),
  * STDERR is the verdict-first human line. Exit 0 on success; the command
  * maps a 4xx domain rejection (bad enum, org-unbound) to exit 2 and lets
  * transport / 5xx failures surface as exit 1.
  */
 
 import { type CliClient, getClient } from "../client.js";
-import { renderIdentifier } from "./recent.js";
+import { decisionWebUrl, linkedHeadline } from "../lib/decision-url.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export interface DecisionLocationScope {
   [key: string]: unknown | undefined;
@@ -145,11 +147,16 @@ export async function fetchCreate(
   })) as CreateOutcome;
 }
 
-export function formatCreateHuman(outcome: CreateOutcome): string {
-  const id = renderIdentifier({ shortId: outcome.shortId, id: outcome.decisionId });
-  return `[prim] created ${id}.`;
+/**
+ * Lead with what was recorded, linked to where to read it. The `dec_` handle
+ * stays in the JSON. The intent is the author's own request text (the server
+ * does not echo it back), sanitized like any display string.
+ */
+export function formatCreateHuman(outcome: CreateOutcome, intent: string): string {
+  return `[prim] created ${linkedHeadline(terminalSafeLine(intent), outcome.decisionId)}.`;
 }
 
+/** The server's identity verbatim, plus the additive `webUrl`. */
 export function formatCreateJson(outcome: CreateOutcome): string {
-  return JSON.stringify(outcome, null, 2);
+  return JSON.stringify({ ...outcome, webUrl: decisionWebUrl(outcome.decisionId) }, null, 2);
 }

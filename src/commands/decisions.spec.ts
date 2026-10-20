@@ -107,8 +107,9 @@ describe("decisions create activation consent", () => {
     expect(mocks.fetchCreate).toHaveBeenCalledWith(
       expect.objectContaining({ attribution: "user" }),
     );
-    expect(errorSpy).toHaveBeenCalledWith("[prim] created dec_abc12345.");
-    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(OUTCOME, null, 2));
+    const webUrl = "https://app.getprimitive.ai/decisions/qx7fpmycwabtzke040y7vecnnh8870pg";
+    expect(errorSpy).toHaveBeenCalledWith(`[prim] created "Use X" → ${webUrl}.`);
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify({ ...OUTCOME, webUrl }, null, 2));
     expect(process.exitCode).toBe(0);
   });
 

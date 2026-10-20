@@ -29,6 +29,8 @@ import {
   formatShowJson,
 } from "./show.js";
 
+const WEB_URL = "https://app.getprimitive.ai/decisions/qx7fpmycwabtzke040y7vecnnh8870pg";
+
 const DETAIL: DecisionShowResult = {
   decision: {
     id: "qx7fpmycwabtzke040y7vecnnh8870pg",
@@ -132,9 +134,8 @@ describe("fetchShow", () => {
 });
 
 describe("formatShowHuman", () => {
-  it("verdicts the decision with id, intent, canonical stage, and area", () => {
+  it("verdicts the decision with intent, canonical stage, and area", () => {
     const out = formatShowHuman(DETAIL);
-    expect(out).toContain("dec_230a72aa");
     expect(out).toContain("Update the AUTH_PROVIDER constant");
     expect(out).toContain("status: adopted");
     expect(out).toContain("area: auth");
@@ -157,6 +158,11 @@ describe("formatShowHuman", () => {
     });
 
     expect(out).toContain("status: active");
+  });
+
+  it("leads with the intent and its web URL, without the dec_ handle", () => {
+    const [header] = formatShowHuman(DETAIL).split("\n");
+    expect(header).toBe(`[prim] "Update the AUTH_PROVIDER constant" → ${WEB_URL}`);
   });
 
   it("renders alternatives, rationale, and decided points", () => {
@@ -292,13 +298,13 @@ describe("formatShowHuman", () => {
     expect(out).not.toContain("rationale:");
   });
 
-  it("renders the raw id when shortId is absent", () => {
+  it("links by the full id when shortId is absent", () => {
     const noShortId = {
       ...DETAIL,
       decision: { ...DETAIL.decision, shortId: undefined },
     };
     const out = formatShowHuman(noShortId);
-    expect(out).toContain("qx7fpmycwabtzke040y7vecnnh8870pg");
+    expect(out).toContain(WEB_URL);
   });
 
   it("renders a supersededBy line for a superseded decision", () => {
@@ -311,7 +317,9 @@ describe("formatShowHuman", () => {
       },
     };
     const out = formatShowHuman(superseded);
-    expect(out).toContain("superseded by: qxsupersedingdecisionid000000000");
+    expect(out).toContain(
+      "superseded by: https://app.getprimitive.ai/decisions/qxsupersedingdecisionid000000000\n",
+    );
   });
 
   it("surfaces respondedAt when the author has responded", () => {
@@ -405,11 +413,34 @@ describe("formatShowJson", () => {
     expect(parsed.flags).toHaveLength(1);
   });
 
+  it("adds the decision's web URL and leaves edge nodes verbatim", () => {
+    const parsed = JSON.parse(formatShowJson(DETAIL));
+    expect(parsed.decision.webUrl).toBe(
+      "https://app.getprimitive.ai/decisions/qx7fpmycwabtzke040y7vecnnh8870pg",
+    );
+    expect(parsed.decision.supersededBy).toBeNull();
+    expect(parsed.decision).not.toHaveProperty("supersededByWebUrl");
+    expect(parsed.dependents[0]).not.toHaveProperty("webUrl");
+  });
+
+  it("links the superseding decision by its full id", () => {
+    const parsed = JSON.parse(
+      formatShowJson({
+        ...DETAIL,
+        decision: { ...DETAIL.decision, supersededBy: "qxsupersedingdecisionid000000000" },
+      }),
+    );
+    expect(parsed.decision.supersededBy).toBe("qxsupersedingdecisionid000000000");
+    expect(parsed.decision.supersededByWebUrl).toBe(
+      "https://app.getprimitive.ai/decisions/qxsupersedingdecisionid000000000",
+    );
+  });
+
   it("does not sanitize the machine-readable projection", () => {
     const unsafe = {
       ...DETAIL,
       decision: { ...DETAIL.decision, intent: "raw\u001b[2J\u202e\u200b" },
     };
-    expect(formatShowJson(unsafe)).toBe(JSON.stringify(unsafe, null, 2));
+    expect(JSON.parse(formatShowJson(unsafe)).decision.intent).toBe(unsafe.decision.intent);
   });
 });

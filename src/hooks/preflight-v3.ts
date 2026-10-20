@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { getClient } from "../client.js";
 import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
+import { decisionWebUrl } from "../lib/decision-url.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
@@ -189,14 +190,13 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
   const directives = response.conflicts.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const { decisionId, shortId } = value as Record<string, unknown>;
-    const id =
-      typeof shortId === "string" && safe.test(shortId)
-        ? `dec_${shortId}`
-        : typeof decisionId === "string" && safe.test(decisionId)
-          ? decisionId
-          : undefined;
+    const fullId = typeof decisionId === "string" && safe.test(decisionId) ? decisionId : undefined;
+    const id = typeof shortId === "string" && safe.test(shortId) ? `dec_${shortId}` : fullId;
     if (!id) return [];
+    // The conflict row carries ids only (no intent), so the link is the
+    // governing Decision's web URL; it needs the full id to resolve.
     return [
+      ...(fullId ? [`Governing Decision: ${decisionWebUrl(fullId)}`] : []),
       `To reconcile, run: prim reconcile ${id}`,
       ...(response.checkId && safe.test(response.checkId)
         ? [

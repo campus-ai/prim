@@ -1,8 +1,8 @@
 /**
  * `prim decisions create` — formatter coverage and the fetch contract.
  *
- * Formatters: the created-identity human line (dec_ short form and the
- * full-id fallback) and the verbatim JSON. fetchCreate: it POSTs to
+ * Formatters: the created-identity human line (intent + web URL) and the
+ * JSON (verbatim plus webUrl). fetchCreate: it POSTs to
  * /api/cli/decisions/create with a body pruned to only the fields the
  * author set (undefined and empty arrays dropped), returns the server's
  * identity, and propagates a domain error untouched for the command to
@@ -21,6 +21,7 @@ import {
 
 const FULL_ID = "qx7fpmycwabtzke040y7vecnnh8870pg";
 const SHORT_ID = "abc12345";
+const WEB_URL = `https://app.getprimitive.ai/decisions/${FULL_ID}`;
 
 const OUTCOME: CreateOutcome = {
   decisionId: FULL_ID,
@@ -38,20 +39,26 @@ function clientWith(post: CliClient["post"]): CliClient {
 }
 
 describe("formatCreateHuman", () => {
-  it("renders the dec_ short form", () => {
-    expect(formatCreateHuman(OUTCOME)).toBe(`[prim] created dec_${SHORT_ID}.`);
+  it("leads with the intent and its web URL, without the dec_ handle", () => {
+    expect(formatCreateHuman(OUTCOME, "Adopt X over Y")).toBe(
+      `[prim] created "Adopt X over Y" → ${WEB_URL}.`,
+    );
   });
 
-  it("falls back to the full id when the server returned no shortId", () => {
-    expect(formatCreateHuman({ decisionId: FULL_ID, createdAt: 1 })).toBe(
-      `[prim] created ${FULL_ID}.`,
-    );
+  it("sanitizes the intent before terminal rendering", () => {
+    const esc = String.fromCharCode(0x1b);
+    const out = formatCreateHuman(OUTCOME, `Adopt\nX${esc}[2J\u202e`);
+    expect(out).toContain('"Adopt X[2J"');
+    expect(out).not.toContain(esc);
+    expect(out).not.toContain("\u202e");
   });
 });
 
 describe("formatCreateJson", () => {
-  it("emits the created identity verbatim", () => {
-    expect(formatCreateJson(OUTCOME)).toBe(JSON.stringify(OUTCOME, null, 2));
+  it("emits the created identity verbatim plus the additive webUrl", () => {
+    expect(formatCreateJson(OUTCOME)).toBe(
+      JSON.stringify({ ...OUTCOME, webUrl: WEB_URL }, null, 2),
+    );
   });
 });
 

@@ -16,11 +16,16 @@
  * string[], optional `contexts[].name`, and `dependsOn` / `dependents` as lean
  * DecisionNode[]; never the raw fileRefs / contextRefs / edge-doc
  * columns the projection deliberately drops.
+ *
+ * The CLI adds web URLs to that projection (`decision.webUrl` and
+ * `decision.supersededByWebUrl`), derived from the full ids, so an agent can
+ * hyperlink the Decision and its successor without another lookup.
  */
 
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
+import { decisionWebUrl, linkedHeadline } from "../lib/decision-url.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 import { renderIdentifier } from "./recent.js";
 
@@ -283,18 +288,18 @@ function describeAudience(users: DecisionUserScopeReadMember[] | undefined): str
 
 export function formatShowHuman(result: DecisionShowResult): string {
   const d = result.decision;
-  const id = color(renderIdentifier({ shortId: d.shortId, id: d.id }), "orange");
   const confidence = d.confidence ?? "(unset)";
   // `status` remains a legacy compatibility shim: it reports "active" for an
   // author-visible abandoned Decision. Prefer the canonical lifecycle stage
   // whenever an updated server provides it.
   const displayedStatus = d.stage ?? d.status;
   const lines = [
-    `[prim] ${id} — ${terminalSafeLine(d.intent)}`,
+    `[prim] ${linkedHeadline(terminalSafeLine(d.intent), d.id)}`,
     `  status: ${colorStatus(displayedStatus)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
   ];
   if (d.supersededBy) {
-    lines.push(`  superseded by: ${terminalSafeLine(d.supersededBy)}`);
+    // The server sends only the successor's full id (no short id or intent).
+    lines.push(`  superseded by: ${decisionWebUrl(d.supersededBy)}`);
   }
   if (d.area) {
     const area = terminalSafeLine(d.area);
@@ -344,6 +349,21 @@ export function formatShowHuman(result: DecisionShowResult): string {
   return lines.join("\n");
 }
 
+/** The server projection verbatim, plus additive web URLs for the Decision and its successor. */
 export function formatShowJson(result: DecisionShowResult): string {
-  return JSON.stringify(result, null, 2);
+  const { decision } = result;
+  return JSON.stringify(
+    {
+      ...result,
+      decision: {
+        ...decision,
+        webUrl: decisionWebUrl(decision.id),
+        ...(decision.supersededBy
+          ? { supersededByWebUrl: decisionWebUrl(decision.supersededBy) }
+          : {}),
+      },
+    },
+    null,
+    2,
+  );
 }
