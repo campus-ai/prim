@@ -42,6 +42,20 @@ skill, and the welcome:
 prim setup                 # add --agent cursor, codex, or hermes; --no-daemon explicitly opts out
 ```
 
+After successful setup, a first-run, 2–3 minute **simulated tour** demonstrates
+sample ingestion, Decision creation, a warning, a blocked write, and a correction.
+Your agent guides two choices; no sample Decisions enter the real graph.
+Use `prim setup --skip-demo` to skip and remember that choice, or
+`prim demo --agent <claude|codex|cursor|hermes>` to replay.
+For a person at a terminal, `prim demo` prompts directly.
+
+The agent tour waits for trusted hooks before showing samples and excludes
+passive capture for the remainder of that agent session, including resumes.
+Start a new session afterward for normal capture. Explicitly approved real
+Decisions can still be created, and other sessions continue capturing.
+The tour uses disposable local files and scripted verdicts; it does not test
+production ingestion or Enforcement. It offers real-memory seeding afterward.
+
 Or run the steps individually:
 
 ```bash

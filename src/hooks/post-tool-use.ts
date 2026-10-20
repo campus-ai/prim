@@ -29,6 +29,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOrg } from "../binding.js";
+import { observeDemoInvocation } from "../demo/isolation.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
@@ -175,6 +176,10 @@ async function main(): Promise<void> {
       return;
     }
     parsed = normalizeEnvelope(incoming, agent);
+    if (observeDemoInvocation(parsed, agent).excluded) {
+      await emit();
+      return;
+    }
   } catch {
     await emit();
     return;

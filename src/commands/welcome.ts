@@ -145,10 +145,13 @@ const GUIDANCE_PASSIVE: Record<AgentCopyKey, string> = {
  * proposal procedure itself lives in the prim skill); the STDERR block
  * carries the same substance for a human running `prim welcome` directly.
  */
-export function seedGuidanceFor(agent?: WelcomeAgent): string {
+const EXCLUDED_CAPTURE =
+  "Passive capture is excluded for this onboarding session. Start a new session for normal capture; explicitly approved real Decisions can still be created.";
+
+export function seedGuidanceFor(agent?: WelcomeAgent, captureExcluded = false): string {
   return [
     "You can tell your agent to add any decision to your Primitive decision graph at any time.",
-    GUIDANCE_PASSIVE[agent ?? "generic"],
+    captureExcluded ? EXCLUDED_CAPTURE : GUIDANCE_PASSIVE[agent ?? "generic"],
     "To capture decisions in other repositories, enable Primitive there too: run `prim enable` in each one.",
   ].join(" ");
 }
@@ -182,7 +185,11 @@ export function welcomeStateFromRecent(result: DecisionsRecentResult): WelcomeSt
   return { org: "active", recent };
 }
 
-export function formatWelcome(state: WelcomeState, agent?: WelcomeAgent): string {
+export function formatWelcome(
+  state: WelcomeState,
+  agent?: WelcomeAgent,
+  captureExcluded = false,
+): string {
   const cmd = (command: string, desc: string): string =>
     `  ${dim(command.padEnd(CMD_GUTTER))}${desc}`;
   const bullet = (text: string): string => `  ${color("•", "green")} ${text}`;
@@ -201,7 +208,7 @@ export function formatWelcome(state: WelcomeState, agent?: WelcomeAgent): string
     "shared graph — automatically, as you work.",
     "",
     bold("How it works"),
-    ...asBullet(CAPTURE_LINES[copyKey]),
+    ...asBullet(captureExcluded ? [EXCLUDED_CAPTURE] : CAPTURE_LINES[copyKey]),
     bullet("Conflict Gates can warn, ask, or block edits that conflict"),
     "    with a load-bearing decision when Enforcement is enabled.",
     bullet('Occasional yes/no prompts confirm the "why" behind a decision —'),
@@ -239,7 +246,7 @@ export function formatWelcome(state: WelcomeState, agent?: WelcomeAgent): string
       "",
       bold("From here on"),
       bullet("Tell your agent to add any decision to Primitive, any time."),
-      ...asBullet(PASSIVE_LINES[copyKey]),
+      ...asBullet(captureExcluded ? [EXCLUDED_CAPTURE] : PASSIVE_LINES[copyKey]),
       bullet("Run `prim enable` in each additional repo you want captured."),
     ];
   } else {
@@ -255,7 +262,11 @@ export function formatWelcome(state: WelcomeState, agent?: WelcomeAgent): string
 }
 
 /** STDOUT payload: the org state plus the branch-specific signal for the agent. */
-export function welcomeJson(state: WelcomeState, agent?: WelcomeAgent): Record<string, unknown> {
+export function welcomeJson(
+  state: WelcomeState,
+  agent?: WelcomeAgent,
+  captureExcluded = false,
+): Record<string, unknown> {
   if (state.org === "active") {
     return { welcomed: true, org: "active", recent: state.recent };
   }
@@ -268,7 +279,7 @@ export function welcomeJson(state: WelcomeState, agent?: WelcomeAgent): Record<s
     return {
       welcomed: true,
       org: "seed",
-      seedGuidance: seedGuidanceFor(agent),
+      seedGuidance: seedGuidanceFor(agent, captureExcluded),
       recent: state.recent,
     };
   }
@@ -280,11 +291,22 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
     .command("welcome")
     .description("Print a brief orientation to Primitive's decision graph")
     .option("--agent <agent>", "claude, codex, cursor, or hermes — tailors the capture guidance")
-    .action(async (options: { agent?: string }) => {
-      const agent = resolveWelcomeAgent(options.agent, process.env);
-      const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);
-      const state = welcomeStateFromRecent(result);
-      process.stderr.write(`${formatWelcome(state, agent)}\n`);
-      printJson(welcomeJson(state, agent));
-    });
+    .option("--defer-seeding", "let setup's local tour finish before proposing real Decisions")
+    .option("--capture-excluded", "explain the demo session's passive capture exclusion")
+    .action(
+      async (options: { agent?: string; deferSeeding?: boolean; captureExcluded?: boolean }) => {
+        const agent = resolveWelcomeAgent(options.agent, process.env);
+        if (options.deferSeeding) {
+          process.stderr.write(
+            "Welcome to Primitive. Setup is complete; the optional simulated tour comes before real Decision seeding.\n",
+          );
+          printJson({ welcomed: true, onboarding: "demo", seedingDeferred: true });
+          return;
+        }
+        const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);
+        const state = welcomeStateFromRecent(result);
+        process.stderr.write(`${formatWelcome(state, agent, options.captureExcluded)}\n`);
+        printJson(welcomeJson(state, agent, options.captureExcluded));
+      },
+    );
 }

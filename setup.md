@@ -113,7 +113,34 @@ tell the user: "Approve the prim hooks when Hermes prompts — until you do,
 decision capture stays inert. To skip the prompts, start
 Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
 
-## 2. Welcome (always), then the seeding proposals — last
+## 2. Simulated tour after successful setup
+
+On the first successful setup in this local OS-user configuration, setup returns
+a demo `nextAction`. Execute it automatically, exactly as a standalone command.
+Always identify your agent with `setup --agent <your agent>`, even when using a PTY.
+Do not ask another permission question to begin the tour. The user may skip with
+`setup --skip-demo`; a later `npx --yes @primitive.ai/prim@latest demo --agent <your agent>`
+explicitly replays it.
+
+Before showing samples, hooks acknowledge exclusion of this agent session from
+passive Decision capture. If the result is pending, surface its trust instructions
+and wait for trust before retrying. This is a local simulation, not a live test of
+ingestion or Enforcement. Present its output faithfully, including the fictional
+source, rationale, scope, actual file evidence, and simulated labels.
+
+Pause for two teaching choices: confirmation of the sample authoring proposal,
+then selection of the repository-based correction or another blocked attempt.
+Follow the returned next/skip actions. Do not delegate the tour, edit sample files
+yourself, promote samples to memory, or create real Decisions from the examples.
+Completion and skip remove owned files; unfinished runs expose cleanup commands.
+
+Passive capture remains excluded for this session, including later resumes.
+Explicitly approved real Decisions can still be created. Tell the user to start
+a new session to resume normal passive capture. After completion or skip, offer
+the real-memory seeding procedure below; defer it while the tour remains pending.
+The tour's status does not change whether installation itself succeeded.
+
+## 3. Welcome and real seeding proposals
 
 The welcome message is a **required deliverable** of setup: once install
 succeeded, the user must always see it. `setup` already ran it once; run it again
@@ -125,6 +152,9 @@ trusted):
 ```
 npx --yes @primitive.ai/prim@latest welcome --agent <your agent>
 ```
+
+If this session ran the demo, add `--capture-excluded` so welcome's guidance
+accurately describes its capture state.
 
 Surface its **orientation** — the canonical "here's how Primitive works". It
 adapts to you: if **you** have recorded decisions it inlines the team's latest

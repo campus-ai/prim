@@ -27,6 +27,7 @@ import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_p
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Command } from "commander";
+import { onboardingFinished } from "../demo/state.js";
 import { gitHooksMode, resolveEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import {
@@ -411,6 +412,7 @@ type SetupCommandOptions = {
   migrate?: boolean;
   daemon: boolean;
   globalHooksPath?: boolean;
+  skipDemo?: boolean;
 };
 
 export function registerSetupCommand(
@@ -437,6 +439,7 @@ export function registerSetupCommand(
       "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
     )
     .option("--no-daemon", "stop and disable the companion daemon")
+    .option("--skip-demo", "skip the local onboarding tour and remember that choice")
     .action((opts: SetupCommandOptions) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
@@ -621,8 +624,26 @@ export function registerSetupCommand(
       // the required final deliverable is always shown. A non-zero (it normally
       // exits 0) is surfaced as `failed` — which, like any required step, flips
       // the overall exit to incomplete — rather than silently reported as ok.
+      const installationSucceeded = !Object.values(results).includes("failed");
+      let tourDue = false;
+      if (installationSucceeded && !opts.skipDemo) {
+        try {
+          tourDue = !onboardingFinished();
+        } catch (error) {
+          note(
+            `demo · cannot read onboarding state: ${error instanceof Error ? error.message : String(error)}; use prim demo to retry`,
+          );
+        }
+      }
+      if (installationSucceeded && opts.skipDemo) {
+        if (run(["demo", "skip"]).code !== 0)
+          note("demo · could not remember skip; installation remains configured");
+      }
       note("welcome");
-      results.welcome = run(["welcome", "--agent", agent]).code === 0 ? "ok" : "failed";
+      results.welcome =
+        run(["welcome", "--agent", agent, ...(tourDue ? ["--defer-seeding"] : [])]).code === 0
+          ? "ok"
+          : "failed";
 
       const failed = Object.entries(results)
         .filter(([, v]) => v === "failed")
@@ -633,6 +654,27 @@ export function registerSetupCommand(
       note(
         `setup ${failed.length === 0 ? "complete" : `incomplete (failed: ${failed.join(", ")})`} — ${trail}`,
       );
+      if (failed.length === 0 && tourDue) {
+        // Agent subprocesses must return a next action rather than block on
+        // readline. An explicit --agent also opts into the isolation handshake
+        // when the harness happens to allocate a PTY.
+        const agentDriven = Boolean(
+          opts.agent ||
+            !process.stdin.isTTY ||
+            !process.stderr.isTTY ||
+            process.env.CLAUDECODE ||
+            process.env.CODEX_THREAD_ID ||
+            process.env.CURSOR_AGENT ||
+            process.env.HERMES_INTERACTIVE,
+        );
+        const demoResult = run([
+          ...(globals.nonInteractive ? ["--non-interactive"] : []),
+          "demo",
+          ...(agentDriven ? ["--agent", agent] : []),
+        ]);
+        if (demoResult.code !== 0)
+          note("demo · pending after an error; setup succeeded. Run prim demo to retry");
+      }
       exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
     });
 }

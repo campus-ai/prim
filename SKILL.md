@@ -144,6 +144,38 @@ Treat changes to shared agent instructions and standards—such as `AGENTS.md`, 
 
 Apply the same attention during non-code deliberation: planning or “grill me” workflows, spec refinement, behavior design, PR planning or review, and conversations imported from Granola or other connected sources. These workflows can settle important forks before any code changes. Accumulate the confirmed decisions and record them at a natural phase or task boundary; do not interrupt or call Primitive after every answer.
 
+### Onboarding: run the local tour before memory seeding
+
+After successful `prim setup`, follow any demo `nextAction` automatically. Setup
+starts this optional tour once per local OS-user configuration; `setup --skip-demo`
+remembers a skip, and `prim demo --agent <claude|codex|cursor|hermes>` replays it.
+Pass your agent explicitly, including when your shell tool allocates a terminal.
+
+The tour is entirely fictional: extraction, Decisions, and verdicts are simulated.
+Execute each generated command **exactly as a standalone shell invocation**; do not
+wrap it, append another command, substitute another executable, or use a subagent.
+Its hook acknowledgment establishes session isolation before any sample is shown.
+If the result is pending, surface its hook-trust instruction and retry only after
+trust is established. Never fabricate the missing output or read sample fixtures
+yourself to bypass isolation.
+
+Present the source, Decision cards, and warning/block evidence. Pause for only the
+two teaching choices: confirming the fictional authoring proposal, then choosing
+the shared-repository correction (or retrying direct storage). Use `confirm` only
+after the user's confirmation; never treat a general setup request or `--yes` as
+that answer. Follow `skipAction` if the user declines or stops the tour.
+
+Never record these examples with `decisions create`, save them to shared memory,
+or include them in later seeding candidates. The tour excludes passive capture
+for the remainder of this agent session, including resumes; tell the user to start
+a new session for normal capture. Other sessions and real-work enforcement remain
+active, and explicitly approved real Decisions can still be created here.
+
+After completion or skip, offer memory seeding and run `prim welcome --agent <your
+agent>` with `--capture-excluded` when this session ran the tour. An unfinished
+tour is listed in `recoverableRuns`; use its skip command for cleanup before replay.
+Do not begin real-memory proposals while the tour is pending.
+
 ### Onboarding: seed the graph from memory, one proposal at a time
 
 When onboarding or `prim welcome` reports `"org": "seed"`, seed the viewer's graph by proposing decisions mined from memory. There is no open goals question: the proposals are the whole seeding pass. Propose **one decision per message**, wait for the user's verdict, and only then present the next — never present the candidates as a batch.

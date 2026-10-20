@@ -30,6 +30,7 @@
  */
 
 import { HttpError, resolveAuthCredential } from "../client.js";
+import { observeDemoInvocation } from "../demo/isolation.js";
 import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
@@ -195,6 +196,14 @@ async function main(): Promise<void> {
   } catch {
     await emit(failOpen());
     return;
+  }
+  try {
+    if (observeDemoInvocation(envelope as Record<string, unknown>, agent, false).invocation) {
+      await emit(failOpen());
+      return;
+    }
+  } catch {
+    // An invalid tour acknowledgment grants no exemption from real enforcement.
   }
   if (envelope.hook_event_name !== "PreToolUse") {
     await emit(failOpen());

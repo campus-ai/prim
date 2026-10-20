@@ -94,10 +94,10 @@ export function runStartupBackgroundWork(
   const [command, subcommand] = args;
   const uninstall = command === "uninstall" || env[UNINSTALL_ORCHESTRATOR_ENV] === "1";
 
-  // Uninstall is deliberately offline: neither the orchestrator nor its child
+  // Uninstall and the local demo are deliberately offline. Neither uninstall nor its child
   // commands should check for updates, opportunistically drain journals, or
-  // upgrade the daemon it is removing.
-  if (uninstall) return;
+  // upgrade the daemon it is removing; a demo must not deliver real journal data.
+  if (uninstall || command === "demo") return;
 
   work.notify();
   // The explicit command drains directly; a concurrent opportunistic drain
