@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.104](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.103...v0.1.0-alpha.104) (2026-10-21)
+
+
+### Miscellaneous Chores
+
+* **release:** cut patched Node runtime release ([543a477](https://github.com/campus-ai/prim/commit/543a477027cf473a4d8f36fe0b8021b996617a78))
+
 ## [0.1.0-alpha.103](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.102...v0.1.0-alpha.103) (2026-10-21)
 
 
