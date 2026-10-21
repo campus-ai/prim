@@ -176,6 +176,11 @@ on a blocked retry. These scripted outcomes do not define universal state rules.
 On the compliant choice, show both actual diffs: the unfinished order-saving
 function becomes a repository call, and service calls return to the shared client.
 Explain that the requested implementation landed while preserving both Decisions.
+On completion, lead with the five-item simulated success receipt, then report
+sample cleanup and the new-session requirement. Never present completion for a
+skip, pending tour, or error. Offer to propose one real project Decision for
+individual approval using the seeding procedure below; keep it separate from the
+fictional examples, and continue one at a time only if the user wants to proceed.
 
 Never record these examples with `decisions create`, save them to shared memory,
 or include them in later seeding candidates. The tour excludes passive capture

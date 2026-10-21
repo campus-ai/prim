@@ -37,9 +37,16 @@ import { printJson } from "../output.js";
 const intro =
   "SIMULATED TOUR — fictional Decisions and scripted verdicts; no live ingestion or enforcement check.";
 const handoff =
-  "Sample files removed. Next: discover real Decisions in your repository's shared memory, approving each individually.";
+  "Sample files removed. Next: ask your agent to propose one real Decision from your project's shared memory for your individual approval.";
 const captureNotice =
   "Passive Decision capture is excluded for the rest of this agent session, including resumed use. Start a new session for normal capture. Explicitly approved real Decisions can still be created.";
+const completionReceipt = [
+  "Extracted a Decision with supporting evidence",
+  "Adopted a Decision with your confirmation",
+  "Surfaced a warning and allowed the edit",
+  "Refused a conflicting write",
+  "Applied the compliant implementation",
+] as const;
 
 type DemoResult = {
   simulated: true;
@@ -52,6 +59,7 @@ type DemoResult = {
   decisions?: unknown;
   evidence?: unknown;
   message?: string;
+  receipt?: readonly string[];
   recoverableRuns?: { runId: string; skipAction: string }[];
 };
 
@@ -129,6 +137,12 @@ function narrateBlockedAttempt(unchanged: string): void {
   );
 }
 
+function narrateCompletion(run: DemoRun): void {
+  process.stderr.write(`\n${bold(color("WALKTHROUGH COMPLETE — simulated", "green"))}\n`);
+  process.stderr.write(`${completionReceipt.map((item) => `✓ ${item}`).join("\n")}\n`);
+  process.stderr.write(`${handoff}\n${run.terminal ? "" : `${captureNotice}\n`}`);
+}
+
 /** Fixed transitions only. The blocked candidate is never passed to a writer. */
 export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice): DemoResult {
   return lockRun(id, (run) => {
@@ -160,7 +174,11 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
     try {
       process.stderr.write(`${bold(intro)}\n`);
       if (!run.terminal && action === "start") process.stderr.write(`${captureNotice}\n`);
-      if (run.stage === "completed" || run.stage === "skipped") return resultFor(run);
+      if (run.stage === "completed") {
+        narrateCompletion(run);
+        return { ...resultFor(run), receipt: completionReceipt };
+      }
+      if (run.stage === "skipped") return resultFor(run);
       if (action === "start") {
         if (run.stage === "prepared") {
           createSandbox(run);
@@ -244,9 +262,10 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
       run.stage = "completed";
       saveRun(run);
       finishOnboarding("completed");
-      process.stderr.write(`${handoff}\n${run.terminal ? "" : `${captureNotice}\n`}`);
+      narrateCompletion(run);
       return {
         ...resultFor(run),
+        receipt: completionReceipt,
         evidence: {
           correction: { before, after },
           orders,
