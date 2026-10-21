@@ -145,6 +145,10 @@ actual diffs and the passing implementation result.
 Follow the returned next/skip actions. Do not delegate the tour, edit sample files
 yourself, promote samples to memory, or create real Decisions from the examples.
 Completion and skip remove owned files; unfinished runs expose cleanup commands.
+On successful completion, lead with the simulated lifecycle receipt before
+reporting cleanup and session guidance. Skipping or an error earns no completion
+receipt. Offer one real project Decision for individual approval next, following
+the seeding procedure below and keeping fictional examples out of it.
 
 Passive capture remains excluded for this session, including later resumes.
 Explicitly approved real Decisions can still be created. Tell the user to start

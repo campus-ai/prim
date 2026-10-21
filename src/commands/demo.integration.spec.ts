@@ -179,6 +179,7 @@ describe("packaged local onboarding", () => {
       expect(pending.json.stage).toBe("pending");
       expect(pending.stderr).not.toContain("shared HTTP");
       expect(pending.stderr).not.toContain("YOUR MISSION");
+      expect(pending.json.receipt).toBeUndefined();
       const started = await f.call(agent, prepared.nextAction);
       expect(started.json.stage).toBe("proposal");
       expect(started.stderr).toContain("scripted extraction");
@@ -219,6 +220,8 @@ describe("packaged local onboarding", () => {
       const retry = confirmed.json.retryAction;
       const blockedAgain = await f.call(agent, retry);
       expect(blockedAgain.json.stage).toBe("conflict");
+      expect(blockedAgain.json.receipt).toBeUndefined();
+      expect(blockedAgain.stderr).not.toContain("WALKTHROUGH COMPLETE");
       expect(blockedAgain.stderr).toContain(decisions[1].decision);
       expect(blockedAgain.stderr).toContain("Conflict: direct storage bypasses");
       expect(blockedAgain.stderr).toContain("Next: save through orders.save(...)");
@@ -237,6 +240,17 @@ describe("packaged local onboarding", () => {
       expect(existsSync(sandbox)).toBe(false);
       expect(readFileSync(join(f.repo, "real.ts"), "utf8")).toBe("export const real = true;\n");
       expect(completed.json.nextAction).toContain("--capture-excluded");
+      expect(completed.json.receipt).toHaveLength(5);
+      for (const item of completed.json.receipt) expect(completed.stderr).toContain(item);
+      expect(completed.stderr).toContain("WALKTHROUGH COMPLETE — simulated");
+      expect(completed.stderr.indexOf("WALKTHROUGH COMPLETE")).toBeLessThan(
+        completed.stderr.indexOf("Sample files removed"),
+      );
+      expect(completed.json.message).toContain("propose one real Decision");
+      const completedAgain = await f.call(agent, confirmed.json.nextAction);
+      expect(completedAgain.json.stage).toBe("completed");
+      expect(completedAgain.json.receipt).toEqual(completed.json.receipt);
+      expect(existsSync(sandbox)).toBe(false);
       // Late/resumed messages and both independent post-tool producers stay excluded.
       for (const event of [
         "PreToolUse",
@@ -338,7 +352,9 @@ describe("packaged local onboarding", () => {
     const repeated = await f.call("claude_code", started.json.nextAction);
     expect(repeated.json.evidence).toEqual(confirmed.json.evidence);
     expect(repeated.stderr).not.toContain("SAMPLE DECISION ADOPTED");
-    await f.shell(confirmed.json.skipAction);
+    const skipped = await f.shell(confirmed.json.skipAction);
+    expect(skipped.json.receipt).toBeUndefined();
+    expect(skipped.stderr).not.toContain("WALKTHROUGH COMPLETE");
     expect(existsSync(started.json.sandbox)).toBe(false);
   });
 
@@ -390,12 +406,23 @@ describe("packaged local onboarding", () => {
     rmSync(join(started.sandbox, "orders.ts"));
     await expect(f.call("codex", started.nextAction)).rejects.toMatchObject({
       stderr: expect.stringContaining("ENOENT"),
+      stdout: expect.not.stringContaining('"receipt"'),
     });
     expect(existsSync(started.sandbox)).toBe(false);
     expect(existsSync(join(f.config, "demo", "onboarding.json"))).toBe(false);
     expect(JSON.parse(readFileSync(f.statePath(prepared.runId), "utf8")).stage).toBe("prepared");
     const restarted = await f.call("codex", prepared.nextAction);
     expect(restarted.json.stage).toBe("proposal");
+    const confirmed = await f.call("codex", restarted.json.nextAction);
+    // Failure to persist completion must not earn a success receipt, even
+    // after the correction and owned-file cleanup have succeeded.
+    mkdirSync(join(f.config, "demo", "onboarding.json"));
+    await expect(f.call("codex", confirmed.json.nextAction)).rejects.toMatchObject({
+      stdout: expect.not.stringContaining('"receipt"'),
+      stderr: expect.not.stringContaining("WALKTHROUGH COMPLETE"),
+    });
+    expect(existsSync(restarted.json.sandbox)).toBe(false);
+    expect(JSON.parse(readFileSync(f.statePath(prepared.runId), "utf8")).stage).toBe("prepared");
   });
 
   it("keeps independent runs separate and leaves real-work enforcement active", async () => {

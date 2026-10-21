@@ -45,6 +45,8 @@ prim setup                 # add --agent cursor, codex, or hermes; --no-daemon e
 After successful setup, a first-run, 2–3 minute **simulated tour** demonstrates
 sample ingestion, Decision creation, a warning, a blocked write, and a correction.
 Your agent guides two choices; no sample Decisions enter the real graph.
+The tour follows one order-saving task and ends with a receipt of the demonstrated
+lifecycle, then offers one real project Decision for your individual approval.
 Use `prim setup --skip-demo` to skip and remember that choice, or
 `prim demo --agent <claude|codex|cursor|hermes>` to replay.
 For a person at a terminal, `prim demo` prompts directly.
