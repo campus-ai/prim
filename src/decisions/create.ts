@@ -19,7 +19,6 @@
 
 import { type CliClient, getClient } from "../client.js";
 import { decisionWebUrl, linkedHeadline } from "../lib/decision-url.js";
-import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 export interface DecisionLocationScope {
   [key: string]: unknown | undefined;
@@ -153,7 +152,7 @@ export async function fetchCreate(
  * does not echo it back), sanitized like any display string.
  */
 export function formatCreateHuman(outcome: CreateOutcome, intent: string): string {
-  return `[prim] created ${linkedHeadline(terminalSafeLine(intent), outcome.decisionId)}.`;
+  return `[prim] created ${linkedHeadline(intent, outcome.decisionId)}.`;
 }
 
 /** The server's identity verbatim, plus the additive `webUrl`. */

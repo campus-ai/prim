@@ -1,5 +1,5 @@
 import { supportsColor } from "./ansi.js";
-import { stripControlChars } from "./terminal-safe.js";
+import { stripControlChars, terminalSafeLine } from "./terminal-safe.js";
 
 /** Origin of the Primitive web app that hosts Decision pages. */
 export const DECISION_ORIGIN = "https://app.getprimitive.ai";
@@ -68,12 +68,12 @@ export function supportsDecisionHyperlinks(): boolean {
 }
 
 /**
- * A quoted, already terminal-safe headline pointing at its Decision. On a
+ * A Decision's headline, sanitized and quoted, pointing at its web page. On a
  * hyperlink-capable TTY the headline itself is the link; everywhere else
  * (agent Bash tools, pipes) the full URL stays visible so agents can cite it.
  */
-export function linkedHeadline(safeHeadline: string, decisionId: string): string {
+export function linkedHeadline(headline: string, decisionId: string): string {
   const url = decisionWebUrl(decisionId);
-  const quoted = `"${safeHeadline}"`;
+  const quoted = `"${terminalSafeLine(headline)}"`;
   return supportsDecisionHyperlinks() ? decisionLink(quoted, url, false) : `${quoted} → ${url}`;
 }

@@ -294,7 +294,7 @@ export function formatShowHuman(result: DecisionShowResult): string {
   // whenever an updated server provides it.
   const displayedStatus = d.stage ?? d.status;
   const lines = [
-    `[prim] ${linkedHeadline(terminalSafeLine(d.intent), d.id)}`,
+    `[prim] ${linkedHeadline(d.intent, d.id)}`,
     `  status: ${colorStatus(displayedStatus)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
   ];
   if (d.supersededBy) {
