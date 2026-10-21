@@ -6,12 +6,21 @@ on:
       tag_name:
         required: true
         type: string
+      npm_tag:
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       tag_name:
         description: Existing GitHub release tag to publish
         required: true
         type: string
+      npm_tag:
+        description: npm distribution tag for this publish
+        required: true
+        default: alpha
+        type: choice
+        options: [alpha, latest]
 
 permissions:
   contents: read
@@ -54,10 +63,20 @@ jobs:
       - name: Determine npm tag
         id: npm-tag
         run: |
-          if echo "${{ inputs.tag_name }}" | grep -q "alpha"; then
-            echo "tag=alpha" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          fi
+          case "$REQUESTED_NPM_TAG" in
+            alpha|latest) tag="$REQUESTED_NPM_TAG" ;;
+            '')
+              if [[ "$RELEASE_TAG" == *alpha* ]]; then
+                tag=alpha
+              else
+                tag=latest
+              fi
+              ;;
+            *) echo "Unsupported npm tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          REQUESTED_NPM_TAG: ${{ inputs.npm_tag }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
 
       - run: npm publish --tag ${{ steps.npm-tag.outputs.tag }} --access public --provenance
