@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.0-alpha.103](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.102...v0.1.0-alpha.103) (2026-10-21)
+
+
+### Features
+
+* **demo:** acknowledge sample Decision adoption ([ddf8526](https://github.com/campus-ai/prim/commit/ddf852655f7e03fe8dac24bd849a04027a03b206))
+* **demo:** anchor the tour to an order-saving mission ([6cf7dac](https://github.com/campus-ai/prim/commit/6cf7dacd97f8aeddb439718e51d46ab9885ae8e5))
+* **demo:** celebrate completion before the real-Decision handoff ([810d227](https://github.com/campus-ai/prim/commit/810d2272e247019ee777c10e2e863375228c4077))
+* **demo:** connect verdicts to Decisions and file evidence ([e772c91](https://github.com/campus-ai/prim/commit/e772c91b5da0929e5ea105fc906d0a60bcd24ffb))
+* **demo:** land a new compliant order-saving implementation ([fbae071](https://github.com/campus-ai/prim/commit/fbae0715d9d9486f41401b751c9b9517e08d81b0))
+* **demo:** show conversation evidence becoming a Decision ([0d52f4c](https://github.com/campus-ai/prim/commit/0d52f4c076ef6631f0e9bfd15218a558a1efddcd))
+* **onboarding:** demonstrate Decisions in an isolated local tour ([4bf0313](https://github.com/campus-ai/prim/commit/4bf0313634b636f6257601c3a0d42d06f71d9d27))
+
+
+### Bug Fixes
+
+* **setup:** defer seeding when onboarding state is unreadable ([3101cb6](https://github.com/campus-ai/prim/commit/3101cb6cf24c14a9f825ffe6fe3ba2c9e56207b2))
+
 ## [0.1.0-alpha.102](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.101...v0.1.0-alpha.102) (2026-10-21)
 
 
