@@ -630,6 +630,9 @@ export function registerSetupCommand(
         try {
           tourDue = !onboardingFinished();
         } catch (error) {
+          // Unreadable state is not proof of completion. Keep seeding deferred
+          // and return a fresh tour handoff so completion can repair the marker.
+          tourDue = true;
           note(
             `demo · cannot read onboarding state: ${error instanceof Error ? error.message : String(error)}; use prim demo to retry`,
           );

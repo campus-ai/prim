@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
@@ -100,5 +100,20 @@ describe("setup's optional demo handoff", () => {
     h.fail("demo");
     expect(await h.setup()).toHaveBeenCalledWith(0);
     expect(h.notes.join("\n")).toContain("demo · pending after an error; setup succeeded");
+  });
+
+  it("keeps seeding deferred when the onboarding marker is unreadable", async () => {
+    const h = harness();
+    const demo = join(h.root, "config", "demo");
+    mkdirSync(demo, { recursive: true });
+    writeFileSync(join(demo, "onboarding.json"), "invalid JSON");
+    expect(await h.setup()).toHaveBeenCalledWith(0);
+    expect(h.calls).toContainEqual(["welcome", "--agent", "codex", "--defer-seeding"]);
+    expect(h.outputs.at(-1)).toMatchObject({ simulated: true, stage: "prepared" });
+    expect(h.notes.join("\n")).toContain("cannot read onboarding state");
+    expect(await h.setup(["--skip-demo"])).toHaveBeenCalledWith(0);
+    expect(JSON.parse(readFileSync(join(demo, "onboarding.json"), "utf8"))).toEqual({
+      outcome: "skipped",
+    });
   });
 });
