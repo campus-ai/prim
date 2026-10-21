@@ -127,6 +127,8 @@ passive Decision capture. If the result is pending, surface its trust instructio
 and wait for trust before retrying. This is a local simulation, not a live test of
 ingestion or Enforcement. Present its output faithfully, including the fictional
 source, rationale, scope, actual file evidence, and simulated labels.
+Once isolation is acknowledged, introduce the mission to add order saving before
+the source conversation; connect each subsequent step to that same task.
 
 Pause for two teaching choices: confirmation of the sample authoring proposal,
 then selection of the repository-based correction or another blocked attempt.

@@ -150,6 +150,9 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
           saveRun(run);
         }
         if (run.stage === "proposal") {
+          process.stderr.write(
+            `\n${bold("YOUR MISSION: add order saving")}\nYour fictional team discussed how this should work. Watch that context become Decisions, then guide an agent's implementation.\nLocal simulation · fictional examples · disposable files\n`,
+          );
           process.stderr.write(`\nSample ingestion (scripted extraction):\n${SAMPLE_NOTE}\n`);
           narrateDecision(0);
           process.stderr.write("\nNow explicitly author another sample Decision:\n");
