@@ -10,7 +10,8 @@
  *   2. POST batches of up to 500 moves and 1 MiB of journal lines to
  *      /api/cli/moves/ingest, checkpointing the rotation's byte offset as
  *      durably acknowledged or quarantined slices retire (see
- *      drain-progress.ts).
+ *      drain-progress.ts). The serialized request is also bounded to the
+ *      server's 4 MiB limit.
  *   3. On success, unlink the .flushing file, then its checkpoint.
  *
  * flush() first re-drains any stranded .flushing files — orphaned when a
@@ -75,6 +76,10 @@ const BATCH_SIZE = 500;
 // about 120 payloads, or about 24 s. Fitting that timeout depends on
 // server-side concurrent staging.
 export const BATCH_MAX_BYTES = 1_048_576;
+// Match the ingest endpoint's hard wire-body limit. Journal bytes are only an
+// estimate: organization binding changes the serialized HTTP request, and a
+// single journal line can be larger than BATCH_MAX_BYTES.
+const MAX_INGEST_REQUEST_BYTES = 4 * 1_048_576;
 const HTTP_TIMEOUT_MS = 10_000;
 const OPPORTUNISTIC_FLUSH_AFTER_MS = 60_000;
 // A stranded .flushing file is adopted once its owning drain is provably gone.
@@ -165,7 +170,17 @@ function isVersionedInvalidMoveDisposition(body: unknown): boolean {
   );
 }
 
+class IngestRequestTooLargeError extends Error {
+  constructor() {
+    super("ingest request exceeds the server body limit");
+    this.name = "IngestRequestTooLargeError";
+  }
+}
+
 function deadLetterReason(error: unknown): DeadLetterReason | undefined {
+  if (error instanceof IngestRequestTooLargeError) {
+    return "oversized_move";
+  }
   if (error instanceof InvalidJournalEnvelopeError) {
     return "invalid_move";
   }
@@ -174,6 +189,15 @@ function deadLetterReason(error: unknown): DeadLetterReason | undefined {
   }
   if (error.status === 400 && isVersionedInvalidMoveDisposition(error.body)) {
     return "invalid_move";
+  }
+  if (
+    error.status === 413 &&
+    typeof error.body === "object" &&
+    error.body !== null &&
+    !Array.isArray(error.body) &&
+    (error.body as Record<string, unknown>).error === "ingest_batch_too_large"
+  ) {
+    return "oversized_move";
   }
   if (
     error.status === 409 &&
@@ -316,6 +340,9 @@ export async function drainFlushingPath(
     const moves = batch.map((entry) => entry.move);
     try {
       const request = buildOrganizationBoundMoveRequest(moves, binding);
+      if (Buffer.byteLength(JSON.stringify(request)) > MAX_INGEST_REQUEST_BYTES) {
+        throw new IngestRequestTooLargeError();
+      }
       const response = await client.post("/api/cli/moves/ingest", request, {
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
       });

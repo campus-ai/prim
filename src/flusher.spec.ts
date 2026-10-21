@@ -545,6 +545,55 @@ describe("flush replay stability", () => {
     ]);
   });
 
+  it("never posts a single move whose bound wire request exceeds the server limit", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    appendMoveToPath(flushing, {
+      ...move("oversized"),
+      payload: { text: "x".repeat(4 * 1_048_576) },
+    });
+    const client = fakeClient({ disposition: "persisted", acknowledged: 1 });
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 0,
+      quarantined: 1,
+    });
+    expect(client.post).not.toHaveBeenCalled();
+    expect(readDeadLetters(flushing)).toEqual([
+      expect.objectContaining({
+        reason: "oversized_move",
+        move: expect.objectContaining({ moveId: "oversized" }),
+      }),
+    ]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
+  it("bisects a server size rejection without losing valid neighbors", async () => {
+    const flushing = join(dir, "journal.ndjson.flushing.1.2");
+    for (const item of [move("first"), move("second"), move("third")]) {
+      appendMoveToPath(flushing, item);
+    }
+    const delivered: string[] = [];
+    const client: CliClient = {
+      get: vi.fn(),
+      post: vi.fn().mockImplementation((_path, body: { batch: Move[] }) => {
+        if (body.batch.length > 1) {
+          return Promise.reject(
+            new HttpError(413, "ingest_batch_too_large", { error: "ingest_batch_too_large" }),
+          );
+        }
+        delivered.push(body.batch[0].moveId);
+        return Promise.resolve({ disposition: "persisted", acknowledged: 1, accepted: 1 });
+      }),
+    };
+
+    await expect(drainFlushingPath(flushing, client)).resolves.toEqual({
+      flushed: 3,
+      quarantined: 0,
+    });
+    expect(delivered).toEqual(["first", "second", "third"]);
+    expect(existsSync(flushing)).toBe(false);
+  });
+
   it("bisects a versioned invalid-move batch, acknowledging valid neighbors and quarantining only poison", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     for (const item of [move("good-a"), move("poison"), move("good-b")]) {
