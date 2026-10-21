@@ -148,6 +148,54 @@ describe("stageHookRuntime", () => {
     ).toBe(false);
   });
 
+  it("repins a same-version runtime when the Node executable changes", () => {
+    const root = temporaryRoot("prim-hook-node-upgrade-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const sourceDir = sourceRuntime(root, "node-upgrade");
+    const oldNode = join(root, "old-node");
+    writeFileSync(oldNode, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+
+    const first = stageHookRuntime({ sourceDir, version: "1.2.3", nodePath: oldNode, env });
+    const repinned = stageHookRuntime({
+      sourceDir,
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+
+    expect(repinned.changed).toBe(true);
+    expect(repinned.releaseDir).not.toBe(first.releaseDir);
+    expect(repinned.manifest.nodePath).toBe(process.execPath);
+    expect(readFileSync(repinned.paths.current, "utf8")).toBe(`${basename(repinned.releaseDir)}\n`);
+    expect(
+      spawnSync(repinned.paths.launcher, ["prim-hook", "--agent", "codex"], {
+        env,
+        input: "payload",
+        encoding: "utf8",
+      }),
+    ).toMatchObject({ status: 0, stdout: "node-upgrade:--agent,codex:payload" });
+  });
+
+  it("keeps a same-version runtime when Node paths resolve to one executable", () => {
+    const root = temporaryRoot("prim-hook-node-alias-");
+    const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };
+    const sourceDir = sourceRuntime(root, "node-alias");
+    const alias = join(root, "node-alias");
+    symlinkSync(process.execPath, alias);
+
+    const first = stageHookRuntime({
+      sourceDir,
+      version: "1.2.3",
+      nodePath: process.execPath,
+      env,
+    });
+    const retained = stageHookRuntime({ sourceDir, version: "1.2.3", nodePath: alias, env });
+
+    expect(retained.changed).toBe(false);
+    expect(retained.releaseDir).toBe(first.releaseDir);
+    expect(retained.manifest.nodePath).toBe(process.execPath);
+  });
+
   it("retains a valid higher selected runtime and refuses to downgrade through corruption", () => {
     const root = temporaryRoot("prim-hook-monotonic-");
     const env = { HOME: join(root, "home"), PRIM_CONFIG_DIR: join(root, "config") };

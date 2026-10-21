@@ -57,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(work, { recursive: true, force: true });
+  vi.mocked(atomicWrite).mockRestore();
   vi.restoreAllMocks();
 });
 

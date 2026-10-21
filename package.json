@@ -24,7 +24,7 @@
     "pre-commit"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^22.23.4 || ^24.22.1 || ^26.12.1"
   },
   "packageManager": "pnpm@9.15.9",
   "bin": {
@@ -76,11 +76,11 @@
     "@types/diff": "^5.2.0",
     "@types/node": "^25.5.0",
     "@types/update-notifier": "^6.0.8",
-    "@vitest/coverage-v8": "^3.1.0",
+    "@vitest/coverage-v8": "^4.1.12",
     "ajv": "8.20.0",
     "json-schema-to-typescript": "15.0.4",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
-    "vitest": "^3.1.0"
+    "vitest": "^4.1.12"
   }
 }
