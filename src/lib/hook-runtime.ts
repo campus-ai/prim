@@ -402,17 +402,21 @@ function hasSafeRuntimeLayout(paths: HookRuntimePaths, selected: SelectedRelease
   );
 }
 
-function recordedNodeMatchesCurrentProcess(nodePath: string): boolean {
+function sameNodeExecutable(recorded: string, desired: string): boolean {
   try {
-    if (!statSync(nodePath).isFile()) return false;
-    accessSync(nodePath, constants.X_OK);
+    if (!statSync(recorded).isFile()) return false;
+    accessSync(recorded, constants.X_OK);
     // The immutable launcher will execute this path later. A diagnostic must
     // not execute manifest-controlled bytes to find out whether that is safe;
-    // accept only the Node executable already running this CLI.
-    return realpathSync(nodePath) === realpathSync(process.execPath);
+    // compare executable identities without running the recorded path.
+    return realpathSync(recorded) === realpathSync(desired);
   } catch {
     return false;
   }
+}
+
+function recordedNodeMatchesCurrentProcess(nodePath: string): boolean {
+  return sameNodeExecutable(nodePath, process.execPath);
 }
 
 /** Inspect the selected immutable hook runtime without staging or repairing it. */
@@ -576,7 +580,10 @@ export function stageHookRuntime(options: StageHookRuntimeOptions = {}): StageHo
     if (precedence === undefined) {
       throw new Error("cannot stage hook runtime: selected release version is malformed");
     }
-    const selectRequested = !selected || precedence < 0;
+    const selectRequested =
+      !selected ||
+      precedence < 0 ||
+      (precedence === 0 && !sameNodeExecutable(selected.manifest.nodePath, nodePath));
     const requestedExists = existsSync(releaseDir);
     const protectedBefore = new Set<string>(selected ? [selected.name] : []);
     if (selectRequested && requestedExists) protectedBefore.add(releaseName);

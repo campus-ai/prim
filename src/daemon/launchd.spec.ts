@@ -415,8 +415,12 @@ describe("runtime staging", () => {
     "falls back within the deadline when an old daemon accepts but never responds",
     async () => {
       const fake = new FakeLaunchd();
-      const staged = stageRuntime(fake.options({ version: "1.2.3" }));
-      const socketPath = join(fake.homeDir, ".config", "prim", "sock");
+      // Keep the Unix socket path below macOS's sockaddr_un limit on newer Node releases.
+      const configDir = join(fake.root, "config");
+      const staged = stageRuntime(
+        fake.options({ version: "1.2.3", env: { ...fake.env, PRIM_CONFIG_DIR: configDir } }),
+      );
+      const socketPath = join(configDir, "sock");
       mkdirSync(join(socketPath, ".."), { recursive: true });
       const child = spawn(
         process.execPath,
@@ -453,9 +457,11 @@ net.createServer((socket) => socket.on("data", () => {}))
           }),
         ).toBe("primitive 1.2.3 (daemon: down)");
       } finally {
-        const exited = new Promise((resolve) => child.once("exit", resolve));
-        child.kill("SIGTERM");
-        await exited;
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise((resolve) => child.once("exit", resolve));
+          child.kill("SIGTERM");
+          await exited;
+        }
       }
     },
   );

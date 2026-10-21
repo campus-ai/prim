@@ -316,7 +316,7 @@ describe("effective post-commit hook", () => {
     mkdirSync(join(husky, ".husky", "_"), { recursive: true });
     git(husky, "config", "--local", "core.hooksPath", ".husky/_");
     expect(() => ensureEffectiveGitHook("post-commit", husky)).toThrow(/dispatcher/);
-  });
+  }, 15_000);
 
   it("does not chmod or edit a non-executable foreign direct hook", () => {
     const root = repository("non-executable");

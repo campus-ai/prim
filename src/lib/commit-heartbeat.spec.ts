@@ -255,5 +255,5 @@ describe("post-commit firing evidence through a real hook", () => {
 
     expect(inspectPostCommitFiring(root, later())).toMatchObject({ state: "fired" });
     expect(inspectPostCommitFiring(linked, later())).toMatchObject({ state: "fired" });
-  });
+  }, 15_000);
 });

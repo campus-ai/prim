@@ -15,7 +15,10 @@ presence — from the command line and via session + git hooks.
 
 ## Installation
 
-Requires Node.js 20+.
+Requires Node.js 22.23.4+, 24.22.1+, or 26.12.1+ within those major versions.
+Node.js 20 is no longer supported. After updating Node.js, restart the daemon
+with `prim daemon restart` and rerun your agent's `prim <agent> install` command
+and `prim hooks install` to repin their runtimes to the updated executable.
 
 ```bash
 npm install -g @primitive.ai/prim
