@@ -134,6 +134,8 @@ is a demo mapping, while the choice and rationale come from the conversation.
 
 Pause for two teaching choices: confirmation of the sample authoring proposal,
 then selection of the repository-based correction or another blocked attempt.
+After confirmation, surface the sample adoption success before the verdicts so
+the user sees their proposal become an adopted Decision.
 Follow the returned next/skip actions. Do not delegate the tour, edit sample files
 yourself, promote samples to memory, or create real Decisions from the examples.
 Completion and skip remove owned files; unfinished runs expose cleanup commands.
