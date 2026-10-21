@@ -9,6 +9,7 @@ import {
 } from "../demo/sandbox.js";
 import {
   BLOCKED_EDIT,
+  REPOSITORY_EDIT,
   SAMPLE_DECISIONS,
   SAMPLE_FILES,
   SAMPLE_NOTE,
@@ -229,18 +230,29 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
         return { ...resultFor(run), evidence: { unchanged } };
       }
       const before = readSample(run, "service.ts");
+      const ordersBefore = readSample(run, "orders.ts");
       writeSample(run, "service.ts", SAMPLE_FILES["service.ts"]);
+      writeSample(run, "orders.ts", REPOSITORY_EDIT);
       const after = readSample(run, "service.ts");
       const orders = readSample(run, "orders.ts");
       process.stderr.write(createPatch("service.ts", before, after));
-      process.stderr.write(`orders.ts uses the shared repository:\n${orders}`);
-      process.stderr.write(`${bold(color("PASS — compliant correction (simulated)", "green"))}\n`);
+      process.stderr.write(createPatch("orders.ts", ordersBefore, orders));
+      process.stderr.write(
+        `${bold(color("PASS — compliant implementation written (simulated)", "green"))}\nOrder saving now uses the shared repository. Service calls use the shared HTTP client.\nThe requested change landed while preserving both sample Decisions.\n`,
+      );
       cleanSandbox(run);
       run.stage = "completed";
       saveRun(run);
       finishOnboarding("completed");
       process.stderr.write(`${handoff}\n${run.terminal ? "" : `${captureNotice}\n`}`);
-      return { ...resultFor(run), evidence: { correction: { before, after }, orders } };
+      return {
+        ...resultFor(run),
+        evidence: {
+          correction: { before, after },
+          orders,
+          orderCorrection: { before: ordersBefore, after: orders },
+        },
+      };
     } catch (error) {
       // Reclaim only still-owned fixtures. Unexpected contents remain available
       // for inspection and an explicit skip/recovery; never mark failure complete.

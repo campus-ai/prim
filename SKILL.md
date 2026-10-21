@@ -173,6 +173,9 @@ enforcement: the user's confirmation turned a proposal into an adopted record.
 Present warning and block as separate beats: attempt, governing Decision,
 conflict, consequence, actual file proof, and next move. Preserve that explanation
 on a blocked retry. These scripted outcomes do not define universal state rules.
+On the compliant choice, show both actual diffs: the unfinished order-saving
+function becomes a repository call, and service calls return to the shared client.
+Explain that the requested implementation landed while preserving both Decisions.
 
 Never record these examples with `decisions create`, save them to shared memory,
 or include them in later seeding candidates. The tour excludes passive capture

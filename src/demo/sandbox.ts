@@ -11,7 +11,13 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { SAMPLE_DECISIONS, SAMPLE_FILES, SAMPLE_NOTE, WARNING_EDIT } from "./scenario.js";
+import {
+  REPOSITORY_EDIT,
+  SAMPLE_DECISIONS,
+  SAMPLE_FILES,
+  SAMPLE_NOTE,
+  WARNING_EDIT,
+} from "./scenario.js";
 import { type DemoRun, saveRun } from "./state.js";
 
 export const decisionBytes = (adopted: boolean) =>
@@ -24,6 +30,7 @@ function allowedFiles(run: DemoRun): Record<string, readonly string[]> {
     "decisions.json": [decisionBytes(false), decisionBytes(true)],
     ...Object.fromEntries(Object.entries(SAMPLE_FILES).map(([name, value]) => [name, [value]])),
     "service.ts": [SAMPLE_FILES["service.ts"], WARNING_EDIT],
+    "orders.ts": [SAMPLE_FILES["orders.ts"], REPOSITORY_EDIT],
   };
 }
 
@@ -81,7 +88,7 @@ export function createSandbox(run: DemoRun): void {
 
 export function writeSample(
   run: DemoRun,
-  name: "service.ts" | "decisions.json",
+  name: "service.ts" | "orders.ts" | "decisions.json",
   bytes: string,
 ): void {
   const root = inspectSandbox(run);

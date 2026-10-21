@@ -37,7 +37,7 @@ export const SAMPLE_FILES = {
   "service.ts":
     'import { http } from "./shared";\nexport const loadOrders = () => http.get("/orders");\n',
   "orders.ts":
-    'import { orders } from "./shared";\nexport const saveOrder = (order: unknown) => orders.save(order);\n',
+    "export const saveOrder = (_order: unknown) => {\n  // TODO: persist this order.\n};\n",
   "shared.ts":
     "// Fictional interfaces; this tour does not execute network or storage operations.\n" +
     "export declare const http: { get(path: string): Promise<unknown> };\n" +
@@ -47,3 +47,5 @@ export const SAMPLE_FILES = {
 export const WARNING_EDIT = 'export const loadOrders = () => fetch("/orders");\n';
 export const BLOCKED_EDIT =
   'export const saveOrder = (order: unknown) => localStorage.setItem("order", JSON.stringify(order));\n';
+export const REPOSITORY_EDIT =
+  'import { orders } from "./shared";\nexport const saveOrder = (order: unknown) => orders.save(order);\n';
