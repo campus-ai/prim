@@ -117,6 +117,17 @@ function narrateDecision(index: 0 | 1): void {
   }
 }
 
+function narrateBlockedAttempt(unchanged: string): void {
+  process.stderr.write(`\n${bold(color("BLOCKED — file unchanged (simulated)", "red"))}\n`);
+  process.stderr.write(
+    `Attempt: save the order with localStorage.setItem(...).\nDecision (adopted sample): ${SAMPLE_DECISIONS[1].decision}\nConflict: direct storage bypasses the shared repository and its validation.\nOutcome: this scenario refuses the proposed write.\n`,
+  );
+  process.stderr.write(createPatch("orders.ts (refused proposal)", unchanged, BLOCKED_EDIT));
+  process.stderr.write(
+    `Proof: orders.ts is unchanged. Actual file:\n${unchanged}\nNext: save through orders.save(...) to preserve repository validation.\n`,
+  );
+}
+
 /** Fixed transitions only. The blocked candidate is never passed to a writer. */
 export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice): DemoResult {
   return lockRun(id, (run) => {
@@ -187,14 +198,15 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
         const unchanged = readSample(run, "orders.ts");
         process.stderr.write(`\n${bold(color("WARNING — edit allowed (simulated)", "yellow"))}\n`);
         process.stderr.write(
-          `Conflicts with provisional Decision: ${SAMPLE_DECISIONS[0].decision}\n`,
+          `Attempt: call fetch("/orders") directly.\nDecision (provisional sample): ${SAMPLE_DECISIONS[0].decision}\nConflict: direct fetch bypasses consistent retries and request tracing.\nOutcome: this scenario surfaces the conflict and allows the edit.\n`,
         );
         process.stderr.write(createPatch("service.ts", before, after));
-        process.stderr.write(`\n${bold(color("BLOCKED — file unchanged (simulated)", "red"))}\n`);
-        process.stderr.write(`Conflicts with adopted Decision: ${SAMPLE_DECISIONS[1].decision}\n`);
-        process.stderr.write(createPatch("orders.ts (refused proposal)", unchanged, BLOCKED_EDIT));
         process.stderr.write(
-          `Actual orders.ts remains:\n${unchanged}\nChoose the shared repository correction, or retry direct storage.\nLive outcomes depend on Decision state and agent behavior; Claude may ask permission where other agents block.\n`,
+          `Proof: service.ts ${before === after ? "already matches the shared client" : "changed, as shown above"}.\nNext: restore the shared HTTP client for consistent retries and tracing.\n`,
+        );
+        narrateBlockedAttempt(unchanged);
+        process.stderr.write(
+          "\nChoose the shared repository correction, or retry direct storage.\nThese verdicts are scripted for this scenario. Live outcomes depend on Decision state and agent behavior; Claude may ask permission where other agents block.\n",
         );
         return {
           ...resultFor(run),
@@ -212,10 +224,9 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
       if (choice !== "repository" && choice !== "local-storage")
         throw new Error("choose repository or local-storage");
       if (choice === "local-storage") {
-        process.stderr.write(
-          `${bold(color("BLOCKED — file unchanged (simulated)", "red"))}\nUse the shared repository to resolve the conflict.\n`,
-        );
-        return { ...resultFor(run), evidence: { unchanged: readSample(run, "orders.ts") } };
+        const unchanged = readSample(run, "orders.ts");
+        narrateBlockedAttempt(unchanged);
+        return { ...resultFor(run), evidence: { unchanged } };
       }
       const before = readSample(run, "service.ts");
       writeSample(run, "service.ts", SAMPLE_FILES["service.ts"]);

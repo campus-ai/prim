@@ -136,6 +136,9 @@ Pause for two teaching choices: confirmation of the sample authoring proposal,
 then selection of the repository-based correction or another blocked attempt.
 After confirmation, surface the sample adoption success before the verdicts so
 the user sees their proposal become an adopted Decision.
+For each warning or block, connect the attempted edit to its Decision, explain
+the conflict, show the actual file consequence, and identify the correction.
+Keep the outcomes explicitly specific to this scripted scenario.
 Follow the returned next/skip actions. Do not delegate the tour, edit sample files
 yourself, promote samples to memory, or create real Decisions from the examples.
 Completion and skip remove owned files; unfinished runs expose cleanup commands.

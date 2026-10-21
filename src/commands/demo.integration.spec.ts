@@ -204,6 +204,10 @@ describe("packaged local onboarding", () => {
       );
       expect(confirmed.stderr).toContain("WARNING — edit allowed");
       expect(confirmed.stderr).toContain("BLOCKED — file unchanged");
+      expect(confirmed.stderr).toContain("Conflict: direct fetch bypasses");
+      expect(confirmed.stderr).toContain("Proof: service.ts changed");
+      expect(confirmed.stderr).toContain("Proof: orders.ts is unchanged");
+      expect(confirmed.stderr).toContain("These verdicts are scripted for this scenario");
       expect(confirmed.json.evidence.block.after).toBe(original);
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
       expect(readFileSync(join(sandbox, "service.ts"), "utf8")).toContain("fetch(");
@@ -211,7 +215,12 @@ describe("packaged local onboarding", () => {
       expect(decisions).toHaveLength(2);
       expect(decisions[1]).toMatchObject({ id: "demo-order-repository", stage: "adopted" });
       const retry = confirmed.json.retryAction;
-      expect((await f.call(agent, retry)).json.stage).toBe("conflict");
+      const blockedAgain = await f.call(agent, retry);
+      expect(blockedAgain.json.stage).toBe("conflict");
+      expect(blockedAgain.stderr).toContain(decisions[1].decision);
+      expect(blockedAgain.stderr).toContain("Conflict: direct storage bypasses");
+      expect(blockedAgain.stderr).toContain("Next: save through orders.save(...)");
+      expect(blockedAgain.json.evidence.unchanged).toBe(original);
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
       const completed = await f.call(agent, confirmed.json.nextAction);
       expect(completed.json.stage).toBe("completed");
