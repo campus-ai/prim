@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.101](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.100...v0.1.0-alpha.101) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ingest:** bound uploader request bodies ([5d7a224](https://github.com/campus-ai/prim/commit/5d7a2245929eb0197dbb8859bed5de344ea6dcf2))
+
 ## [0.1.0-alpha.100](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.99...v0.1.0-alpha.100) (2026-10-18)
 
 
