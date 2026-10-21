@@ -30,6 +30,7 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
+import { observeDemoInvocation } from "../demo/isolation.js";
 import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
@@ -89,6 +90,10 @@ async function main(): Promise<void> {
     const incoming = JSON.parse(raw) as Record<string, unknown>;
     if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-hook")) return;
     parsed = normalizeEnvelope(incoming, agent);
+    if (observeDemoInvocation(parsed, agent).excluded) {
+      await emitOutput(cursorPassiveOutput());
+      return;
+    }
   } catch (error) {
     writeHookDebug("capture failed", error);
     await emitOutput(cursorPassiveOutput());
