@@ -139,6 +139,9 @@ the user sees their proposal become an adopted Decision.
 For each warning or block, connect the attempted edit to its Decision, explain
 the conflict, show the actual file consequence, and identify the correction.
 Keep the outcomes explicitly specific to this scripted scenario.
+The successful correction must show the unfinished order-saving function becoming
+a shared-repository call and the shared HTTP client being restored. Present both
+actual diffs and the passing implementation result.
 Follow the returned next/skip actions. Do not delegate the tour, edit sample files
 yourself, promote samples to memory, or create real Decisions from the examples.
 Completion and skip remove owned files; unfinished runs expose cleanup commands.

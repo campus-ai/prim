@@ -195,6 +195,8 @@ describe("packaged local onboarding", () => {
       expect(started.stderr).toContain(extracted.scopeBasis);
       expect(JSON.stringify(extracted)).not.toContain("at three");
       const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
+      expect(original).toContain("TODO: persist this order");
+      expect(original).not.toContain("orders.save");
       expect(started.stderr).not.toContain("SAMPLE DECISION ADOPTED");
       expect(JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"))).toHaveLength(1);
       const confirmed = await f.call(agent, started.json.nextAction);
@@ -225,8 +227,15 @@ describe("packaged local onboarding", () => {
       const completed = await f.call(agent, confirmed.json.nextAction);
       expect(completed.json.stage).toBe("completed");
       expect(completed.json.evidence.correction.after).toContain("http.get");
-      expect(completed.stderr).toContain("PASS");
+      expect(completed.json.evidence.orderCorrection.before).toBe(original);
+      expect(completed.json.evidence.orderCorrection.after).toBe(completed.json.evidence.orders);
+      expect(completed.json.evidence.orderCorrection.after).toContain("orders.save(order)");
+      expect(completed.json.evidence.orderCorrection.after).not.toContain("TODO");
+      expect(completed.json.evidence.orderCorrection.after).not.toContain("localStorage");
+      expect(completed.stderr).toContain("PASS — compliant implementation written (simulated)");
+      expect(completed.stderr).toContain("Index: orders.ts");
       expect(existsSync(sandbox)).toBe(false);
+      expect(readFileSync(join(f.repo, "real.ts"), "utf8")).toBe("export const real = true;\n");
       expect(completed.json.nextAction).toContain("--capture-excluded");
       // Late/resumed messages and both independent post-tool producers stay excluded.
       for (const event of [
