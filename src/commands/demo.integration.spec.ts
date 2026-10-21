@@ -187,6 +187,13 @@ describe("packaged local onboarding", () => {
         started.stderr.indexOf("Sample ingestion"),
       );
       const sandbox = started.json.sandbox;
+      const note = readFileSync(join(sandbox, "note.md"), "utf8");
+      const extracted = started.json.decisions[0];
+      expect(started.stderr).toContain("DECISION EXTRACTED — simulated");
+      expect(extracted.stage).toBe("provisional");
+      for (const quote of extracted.evidence) expect(note).toContain(quote);
+      expect(started.stderr).toContain(extracted.scopeBasis);
+      expect(JSON.stringify(extracted)).not.toContain("at three");
       const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
       const confirmed = await f.call(agent, started.json.nextAction);
       expect(confirmed.stderr).toContain("WARNING — edit allowed");

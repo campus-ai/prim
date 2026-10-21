@@ -161,6 +161,8 @@ yourself to bypass isolation.
 
 Once isolation is acknowledged, open with the tour's mission: add order saving.
 Connect the team's context, the Decisions, and the implementation to that task.
+Show the source conversation becoming a provisional Decision with quoted evidence.
+Distinguish the fixture's file-scope mapping from what the conversation states.
 Present the source, Decision cards, and warning/block evidence. Pause for only the
 two teaching choices: confirming the fictional authoring proposal, then choosing
 the shared-repository correction (or retrying direct storage). Use `confirm` only
