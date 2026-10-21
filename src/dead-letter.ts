@@ -22,7 +22,11 @@ const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 export const DEAD_LETTER_DIRNAME = "dead-letter";
 
-export type DeadLetterReason = "invalid_move" | "move_id_conflict" | "tenant_mismatch";
+export type DeadLetterReason =
+  | "invalid_move"
+  | "move_id_conflict"
+  | "tenant_mismatch"
+  | "oversized_move";
 
 export type DeadLetterRecord = {
   version: 1;
