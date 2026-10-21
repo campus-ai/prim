@@ -159,6 +159,8 @@ If the result is pending, surface its hook-trust instruction and retry only afte
 trust is established. Never fabricate the missing output or read sample fixtures
 yourself to bypass isolation.
 
+Once isolation is acknowledged, open with the tour's mission: add order saving.
+Connect the team's context, the Decisions, and the implementation to that task.
 Present the source, Decision cards, and warning/block evidence. Pause for only the
 two teaching choices: confirming the fictional authoring proposal, then choosing
 the shared-repository correction (or retrying direct storage). Use `confirm` only

@@ -178,9 +178,14 @@ describe("packaged local onboarding", () => {
       const pending = await f.shell(prepared.nextAction);
       expect(pending.json.stage).toBe("pending");
       expect(pending.stderr).not.toContain("shared HTTP");
+      expect(pending.stderr).not.toContain("YOUR MISSION");
       const started = await f.call(agent, prepared.nextAction);
       expect(started.json.stage).toBe("proposal");
       expect(started.stderr).toContain("scripted extraction");
+      expect(started.stderr).toContain("YOUR MISSION: add order saving");
+      expect(started.stderr.indexOf("YOUR MISSION")).toBeLessThan(
+        started.stderr.indexOf("Sample ingestion"),
+      );
       const sandbox = started.json.sandbox;
       const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
       const confirmed = await f.call(agent, started.json.nextAction);
