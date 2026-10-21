@@ -1,16 +1,25 @@
 /** Fictional fixtures only. Never pass these records to a production API. */
-export const SAMPLE_NOTE =
-  "Fictional engineering note: Route service calls through our shared HTTP client so retries " +
-  "and request tracing stay consistent. Direct fetch calls were rejected because they duplicate that policy.";
+export const SAMPLE_NOTE = [
+  "Fictional engineering conversation:",
+  "Maya: Could we call fetch directly for the order service?",
+  "Ravi: Use the shared HTTP client for service calls. We need retries and request tracing to stay consistent.",
+  "Maya: Agreed. Let's reject direct fetch calls because they duplicate that policy.",
+  "Ravi: Also, the team demo is at three.",
+].join("\n");
 
 export const SAMPLE_DECISIONS = [
   {
     id: "demo-http-client",
     decision: "Use the shared HTTP client for service calls",
     stage: "provisional",
-    source: "Fictional engineering note",
+    source: "Fictional engineering conversation",
+    evidence: [
+      "Use the shared HTTP client for service calls. We need retries and request tracing to stay consistent.",
+      "Let's reject direct fetch calls because they duplicate that policy.",
+    ],
     rationale: "Centralize retries and request tracing.",
     files: ["service.ts"],
+    scopeBasis: "Demo mapping from service calls to service.ts; the conversation names no file.",
     alternativesRejected: ["Direct fetch calls with duplicated retry and tracing policy"],
   },
   {

@@ -109,6 +109,12 @@ function narrateDecision(index: 0 | 1): void {
     `\nDecision: ${item.decision}\nStatus: ${status} (sample)\nSource: ${source}\n` +
       `Rationale: ${item.rationale}\nScope: ${item.files.join(", ")}\nAlternatives rejected: ${item.alternativesRejected.join("; ")}\n`,
   );
+  if (index === 0) {
+    const extracted = SAMPLE_DECISIONS[0];
+    process.stderr.write(
+      `Source evidence:\n${extracted.evidence.map((quote) => `  "${quote}"`).join("\n")}\nScope basis: ${extracted.scopeBasis}\n`,
+    );
+  }
 }
 
 /** Fixed transitions only. The blocked candidate is never passed to a writer. */
@@ -154,7 +160,9 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
             `\n${bold("YOUR MISSION: add order saving")}\nYour fictional team discussed how this should work. Watch that context become Decisions, then guide an agent's implementation.\nLocal simulation · fictional examples · disposable files\n`,
           );
           process.stderr.write(`\nSample ingestion (scripted extraction):\n${SAMPLE_NOTE}\n`);
+          process.stderr.write(`\n${bold(color("DECISION EXTRACTED — simulated", "green"))}\n`);
           narrateDecision(0);
+          process.stderr.write("The choice, its reason, and its source now travel together.\n");
           process.stderr.write("\nNow explicitly author another sample Decision:\n");
           narrateDecision(1);
           process.stderr.write("Confirm this fictional Decision to adopt it, or skip the tour.\n");
