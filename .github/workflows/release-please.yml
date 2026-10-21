@@ -3,6 +3,18 @@ name: Release Please
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing GitHub release tag to publish
+        required: true
+        type: string
+      npm_tag:
+        description: npm distribution tag for this publish
+        required: true
+        default: alpha
+        type: choice
+        options: [alpha, latest]
 
 permissions:
   contents: write
@@ -10,6 +22,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -22,10 +35,13 @@ jobs:
 
   publish:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: >-
+      always() && (github.event_name == 'workflow_dispatch' ||
+      needs.release-please.outputs.release_created == 'true')
     uses: ./.github/workflows/release.yml
     with:
-      tag_name: ${{ needs.release-please.outputs.tag_name }}
+      tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || needs.release-please.outputs.tag_name }}
+      npm_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || '' }}
     permissions:
       contents: read
       id-token: write
