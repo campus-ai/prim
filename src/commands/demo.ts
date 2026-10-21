@@ -179,6 +179,9 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
           writeSample(run, "service.ts", WARNING_EDIT);
           run.stage = "conflict";
           saveRun(run);
+          process.stderr.write(
+            `\n${bold(color("SAMPLE DECISION ADOPTED — simulated", "green"))}\n${SAMPLE_DECISIONS[1].decision}\nYour confirmation changed this proposal into an adopted sample Decision.\n`,
+          );
         }
         const after = readSample(run, "service.ts");
         const unchanged = readSample(run, "orders.ts");

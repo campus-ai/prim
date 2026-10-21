@@ -195,13 +195,21 @@ describe("packaged local onboarding", () => {
       expect(started.stderr).toContain(extracted.scopeBasis);
       expect(JSON.stringify(extracted)).not.toContain("at three");
       const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
+      expect(started.stderr).not.toContain("SAMPLE DECISION ADOPTED");
+      expect(JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"))).toHaveLength(1);
       const confirmed = await f.call(agent, started.json.nextAction);
+      expect(confirmed.stderr).toContain("SAMPLE DECISION ADOPTED — simulated");
+      expect(confirmed.stderr.indexOf("SAMPLE DECISION ADOPTED")).toBeLessThan(
+        confirmed.stderr.indexOf("WARNING — edit allowed"),
+      );
       expect(confirmed.stderr).toContain("WARNING — edit allowed");
       expect(confirmed.stderr).toContain("BLOCKED — file unchanged");
       expect(confirmed.json.evidence.block.after).toBe(original);
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
       expect(readFileSync(join(sandbox, "service.ts"), "utf8")).toContain("fetch(");
-      expect(JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"))).toHaveLength(2);
+      const decisions = JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"));
+      expect(decisions).toHaveLength(2);
+      expect(decisions[1]).toMatchObject({ id: "demo-order-repository", stage: "adopted" });
       const retry = confirmed.json.retryAction;
       expect((await f.call(agent, retry)).json.stage).toBe("conflict");
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
@@ -311,6 +319,7 @@ describe("packaged local onboarding", () => {
     expect(confirmed.json.stage).toBe("conflict");
     const repeated = await f.call("claude_code", started.json.nextAction);
     expect(repeated.json.evidence).toEqual(confirmed.json.evidence);
+    expect(repeated.stderr).not.toContain("SAMPLE DECISION ADOPTED");
     await f.shell(confirmed.json.skipAction);
     expect(existsSync(started.json.sandbox)).toBe(false);
   });

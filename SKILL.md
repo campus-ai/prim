@@ -168,6 +168,8 @@ two teaching choices: confirming the fictional authoring proposal, then choosing
 the shared-repository correction (or retrying direct storage). Use `confirm` only
 after the user's confirmation; never treat a general setup request or `--yes` as
 that answer. Follow `skipAction` if the user declines or stops the tour.
+After confirmation, acknowledge the adopted sample Decision before presenting
+enforcement: the user's confirmation turned a proposal into an adopted record.
 
 Never record these examples with `decisions create`, save them to shared memory,
 or include them in later seeding candidates. The tour excludes passive capture
