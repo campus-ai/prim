@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.102](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.101...v0.1.0-alpha.102) (2026-10-21)
+
+
+### Bug Fixes
+
+* **release:** allow retrying publication of an existing tag ([cbcfdef](https://github.com/campus-ai/prim/commit/cbcfdef54957958218248d3c04d13cebeeababa1))
+* **release:** retry publish from trusted caller workflow ([2f20a58](https://github.com/campus-ai/prim/commit/2f20a58a981834dd406d25e7d797ad1c7733ab51))
+
 ## [0.1.0-alpha.101](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.100...v0.1.0-alpha.101) (2026-10-21)
 
 
