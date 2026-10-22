@@ -30,6 +30,7 @@ export type DemoRun = {
   binding?: string;
   acknowledgment?: { command: string; at: number };
   server?: import("../contract/cli-http-v1.js").DemoStatusResponse;
+  needsStatus?: boolean;
   receipt?: { revision: number; appliedDigest: string };
   sandbox?: { path: string; device: number; inode: number };
 };
@@ -66,6 +67,7 @@ export function readRun(id: string): DemoRun {
       "completed",
       "skipped",
     ].includes(run.stage) ||
+    (run.needsStatus !== undefined && typeof run.needsStatus !== "boolean") ||
     (run.server !== undefined && !isDemoStatusResponse(run.server)) ||
     (run.receipt !== undefined &&
       (!Number.isSafeInteger(run.receipt.revision) ||

@@ -248,6 +248,14 @@ export async function advanceDemo(
           : ["conflict", "approved", "applied", "cleanup"];
     if (!allowed.includes(run.stage)) throw new Error("Invalid demo transition");
     try {
+      if (run.needsStatus && run.server) {
+        const latest = await demoStatus(run.server.runId);
+        if (latest.runId !== run.server.runId)
+          throw new Error("Server returned a different demo run");
+        run.server = latest;
+        run.needsStatus = false;
+        saveRun(run);
+      }
       if (action === "start" && run.stage === "prepared") {
         run.server = await demoApi("start", { scenarioVersion: 1, localRunId: run.id });
         if (run.server.stage !== "ready")
@@ -287,6 +295,8 @@ export async function advanceDemo(
         };
       return handoff(run);
     } catch (error) {
+      run.needsStatus = true;
+      saveRun(run);
       return {
         ...resultFor(run),
         stage: "pending",

@@ -159,6 +159,7 @@ async function serveStory(f: ReturnType<typeof fixture>) {
   const bodies: Record<string, unknown>[] = [];
   const runs = new Map<string, Record<string, unknown>>();
   let loseComplete = false;
+  let loseCheck = false;
   let pendingCheck = false;
   let queues = 0;
   const server = createServer(async (req, res) => {
@@ -208,6 +209,24 @@ async function serveStory(f: ReturnType<typeof fixture>) {
       res.end('{"error":"not found"}');
       return;
     }
+    if (action === "check" && loseCheck) {
+      loseCheck = false;
+      Object.assign(run, {
+        stage: "checking",
+        verdict: "pending",
+        revision: Number(run.revision) + 1,
+      });
+      res.destroy();
+      return;
+    }
+    if (action === "check" && run.stage === "checking") {
+      if (body.revision !== run.revision) {
+        res.statusCode = 409;
+        res.end('{"error":"stale revision"}');
+        return;
+      }
+      Object.assign(run, { stage: "ready" });
+    }
     if (action === "check" && run.stage === "ready") {
       if (pendingCheck)
         Object.assign(run, { verdict: "pending", reasonCode: "evaluator_unavailable" });
@@ -252,6 +271,9 @@ async function serveStory(f: ReturnType<typeof fixture>) {
     requests,
     bodies,
     runs,
+    loseCheck: () => {
+      loseCheck = true;
+    },
     loseCompletion: () => {
       loseComplete = true;
     },
@@ -399,6 +421,22 @@ describe("packaged author story", () => {
     const completes = api.bodies.filter((body) => "appliedDigest" in body);
     expect(completes).toHaveLength(2);
     expect(completes[0]).toEqual(completes[1]);
+  });
+  it("refreshes a lost check revision on retry without mutating status reads", async () => {
+    const f = fixture();
+    const api = await serveStory(f);
+    api.loseCheck();
+    const { started, blocked } = await blockedStory(f);
+    expect(blocked.stage).toBe("pending");
+    const before = JSON.parse(readFileSync(f.statePath(blocked.runId), "utf8"));
+    expect(before.needsStatus).toBe(true);
+    const status = (await f.call("codex", blocked.statusAction)).json;
+    expect(status.server.stage).toBe("checking");
+    const after = JSON.parse(readFileSync(f.statePath(blocked.runId), "utf8"));
+    expect(after.server).toEqual(before.server);
+    const retry = (await f.call("codex", blocked.nextAction)).json;
+    expect(retry.stage).toBe("conflict");
+    expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
   });
   it("leaves unavailable evaluation pending with unchanged bytes", async () => {
     const f = fixture();
