@@ -5,7 +5,6 @@
 
 ### Features
 
-* **onboarding:** make the demo compact and visual ([942c932](https://github.com/campus-ai/prim/commit/942c932074a7951cb21d7f6e7d1b49d6a1060b41))
 * **onboarding:** make the demo compact and visual ([172f77d](https://github.com/campus-ai/prim/commit/172f77d30059e1983b076a2e8882410ecb685047))
 
 ## [0.1.0-alpha.104](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.103...v0.1.0-alpha.104) (2026-10-21)
