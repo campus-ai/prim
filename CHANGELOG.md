@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.105](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.104...v0.1.0-alpha.105) (2026-10-22)
+
+
+### Features
+
+* **onboarding:** make the demo compact and visual ([172f77d](https://github.com/campus-ai/prim/commit/172f77d30059e1983b076a2e8882410ecb685047))
+
 ## [0.1.0-alpha.104](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.103...v0.1.0-alpha.104) (2026-10-21)
 
 
