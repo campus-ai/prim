@@ -1,86 +1,62 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 import { diffLines } from "diff";
-import {
-  cleanSandbox,
-  createSandbox,
-  decisionBytes,
-  readSample,
-  writeSample,
-} from "../demo/sandbox.js";
-import {
-  BLOCKED_EDIT,
-  REPOSITORY_EDIT,
-  SAMPLE_DECISIONS,
-  SAMPLE_FILES,
-  SAMPLE_NOTE,
-  WARNING_EDIT,
-} from "../demo/scenario.js";
+import { demoApi, demoStatus } from "../demo/api.js";
+import { cleanSandbox, createSandbox, readSample, writeSample } from "../demo/sandbox.js";
 import {
   type DemoAction,
   type DemoChoice,
   type DemoRun,
   RUN_ID,
   demoCommand,
+  demoDiagnosticCommand,
+  demoWelcomeCommand,
   exclusionPath,
   finishOnboarding,
   lockRun,
+  lockRunAsync,
   pendingRuns,
   prepareRun,
   readDemoJson,
   saveRun,
 } from "../demo/state.js";
+import {
+  DEMO_ADHERE,
+  DEMO_INITIAL,
+  DEMO_ORIGINAL,
+  DEMO_REPLACEMENT,
+  DEMO_SUPERSEDE,
+  DEMO_TASK,
+} from "../demo/story.js";
 import type { Agent } from "../hooks/agent.js";
 import { bold, color } from "../lib/ansi.js";
-import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
-import { printJson } from "../output.js";
+import { isNonInteractive } from "../lib/confirmation.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
-const intro = "SIMULATED TOUR · fictional Decisions · scripted verdicts";
-const handoff = "Sample files removed. Next: propose one real Decision for your approval.";
+const printJson = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+const digest = (bytes: string) => createHash("sha256").update(bytes).digest("hex");
 const captureNotice =
-  "Passive capture stays off in this session, including resumes.\nStart a new session to resume capture.";
-const completionReceipt = ["Extracted", "Adopted", "Warned", "Blocked", "Corrected"] as const;
-
-type DemoResult = {
-  simulated: true;
-  runId?: string;
-  stage: string;
-  nextAction?: string;
-  skipAction?: string;
-  retryAction?: string;
-  sandbox?: string;
-  decisions?: unknown;
-  proposal?: unknown;
-  sourceNote?: string;
-  evidence?: unknown;
-  message?: string;
-  receipt?: readonly string[];
-  recoverableRuns?: { runId: string; skipAction: string }[];
-};
-
-function resultFor(run: DemoRun): DemoResult {
-  const action =
-    run.stage === "prepared" ? "start" : run.stage === "proposal" ? "confirm" : "resolve";
-  const done = run.stage === "completed" || run.stage === "skipped";
-  return {
-    simulated: true,
-    runId: run.id,
-    stage: run.stage,
-    ...(done
-      ? { message: handoff, nextAction: `prim welcome${run.binding ? " --capture-excluded" : ""}` }
-      : {
-          nextAction: demoCommand(run, action, action === "resolve" ? "repository" : undefined),
-          skipAction: demoCommand(run, "skip"),
-        }),
-    ...(run.sandbox ? { sandbox: run.sandbox.path } : {}),
-    ...(run.stage === "conflict"
-      ? { retryAction: demoCommand(run, "resolve", "local-storage") }
-      : {}),
-  };
+  "Start a new agent session to resume passive capture. Explicitly approved real Decisions still work here.";
+const label = "**Fictional project · real conflict check**";
+const diagram = (value: string) => `\n\`\`\`text\n${value}\n\`\`\``;
+const safeMarkdown = (value: string) => terminalSafeLine(value).replace(/[\\`*_{}[\]<>]/gu, "\\$&");
+function compactDiff(before: string, after: string): string {
+  return diffLines(before, after)
+    .filter((part) => part.added || part.removed)
+    .map((part) =>
+      part.value
+        .trimEnd()
+        .split("\n")
+        .map((line) => `${part.added ? "+" : "-"} ${line}`)
+        .join("\n"),
+    )
+    .join("\n");
 }
-
 export function demoTrustGuidance(agent?: Agent): string {
   if (agent === "codex")
-    return "Trust the installed prim hooks with /hooks in Codex, then retry the exact nextAction.";
+    return "Check /hooks in Codex. Approve only if a trust action is offered. If hooks are already active, retry the exact standalone command once; do not keep asking for trust or a new session. If still pending, run diagnosticAction and inspect hook errors.";
   if (agent === "hermes")
     return "Approve the installed prim hooks when Hermes prompts, then retry the exact nextAction.";
   if (agent === "cursor")
@@ -88,330 +64,349 @@ export function demoTrustGuidance(agent?: Agent): string {
   return "Activate the installed prim hooks in your agent, then retry the exact nextAction.";
 }
 
-function consumeAcknowledgment(run: DemoRun, action: DemoAction, choice?: DemoChoice): boolean {
-  if (run.terminal) return Boolean(process.stdin.isTTY && process.stderr.isTTY);
+function consumeAcknowledgment(
+  run: DemoRun,
+  action: DemoAction,
+  choice?: DemoChoice,
+  reason?: string,
+): string | undefined {
+  if (run.terminal)
+    return process.stdin.isTTY && process.stderr.isTTY ? undefined : "terminal-required";
   const ack = run.acknowledgment;
   run.acknowledgment = undefined;
   saveRun(run);
-  if (!run.binding || !ack || ack.command !== demoCommand(run, action, choice)) return false;
+  if (!run.binding || !ack) return "acknowledgment-missing";
+  if (ack.command !== demoCommand(run, action, choice, reason)) return "command-mismatch";
   const age = Date.now() - ack.at;
-  if (!Number.isFinite(age) || age < 0 || age > 30_000) return false;
+  if (!Number.isFinite(age) || age < 0 || age > 30_000) return "acknowledgment-expired";
   try {
     const exclusion = readDemoJson(exclusionPath(run.binding)) as { runId?: string };
-    return typeof exclusion.runId === "string" && RUN_ID.test(exclusion.runId);
+    return typeof exclusion.runId === "string" && RUN_ID.test(exclusion.runId)
+      ? undefined
+      : "exclusion-invalid";
   } catch {
-    return false;
+    return "exclusion-missing";
   }
 }
 
-function narrateDecision(index: 0 | 1, details: boolean): void {
-  const item = SAMPLE_DECISIONS[index];
-  const status = index === 1 ? "proposed" : item.stage;
-  const source = index === 1 ? "Fictional authoring proposal" : item.source;
-  process.stderr.write(
-    `${bold(`Decision [${status}]`)}\n${item.decision}\n` +
-      `Why: ${item.rationale}\n${index === 0 ? "Demo scope" : "File"}: ${item.files.join(", ")}\n`,
-  );
-  if (details) {
-    process.stderr.write(
-      `Source: ${source}\nAlternatives rejected: ${item.alternativesRejected.join("; ")}\n`,
-    );
-    if (index === 0) process.stderr.write(`Scope basis: ${SAMPLE_DECISIONS[0].scopeBasis}\n`);
-  }
+function resultFor(run: DemoRun) {
+  const complete = run.stage === "completed" || run.stage === "skipped";
+  return {
+    fictional: true as const,
+    evaluation: "live" as const,
+    runId: run.id,
+    stage: run.stage,
+    ...(run.server && run.stage !== "skipped" ? { server: run.server } : {}),
+    ...(run.sandbox ? { sandbox: run.sandbox.path } : {}),
+    skipAction: demoCommand(run, "skip"),
+    statusAction: demoCommand(run, "status"),
+    ...(complete ? { nextAction: demoWelcomeCommand(run) } : {}),
+  };
 }
-
-/** Show the actual lines, without patch transport headers or hunk metadata. */
-function narrateDiff(file: string, before: string, after: string): void {
-  process.stderr.write(`${bold(file)}\n`);
-  for (const part of diffLines(before, after)) {
-    const prefix = part.added ? "+" : part.removed ? "-" : " ";
-    const lines = part.value.endsWith("\n") ? part.value.slice(0, -1) : part.value;
-    for (const line of lines.split("\n")) {
-      const text = `${prefix} ${line}\n`;
-      process.stderr.write(
-        part.added ? color(text, "green") : part.removed ? color(text, "red") : text,
-      );
+function present(run: DemoRun): string {
+  if (run.stage === "prepared") return "Tour ready. Run nextAction to check session isolation.";
+  if (run.stage === "skipped") return "Tour skipped. Owned sample files removed.";
+  if (run.stage === "prompt")
+    return `${label}\n\nImagine you’re a new engineer joining a team. In this story, you previously authored a Decision; now experience it as the new engineer. We’ll email the outcome to your signed-in address.\n${diagram("[1 Enter task] → [2 Your Decision stops it] → [3 Choose → Email]")}\n\nEnter this prompt in this chat:\n\n\`\`\`text\n${DEMO_TASK}\n\`\`\``;
+  if (run.stage === "conflict")
+    return `${label}\n\n**YOUR DECISION STOPPED THIS**\n${diagram("CSV export [name, email]\n                   │\n            ✕ email excluded\n                   │\n         customers.ts unchanged")}\n\n**${DEMO_ORIGINAL}**\nFictional prior author: ${safeMarkdown(run.server?.authorName ?? "you")}\n\n\`\`\`ts\n${readSample(run, "customers.ts").trimEnd()}\n\`\`\`\n\nChoose **Adhere** (export names only) or **Supersede** with **${DEMO_REPLACEMENT}** and your short reason.`;
+  if (run.stage === "completed" || run.stage === "cleanup") {
+    const choice = run.server?.choice;
+    const after = choice === "adhere" ? DEMO_ADHERE : DEMO_SUPERSEDE;
+    return `${label}\n\n**PASS — CSV export implemented**\n${diagram(`CSV [${choice === "adhere" ? "name" : "name, email"}] → CHECK PASSED → IMPLEMENTED\nYour Decision → ${choice === "adhere" ? "preserved" : "replacement + your reason"} → EMAIL ${run.server?.email.toUpperCase()}`)}\n\n\`\`\`diff\n${compactDiff(DEMO_INITIAL, after)}\n\`\`\`\n\n${run.stage === "cleanup" ? "Sample cleanup still needs attention." : "Owned sample files removed."} ${run.server?.email === "accepted" ? "The provider accepted the email; inbox delivery is not confirmed." : "Queued is not inbox delivery."}\n\n${run.binding ? captureNotice : "Ready for your real Decisions."}`;
+  }
+  return `${label}\n\nChecked edit saved; email finalization is pending. Retry the same resolution to finish. No second email will be queued.`;
+}
+function handoff(run: DemoRun) {
+  const result = { ...resultFor(run), presentation: present(run) };
+  if (run.stage === "prepared") return { ...result, nextAction: demoCommand(run, "start") };
+  if (run.stage === "prompt")
+    return { ...result, awaitUserPrompt: DEMO_TASK, attemptAction: demoCommand(run, "attempt") };
+  if (run.stage === "conflict")
+    return {
+      ...result,
+      choices: {
+        adhere: demoCommand(run, "resolve", "adhere"),
+        supersede: {
+          command: demoCommand(run, "resolve", "supersede"),
+          requiredArgument: "--reason <user-provided reason>",
+          replacement: DEMO_REPLACEMENT,
+        },
+      },
+    };
+  if (run.server?.choice && !["completed", "skipped"].includes(run.stage))
+    return {
+      ...result,
+      nextAction: demoCommand(run, "resolve", run.server.choice, run.server.reason),
+    };
+  return result;
+}
+function requireResolution(choice?: DemoChoice, reason?: string) {
+  if (choice !== "adhere" && choice !== "supersede") throw new Error("Choose adhere or supersede");
+  if (choice === "supersede" && (!reason?.trim() || reason.length > 500))
+    throw new Error("Supersession requires your short reason (1–500 characters)");
+  if (choice === "adhere" && reason !== undefined)
+    throw new Error("A supersession reason only applies to supersede");
+}
+async function finishResolution(run: DemoRun, choice: DemoChoice, reason?: string) {
+  if (!run.server) throw new Error("Start the story first");
+  if (
+    run.stage !== "conflict" &&
+    run.server.choice &&
+    (run.server.choice !== choice || run.server.reason !== reason)
+  )
+    throw new Error("This run already has a different approved resolution");
+  if (run.stage === "conflict") {
+    run.server = await demoApi("resolve", {
+      runId: run.server.runId,
+      revision: run.server.revision,
+      choice,
+      ...(reason === undefined ? {} : { reason }),
+    });
+    if (run.server.stage !== "approved" || run.server.verdict !== "pass") {
+      saveRun(run);
+      return;
     }
+    run.stage = "approved";
+    saveRun(run);
+  }
+  if (run.stage === "approved") {
+    const after = choice === "adhere" ? DEMO_ADHERE : DEMO_SUPERSEDE;
+    if (digest(after) !== run.server.approvedDigest)
+      throw new Error("Server approved unexpected sample bytes");
+    const before = readSample(run, "customers.ts");
+    if (before !== DEMO_INITIAL && before !== after)
+      throw new Error("Sample changed; retained for inspection");
+    writeSample(run, "customers.ts", after);
+    if (readSample(run, "customers.ts") !== after) throw new Error("Sample write was not verified");
+    run.receipt = { revision: run.server.revision, appliedDigest: digest(after) };
+    run.stage = "applied";
+    saveRun(run);
+  }
+  if (run.stage === "applied") {
+    if (!run.receipt || digest(readSample(run, "customers.ts")) !== run.receipt.appliedDigest)
+      throw new Error("Applied sample receipt no longer matches");
+    run.server = await demoApi("complete", { runId: run.server.runId, ...run.receipt });
+    if (run.server.stage !== "completed" || run.server.email === "not_queued")
+      throw new Error("Email was not durably queued");
+    run.stage = "cleanup";
+    saveRun(run);
+  }
+  if (run.stage === "cleanup") {
+    cleanSandbox(run);
+    run.stage = "completed";
+    saveRun(run);
+    finishOnboarding("completed");
   }
 }
-
-function narrateBlockedAttempt(unchanged: string, details: boolean): void {
-  process.stderr.write(`\n${bold(color("× BLOCKED — file unchanged", "red"))}\n`);
-  process.stderr.write(
-    `${SAMPLE_DECISIONS[1].decision} [adopted]\nlocalStorage.setItem(…) ──×──→ orders.ts\nBypasses repository validation.\n`,
-  );
-  if (details) process.stderr.write(`Refused proposal:\n${BLOCKED_EDIT}`);
-  process.stderr.write(
-    `${bold("orders.ts · before = after")}\n${unchanged}Next: shared repository → orders.save(order)\n`,
-  );
-}
-
-function narrateCompletion(run: DemoRun): void {
-  process.stderr.write(`\n${bold(color("WALKTHROUGH COMPLETE — simulated", "green"))}\n`);
-  process.stderr.write(`${completionReceipt.map((item) => `✓ ${item}`).join(" · ")}\n`);
-  process.stderr.write(`${handoff}\n${run.terminal ? "" : `${captureNotice}\n`}`);
-}
-
-/** Fixed transitions only. The blocked candidate is never passed to a writer. */
-export function advanceDemo(
+export async function advanceDemo(
   id: string,
   action: DemoAction,
   choice?: DemoChoice,
-  details = false,
-): DemoResult {
-  return lockRun(id, (run) => {
+  reason?: string,
+) {
+  return await lockRunAsync(id, async (run) => {
+    if (action === "resolve") requireResolution(choice, reason);
     if (action === "skip") {
+      if (run.server && !["completed", "skipped"].includes(run.server.stage)) {
+        const latest = await demoStatus(run.server.runId);
+        run.server = await demoApi("skip", { runId: latest.runId, revision: latest.revision });
+      }
       cleanSandbox(run);
       run.stage = "skipped";
       saveRun(run);
       finishOnboarding("skipped");
-      process.stderr.write(`[prim] Tour skipped. ${handoff}\n`);
-      if (run.binding) process.stderr.write(`${captureNotice}\n`);
-      return resultFor(run);
+      return handoff(run);
     }
-    if (!consumeAcknowledgment(run, action, choice)) {
-      const message = `Tour pending: session isolation has not been acknowledged. ${demoTrustGuidance(run.agent)}`;
-      process.stderr.write(`[prim] ${message}\n`);
+    if (run.version === 1)
+      throw new Error(
+        `Legacy tour: clean up with ${demoCommand(run, "skip")}, then run prim demo again`,
+      );
+    const isolation = consumeAcknowledgment(run, action, choice, reason);
+    if (isolation)
+      return {
+        fictional: true,
+        evaluation: "live",
+        runId: id,
+        stage: "pending",
+        isolation,
+        nextAction: demoCommand(run, action, choice, reason),
+        diagnosticAction: demoDiagnosticCommand(run),
+        skipAction: demoCommand(run, "skip"),
+        presentation: `Session isolation pending (${isolation}). ${demoTrustGuidance(run.agent)}`,
+      };
+    if (action === "status") {
+      const server = run.server ? await demoStatus(run.server.runId) : undefined;
+      return { ...handoff(run), ...(server ? { server } : {}) };
+    }
+    if (["completed", "skipped"].includes(run.stage)) return handoff(run);
+    const allowed =
+      action === "start"
+        ? ["prepared", "prompt"]
+        : action === "attempt"
+          ? ["prompt", "conflict"]
+          : ["conflict", "approved", "applied", "cleanup"];
+    if (!allowed.includes(run.stage)) throw new Error("Invalid demo transition");
+    try {
+      if (action === "start" && run.stage === "prepared") {
+        run.server = await demoApi("start", { scenarioVersion: 1, localRunId: run.id });
+        if (run.server.stage !== "ready")
+          throw new Error("Existing backend run needs recovery; inspect status");
+        saveRun(run);
+        createSandbox(run);
+        run.stage = "prompt";
+        saveRun(run);
+      } else if (action === "attempt" && run.stage === "prompt") {
+        if (!run.server || readSample(run, "customers.ts") !== DEMO_INITIAL)
+          throw new Error("Initial sample changed");
+        run.server = await demoApi("check", {
+          runId: run.server.runId,
+          revision: run.server.revision,
+        });
+        if (run.server.stage === "blocked" && run.server.verdict === "block")
+          run.stage = "conflict";
+        saveRun(run);
+      } else if (action === "resolve") {
+        if (!["conflict", "approved", "applied", "cleanup"].includes(run.stage))
+          throw new Error("Enter the task and see its conflict before resolving");
+        await finishResolution(run, choice as DemoChoice, reason);
+      } else if (
+        !(
+          (action === "start" && run.stage === "prompt") ||
+          (action === "attempt" && run.stage === "conflict")
+        )
+      ) {
+        throw new Error("Invalid demo transition");
+      }
+      if (run.server?.verdict === "pending")
+        return {
+          ...resultFor(run),
+          stage: "pending",
+          nextAction: demoCommand(run, action, choice, reason),
+          presentation: `${label}\n\nCheck pending (${run.server.reasonCode ?? "evaluation in progress"}). File unchanged; retry or skip.`,
+        };
+      return handoff(run);
+    } catch (error) {
       return {
         ...resultFor(run),
         stage: "pending",
-        message,
-        nextAction: demoCommand(run, action, choice),
+        nextAction: demoCommand(run, action, choice, reason),
+        presentation: `Tour pending: ${terminalSafeLine(error instanceof Error ? error.message : String(error))}`,
+        ...(run.stage === "cleanup" ? { outcomePresentation: present(run) } : {}),
       };
-    }
-    if (action === "confirm" && run.stage === "prepared") {
-      throw new Error("start the demo before confirming its proposal");
-    }
-    if (action === "resolve" && (run.stage === "prepared" || run.stage === "proposal")) {
-      throw new Error("confirm the sample Decision before resolving");
-    }
-    try {
-      if (!run.terminal && action === "start") process.stderr.write(`${captureNotice}\n`);
-      if (run.stage === "completed") {
-        narrateCompletion(run);
-        return { ...resultFor(run), receipt: completionReceipt };
-      }
-      if (run.stage === "skipped") return resultFor(run);
-      if (action === "start") {
-        if (run.stage === "prepared") {
-          createSandbox(run);
-          run.stage = "proposal";
-          saveRun(run);
-        }
-        if (run.stage === "proposal") {
-          process.stderr.write(`${bold("Add order saving")}\n${intro}\n`);
-          process.stderr.write(
-            `\n${bold("1/4 · Extract")}\nTeam conversation\n“${SAMPLE_DECISIONS[0].evidence[0]}”\n  ↓ scripted extraction\n`,
-          );
-          process.stderr.write(`${bold(color("✓ DECISION EXTRACTED", "green"))}\n`);
-          narrateDecision(0, details);
-          if (details) process.stderr.write(`\nFull source:\n${SAMPLE_NOTE}\n`);
-          process.stderr.write(`\n${bold("2/4 · Adopt")}\n`);
-          narrateDecision(1, details);
-          process.stderr.write("Proposed ── your approval ──→ Adopted\n");
-        }
-        return {
-          ...resultFor(run),
-          decisions: SAMPLE_DECISIONS.slice(0, run.stage === "proposal" ? 1 : 2),
-          ...(run.stage === "proposal"
-            ? {
-                sourceNote: SAMPLE_NOTE,
-                proposal: {
-                  ...SAMPLE_DECISIONS[1],
-                  stage: "proposed",
-                  source: "Fictional authoring proposal",
-                },
-              }
-            : {}),
-        };
-      }
-      if (action === "confirm") {
-        const before = SAMPLE_FILES["service.ts"];
-        if (run.stage === "proposal") {
-          writeSample(run, "decisions.json", decisionBytes(true));
-          writeSample(run, "service.ts", WARNING_EDIT);
-          run.stage = "conflict";
-          saveRun(run);
-          process.stderr.write(
-            `\n${bold(color("✓ SAMPLE DECISION ADOPTED", "green"))}\nProposed → Adopted\n`,
-          );
-        }
-        const after = readSample(run, "service.ts");
-        const unchanged = readSample(run, "orders.ts");
-        process.stderr.write(`\n${bold("3/4 · Protect · simulated")}\n`);
-        process.stderr.write(`${bold(color("! WARNING — edit allowed", "yellow"))}\n`);
-        process.stderr.write(
-          `${SAMPLE_DECISIONS[0].decision} [provisional]\nBypasses shared retries and tracing.\n`,
-        );
-        narrateDiff("service.ts · changed", before, after);
-        narrateBlockedAttempt(unchanged, details);
-        if (!run.terminal)
-          process.stderr.write("\nChoose: shared repository · retry direct storage\n");
-        process.stderr.write(
-          "\nScripted verdicts. Live gates vary; Claude may ask where other agents block.\n",
-        );
-        return {
-          ...resultFor(run),
-          decisions: SAMPLE_DECISIONS,
-          evidence: {
-            warning: { before, after },
-            block: {
-              before: unchanged,
-              proposed: BLOCKED_EDIT,
-              after: readSample(run, "orders.ts"),
-            },
-          },
-        };
-      }
-      if (choice !== "repository" && choice !== "local-storage")
-        throw new Error("choose repository or local-storage");
-      if (choice === "local-storage") {
-        const unchanged = readSample(run, "orders.ts");
-        process.stderr.write(`${bold("3/4 · Retry · simulated")}\n`);
-        narrateBlockedAttempt(unchanged, details);
-        return { ...resultFor(run), evidence: { unchanged } };
-      }
-      const before = readSample(run, "service.ts");
-      const ordersBefore = readSample(run, "orders.ts");
-      writeSample(run, "service.ts", SAMPLE_FILES["service.ts"]);
-      writeSample(run, "orders.ts", REPOSITORY_EDIT);
-      const after = readSample(run, "service.ts");
-      const orders = readSample(run, "orders.ts");
-      process.stderr.write(`\n${bold("4/4 · Correct · simulated")}\n`);
-      narrateDiff("orders.ts", ordersBefore, orders);
-      narrateDiff("service.ts", before, after);
-      process.stderr.write(
-        `${bold(color("✓ PASS — order saving added", "green"))}\nBoth sample Decisions respected.\n`,
-      );
-      cleanSandbox(run);
-      run.stage = "completed";
-      saveRun(run);
-      finishOnboarding("completed");
-      narrateCompletion(run);
-      return {
-        ...resultFor(run),
-        receipt: completionReceipt,
-        evidence: {
-          correction: { before, after },
-          orders,
-          orderCorrection: { before: ordersBefore, after: orders },
-        },
-      };
-    } catch (error) {
-      // Reclaim only still-owned fixtures. Unexpected contents remain available
-      // for inspection and an explicit skip/recovery; never mark failure complete.
-      try {
-        cleanSandbox(run);
-        run.stage = "prepared";
-        saveRun(run);
-      } catch {
-        // The original failure includes the retained path when ownership changed.
-      }
-      throw error;
     }
   });
 }
-
-function parseDemoAgent(value?: string): Agent | undefined {
+function parseAgent(value?: string): Agent | undefined {
   if (value === "claude") return "claude_code";
   if (value === undefined || ["claude_code", "codex", "cursor", "hermes"].includes(value))
     return value as Agent | undefined;
-  throw new Error("expected --agent claude, codex, cursor, or hermes");
+  throw new Error("Expected --agent claude, codex, cursor, or hermes");
 }
-
-function reportError(error: unknown, json = true): void {
-  const message = error instanceof Error ? error.message : String(error);
+function reportError(error: unknown) {
+  const message = terminalSafeLine(error instanceof Error ? error.message : String(error));
   process.stderr.write(`[prim] demo: ${message}\n`);
-  if (json) printJson({ simulated: true, stage: "error", message });
+  printJson({ fictional: true, evaluation: "live", stage: "error", message });
   process.exitCode = 1;
 }
-
+async function terminalTour(run: DemoRun) {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const show = (result: Awaited<ReturnType<typeof advanceDemo>>) => {
+    const text = result.presentation
+      .replace(/^```(?:text|ts|diff)?\n/gmu, "")
+      .replace(/```/gu, "")
+      .replace(/\*\*(.*?)\*\*/gu, (_match: string, title: string) => bold(title));
+    process.stderr.write(
+      `${text.replace("YOUR DECISION STOPPED THIS", color("YOUR DECISION STOPPED THIS", "red")).replace("PASS — CSV export implemented", color("PASS — CSV export implemented", "green"))}\n`,
+    );
+    return result;
+  };
+  try {
+    const started = show(await advanceDemo(run.id, "start"));
+    if (started.stage !== "prompt") return started;
+    const task = await rl.question("Enter the task above (or skip): ");
+    if (task.trim() !== DEMO_TASK) return show(await advanceDemo(run.id, "skip"));
+    const blocked = show(await advanceDemo(run.id, "attempt"));
+    if (blocked.stage !== "conflict") return blocked;
+    const choice = (await rl.question("Adhere or supersede? [adhere/supersede/skip] "))
+      .trim()
+      .toLowerCase();
+    if (choice !== "adhere" && choice !== "supersede")
+      return show(await advanceDemo(run.id, "skip"));
+    const reason =
+      choice === "supersede" ? await rl.question("Your reason for the replacement: ") : undefined;
+    return show(await advanceDemo(run.id, "resolve", choice, reason));
+  } finally {
+    rl.close();
+  }
+}
 export function registerDemoCommands(program: Command): void {
   const demo = program
     .command("demo")
-    .description("Try a fictional, local Decision and enforcement walkthrough")
-    .option("--agent <agent>", "calling agent; requires hook acknowledgment before samples")
-    .option(
-      "--details",
-      "show the full source and supporting detail in the interactive terminal tour",
-    )
-    .action(async (options: { agent?: string; details?: boolean }, command: Command) => {
-      let terminal = false;
-      const output = (result: DemoResult) => {
-        // Human terminal sessions already receive narration. Preserve JSON for
-        // redirected output and every agent handoff, including agent PTYs.
-        if (!terminal || !process.stdout.isTTY) printJson(result);
-      };
+    .description("Experience your Decision protecting a fictional teammate change")
+    .option("--agent <agent>", "calling agent; requires session isolation")
+    .option("--details", "include supporting story detail")
+    .action(async (options: { agent?: string }, command: Command) => {
       try {
-        const agent = parseDemoAgent(options.agent);
-        terminal =
+        const agent = parseAgent(options.agent);
+        const terminal =
           !agent &&
           !isNonInteractive(command.optsWithGlobals()) &&
-          Boolean(process.stdin.isTTY && process.stderr.isTTY) &&
+          !!process.stdin.isTTY &&
+          !!process.stderr.isTTY &&
           !process.env.CLAUDECODE &&
           !process.env.CODEX_THREAD_ID &&
           !process.env.CURSOR_AGENT &&
           !process.env.HERMES_INTERACTIVE;
-        if (options.details && !terminal)
-          throw new Error(
-            "--details requires an interactive terminal; agents receive full detail in JSON",
-          );
         const recovery = pendingRuns().map((id) =>
-          lockRun(id, (run) => ({ runId: id, skipAction: demoCommand(run, "skip") })),
+          lockRun(id, (run) => ({
+            runId: id,
+            skipAction: demoCommand(
+              { ...run, launcher: [process.execPath, resolve(process.argv[1])] },
+              "skip",
+            ),
+          })),
         );
         const run = prepareRun(agent, terminal);
-        if (!terminal) {
-          process.stderr.write(
-            "[prim] Tour ready. Run nextAction exactly, as a standalone command. Samples wait for trusted hooks.\n",
-          );
-          if (recovery.length)
-            process.stderr.write(
-              "[prim] Earlier unfinished tours are listed in recoverableRuns; use their skipAction to clean up.\n",
-            );
-          printJson({ ...resultFor(run), recoverableRuns: recovery });
+        if (terminal) {
+          const result = await terminalTour(run);
+          if (!process.stdout.isTTY) printJson(result);
           return;
         }
-        advanceDemo(run.id, "start", undefined, options.details);
-        if (!(await askConfirmation("Adopt this sample Decision?", process.stderr))) {
-          output(advanceDemo(run.id, "skip"));
-          return;
-        }
-        advanceDemo(run.id, "confirm", undefined, options.details);
-        if (await askConfirmation("Apply the shared repository correction?", process.stderr)) {
-          output(advanceDemo(run.id, "resolve", "repository", options.details));
-        } else {
-          output(advanceDemo(run.id, "skip"));
-        }
-      } catch (error) {
-        reportError(error, !terminal || !process.stdout.isTTY);
-      }
-    });
-  for (const action of ["start", "confirm", "resolve", "skip"] as const) {
-    const subcommand = demo.command(`${action} ${action === "skip" ? "[runId]" : "<runId>"}`);
-    if (action === "resolve")
-      subcommand.requiredOption("--choice <choice>", "repository or local-storage");
-    subcommand.action((id: string | undefined, options: { choice?: string }) => {
-      try {
-        if (action === "skip" && !id) {
-          finishOnboarding("skipped");
-          printJson({
-            simulated: true,
-            stage: "skipped",
-            message: "Tour skipped. Run prim welcome for real Decision seeding.",
-          });
-          return;
-        }
-        if (
-          action === "resolve" &&
-          options.choice !== "repository" &&
-          options.choice !== "local-storage"
-        ) {
-          throw new Error("choose repository or local-storage");
-        }
-        printJson(advanceDemo(id as string, action, options.choice as DemoChoice | undefined));
+        process.stderr.write("[prim] Tour ready → run nextAction to check session isolation.\n");
+        printJson({
+          ...handoff(run),
+          instructions:
+            "Run nextAction exactly as a standalone command. Render presentation once, preserving diagrams. At awaitUserPrompt, wait for the user to enter that task before running attemptAction. At the block, wait for adhere or supersede; supersede requires the user's own reason and approval of the displayed replacement. Append --reason and the reason using the same single-quoted argv format (escape an apostrophe as '\\''). Never invent a reason, delegate this tour, or save fictional samples to memory or real Decisions. On completion display success before following welcome. A new session resumes passive capture.",
+          recoverableRuns: recovery,
+        });
       } catch (error) {
         reportError(error);
       }
     });
+  for (const action of ["start", "attempt", "resolve", "status", "skip"] as const) {
+    const sub = demo.command(`${action} ${action === "skip" ? "[runId]" : "<runId>"}`);
+    if (action === "resolve")
+      sub
+        .requiredOption("--choice <choice>", "adhere or supersede")
+        .option("--reason <reason>", "your reason for the displayed replacement");
+    sub.action(
+      async (id: string | undefined, options: { choice?: DemoChoice; reason?: string }) => {
+        try {
+          if (action === "skip" && !id) {
+            finishOnboarding("skipped");
+            printJson({
+              fictional: true,
+              stage: "skipped",
+              message: "Tour skipped. Run prim welcome for real Decisions.",
+            });
+            return;
+          }
+          printJson(await advanceDemo(id as string, action, options.choice, options.reason));
+        } catch (error) {
+          reportError(error);
+        }
+      },
+    );
   }
 }

@@ -182,8 +182,8 @@ describe("formatWelcome", () => {
     expect(flat("claude")).toContain("Capture is automatic — keep coding");
     // Codex/Hermes: hooks are inert until trusted/approved — the copy names
     // the unlocking action instead of overclaiming.
-    expect(flat("codex")).toContain("run /hooks in Codex");
-    expect(flat("codex")).toContain("until then nothing is recorded");
+    expect(flat("codex")).toContain("check /hooks in Codex");
+    expect(flat("codex")).toContain("approve them only if prompted");
     expect(flat("codex")).not.toContain("Capture is automatic");
     expect(flat("hermes")).toContain("approve the prim hooks when Hermes prompts");
     expect(flat("hermes")).not.toContain("Capture is automatic");
@@ -244,7 +244,7 @@ describe("welcomeJson", () => {
   it("seedGuidance in the JSON is agent-tailored — the field the agent surfaces verbatim", () => {
     const json = welcomeJson({ org: "seed", recent: [] }, "codex") as { seedGuidance: string };
     expect(json.seedGuidance).toBe(seedGuidanceFor("codex"));
-    expect(json.seedGuidance).toContain("run /hooks in Codex");
+    expect(json.seedGuidance).toContain("check /hooks in Codex");
   });
 
   it("seedGuidanceFor(claude) is the verbatim unconditional guidance; others gate on hook activation", () => {

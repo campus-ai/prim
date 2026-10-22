@@ -76,7 +76,11 @@ describe("setup's optional demo handoff", () => {
       h.calls.findIndex((args) => args[0] === "demo"),
     );
     expect(h.calls).toContainEqual(["welcome", "--agent", "codex", "--defer-seeding"]);
-    expect(h.outputs.at(-1)).toMatchObject({ simulated: true, stage: "prepared" });
+    expect(h.outputs.at(-1)).toMatchObject({
+      fictional: true,
+      evaluation: "live",
+      stage: "prepared",
+    });
     expect(JSON.stringify(h.outputs)).not.toContain("shared HTTP");
   });
 
@@ -109,7 +113,11 @@ describe("setup's optional demo handoff", () => {
     writeFileSync(join(demo, "onboarding.json"), "invalid JSON");
     expect(await h.setup()).toHaveBeenCalledWith(0);
     expect(h.calls).toContainEqual(["welcome", "--agent", "codex", "--defer-seeding"]);
-    expect(h.outputs.at(-1)).toMatchObject({ simulated: true, stage: "prepared" });
+    expect(h.outputs.at(-1)).toMatchObject({
+      fictional: true,
+      evaluation: "live",
+      stage: "prepared",
+    });
     expect(h.notes.join("\n")).toContain("cannot read onboarding state");
     expect(await h.setup(["--skip-demo"])).toHaveBeenCalledWith(0);
     expect(JSON.parse(readFileSync(join(demo, "onboarding.json"), "utf8"))).toEqual({

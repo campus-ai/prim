@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { DEMO_ADHERE, DEMO_INITIAL, DEMO_SUPERSEDE } from "../demo/story.js";
 
 const exec = promisify(execFile);
 const cli = resolve("dist/index.js");
@@ -152,215 +154,153 @@ function fixture() {
   return { root, repo, config, env, run, shell, hook, envelope, call, statePath };
 }
 
-describe("packaged local onboarding", () => {
-  it.each([
-    { details: false, redirected: false, skip: false },
-    { details: true, redirected: false, skip: false },
-    { details: false, redirected: true, skip: false },
-    { details: false, redirected: false, skip: true },
-  ])(
-    "renders terminal narration with $details detail, redirected=$redirected, skip=$skip",
-    async ({ details, redirected, skip }) => {
-      const f = fixture();
-      const preload = join(f.root, "terminal.cjs");
-      // Exercise the built CLI's terminal branches with deterministic input pipes.
-      // Real PTY walkthroughs are also checked manually; no platform PTY dependency.
-      writeFileSync(
-        preload,
-        `
-for (const stream of [process.stdin, process.stderr]) Object.defineProperty(stream, "isTTY", { value: true });
-Object.defineProperty(process.stdout, "isTTY", { value: ${!redirected} });
-`,
-      );
-      const env = {
-        ...f.env,
-        CI: "",
-        PRIM_NON_INTERACTIVE: "",
-        CLAUDECODE: "",
-        CODEX_THREAD_ID: "",
-        CURSOR_AGENT: "",
-        HERMES_INTERACTIVE: "",
-        NODE_OPTIONS: `--require=${preload}`,
-      };
-      const result = await new Promise<{ stdout: string; stderr: string }>((res, rej) => {
-        const child = execFile(
-          process.execPath,
-          [cli, "demo", ...(details ? ["--details"] : [])],
-          {
-            cwd: f.repo,
-            env,
-            timeout: 10_000,
-          },
-          (error, stdout, stderr) => (error ? rej(error) : res({ stdout, stderr })),
-        );
-        let transcript = "";
-        let replies = 0;
-        child.stderr?.on("data", (data) => {
-          transcript += data;
-          if (replies === 0 && transcript.includes("Adopt this sample Decision?")) {
-            replies++;
-            child.stdin?.write(skip ? "n\n" : "y\n");
-          } else if (
-            replies === 1 &&
-            transcript.includes("Apply the shared repository correction?")
-          ) {
-            replies++;
-            child.stdin?.write("y\n");
-          }
+async function serveStory(f: ReturnType<typeof fixture>) {
+  const requests: string[] = [];
+  const bodies: Record<string, unknown>[] = [];
+  const runs = new Map<string, Record<string, unknown>>();
+  let loseComplete = false;
+  let pendingCheck = false;
+  let queues = 0;
+  const server = createServer(async (req, res) => {
+    const path = req.url ?? "";
+    requests.push(path);
+    res.setHeader("Content-Type", "application/json");
+    let bytes = "";
+    for await (const chunk of req) bytes += chunk;
+    const body = bytes ? JSON.parse(bytes) : {};
+    bodies.push(body);
+    if (!path.startsWith("/api/cli/demo/")) {
+      const result = path.startsWith("/api/cli/decisions/recent")
+        ? { decisions: [], viewerHasDecisions: false }
+        : path.includes("conflict-check")
+          ? {
+              protocolVersion: 3,
+              verdict: "block",
+              reasonCode: "high_confidence_contradiction",
+              message: "real policy",
+              conflicts: [],
+              bypassed: [],
+            }
+          : { decisionId: "real-decision", shortId: "1234abcd", createdAt: 1 };
+      res.end(JSON.stringify(result));
+      return;
+    }
+    const action = path.split("/").at(-1);
+    if (action === "start") {
+      const id = body.localRunId.replaceAll("-", "");
+      if (!runs.has(id))
+        runs.set(id, {
+          scenarioVersion: 1,
+          fictional: true,
+          evaluation: "live",
+          runId: id,
+          revision: 0,
+          stage: "ready",
+          authorName: "Avery",
+          email: "not_queued",
         });
+      res.end(JSON.stringify(runs.get(id)));
+      return;
+    }
+    const run = runs.get(body.runId ?? action);
+    if (!run) {
+      res.statusCode = 404;
+      res.end('{"error":"not found"}');
+      return;
+    }
+    if (action === "check" && run.stage === "ready") {
+      if (pendingCheck)
+        Object.assign(run, { verdict: "pending", reasonCode: "evaluator_unavailable" });
+      else
+        Object.assign(run, {
+          stage: "blocked",
+          verdict: "block",
+          revision: Number(run.revision) + 1,
+        });
+    }
+    if (action === "resolve" && run.stage === "blocked")
+      Object.assign(run, {
+        stage: "approved",
+        verdict: "pass",
+        choice: body.choice,
+        ...(body.reason ? { reason: body.reason } : {}),
+        revision: Number(run.revision) + 1,
+        approvedDigest: createHash("sha256")
+          .update(body.choice === "adhere" ? DEMO_ADHERE : DEMO_SUPERSEDE)
+          .digest("hex"),
       });
-      expect(JSON.parse(readFileSync(join(f.config, "demo", "onboarding.json"), "utf8"))).toEqual({
-        outcome: skip ? "skipped" : "completed",
+    if (action === "complete" && run.stage === "approved") {
+      Object.assign(run, {
+        stage: "completed",
+        email: "queued",
+        revision: Number(run.revision) + 1,
       });
-      if (redirected)
-        expect(JSON.parse(result.stdout)).toMatchObject({ simulated: true, stage: "completed" });
-      else expect(result.stdout).toBe("");
-      expect(result.stderr.includes("WALKTHROUGH COMPLETE")).toBe(!skip);
-      expect(result.stderr).not.toContain("Choose: shared repository · retry direct storage");
-      expect(result.stderr.includes("Full source:")).toBe(details);
-      expect(result.stderr.includes("Alternatives rejected:")).toBe(details);
-      if (details) {
-        expect(result.stderr).toContain("the conversation names no file");
-        expect(result.stderr).toContain("the team demo is at three");
-        expect(result.stderr).toContain("Refused proposal:");
-      }
-      // An explicit agent remains a JSON handoff even when the harness uses a PTY.
-      const prepared = await f.run(["demo", "--agent", "codex"], env);
-      expect(prepared.json).toMatchObject({ simulated: true, stage: "prepared" });
-      expect(prepared.stderr).not.toContain("Adopt this sample Decision?");
-    },
-  );
-
-  it("rejects terminal-only detail mode without showing samples or preparing a run", async () => {
-    const f = fixture();
-    await expect(f.run(["demo", "--agent", "codex", "--details"])).rejects.toMatchObject({
-      stderr: expect.stringContaining("--details requires an interactive terminal"),
-      stdout: expect.not.stringContaining("shared HTTP"),
-    });
-    expect(existsSync(join(f.config, "demo", "runs"))).toBe(false);
+      queues++;
+    }
+    if (action === "complete" && loseComplete) {
+      loseComplete = false;
+      res.destroy();
+      return;
+    }
+    if (action === "skip" && run.stage !== "completed") Object.assign(run, { stage: "skipped" });
+    res.end(JSON.stringify(run));
   });
+  servers.push(server);
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  f.env.PRIM_API_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  return {
+    requests,
+    bodies,
+    runs,
+    loseCompletion: () => {
+      loseComplete = true;
+    },
+    pending: (value: boolean) => {
+      pendingCheck = value;
+    },
+    queues: () => queues,
+  };
+}
+const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+async function blockedStory(f: ReturnType<typeof fixture>, agent = "codex") {
+  const prepared = (await f.run(["demo", "--agent", agent])).json;
+  const started = (await f.call(agent, prepared.nextAction)).json;
+  const blocked = (await f.call(agent, started.attemptAction)).json;
+  return { prepared, started, blocked };
+}
 
+describe("packaged author story", () => {
   it.each(["claude_code", "codex", "cursor", "hermes"])(
-    "runs the two-choice tour and excludes both capture paths for %s",
+    "protects the story and both capture paths for %s",
     async (agent) => {
       const f = fixture();
-      const requests: string[] = [];
-      const server = createServer((req, res) => {
-        requests.push(req.url ?? "");
-        res.setHeader("Content-Type", "application/json");
-        res.end(
-          JSON.stringify(
-            req.url?.startsWith("/api/cli/decisions/recent")
-              ? { decisions: [], viewerHasDecisions: false }
-              : { decisionId: "real-decision", shortId: "1234abcd", createdAt: 1 },
-          ),
-        );
-      });
-      servers.push(server);
-      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-      f.env.PRIM_API_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const { requests, queues } = await serveStory(f);
       const prepared = (await f.run(["demo", "--agent", agent])).json;
-      expect(prepared.stage).toBe("prepared");
-      expect(JSON.stringify(prepared)).not.toContain("shared HTTP");
+      expect(JSON.stringify(prepared)).not.toContain("CSV");
       const pending = await f.shell(prepared.nextAction);
-      expect(pending.json.stage).toBe("pending");
-      expect(pending.stderr).not.toContain("shared HTTP");
-      expect(pending.stderr).not.toContain("Add order saving");
-      expect(pending.json.receipt).toBeUndefined();
-      const started = await f.call(agent, prepared.nextAction);
-      expect(started.json.stage).toBe("proposal");
-      expect(started.stderr).toContain("scripted extraction");
-      expect(started.stderr).toContain("Add order saving");
-      expect(started.stderr.indexOf("Add order saving")).toBeLessThan(
-        started.stderr.indexOf("Team conversation"),
-      );
-      const sandbox = started.json.sandbox;
-      const note = readFileSync(join(sandbox, "note.md"), "utf8");
-      const extracted = started.json.decisions[0];
-      expect(started.stderr).toContain("DECISION EXTRACTED");
-      expect(extracted.stage).toBe("provisional");
-      for (const quote of extracted.evidence) expect(note).toContain(quote);
-      expect(started.stderr).toContain("Demo scope: service.ts");
-      expect(extracted.scopeBasis).toContain("the conversation names no file");
-      expect(started.json.sourceNote).toBe(note);
-      expect(started.json.proposal).toMatchObject({
-        stage: "proposed",
-        source: "Fictional authoring proposal",
-        alternativesRejected: ["Direct local-storage writes that bypass repository validation"],
-      });
-      expect(started.stderr.split(extracted.evidence[0])).toHaveLength(2);
-      expect(started.stderr).not.toContain("Alternatives rejected:");
-      expect(started.stderr.trim().split(/\s+/).length).toBeLessThan(160);
-      expect(JSON.stringify(extracted)).not.toContain("at three");
-      const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
-      expect(original).toContain("TODO: persist this order");
-      expect(original).not.toContain("orders.save");
-      expect(started.stderr).not.toContain("SAMPLE DECISION ADOPTED");
-      expect(JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"))).toHaveLength(1);
-      const confirmed = await f.call(agent, started.json.nextAction);
-      expect(confirmed.stderr).toContain("SAMPLE DECISION ADOPTED");
-      expect(confirmed.stderr).toContain("Proposed → Adopted");
-      expect(confirmed.stderr.indexOf("SAMPLE DECISION ADOPTED")).toBeLessThan(
-        confirmed.stderr.indexOf("WARNING — edit allowed"),
-      );
-      expect(confirmed.stderr).toContain("WARNING — edit allowed");
-      expect(confirmed.stderr).toContain("BLOCKED — file unchanged");
-      expect(confirmed.stderr).toContain("Bypasses shared retries and tracing");
-      expect(confirmed.stderr).toContain("service.ts · changed");
-      expect(confirmed.stderr).toContain(`orders.ts · before = after\n${original}`);
-      expect(confirmed.stderr).toContain("localStorage.setItem(…) ──×──→ orders.ts");
-      expect(confirmed.stderr).toContain("Scripted verdicts. Live gates vary");
-      expect(confirmed.stderr).toContain("Choose: shared repository · retry direct storage");
-      expect(confirmed.stderr).not.toContain("Index:");
-      expect(confirmed.stderr).not.toContain("@@");
-      expect(confirmed.stderr.trim().split(/\s+/).length).toBeLessThan(160);
-      expect(confirmed.json.evidence.block.after).toBe(original);
-      expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
-      expect(readFileSync(join(sandbox, "service.ts"), "utf8")).toContain("fetch(");
-      const decisions = JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"));
-      expect(decisions).toHaveLength(2);
-      expect(decisions[1]).toMatchObject({ id: "demo-order-repository", stage: "adopted" });
-      const retry = confirmed.json.retryAction;
-      const blockedAgain = await f.call(agent, retry);
-      expect(blockedAgain.json.stage).toBe("conflict");
-      expect(blockedAgain.json.receipt).toBeUndefined();
-      expect(blockedAgain.stderr).not.toContain("WALKTHROUGH COMPLETE");
-      expect(blockedAgain.stderr).toContain(decisions[1].decision);
-      expect(blockedAgain.stderr).toContain("Bypasses repository validation");
-      expect(blockedAgain.stderr).not.toContain("WARNING");
-      expect(blockedAgain.stderr).toContain("Next: shared repository → orders.save(order)");
-      expect(blockedAgain.json.evidence.unchanged).toBe(original);
-      expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
-      const completed = await f.call(agent, confirmed.json.nextAction);
+      expect(pending.json).toMatchObject({ stage: "pending", isolation: "acknowledgment-missing" });
+      expect(requests).toEqual([]);
+      const started = (await f.call(agent, prepared.nextAction)).json;
+      expect(started.stage).toBe("prompt");
+      expect(started.nextAction).toBeUndefined();
+      expect(started.awaitUserPrompt).toContain("including name and email");
+      expect(requests).toEqual(["/api/cli/demo/start"]);
+      expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
+      const blocked = (await f.call(agent, started.attemptAction)).json;
+      expect(blocked.stage).toBe("conflict");
+      expect(blocked.presentation).toContain("YOUR DECISION STOPPED THIS");
+      expect(blocked.presentation).toContain("customers.ts unchanged");
+      expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
+      const completed = await f.call(agent, blocked.choices.adhere);
       expect(completed.json.stage).toBe("completed");
-      expect(completed.json.evidence.correction.after).toContain("http.get");
-      expect(completed.json.evidence.orderCorrection.before).toBe(original);
-      expect(completed.json.evidence.orderCorrection.after).toBe(completed.json.evidence.orders);
-      expect(completed.json.evidence.orderCorrection.after).toContain("orders.save(order)");
-      expect(completed.json.evidence.orderCorrection.after).not.toContain("TODO");
-      expect(completed.json.evidence.orderCorrection.after).not.toContain("localStorage");
-      expect(completed.stderr).toContain("PASS — order saving added");
-      expect(completed.stderr).toContain("orders.ts\n- export const saveOrder");
-      expect(completed.stderr).toContain(
-        "+ export const saveOrder = (order: unknown) => orders.save(order);",
-      );
-      expect(completed.stderr).toContain(
-        'service.ts\n- export const loadOrders = () => fetch("/orders");',
-      );
-      expect(existsSync(sandbox)).toBe(false);
-      expect(readFileSync(join(f.repo, "real.ts"), "utf8")).toBe("export const real = true;\n");
-      expect(completed.json.nextAction).toContain("--capture-excluded");
-      expect(completed.json.receipt).toHaveLength(5);
-      for (const item of completed.json.receipt) expect(completed.stderr).toContain(item);
-      expect(completed.stderr).toContain("WALKTHROUGH COMPLETE — simulated");
-      expect(completed.stderr.indexOf("WALKTHROUGH COMPLETE")).toBeLessThan(
-        completed.stderr.indexOf("Sample files removed"),
-      );
-      expect(completed.json.message).toContain("propose one real Decision");
-      const completedAgain = await f.call(agent, confirmed.json.nextAction);
-      expect(completedAgain.json.stage).toBe("completed");
-      expect(completedAgain.json.receipt).toEqual(completed.json.receipt);
-      expect(existsSync(sandbox)).toBe(false);
+      expect(completed.json.presentation).toContain("PASS — CSV export implemented");
+      expect(completed.json.presentation).toContain("EMAIL QUEUED");
+      expect(completed.stderr).toBe("");
+      expect(completed.stdout.trim().split("\n")).toHaveLength(1);
+      expect(existsSync(started.sandbox)).toBe(false);
+      expect(queues()).toBe(1);
+      expect((await f.call(agent, blocked.choices.adhere)).json.stage).toBe("completed");
+      expect(queues()).toBe(1);
       // Late/resumed messages and both independent post-tool producers stay excluded.
       for (const event of [
         "PreToolUse",
@@ -399,7 +339,7 @@ Object.defineProperty(process.stdout, "isTTY", { value: ${!redirected} });
         });
       }
       expect(existsSync(join(f.config, "moves"))).toBe(false);
-      expect(requests).toEqual([]);
+      expect(requests).not.toContain("/api/cli/moves/ingest");
       // A different session still captures, even in the same repository.
       await f.hook("prim-hook", agent, f.envelope(agent, "echo real work", "another-session"));
       expect(existsSync(join(f.config, "moves"))).toBe(true);
@@ -432,129 +372,94 @@ Object.defineProperty(process.stdout, "isTTY", { value: ${!redirected} });
       expect(welcome.json.seedGuidance).toContain("Passive capture is excluded");
       expect(welcome.stderr).not.toContain("Capture is automatic");
     },
-    25_000,
+    30_000,
   );
 
-  it("rejects compound, stale and different-session acknowledgments; serializes duplicate hooks", async () => {
+  it("requires the user's reason, preserves it verbatim, and resumes a lost email response", async () => {
     const f = fixture();
-    const { json: prepared } = await f.run(["demo", "--agent", "claude"]);
-    await f.hook(
-      "prim-hook",
-      "claude_code",
-      f.envelope("claude_code", `${prepared.nextAction}; echo other`),
-    );
+    const api = await serveStory(f);
+    const { started, blocked } = await blockedStory(f);
+    await expect(
+      f.run(["demo", "resolve", blocked.runId, "--choice", "supersede"]),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining("your short reason") });
+    const reason =
+      "Customer's request for export 123e4567-e89b-42d3-a456-426614174000; $(echo never-run)";
+    const command = `${blocked.choices.supersede.command} '--reason' ${quote(reason)}`;
+    api.loseCompletion();
+    const interrupted = (await f.call("codex", command)).json;
+    expect(interrupted.stage).toBe("pending");
+    expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_SUPERSEDE);
+    const receipt = JSON.parse(readFileSync(f.statePath(blocked.runId), "utf8")).receipt;
+    expect(receipt.appliedDigest).toHaveLength(64);
+    const done = (await f.call("codex", interrupted.nextAction)).json;
+    expect(done.stage).toBe("completed");
+    expect(done.server.reason).toBe(reason);
+    expect(api.queues()).toBe(1);
+    expect(api.requests.filter((path) => path.endsWith("/resolve"))).toHaveLength(1);
+    const completes = api.bodies.filter((body) => "appliedDigest" in body);
+    expect(completes).toHaveLength(2);
+    expect(completes[0]).toEqual(completes[1]);
+  });
+  it("leaves unavailable evaluation pending with unchanged bytes", async () => {
+    const f = fixture();
+    const api = await serveStory(f);
+    api.pending(true);
+    const { started, blocked } = await blockedStory(f);
+    expect(blocked.stage).toBe("pending");
+    expect(blocked.presentation).not.toContain("STOPPED THIS");
+    expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
+    expect(api.queues()).toBe(0);
+    api.pending(false);
+    expect((await f.call("codex", blocked.nextAction)).json.stage).toBe("conflict");
+  });
+  it("rejects compound, stale and mismatched acknowledgments before revealing the story", async () => {
+    const f = fixture();
+    const api = await serveStory(f);
+    const prepared = (await f.run(["demo", "--agent", "codex"])).json;
+    await f.hook("prim-hook", "codex", f.envelope("codex", `${prepared.nextAction}; echo other`));
     expect((await f.shell(prepared.nextAction)).json.stage).toBe("pending");
     await Promise.all([
-      f.hook("prim-hook", "claude_code", f.envelope("claude_code", prepared.nextAction)),
-      f.hook("pre-tool-use", "claude_code", f.envelope("claude_code", prepared.nextAction)),
+      f.hook("prim-hook", "codex", f.envelope("codex", prepared.nextAction)),
+      f.hook("pre-tool-use", "codex", f.envelope("codex", prepared.nextAction)),
     ]);
     const path = f.statePath(prepared.runId);
     const state = JSON.parse(readFileSync(path, "utf8"));
     state.acknowledgment.at -= 60_000;
     writeFileSync(path, JSON.stringify(state));
-    expect((await f.shell(prepared.nextAction)).json.stage).toBe("pending");
-    const started = await f.call("claude_code", prepared.nextAction);
-    const wrongSession = await f.call("claude_code", started.json.nextAction, "different-session");
-    expect(wrongSession.json.stage).toBe("pending");
-    expect(wrongSession.stderr).not.toContain("Persist orders");
-    const confirmed = await f.call("claude_code", started.json.nextAction);
-    expect(confirmed.json.stage).toBe("conflict");
-    const repeated = await f.call("claude_code", started.json.nextAction);
-    expect(repeated.json.evidence).toEqual(confirmed.json.evidence);
-    expect(repeated.stderr).not.toContain("SAMPLE DECISION ADOPTED");
-    const skipped = await f.shell(confirmed.json.skipAction);
-    expect(skipped.json.receipt).toBeUndefined();
-    expect(skipped.stderr).not.toContain("WALKTHROUGH COMPLETE");
-    expect(existsSync(started.json.sandbox)).toBe(false);
-  });
-
-  it("preserves foreign files and symlinks during cleanup and offers interrupted-run recovery", async () => {
-    const f = fixture();
-    const prepared = (await f.run(["demo", "--agent", "codex"])).json;
+    expect((await f.shell(prepared.nextAction)).json.isolation).toBe("acknowledgment-expired");
+    expect(api.requests).toEqual([]);
     const started = (await f.call("codex", prepared.nextAction)).json;
-    const next = (await f.run(["demo", "--agent", "codex"])).json;
-    expect(next.recoverableRuns).toContainEqual({
-      runId: prepared.runId,
-      skipAction: started.skipAction,
-    });
-    const foreign = join(started.sandbox, "foreign.txt");
+    expect((await f.call("codex", started.attemptAction, "another-session")).json.stage).toBe(
+      "pending",
+    );
+    expect((await f.call("codex", started.attemptAction)).json.stage).toBe("conflict");
+  });
+  it("preserves foreign files and symlink targets during recovery", async () => {
+    const f = fixture();
+    await serveStory(f);
+    const { started } = await blockedStory(f);
+    const foreign = join(started.sandbox, "foreign");
     writeFileSync(foreign, "keep");
     await expect(f.shell(started.skipAction)).rejects.toMatchObject({
       stderr: expect.stringContaining("retained"),
     });
     expect(readFileSync(foreign, "utf8")).toBe("keep");
     rmSync(foreign);
-    rmSync(join(started.sandbox, "service.ts"));
-    symlinkSync(join(f.repo, "real.ts"), join(started.sandbox, "service.ts"));
+    rmSync(join(started.sandbox, "customers.ts"));
+    symlinkSync(join(f.repo, "real.ts"), join(started.sandbox, "customers.ts"));
     await expect(f.shell(started.skipAction)).rejects.toMatchObject({
       stderr: expect.stringContaining("retained"),
     });
     expect(readFileSync(join(f.repo, "real.ts"), "utf8")).toBe("export const real = true;\n");
-    rmSync(join(started.sandbox, "service.ts"));
+    rmSync(join(started.sandbox, "customers.ts"));
+    const recovery = (await f.run(["demo", "--agent", "codex"])).json.recoverableRuns;
+    expect(recovery.some((run: { runId: string }) => run.runId === started.runId)).toBe(true);
     await f.shell(started.skipAction);
     expect(existsSync(started.sandbox)).toBe(false);
-    expect((await f.run(["demo", "--agent", "codex"])).json.stage).toBe("prepared");
   });
-
-  it("skips before starting without excluding the session, and rejects out-of-order choices", async () => {
+  it("keeps independent runs separate and production enforcement active", async () => {
     const f = fixture();
-    const prepared = (await f.run(["demo", "--agent", "claude"])).json;
-    await f.call("claude_code", prepared.skipAction);
-    expect(existsSync(join(f.config, "demo", "excluded-sessions"))).toBe(false);
-    const replay = (await f.run(["demo", "--agent", "claude"])).json;
-    const invalid = replay.nextAction.replace("'start'", "'confirm'");
-    await expect(f.call("claude_code", invalid)).rejects.toMatchObject({
-      stderr: expect.stringContaining("start the demo before confirming"),
-    });
-    expect(JSON.parse(readFileSync(f.statePath(replay.runId), "utf8")).stage).toBe("prepared");
-  });
-
-  it("cleans still-owned files after a recoverable error without marking onboarding complete", async () => {
-    const f = fixture();
-    const prepared = (await f.run(["demo", "--agent", "codex"])).json;
-    const started = (await f.call("codex", prepared.nextAction)).json;
-    rmSync(join(started.sandbox, "orders.ts"));
-    await expect(f.call("codex", started.nextAction)).rejects.toMatchObject({
-      stderr: expect.stringContaining("ENOENT"),
-      stdout: expect.not.stringContaining('"receipt"'),
-    });
-    expect(existsSync(started.sandbox)).toBe(false);
-    expect(existsSync(join(f.config, "demo", "onboarding.json"))).toBe(false);
-    expect(JSON.parse(readFileSync(f.statePath(prepared.runId), "utf8")).stage).toBe("prepared");
-    const restarted = await f.call("codex", prepared.nextAction);
-    expect(restarted.json.stage).toBe("proposal");
-    const confirmed = await f.call("codex", restarted.json.nextAction);
-    // Failure to persist completion must not earn a success receipt, even
-    // after the correction and owned-file cleanup have succeeded.
-    mkdirSync(join(f.config, "demo", "onboarding.json"));
-    await expect(f.call("codex", confirmed.json.nextAction)).rejects.toMatchObject({
-      stdout: expect.not.stringContaining('"receipt"'),
-      stderr: expect.not.stringContaining("WALKTHROUGH COMPLETE"),
-    });
-    expect(existsSync(restarted.json.sandbox)).toBe(false);
-    expect(JSON.parse(readFileSync(f.statePath(prepared.runId), "utf8")).stage).toBe("prepared");
-  });
-
-  it("keeps independent runs separate and leaves real-work enforcement active", async () => {
-    const f = fixture();
-    const requests: string[] = [];
-    const server = createServer((req, res) => {
-      requests.push(req.url ?? "");
-      res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          protocolVersion: 3,
-          verdict: "block",
-          reasonCode: "high_confidence_contradiction",
-          message: "real policy",
-          conflicts: [],
-          bypassed: [],
-        }),
-      );
-    });
-    servers.push(server);
-    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-    f.env.PRIM_API_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const api = await serveStory(f);
     const a = (await f.run(["demo", "--agent", "codex"])).json;
     const b = (await f.run(["demo", "--agent", "codex"])).json;
     const started = await Promise.all([
@@ -564,57 +469,84 @@ Object.defineProperty(process.stdout, "isTTY", { value: ${!redirected} });
     expect(started[0].json.sandbox).not.toBe(started[1].json.sandbox);
     await f.shell(started[0].json.skipAction);
     expect(existsSync(started[1].json.sandbox)).toBe(true);
-    const realEdit = f.envelope("codex", "", "b");
-    realEdit.tool_name = "apply_patch";
-    realEdit.tool_input = {
-      command:
-        "*** Begin Patch\n*** Update File: real.ts\n@@\n-export const real = true;\n+export const real = false;\n*** End Patch",
+    const realEdit = {
+      ...f.envelope("codex", "", "b"),
+      tool_name: "apply_patch",
+      tool_input: {
+        command:
+          "*** Begin Patch\n*** Update File: real.ts\n@@\n-export const real = true;\n+export const real = false;\n*** End Patch",
+      },
     };
     const result = await f.hook("pre-tool-use", "codex", realEdit);
-    expect(requests).toContain("/api/cli/decisions/conflict-check");
+    expect(api.requests).toContain("/api/cli/decisions/conflict-check");
     expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
-    const binding = JSON.parse(readFileSync(f.statePath(b.runId), "utf8")).binding;
-    writeFileSync(join(f.config, "demo", "excluded-sessions", `${binding}.json`), "broken");
-    const afterCorruption = await f.hook("pre-tool-use", "codex", realEdit);
-    expect(JSON.parse(afterCorruption.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
-
-  it("runs from distribution-only files without starting network or background work", async () => {
+  it("skips before isolation and retires legacy runs without revealing their samples", async () => {
     const f = fixture();
+    const prepared = (await f.run(["demo", "--agent", "codex"])).json;
+    await f.call("codex", prepared.skipAction);
+    expect(existsSync(join(f.config, "demo", "excluded-sessions"))).toBe(false);
+    const old = (await f.run(["demo", "--agent", "codex"])).json;
+    const state = JSON.parse(readFileSync(f.statePath(old.runId), "utf8"));
+    state.version = 1;
+    state.launcher = ["/removed/node", "/removed/prim"];
+    writeFileSync(f.statePath(old.runId), JSON.stringify(state));
+    const replay = (await f.run(["demo", "--agent", "codex"])).json;
+    const cleanup = replay.recoverableRuns.find(
+      (run: { runId: string }) => run.runId === old.runId,
+    ).skipAction;
+    expect(cleanup).not.toContain("/removed");
+    expect((await f.shell(cleanup)).json.stage).toBe("skipped");
+  });
+  it.each(["seed", "active", "unknown"])(
+    "keeps the post-tour %s handoff short and state-aware",
+    async (org) => {
+      const f = fixture();
+      const server = createServer((_request, response) => {
+        response.writeHead(org === "unknown" ? 503 : 200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ decisions: [], viewerHasDecisions: org === "active" }));
+      });
+      servers.push(server);
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("missing server address");
+      const output = await f.run(
+        ["welcome", "--agent", "codex", "--capture-excluded", "--after-demo"],
+        {
+          PRIM_API_URL: `http://127.0.0.1:${address.port}`,
+        },
+      );
+      expect(output.json).toMatchObject({ welcomed: true, org, captureExcluded: true });
+      expect(output.json.recent).toBeUndefined();
+      expect(output.json.presentation.split(/\s+/).length).toBeLessThan(40);
+      expect(output.stderr).not.toContain("How it works");
+      if (org === "seed") expect(output.json.seedGuidance).toContain("Passive capture is excluded");
+      else expect(output.json.seedGuidance).toBeUndefined();
+      if (org === "unknown") expect(output.json.presentation).toContain("unavailable");
+    },
+  );
+
+  it("runs from distribution-only files and limits network calls to the explicit demo API", async () => {
+    const f = fixture();
+    const api = await serveStory(f);
     const packed = join(f.root, "package");
     mkdirSync(packed);
     cpSync(resolve("dist"), join(packed, "dist"), { recursive: true });
     cpSync(resolve("package.json"), join(packed, "package.json"));
-    // Normal dist uses external packages; emulate an installed package's resolution.
     symlinkSync(resolve("node_modules"), join(packed, "node_modules"), "dir");
-    const preload = join(f.root, "forbid-background.cjs");
-    const log = join(f.root, "side-effects");
-    writeFileSync(
-      preload,
-      `
-const fs = require("node:fs");
-const cp = require("node:child_process");
-const fail = () => { fs.appendFileSync(${JSON.stringify(log)}, "unexpected work\\n"); throw Error("unexpected background/network work"); };
-globalThis.fetch = fail;
-cp.spawn = fail;
-require("node:http").request = fail;
-require("node:https").request = fail;
-require("node:module").syncBuiltinESMExports();
-`,
-    );
-    const prepared = await f.run(
-      ["demo", "--agent", "claude"],
-      {
-        NODE_OPTIONS: `--require=${preload}`,
-        PRIM_UNATTENDED: "",
-        NO_UPDATE_NOTIFIER: "",
-      },
-      join(packed, "dist", "index.js"),
-    );
-    expect(prepared.json.stage).toBe("prepared");
-    expect(existsSync(log)).toBe(false);
-    const started = await f.call("claude_code", prepared.json.nextAction);
-    expect(started.json.stage).toBe("proposal");
-    expect(readdirSync(started.json.sandbox)).toContain("decisions.json");
+    const prepared = (
+      await f.run(["demo", "--agent", "codex"], {}, join(packed, "dist", "index.js"))
+    ).json;
+    expect(api.requests).toEqual([]);
+    const started = (await f.call("codex", prepared.nextAction)).json;
+    expect(readdirSync(started.sandbox).sort()).toEqual([".owner", "customers.ts"]);
+    const blocked = (await f.call("codex", started.attemptAction)).json;
+    expect((await f.call("codex", blocked.choices.adhere)).json.stage).toBe("completed");
+    expect(api.requests).toEqual([
+      "/api/cli/demo/start",
+      "/api/cli/demo/check",
+      "/api/cli/demo/resolve",
+      "/api/cli/demo/complete",
+    ]);
   });
 });
