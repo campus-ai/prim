@@ -18,9 +18,10 @@
  * prim calls in the same session stop prompting — and every future repo onboards
  * prompt-free.
  *
- * AX: each step's own output streams through (STDERR human / STDOUT machine);
- * this wrapper adds a one-line-per-step progress trail on STDERR and a final
- * status line. Idempotent — every underlying step is, so re-running is safe.
+ * AX: human progress, prompts, and warnings stay live on STDERR. Default
+ * output omits installation child JSON in favor of a setup summary; --details
+ * streams full child output. Welcome/demo retain their structured handoffs.
+ * Idempotent — every underlying step is, so re-running is safe.
  */
 
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
@@ -30,6 +31,7 @@ import type { Command } from "commander";
 import { onboardingFinished } from "../demo/state.js";
 import { gitHooksMode, resolveEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
+import { printJson } from "../output.js";
 import {
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
   type GlobalHooksPlan,
@@ -65,7 +67,7 @@ export const SETUP_DAEMON_DRAINS_ENV = "PRIM_SETUP_DAEMON_DRAINS";
 export function setupStepSpawnOptions(
   capture: boolean,
   env: NodeJS.ProcessEnv = process.env,
-  options: { startsDaemon?: boolean } = {},
+  options: { startsDaemon?: boolean; compact?: boolean } = {},
 ): SpawnSyncOptionsWithStringEncoding {
   return {
     env: {
@@ -74,7 +76,11 @@ export function setupStepSpawnOptions(
       // Unset rather than inherited when this setup starts no daemon.
       [SETUP_DAEMON_DRAINS_ENV]: options.startsDaemon === true ? "1" : undefined,
     },
-    stdio: capture ? ["inherit", "pipe", "ignore"] : "inherit",
+    stdio: capture
+      ? ["inherit", "pipe", "ignore"]
+      : options.compact
+        ? ["inherit", "pipe", "inherit"]
+        : "inherit",
     encoding: "utf-8",
   };
 }
@@ -191,7 +197,7 @@ export function planSetupSteps(opts: {
     steps.push({
       key: "health",
       label: "Capture health",
-      args: ["doctor", "--expect-backlog"],
+      args: ["doctor", "--expect-backlog", "--agent", opts.agent, "--compact"],
       required: true,
     });
   }
@@ -413,6 +419,7 @@ type SetupCommandOptions = {
   daemon: boolean;
   globalHooksPath?: boolean;
   skipDemo?: boolean;
+  details?: boolean;
 };
 
 export function registerSetupCommand(
@@ -439,7 +446,8 @@ export function registerSetupCommand(
       "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
     )
     .option("--no-daemon", "stop and disable the companion daemon")
-    .option("--skip-demo", "skip the local onboarding tour and remember that choice")
+    .option("--details", "show full installation diagnostics and child output")
+    .option("--skip-demo", "skip the optional author story and remember that choice")
     .action((opts: SetupCommandOptions) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
@@ -479,12 +487,27 @@ export function registerSetupCommand(
       const run =
         dependencies.run ??
         ((args: string[], capture = false): { code: number; stdout: string } => {
+          // Keep auth/confirmation prompts live on STDERR. Only consume the
+          // installation steps' redundant STDOUT; welcome/demo own their payloads.
+          const compact = !opts.details;
+          const structuredChild = args.includes("demo") || args[0] === "welcome";
+          const childArgs = opts.details ? args.filter((arg) => arg !== "--compact") : args;
           const r = spawnSync(
             process.execPath,
-            [self, ...args],
-            setupStepSpawnOptions(capture, process.env, { startsDaemon: opts.daemon }),
+            [self, ...childArgs],
+            setupStepSpawnOptions(capture, process.env, {
+              startsDaemon: opts.daemon,
+              compact: compact || structuredChild,
+            }),
           );
-          return { code: r.status ?? 1, stdout: capture ? (r.stdout ?? "") : "" };
+          if (!capture && opts.details && structuredChild && r.stdout)
+            process.stdout.write(r.stdout);
+          if (!capture && compact && r.status !== 0 && r.stdout) process.stderr.write(r.stdout);
+          if (r.error) process.stderr.write(`[prim] ${r.error.message}\n`);
+          return {
+            code: r.status ?? 1,
+            stdout: capture || compact || structuredChild ? (r.stdout ?? "") : "",
+          };
         });
 
       const results: Record<string, StepResult> = {};
@@ -643,10 +666,13 @@ export function registerSetupCommand(
           note("demo · could not remember skip; installation remains configured");
       }
       note("welcome");
-      results.welcome =
-        run(["welcome", "--agent", agent, ...(tourDue ? ["--defer-seeding"] : [])]).code === 0
-          ? "ok"
-          : "failed";
+      const welcomeResult = run([
+        "welcome",
+        "--agent",
+        agent,
+        ...(tourDue ? ["--defer-seeding"] : []),
+      ]);
+      results.welcome = welcomeResult.code === 0 ? "ok" : "failed";
 
       const failed = Object.entries(results)
         .filter(([, v]) => v === "failed")
@@ -657,6 +683,7 @@ export function registerSetupCommand(
       note(
         `setup ${failed.length === 0 ? "complete" : `incomplete (failed: ${failed.join(", ")})`} — ${trail}`,
       );
+      let onboarding: Record<string, unknown> | undefined;
       if (failed.length === 0 && tourDue) {
         // Agent subprocesses must return a next action rather than block on
         // readline. An explicit --agent also opts into the isolation handshake
@@ -675,9 +702,43 @@ export function registerSetupCommand(
           "demo",
           ...(agentDriven ? ["--agent", agent] : []),
         ]);
-        if (demoResult.code !== 0)
+        onboarding = setupChildPayload(demoResult.stdout) ?? {
+          stage: "pending",
+          message: "Run prim demo to recover the optional story",
+        };
+        if (demoResult.code !== 0) {
+          onboarding = { ...onboarding, stage: "pending" };
           note("demo · pending after an error; setup succeeded. Run prim demo to retry");
+        }
       }
+      if (
+        !process.stdout.isTTY ||
+        opts.agent ||
+        globals.nonInteractive ||
+        process.env.CLAUDECODE ||
+        process.env.CODEX_THREAD_ID ||
+        process.env.CURSOR_AGENT ||
+        process.env.HERMES_INTERACTIVE
+      )
+        printJson({
+          setup: true,
+          status: failed.length ? "incomplete" : "complete",
+          steps: results,
+          welcome: setupChildPayload(welcomeResult.stdout),
+          ...(onboarding ? { onboarding, nextAction: onboarding.nextAction } : {}),
+        });
       exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
     });
+}
+
+/** Preserve one machine-readable setup result while children narrate on STDERR. */
+function setupChildPayload(stdout: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(stdout);
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

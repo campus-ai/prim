@@ -402,6 +402,22 @@ describe("hooks install action", () => {
 
   const huskyDetected = (p: string) => p === "/fake/root/.husky" || p === "/fake/root/.husky/_";
 
+  it("keeps the interactive installation prompt and fallback on STDERR", async () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("PRIM_NON_INTERACTIVE", "");
+    mockedExistsSync.mockImplementation(huskyDetected);
+    vi.mocked(askConfirmation).mockResolvedValue(false);
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    await buildProgram().parseAsync(["hooks", "install"], { from: "user" });
+    expect(askConfirmation).toHaveBeenCalledWith(
+      expect.stringContaining("Husky detected"),
+      process.stderr,
+    );
+    expect(stderr).toHaveBeenCalledWith("Falling back to .git/hooks install.");
+    expect(wiredPaths()).toEqual(HOOK_NAMES.map((hook) => `/fake/root/.git/hooks/${hook}`));
+    stderr.mockRestore();
+  });
+
   it("--yes installs to .husky when Husky is detected", async () => {
     mockedExistsSync.mockImplementation(huskyDetected);
     await buildProgram().parseAsync(["hooks", "install", "--yes"], { from: "user" });

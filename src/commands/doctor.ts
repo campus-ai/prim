@@ -135,7 +135,7 @@ export type DaemonDoctorSnapshot = {
  * bowed out to a concurrent drain) is not visible here. Standalone doctor
  * never sets it.
  */
-export type DoctorOptions = { backlogExpected?: boolean };
+export type DoctorOptions = { backlogExpected?: boolean; agent?: string; compact?: boolean };
 
 export type MovesStatus = {
   captureState: "enabled";
@@ -623,6 +623,8 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
         return `outside this repository — ${externalHookRemedy(inspection.hookName, inspection.gitRoot)}`;
       }
       return "run `prim hooks install`";
+    case "unsupported_interpreter":
+      return "verify the hook interpreter; direct shell hooks need a supported shebang (for example #!/bin/sh); Husky v9 must use its .husky/_ dispatcher";
     case "entrypoint_missing":
       return "run `prim enable` to stage the hook runtime";
     default:
@@ -1191,7 +1193,18 @@ const DEFAULT_DOCTOR_PROBES: DoctorProbes = {
 
 async function collectChecks(options: DoctorOptions, probes: DoctorProbes): Promise<Check[]> {
   const { before, after } = await probes.independent();
-  return [...before, ...classifyDelivery(await probes.delivery(), options), ...after];
+  const checks = [...before, ...classifyDelivery(await probes.delivery(), options), ...after];
+  // An absent unrelated integration is not degraded setup health. Preserve
+  // every installed-but-broken surface and every shared pipeline check.
+  return checks.filter(
+    (check) =>
+      !(
+        options.agent &&
+        options.agent !== "claude" &&
+        check.name === "feedback-hooks" &&
+        check.detail.startsWith("Claude lifecycle hooks missing")
+      ),
+  );
 }
 
 function icon(status: CheckStatus): string {
@@ -1206,6 +1219,7 @@ async function runDoctor(options: DoctorOptions, probes: DoctorProbes): Promise<
     json.status === "ok" ? "✓ healthy" : json.status === "warn" ? "⚠ degraded" : "✗ unhealthy";
   process.stderr.write(`[prim] doctor: ${headline}\n`);
   for (const c of checks) {
+    if (options.compact && c.status === "ok") continue;
     process.stderr.write(`  ${icon(c.status)} ${c.name.padEnd(13)} ${c.detail}\n`);
   }
 
@@ -1226,9 +1240,11 @@ export function registerDoctorCommands(
     )
     // Passed only by `prim setup`; see DoctorOptions.
     .addOption(new Option("--expect-backlog").hideHelp())
-    .action(async (opts: { expectBacklog?: boolean }) => {
+    .addOption(new Option("--agent <agent>").choices(["claude", "codex", "cursor", "hermes"]))
+    .option("--compact", "show only health warnings and failures on STDERR")
+    .action(async (opts: { expectBacklog?: boolean; agent?: string; compact?: boolean }) => {
       await runDoctor(
-        { backlogExpected: opts.expectBacklog === true },
+        { backlogExpected: opts.expectBacklog === true, agent: opts.agent, compact: opts.compact },
         dependencies.probes ?? DEFAULT_DOCTOR_PROBES,
       );
     });

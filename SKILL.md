@@ -144,63 +144,60 @@ Treat changes to shared agent instructions and standards—such as `AGENTS.md`, 
 
 Apply the same attention during non-code deliberation: planning or “grill me” workflows, spec refinement, behavior design, PR planning or review, and conversations imported from Granola or other connected sources. These workflows can settle important forks before any code changes. Accumulate the confirmed decisions and record them at a natural phase or task boundary; do not interrupt or call Primitive after every answer.
 
-### Onboarding: run the local tour before memory seeding
+### Onboarding: experience your Decision protecting a teammate
 
-After successful `prim setup`, follow any demo `nextAction` automatically. Setup
-starts this optional tour once per local OS-user configuration; `setup --skip-demo`
-remembers a skip, and `prim demo --agent <claude|codex|cursor|hermes>` replays it.
-Pass your agent explicitly, including when your shell tool allocates a terminal.
+After successful `prim setup`, follow its `nextAction` automatically; the `onboarding`
+object contains the preparation instructions.
+Pass your agent explicitly: Claude, Codex, Cursor and Hermes use the same sequence.
+Run each generated command exactly as a standalone invocation. The first action
+establishes capture isolation before the story is revealed. Do not delegate, wrap
+commands, read fixtures, or manufacture an acknowledgment. If pending, use the
+returned isolation reason and diagnostic action. Unknown trust is not proof that
+hooks are disabled; for Codex, check `/hooks` and approve only if prompted.
 
-The tour is entirely fictional: extraction, Decisions, and verdicts are simulated.
-Execute each generated command **exactly as a standalone shell invocation**; do not
-wrap it, append another command, substitute another executable, or use a subagent.
-Its hook acknowledgment establishes session isolation before any sample is shown.
-If the result is pending, surface its hook-trust instruction and retry only after
-trust is established. Never fabricate the missing output or read sample fixtures
-yourself to bypass isolation.
+Render each `presentation` once as Markdown, preserving diagrams and file evidence.
+Do not echo JSON/STDERR, expand the records, or add a prose recap. Keep the
+**Fictional project · real conflict check** label. This uses the production semantic
+evaluator on private demo records and a demo-only blocking policy; native production
+hooks did not supply the verdict. Production outcomes still vary by agent and
+Decision state, including Claude's permission prompt.
 
-Render each result once. Consume the JSON; do not dump it, echo the CLI narration,
-or add a second prose recap. Use compact Markdown, short code blocks, and visible
-state changes. Aim for at most 120 narrative words per choice, excluding code;
-do not fill the budget. Keep a short **Simulated tour** label on each response.
+The participant is the fictional earlier author, now playing a new engineer in this
+same chat. At `awaitUserPrompt`, show the copyable CSV-export task and **wait for the
+user to enter it**. Only then run `attemptAction`. Do not auto-submit it, ask them to
+adopt the prior Decision, or implement the feature yourself.
 
-Once isolated, lead with **Add order saving**. Show one supporting quote flowing
-into the extracted Decision: `Source → Decision [provisional]`. Give each Decision
-only its headline, one-line **Why**, and file scope; label the extracted scope as
-a demo mapping. The JSON's `sourceNote`, `decisions`, and `proposal` retain the
-full source, evidence, rationale, and rejected alternatives for questions.
+At the actual block, show the unchanged file and ask **Adhere or Supersede?**
+Adhere uses `choices.adhere`. Supersede approves the displayed replacement,
+**Allow customer names and email addresses in CSV exports**, and requires a short
+reason in the user's own words. Append `'--reason'` and their single-quoted reason
+to `choices.supersede.command`; escape any apostrophe as `'\''`, matching the
+command's existing shell quoting. Never invent a reason or execute a placeholder.
+Do not call production `reconcile` or `decisions create` for these samples.
 
-Pause for only two teaching choices: adopt the proposal, then choose the shared
-repository correction or retry direct storage. Use `confirm` only after the user's
-confirmation; a setup request or `--yes` is not that answer. Follow `skipAction`
-if the user declines or stops. Acknowledge approval with **Proposed → Adopted**.
+An unavailable or uncertain judgment remains pending; never invent a block or pass.
+Use `statusAction` for diagnosis and the returned action for recovery. A resolution
+retry uses the same approved bytes and completion receipt. Show success **before**
+following welcome. Continue when the real outcome email is durably queued; provider
+acceptance is not inbox delivery. Cleanup errors retain the path and defer seeding.
 
-Present **WARNING — edit allowed** and **BLOCKED — file unchanged** separately.
-For each, show the governing Decision, one reason, and compact file evidence.
-Use the returned before/after bytes: show the warning's changed lines, and the
-blocked write stopping before `orders.ts` with its actual contents unchanged.
-Omit diff transport headers and hunk metadata. On retry, repeat only the block,
-its reason, unchanged-file evidence, and correction choice. These are scripted
-verdicts, not universal rules for Decision states; live gates vary by agent and
-state (Claude may request permission where other agents block).
+After completion or explicit skip, follow the exact welcome `nextAction` once.
+It preserves the executable and agent and requests `--after-demo`. Its viewer-based
+`org` result governs the transition: `seed` proposes one real Decision for individual
+approval; `active` continues real work; `unknown` reports unavailable history and
+must never be treated as empty. Do not repeat the feed or seed from fictional data.
 
-On correction, show both actual diffs and **PASS — order saving added**. Finish
-with `✓ Extracted · ✓ Adopted · ✓ Warned · ✓ Blocked · ✓ Corrected`, sample cleanup,
-and the new-session reminder. Never show completion for a skip, pending tour, or
-error. Offer one real Decision for individual approval; continue one at a time
-only if the user wants to proceed. Keep supporting detail on request instead of
-expanding every record. Direct terminal users can replay with `prim demo --details`.
+Passive capture stays excluded for this session, including resumes. Start a new
+session to resume capture; other sessions and real-work enforcement stay active.
+Explicitly approved real Decisions remain available here. Never save this story,
+its Decisions, reason or outcome to repository memory or the real Decision graph.
 
-Never record these examples with `decisions create`, save them to shared memory,
-or include them in later seeding candidates. The tour excludes passive capture
-for the remainder of this agent session, including resumes; tell the user to start
-a new session for normal capture. Other sessions and real-work enforcement remain
-active, and explicitly approved real Decisions can still be created here.
-
-After completion or skip, offer memory seeding and run `prim welcome --agent <your
-agent>` with `--capture-excluded` when this session ran the tour. An unfinished
-tour is listed in `recoverableRuns`; use its skip command for cleanup before replay.
-Do not begin real-memory proposals while the tour is pending.
+Setup runs the optional story once per local OS-user configuration. `setup --skip-demo`
+remembers a skip; `prim demo --agent <claude|codex|cursor|hermes>` explicitly replays.
+Old completion markers do not force a replay. `recoverableRuns` offers cleanup of
+unfinished runs, including legacy local tours; it does not gate a fresh tour.
+A missing backend/email configuration leaves the optional story pending while setup
+remains successful. Surface the returned remedy or offer its skip action.
 
 ### Onboarding: seed the graph from memory, one proposal at a time
 

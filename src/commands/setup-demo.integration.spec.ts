@@ -12,6 +12,7 @@ const roots: string[] = [];
 afterEach(() => {
   process.chdir(originalCwd);
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -30,6 +31,8 @@ function harness() {
   const calls: string[][] = [];
   const outputs: Record<string, unknown>[] = [];
   const notes: string[] = [];
+  const summaries: { nextAction?: string; onboarding: { nextAction?: string } }[] = [];
+  vi.spyOn(console, "log").mockImplementation((value) => summaries.push(JSON.parse(String(value))));
   let failedStep = "";
   const setup = async (options: string[] = []) => {
     calls.length = 0;
@@ -60,6 +63,7 @@ function harness() {
     root,
     calls,
     outputs,
+    summaries,
     notes,
     setup,
     fail: (step: string) => {
@@ -69,6 +73,27 @@ function harness() {
 }
 
 describe("setup's optional demo handoff", () => {
+  it("returns one structured setup result with the onboarding action", async () => {
+    const h = harness();
+    await h.setup();
+    expect(h.summaries).toHaveLength(1);
+    expect(h.summaries[0]).toMatchObject({
+      setup: true,
+      status: "complete",
+      onboarding: { stage: "prepared", fictional: true, evaluation: "live" },
+    });
+    expect(h.summaries[0].nextAction).toBe(h.summaries[0].onboarding.nextAction);
+  });
+  it("keeps optional tour failure separate from installation success", async () => {
+    const h = harness();
+    h.fail("demo");
+    expect(await h.setup()).toHaveBeenCalledWith(0);
+    expect(h.summaries.at(-1)).toMatchObject({
+      status: "complete",
+      onboarding: { stage: "pending" },
+    });
+    expect(h.notes.join("\n")).toContain("setup succeeded");
+  });
   it("defers seeding after successful installation and returns a content-free agent handoff", async () => {
     const h = harness();
     expect(await h.setup()).toHaveBeenCalledWith(0);

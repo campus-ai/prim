@@ -27,7 +27,11 @@ memory surface you mine for seeding proposals; nothing else.
 
 ## 1. Install — one command
 
-Run the entire install as a single command and surface its output:
+Run the install as one command. Show one concise setup status and actionable
+warnings; keep child diagnostics out of the narrated tour. `setup --details`
+retains full diagnostic output. A cold `npx` download can be quiet: keep polling
+the same process rather than launching a duplicate setup. If it fails, report its
+actual exit and error before retrying.
 
 ```
 npx --yes @primitive.ai/prim@latest setup
@@ -91,10 +95,12 @@ stays responsive:
 
 ### Codex only
 
-`setup --agent codex` installs the hooks into `~/.codex/hooks.json`, but Codex won't
-fire non-managed hooks until they're trusted. After setup, tell the user: "Run
-`/hooks` in Codex and trust the prim hooks — until you do, decision capture stays
-inert."
+`setup --agent codex` installs the hooks into `~/.codex/hooks.json`. Run the
+returned tour command first: its acknowledgment is the readiness check. If it
+returns pending, inspect `/hooks` and approve only if a trust action is offered.
+Hooks already shown as active need no extra approval. Retry once, then diagnose
+hook errors if still pending; don't send the user through repeated trust/restart
+instructions. A missing acknowledgment is not proof of untrusted hooks.
 
 ### Cursor only
 
@@ -113,68 +119,71 @@ tell the user: "Approve the prim hooks when Hermes prompts — until you do,
 decision capture stays inert. To skip the prompts, start
 Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
 
-## 2. Simulated tour after successful setup
+## 2. Your Decision protects a new engineer
 
-On the first successful setup in this local OS-user configuration, setup returns
-a demo `nextAction`. Execute it automatically, exactly as a standalone command.
-Always identify your agent with `setup --agent <your agent>`, even when using a PTY.
-Do not ask another permission question to begin the tour. The user may skip with
-`setup --skip-demo`; a later `npx --yes @primitive.ai/prim@latest demo --agent <your agent>`
-explicitly replays it.
+Default setup returns one JSON object: `onboarding` holds the story instructions,
+`nextAction` starts it, and `welcome` holds the viewer-seeding result when available.
+After successful setup, follow `nextAction` automatically. Always
+pass `--agent <claude|codex|cursor|hermes>`, including in a PTY. Its standalone
+command verifies session isolation before revealing the story. If pending, use the
+returned reason and diagnostic action; never fabricate acknowledgment or read
+fixtures to bypass it. Do not ask for trust again when hooks are already active.
 
-Before showing samples, hooks acknowledge exclusion of this agent session from
-passive Decision capture. If the result is pending, surface its trust instructions
-and wait for trust before retrying. This is a local simulation, not a live test of
-ingestion or Enforcement. Render the JSON once as compact Markdown; do not echo
-the tool transcript, dump JSON, or add a prose recap. Keep a short **Simulated tour**
-label, and aim for at most 120 narrative words per choice, excluding code.
-Once isolated, lead with **Add order saving**. Show one source quote flowing into
-a provisional Decision, followed by the authoring proposal. Each Decision needs
-only a headline, one-line **Why**, and file scope. Label the extracted scope as a
-demo mapping. Full source and supporting detail remain in `sourceNote`, `decisions`,
-and `proposal` for questions; do not display every field by default.
+Render each `presentation` once, preserving its diagram and file evidence:
 
-Pause for two teaching choices: confirmation of the sample authoring proposal,
-then selection of the repository-based correction or another blocked attempt.
-After confirmation, show **Proposed → Adopted**. For each verdict, show the governing
-Decision, one reason, and compact file evidence: changed lines for the warning;
-a refused write and actual unchanged contents for the block. Omit patch headers
-and hunk metadata. On retry, repeat only the block and correction choice. Keep
-verdicts specific to the simulation; live gates vary by Decision state and agent.
-The correction shows both actual diffs: order saving through the repository and
-the HTTP client restored, followed by **PASS — order saving added**.
-Follow the returned next/skip actions. Do not delegate the tour, edit sample files
-yourself, promote samples to memory, or create real Decisions from the examples.
-Completion and skip remove owned files; unfinished runs expose cleanup commands.
-Finish with `✓ Extracted · ✓ Adopted · ✓ Warned · ✓ Blocked · ✓ Corrected`, cleanup,
-and session guidance. Skipping or an error earns no completion receipt. Offer one
-real project Decision for individual approval next, keeping samples out of it.
-Direct terminal tours show narration only; redirected STDOUT and agent commands
-retain JSON. `prim demo --details` shows full supporting detail in a terminal.
+```text
+Enter the feature task → Your Decision stops it → Choose → Outcome email
+```
 
-Passive capture remains excluded for this session, including later resumes.
-Explicitly approved real Decisions can still be created. Tell the user to start
-a new session to resume normal passive capture. After completion or skip, offer
-the real-memory seeding procedure below; defer it while the tour remains pending.
-The tour's status does not change whether installation itself succeeded.
+The participant plays a new engineer in this chat and a disposable project. They
+are also the fictional prior author of the Decision that excludes customer email
+addresses from exports. No adoption approval is needed for this fictional history.
+
+1. Show `awaitUserPrompt` and wait for the participant to enter the CSV-export task.
+   Only then execute `attemptAction`.
+2. Show the actual blocking result and unchanged file. Offer **Adhere** (names only)
+   or **Supersede** with the displayed replacement allowing names and email.
+3. Supersession requires a short user-provided reason. Append `'--reason'` and the
+   quoted reason to the supplied command, escaping apostrophes as `'\''`. Do not
+   invent a reason, silently change the replacement, or use production reconcile.
+4. Show the checked implementation and real email-queued result before welcome.
+   Do not wait for inbox delivery. An uncertain or unavailable check stays pending.
+
+Keep **Fictional project · real conflict check** visible. The backend uses the real
+semantic evaluator on private demo records with a demo blocking policy. This is
+not a demonstration of native production hook behavior or live ingestion. No sample
+enters the team graph or affects whether the participant has real Decisions.
+
+Never delegate, directly edit the samples, promote them to memory, or record them
+as real Decisions. Cleanup deletes only verified owned files. Follow `statusAction`
+for recovery; earlier runs can be skipped through `recoverableRuns`. A retained
+foreign file or symlink needs attention before seeding, not another setup loop.
+
+Passive capture remains excluded for this session, including resumes. A new session
+resumes it; other sessions, production enforcement and approved real authoring keep
+working. Setup success is independent of the optional story. Existing email controls
+and backend availability can leave the story pending with a remedy or skip action.
+
+`setup --skip-demo` remembers a skip. `prim demo --agent <your agent>` replays the
+story; old completed markers do not trigger it again. Direct terminal `prim demo`
+uses the same prompts and diagrams without agent-session exclusion.
 
 ## 3. Welcome and real seeding proposals
 
-The welcome message is a **required deliverable** of setup: once install
-succeeded, the user must always see it. `setup` already ran it once; run it again
-to capture its structured output cleanly (this won't prompt — prim is authorized
-now). Pass `--agent` so the capture guidance speaks to your agent's hook
-reality (Claude and Cursor hooks are live at install; Codex/Hermes stay inert until
-trusted):
+After the tour, execute its returned welcome `nextAction` once. It includes
+`--after-demo`, the agent, and `--capture-excluded` when needed, using the same
+executable that ran the tour. Render its short `presentation`; don't repeat the
+orientation or team feed. Branch on `org` as described below. Here `active` means
+the viewer already has Decisions, not that seeding was skipped because teammates do.
+
+If setup already returned an ordinary welcome (no tour due), use that result;
+don't rerun it merely to get another copy. Standalone welcome remains available:
 
 ```
 npx --yes @primitive.ai/prim@latest welcome --agent <your agent>
 ```
 
-If this session ran the demo, add `--capture-excluded` so welcome's guidance
-accurately describes its capture state.
-
-Surface its **orientation** — the canonical "here's how Primitive works". It
+For standalone welcome, surface its **orientation** — the canonical "here's how Primitive works". It
 adapts to you: if **you** have recorded decisions it inlines the team's latest
 decisions; if you haven't yet, its seeding block explains that you will propose
 any decisions you find in memory and closes on the standing capture guidance —

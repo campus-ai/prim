@@ -329,6 +329,9 @@ async function terminalTour(run: DemoRun) {
     process.stderr.write(
       `${text.replace("YOUR DECISION STOPPED THIS", color("YOUR DECISION STOPPED THIS", "red")).replace("PASS — CSV export implemented", color("PASS — CSV export implemented", "green"))}\n`,
     );
+    if (["completed", "skipped"].includes(result.stage) && "nextAction" in result) {
+      process.stderr.write(`Next: ${result.nextAction}\n`);
+    }
     return result;
   };
   try {
