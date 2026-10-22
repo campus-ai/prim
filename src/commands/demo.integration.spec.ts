@@ -153,6 +153,93 @@ function fixture() {
 }
 
 describe("packaged local onboarding", () => {
+  it.each([
+    { details: false, redirected: false, skip: false },
+    { details: true, redirected: false, skip: false },
+    { details: false, redirected: true, skip: false },
+    { details: false, redirected: false, skip: true },
+  ])(
+    "renders terminal narration with $details detail, redirected=$redirected, skip=$skip",
+    async ({ details, redirected, skip }) => {
+      const f = fixture();
+      const preload = join(f.root, "terminal.cjs");
+      // Exercise the built CLI's terminal branches with deterministic input pipes.
+      // Real PTY walkthroughs are also checked manually; no platform PTY dependency.
+      writeFileSync(
+        preload,
+        `
+for (const stream of [process.stdin, process.stderr]) Object.defineProperty(stream, "isTTY", { value: true });
+Object.defineProperty(process.stdout, "isTTY", { value: ${!redirected} });
+`,
+      );
+      const env = {
+        ...f.env,
+        CI: "",
+        PRIM_NON_INTERACTIVE: "",
+        CLAUDECODE: "",
+        CODEX_THREAD_ID: "",
+        CURSOR_AGENT: "",
+        HERMES_INTERACTIVE: "",
+        NODE_OPTIONS: `--require=${preload}`,
+      };
+      const result = await new Promise<{ stdout: string; stderr: string }>((res, rej) => {
+        const child = execFile(
+          process.execPath,
+          [cli, "demo", ...(details ? ["--details"] : [])],
+          {
+            cwd: f.repo,
+            env,
+            timeout: 10_000,
+          },
+          (error, stdout, stderr) => (error ? rej(error) : res({ stdout, stderr })),
+        );
+        let transcript = "";
+        let replies = 0;
+        child.stderr?.on("data", (data) => {
+          transcript += data;
+          if (replies === 0 && transcript.includes("Adopt this sample Decision?")) {
+            replies++;
+            child.stdin?.write(skip ? "n\n" : "y\n");
+          } else if (
+            replies === 1 &&
+            transcript.includes("Apply the shared repository correction?")
+          ) {
+            replies++;
+            child.stdin?.write("y\n");
+          }
+        });
+      });
+      expect(JSON.parse(readFileSync(join(f.config, "demo", "onboarding.json"), "utf8"))).toEqual({
+        outcome: skip ? "skipped" : "completed",
+      });
+      if (redirected)
+        expect(JSON.parse(result.stdout)).toMatchObject({ simulated: true, stage: "completed" });
+      else expect(result.stdout).toBe("");
+      expect(result.stderr.includes("WALKTHROUGH COMPLETE")).toBe(!skip);
+      expect(result.stderr).not.toContain("Choose: shared repository · retry direct storage");
+      expect(result.stderr.includes("Full source:")).toBe(details);
+      expect(result.stderr.includes("Alternatives rejected:")).toBe(details);
+      if (details) {
+        expect(result.stderr).toContain("the conversation names no file");
+        expect(result.stderr).toContain("the team demo is at three");
+        expect(result.stderr).toContain("Refused proposal:");
+      }
+      // An explicit agent remains a JSON handoff even when the harness uses a PTY.
+      const prepared = await f.run(["demo", "--agent", "codex"], env);
+      expect(prepared.json).toMatchObject({ simulated: true, stage: "prepared" });
+      expect(prepared.stderr).not.toContain("Adopt this sample Decision?");
+    },
+  );
+
+  it("rejects terminal-only detail mode without showing samples or preparing a run", async () => {
+    const f = fixture();
+    await expect(f.run(["demo", "--agent", "codex", "--details"])).rejects.toMatchObject({
+      stderr: expect.stringContaining("--details requires an interactive terminal"),
+      stdout: expect.not.stringContaining("shared HTTP"),
+    });
+    expect(existsSync(join(f.config, "demo", "runs"))).toBe(false);
+  });
+
   it.each(["claude_code", "codex", "cursor", "hermes"])(
     "runs the two-choice tour and excludes both capture paths for %s",
     async (agent) => {
@@ -178,22 +265,32 @@ describe("packaged local onboarding", () => {
       const pending = await f.shell(prepared.nextAction);
       expect(pending.json.stage).toBe("pending");
       expect(pending.stderr).not.toContain("shared HTTP");
-      expect(pending.stderr).not.toContain("YOUR MISSION");
+      expect(pending.stderr).not.toContain("Add order saving");
       expect(pending.json.receipt).toBeUndefined();
       const started = await f.call(agent, prepared.nextAction);
       expect(started.json.stage).toBe("proposal");
       expect(started.stderr).toContain("scripted extraction");
-      expect(started.stderr).toContain("YOUR MISSION: add order saving");
-      expect(started.stderr.indexOf("YOUR MISSION")).toBeLessThan(
-        started.stderr.indexOf("Sample ingestion"),
+      expect(started.stderr).toContain("Add order saving");
+      expect(started.stderr.indexOf("Add order saving")).toBeLessThan(
+        started.stderr.indexOf("Team conversation"),
       );
       const sandbox = started.json.sandbox;
       const note = readFileSync(join(sandbox, "note.md"), "utf8");
       const extracted = started.json.decisions[0];
-      expect(started.stderr).toContain("DECISION EXTRACTED — simulated");
+      expect(started.stderr).toContain("DECISION EXTRACTED");
       expect(extracted.stage).toBe("provisional");
       for (const quote of extracted.evidence) expect(note).toContain(quote);
-      expect(started.stderr).toContain(extracted.scopeBasis);
+      expect(started.stderr).toContain("Demo scope: service.ts");
+      expect(extracted.scopeBasis).toContain("the conversation names no file");
+      expect(started.json.sourceNote).toBe(note);
+      expect(started.json.proposal).toMatchObject({
+        stage: "proposed",
+        source: "Fictional authoring proposal",
+        alternativesRejected: ["Direct local-storage writes that bypass repository validation"],
+      });
+      expect(started.stderr.split(extracted.evidence[0])).toHaveLength(2);
+      expect(started.stderr).not.toContain("Alternatives rejected:");
+      expect(started.stderr.trim().split(/\s+/).length).toBeLessThan(160);
       expect(JSON.stringify(extracted)).not.toContain("at three");
       const original = readFileSync(join(sandbox, "orders.ts"), "utf8");
       expect(original).toContain("TODO: persist this order");
@@ -201,16 +298,22 @@ describe("packaged local onboarding", () => {
       expect(started.stderr).not.toContain("SAMPLE DECISION ADOPTED");
       expect(JSON.parse(readFileSync(join(sandbox, "decisions.json"), "utf8"))).toHaveLength(1);
       const confirmed = await f.call(agent, started.json.nextAction);
-      expect(confirmed.stderr).toContain("SAMPLE DECISION ADOPTED — simulated");
+      expect(confirmed.stderr).toContain("SAMPLE DECISION ADOPTED");
+      expect(confirmed.stderr).toContain("Proposed → Adopted");
       expect(confirmed.stderr.indexOf("SAMPLE DECISION ADOPTED")).toBeLessThan(
         confirmed.stderr.indexOf("WARNING — edit allowed"),
       );
       expect(confirmed.stderr).toContain("WARNING — edit allowed");
       expect(confirmed.stderr).toContain("BLOCKED — file unchanged");
-      expect(confirmed.stderr).toContain("Conflict: direct fetch bypasses");
-      expect(confirmed.stderr).toContain("Proof: service.ts changed");
-      expect(confirmed.stderr).toContain("Proof: orders.ts is unchanged");
-      expect(confirmed.stderr).toContain("These verdicts are scripted for this scenario");
+      expect(confirmed.stderr).toContain("Bypasses shared retries and tracing");
+      expect(confirmed.stderr).toContain("service.ts · changed");
+      expect(confirmed.stderr).toContain(`orders.ts · before = after\n${original}`);
+      expect(confirmed.stderr).toContain("localStorage.setItem(…) ──×──→ orders.ts");
+      expect(confirmed.stderr).toContain("Scripted verdicts. Live gates vary");
+      expect(confirmed.stderr).toContain("Choose: shared repository · retry direct storage");
+      expect(confirmed.stderr).not.toContain("Index:");
+      expect(confirmed.stderr).not.toContain("@@");
+      expect(confirmed.stderr.trim().split(/\s+/).length).toBeLessThan(160);
       expect(confirmed.json.evidence.block.after).toBe(original);
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
       expect(readFileSync(join(sandbox, "service.ts"), "utf8")).toContain("fetch(");
@@ -223,8 +326,9 @@ describe("packaged local onboarding", () => {
       expect(blockedAgain.json.receipt).toBeUndefined();
       expect(blockedAgain.stderr).not.toContain("WALKTHROUGH COMPLETE");
       expect(blockedAgain.stderr).toContain(decisions[1].decision);
-      expect(blockedAgain.stderr).toContain("Conflict: direct storage bypasses");
-      expect(blockedAgain.stderr).toContain("Next: save through orders.save(...)");
+      expect(blockedAgain.stderr).toContain("Bypasses repository validation");
+      expect(blockedAgain.stderr).not.toContain("WARNING");
+      expect(blockedAgain.stderr).toContain("Next: shared repository → orders.save(order)");
       expect(blockedAgain.json.evidence.unchanged).toBe(original);
       expect(readFileSync(join(sandbox, "orders.ts"), "utf8")).toBe(original);
       const completed = await f.call(agent, confirmed.json.nextAction);
@@ -235,8 +339,14 @@ describe("packaged local onboarding", () => {
       expect(completed.json.evidence.orderCorrection.after).toContain("orders.save(order)");
       expect(completed.json.evidence.orderCorrection.after).not.toContain("TODO");
       expect(completed.json.evidence.orderCorrection.after).not.toContain("localStorage");
-      expect(completed.stderr).toContain("PASS — compliant implementation written (simulated)");
-      expect(completed.stderr).toContain("Index: orders.ts");
+      expect(completed.stderr).toContain("PASS — order saving added");
+      expect(completed.stderr).toContain("orders.ts\n- export const saveOrder");
+      expect(completed.stderr).toContain(
+        "+ export const saveOrder = (order: unknown) => orders.save(order);",
+      );
+      expect(completed.stderr).toContain(
+        'service.ts\n- export const loadOrders = () => fetch("/orders");',
+      );
       expect(existsSync(sandbox)).toBe(false);
       expect(readFileSync(join(f.repo, "real.ts"), "utf8")).toBe("export const real = true;\n");
       expect(completed.json.nextAction).toContain("--capture-excluded");

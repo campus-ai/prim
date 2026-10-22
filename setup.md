@@ -125,30 +125,32 @@ explicitly replays it.
 Before showing samples, hooks acknowledge exclusion of this agent session from
 passive Decision capture. If the result is pending, surface its trust instructions
 and wait for trust before retrying. This is a local simulation, not a live test of
-ingestion or Enforcement. Present its output faithfully, including the fictional
-source, rationale, scope, actual file evidence, and simulated labels.
-Once isolation is acknowledged, introduce the mission to add order saving before
-the source conversation; connect each subsequent step to that same task.
-Show the extracted Decision's supporting quotes and explain that its file scope
-is a demo mapping, while the choice and rationale come from the conversation.
+ingestion or Enforcement. Render the JSON once as compact Markdown; do not echo
+the tool transcript, dump JSON, or add a prose recap. Keep a short **Simulated tour**
+label, and aim for at most 120 narrative words per choice, excluding code.
+Once isolated, lead with **Add order saving**. Show one source quote flowing into
+a provisional Decision, followed by the authoring proposal. Each Decision needs
+only a headline, one-line **Why**, and file scope. Label the extracted scope as a
+demo mapping. Full source and supporting detail remain in `sourceNote`, `decisions`,
+and `proposal` for questions; do not display every field by default.
 
 Pause for two teaching choices: confirmation of the sample authoring proposal,
 then selection of the repository-based correction or another blocked attempt.
-After confirmation, surface the sample adoption success before the verdicts so
-the user sees their proposal become an adopted Decision.
-For each warning or block, connect the attempted edit to its Decision, explain
-the conflict, show the actual file consequence, and identify the correction.
-Keep the outcomes explicitly specific to this scripted scenario.
-The successful correction must show the unfinished order-saving function becoming
-a shared-repository call and the shared HTTP client being restored. Present both
-actual diffs and the passing implementation result.
+After confirmation, show **Proposed → Adopted**. For each verdict, show the governing
+Decision, one reason, and compact file evidence: changed lines for the warning;
+a refused write and actual unchanged contents for the block. Omit patch headers
+and hunk metadata. On retry, repeat only the block and correction choice. Keep
+verdicts specific to the simulation; live gates vary by Decision state and agent.
+The correction shows both actual diffs: order saving through the repository and
+the HTTP client restored, followed by **PASS — order saving added**.
 Follow the returned next/skip actions. Do not delegate the tour, edit sample files
 yourself, promote samples to memory, or create real Decisions from the examples.
 Completion and skip remove owned files; unfinished runs expose cleanup commands.
-On successful completion, lead with the simulated lifecycle receipt before
-reporting cleanup and session guidance. Skipping or an error earns no completion
-receipt. Offer one real project Decision for individual approval next, following
-the seeding procedure below and keeping fictional examples out of it.
+Finish with `✓ Extracted · ✓ Adopted · ✓ Warned · ✓ Blocked · ✓ Corrected`, cleanup,
+and session guidance. Skipping or an error earns no completion receipt. Offer one
+real project Decision for individual approval next, keeping samples out of it.
+Direct terminal tours show narration only; redirected STDOUT and agent commands
+retain JSON. `prim demo --details` shows full supporting detail in a terminal.
 
 Passive capture remains excluded for this session, including later resumes.
 Explicitly approved real Decisions can still be created. Tell the user to start
