@@ -52,7 +52,10 @@ The tour follows one order-saving task and ends with a receipt of the demonstrat
 lifecycle, then offers one real project Decision for your individual approval.
 Use `prim setup --skip-demo` to skip and remember that choice, or
 `prim demo --agent <claude|codex|cursor|hermes>` to replay.
-For a person at a terminal, `prim demo` prompts directly.
+For a person at a terminal, `prim demo` prompts directly with compact Decision
+cards, write outcomes, and file diffs. Use `prim demo --details` for the full source
+and supporting detail. Interactive terminal output omits the completion JSON;
+redirected STDOUT and agent commands retain machine-readable JSON.
 
 The agent tour waits for trusted hooks before showing samples and excludes
 passive capture for the remainder of that agent session, including resumes.

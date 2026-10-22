@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { createPatch } from "diff";
+import { diffLines } from "diff";
 import {
   cleanSandbox,
   createSandbox,
@@ -34,19 +34,11 @@ import { bold, color } from "../lib/ansi.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { printJson } from "../output.js";
 
-const intro =
-  "SIMULATED TOUR — fictional Decisions and scripted verdicts; no live ingestion or enforcement check.";
-const handoff =
-  "Sample files removed. Next: ask your agent to propose one real Decision from your project's shared memory for your individual approval.";
+const intro = "SIMULATED TOUR · fictional Decisions · scripted verdicts";
+const handoff = "Sample files removed. Next: propose one real Decision for your approval.";
 const captureNotice =
-  "Passive Decision capture is excluded for the rest of this agent session, including resumed use. Start a new session for normal capture. Explicitly approved real Decisions can still be created.";
-const completionReceipt = [
-  "Extracted a Decision with supporting evidence",
-  "Adopted a Decision with your confirmation",
-  "Surfaced a warning and allowed the edit",
-  "Refused a conflicting write",
-  "Applied the compliant implementation",
-] as const;
+  "Passive capture stays off in this session, including resumes.\nStart a new session to resume capture.";
+const completionReceipt = ["Extracted", "Adopted", "Warned", "Blocked", "Corrected"] as const;
 
 type DemoResult = {
   simulated: true;
@@ -57,6 +49,8 @@ type DemoResult = {
   retryAction?: string;
   sandbox?: string;
   decisions?: unknown;
+  proposal?: unknown;
+  sourceNote?: string;
   evidence?: unknown;
   message?: string;
   receipt?: readonly string[];
@@ -110,48 +104,68 @@ function consumeAcknowledgment(run: DemoRun, action: DemoAction, choice?: DemoCh
   }
 }
 
-function narrateDecision(index: 0 | 1): void {
+function narrateDecision(index: 0 | 1, details: boolean): void {
   const item = SAMPLE_DECISIONS[index];
-  const status = index === 1 ? "proposed adoption, awaiting confirmation" : item.stage;
+  const status = index === 1 ? "proposed" : item.stage;
   const source = index === 1 ? "Fictional authoring proposal" : item.source;
   process.stderr.write(
-    `\nDecision: ${item.decision}\nStatus: ${status} (sample)\nSource: ${source}\n` +
-      `Rationale: ${item.rationale}\nScope: ${item.files.join(", ")}\nAlternatives rejected: ${item.alternativesRejected.join("; ")}\n`,
+    `${bold(`Decision [${status}]`)}\n${item.decision}\n` +
+      `Why: ${item.rationale}\n${index === 0 ? "Demo scope" : "File"}: ${item.files.join(", ")}\n`,
   );
-  if (index === 0) {
-    const extracted = SAMPLE_DECISIONS[0];
+  if (details) {
     process.stderr.write(
-      `Source evidence:\n${extracted.evidence.map((quote) => `  "${quote}"`).join("\n")}\nScope basis: ${extracted.scopeBasis}\n`,
+      `Source: ${source}\nAlternatives rejected: ${item.alternativesRejected.join("; ")}\n`,
     );
+    if (index === 0) process.stderr.write(`Scope basis: ${SAMPLE_DECISIONS[0].scopeBasis}\n`);
   }
 }
 
-function narrateBlockedAttempt(unchanged: string): void {
-  process.stderr.write(`\n${bold(color("BLOCKED — file unchanged (simulated)", "red"))}\n`);
+/** Show the actual lines, without patch transport headers or hunk metadata. */
+function narrateDiff(file: string, before: string, after: string): void {
+  process.stderr.write(`${bold(file)}\n`);
+  for (const part of diffLines(before, after)) {
+    const prefix = part.added ? "+" : part.removed ? "-" : " ";
+    const lines = part.value.endsWith("\n") ? part.value.slice(0, -1) : part.value;
+    for (const line of lines.split("\n")) {
+      const text = `${prefix} ${line}\n`;
+      process.stderr.write(
+        part.added ? color(text, "green") : part.removed ? color(text, "red") : text,
+      );
+    }
+  }
+}
+
+function narrateBlockedAttempt(unchanged: string, details: boolean): void {
+  process.stderr.write(`\n${bold(color("× BLOCKED — file unchanged", "red"))}\n`);
   process.stderr.write(
-    `Attempt: save the order with localStorage.setItem(...).\nDecision (adopted sample): ${SAMPLE_DECISIONS[1].decision}\nConflict: direct storage bypasses the shared repository and its validation.\nOutcome: this scenario refuses the proposed write.\n`,
+    `${SAMPLE_DECISIONS[1].decision} [adopted]\nlocalStorage.setItem(…) ──×──→ orders.ts\nBypasses repository validation.\n`,
   );
-  process.stderr.write(createPatch("orders.ts (refused proposal)", unchanged, BLOCKED_EDIT));
+  if (details) process.stderr.write(`Refused proposal:\n${BLOCKED_EDIT}`);
   process.stderr.write(
-    `Proof: orders.ts is unchanged. Actual file:\n${unchanged}\nNext: save through orders.save(...) to preserve repository validation.\n`,
+    `${bold("orders.ts · before = after")}\n${unchanged}Next: shared repository → orders.save(order)\n`,
   );
 }
 
 function narrateCompletion(run: DemoRun): void {
   process.stderr.write(`\n${bold(color("WALKTHROUGH COMPLETE — simulated", "green"))}\n`);
-  process.stderr.write(`${completionReceipt.map((item) => `✓ ${item}`).join("\n")}\n`);
+  process.stderr.write(`${completionReceipt.map((item) => `✓ ${item}`).join(" · ")}\n`);
   process.stderr.write(`${handoff}\n${run.terminal ? "" : `${captureNotice}\n`}`);
 }
 
 /** Fixed transitions only. The blocked candidate is never passed to a writer. */
-export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice): DemoResult {
+export function advanceDemo(
+  id: string,
+  action: DemoAction,
+  choice?: DemoChoice,
+  details = false,
+): DemoResult {
   return lockRun(id, (run) => {
     if (action === "skip") {
       cleanSandbox(run);
       run.stage = "skipped";
       saveRun(run);
       finishOnboarding("skipped");
-      process.stderr.write(`[prim] ${handoff}\n`);
+      process.stderr.write(`[prim] Tour skipped. ${handoff}\n`);
       if (run.binding) process.stderr.write(`${captureNotice}\n`);
       return resultFor(run);
     }
@@ -172,7 +186,6 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
       throw new Error("confirm the sample Decision before resolving");
     }
     try {
-      process.stderr.write(`${bold(intro)}\n`);
       if (!run.terminal && action === "start") process.stderr.write(`${captureNotice}\n`);
       if (run.stage === "completed") {
         narrateCompletion(run);
@@ -186,20 +199,30 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
           saveRun(run);
         }
         if (run.stage === "proposal") {
+          process.stderr.write(`${bold("Add order saving")}\n${intro}\n`);
           process.stderr.write(
-            `\n${bold("YOUR MISSION: add order saving")}\nYour fictional team discussed how this should work. Watch that context become Decisions, then guide an agent's implementation.\nLocal simulation · fictional examples · disposable files\n`,
+            `\n${bold("1/4 · Extract")}\nTeam conversation\n“${SAMPLE_DECISIONS[0].evidence[0]}”\n  ↓ scripted extraction\n`,
           );
-          process.stderr.write(`\nSample ingestion (scripted extraction):\n${SAMPLE_NOTE}\n`);
-          process.stderr.write(`\n${bold(color("DECISION EXTRACTED — simulated", "green"))}\n`);
-          narrateDecision(0);
-          process.stderr.write("The choice, its reason, and its source now travel together.\n");
-          process.stderr.write("\nNow explicitly author another sample Decision:\n");
-          narrateDecision(1);
-          process.stderr.write("Confirm this fictional Decision to adopt it, or skip the tour.\n");
+          process.stderr.write(`${bold(color("✓ DECISION EXTRACTED", "green"))}\n`);
+          narrateDecision(0, details);
+          if (details) process.stderr.write(`\nFull source:\n${SAMPLE_NOTE}\n`);
+          process.stderr.write(`\n${bold("2/4 · Adopt")}\n`);
+          narrateDecision(1, details);
+          process.stderr.write("Proposed ── your approval ──→ Adopted\n");
         }
         return {
           ...resultFor(run),
           decisions: SAMPLE_DECISIONS.slice(0, run.stage === "proposal" ? 1 : 2),
+          ...(run.stage === "proposal"
+            ? {
+                sourceNote: SAMPLE_NOTE,
+                proposal: {
+                  ...SAMPLE_DECISIONS[1],
+                  stage: "proposed",
+                  source: "Fictional authoring proposal",
+                },
+              }
+            : {}),
         };
       }
       if (action === "confirm") {
@@ -210,22 +233,22 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
           run.stage = "conflict";
           saveRun(run);
           process.stderr.write(
-            `\n${bold(color("SAMPLE DECISION ADOPTED — simulated", "green"))}\n${SAMPLE_DECISIONS[1].decision}\nYour confirmation changed this proposal into an adopted sample Decision.\n`,
+            `\n${bold(color("✓ SAMPLE DECISION ADOPTED", "green"))}\nProposed → Adopted\n`,
           );
         }
         const after = readSample(run, "service.ts");
         const unchanged = readSample(run, "orders.ts");
-        process.stderr.write(`\n${bold(color("WARNING — edit allowed (simulated)", "yellow"))}\n`);
+        process.stderr.write(`\n${bold("3/4 · Protect · simulated")}\n`);
+        process.stderr.write(`${bold(color("! WARNING — edit allowed", "yellow"))}\n`);
         process.stderr.write(
-          `Attempt: call fetch("/orders") directly.\nDecision (provisional sample): ${SAMPLE_DECISIONS[0].decision}\nConflict: direct fetch bypasses consistent retries and request tracing.\nOutcome: this scenario surfaces the conflict and allows the edit.\n`,
+          `${SAMPLE_DECISIONS[0].decision} [provisional]\nBypasses shared retries and tracing.\n`,
         );
-        process.stderr.write(createPatch("service.ts", before, after));
+        narrateDiff("service.ts · changed", before, after);
+        narrateBlockedAttempt(unchanged, details);
+        if (!run.terminal)
+          process.stderr.write("\nChoose: shared repository · retry direct storage\n");
         process.stderr.write(
-          `Proof: service.ts ${before === after ? "already matches the shared client" : "changed, as shown above"}.\nNext: restore the shared HTTP client for consistent retries and tracing.\n`,
-        );
-        narrateBlockedAttempt(unchanged);
-        process.stderr.write(
-          "\nChoose the shared repository correction, or retry direct storage.\nThese verdicts are scripted for this scenario. Live outcomes depend on Decision state and agent behavior; Claude may ask permission where other agents block.\n",
+          "\nScripted verdicts. Live gates vary; Claude may ask where other agents block.\n",
         );
         return {
           ...resultFor(run),
@@ -244,7 +267,8 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
         throw new Error("choose repository or local-storage");
       if (choice === "local-storage") {
         const unchanged = readSample(run, "orders.ts");
-        narrateBlockedAttempt(unchanged);
+        process.stderr.write(`${bold("3/4 · Retry · simulated")}\n`);
+        narrateBlockedAttempt(unchanged, details);
         return { ...resultFor(run), evidence: { unchanged } };
       }
       const before = readSample(run, "service.ts");
@@ -253,10 +277,11 @@ export function advanceDemo(id: string, action: DemoAction, choice?: DemoChoice)
       writeSample(run, "orders.ts", REPOSITORY_EDIT);
       const after = readSample(run, "service.ts");
       const orders = readSample(run, "orders.ts");
-      process.stderr.write(createPatch("service.ts", before, after));
-      process.stderr.write(createPatch("orders.ts", ordersBefore, orders));
+      process.stderr.write(`\n${bold("4/4 · Correct · simulated")}\n`);
+      narrateDiff("orders.ts", ordersBefore, orders);
+      narrateDiff("service.ts", before, after);
       process.stderr.write(
-        `${bold(color("PASS — compliant implementation written (simulated)", "green"))}\nOrder saving now uses the shared repository. Service calls use the shared HTTP client.\nThe requested change landed while preserving both sample Decisions.\n`,
+        `${bold(color("✓ PASS — order saving added", "green"))}\nBoth sample Decisions respected.\n`,
       );
       cleanSandbox(run);
       run.stage = "completed";
@@ -294,10 +319,10 @@ function parseDemoAgent(value?: string): Agent | undefined {
   throw new Error("expected --agent claude, codex, cursor, or hermes");
 }
 
-function reportError(error: unknown): void {
+function reportError(error: unknown, json = true): void {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`[prim] demo: ${message}\n`);
-  printJson({ simulated: true, stage: "error", message });
+  if (json) printJson({ simulated: true, stage: "error", message });
   process.exitCode = 1;
 }
 
@@ -306,10 +331,20 @@ export function registerDemoCommands(program: Command): void {
     .command("demo")
     .description("Try a fictional, local Decision and enforcement walkthrough")
     .option("--agent <agent>", "calling agent; requires hook acknowledgment before samples")
-    .action(async (options: { agent?: string }, command: Command) => {
+    .option(
+      "--details",
+      "show the full source and supporting detail in the interactive terminal tour",
+    )
+    .action(async (options: { agent?: string; details?: boolean }, command: Command) => {
+      let terminal = false;
+      const output = (result: DemoResult) => {
+        // Human terminal sessions already receive narration. Preserve JSON for
+        // redirected output and every agent handoff, including agent PTYs.
+        if (!terminal || !process.stdout.isTTY) printJson(result);
+      };
       try {
         const agent = parseDemoAgent(options.agent);
-        const terminal =
+        terminal =
           !agent &&
           !isNonInteractive(command.optsWithGlobals()) &&
           Boolean(process.stdin.isTTY && process.stderr.isTTY) &&
@@ -317,13 +352,17 @@ export function registerDemoCommands(program: Command): void {
           !process.env.CODEX_THREAD_ID &&
           !process.env.CURSOR_AGENT &&
           !process.env.HERMES_INTERACTIVE;
+        if (options.details && !terminal)
+          throw new Error(
+            "--details requires an interactive terminal; agents receive full detail in JSON",
+          );
         const recovery = pendingRuns().map((id) =>
           lockRun(id, (run) => ({ runId: id, skipAction: demoCommand(run, "skip") })),
         );
         const run = prepareRun(agent, terminal);
         if (!terminal) {
           process.stderr.write(
-            "[prim] Preparing the simulated tour. Run nextAction exactly, as a standalone shell command. No sample content is shown until session isolation is acknowledged.\n",
+            "[prim] Tour ready. Run nextAction exactly, as a standalone command. Samples wait for trusted hooks.\n",
           );
           if (recovery.length)
             process.stderr.write(
@@ -332,19 +371,19 @@ export function registerDemoCommands(program: Command): void {
           printJson({ ...resultFor(run), recoverableRuns: recovery });
           return;
         }
-        advanceDemo(run.id, "start");
-        if (!(await askConfirmation("Adopt this fictional Decision?", process.stderr))) {
-          printJson(advanceDemo(run.id, "skip"));
+        advanceDemo(run.id, "start", undefined, options.details);
+        if (!(await askConfirmation("Adopt this sample Decision?", process.stderr))) {
+          output(advanceDemo(run.id, "skip"));
           return;
         }
-        advanceDemo(run.id, "confirm");
+        advanceDemo(run.id, "confirm", undefined, options.details);
         if (await askConfirmation("Apply the shared repository correction?", process.stderr)) {
-          printJson(advanceDemo(run.id, "resolve", "repository"));
+          output(advanceDemo(run.id, "resolve", "repository", options.details));
         } else {
-          printJson(advanceDemo(run.id, "skip"));
+          output(advanceDemo(run.id, "skip"));
         }
       } catch (error) {
-        reportError(error);
+        reportError(error, !terminal || !process.stdout.isTTY);
       }
     });
   for (const action of ["start", "confirm", "resolve", "skip"] as const) {

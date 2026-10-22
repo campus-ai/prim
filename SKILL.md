@@ -159,28 +159,37 @@ If the result is pending, surface its hook-trust instruction and retry only afte
 trust is established. Never fabricate the missing output or read sample fixtures
 yourself to bypass isolation.
 
-Once isolation is acknowledged, open with the tour's mission: add order saving.
-Connect the team's context, the Decisions, and the implementation to that task.
-Show the source conversation becoming a provisional Decision with quoted evidence.
-Distinguish the fixture's file-scope mapping from what the conversation states.
-Present the source, Decision cards, and warning/block evidence. Pause for only the
-two teaching choices: confirming the fictional authoring proposal, then choosing
-the shared-repository correction (or retrying direct storage). Use `confirm` only
-after the user's confirmation; never treat a general setup request or `--yes` as
-that answer. Follow `skipAction` if the user declines or stops the tour.
-After confirmation, acknowledge the adopted sample Decision before presenting
-enforcement: the user's confirmation turned a proposal into an adopted record.
-Present warning and block as separate beats: attempt, governing Decision,
-conflict, consequence, actual file proof, and next move. Preserve that explanation
-on a blocked retry. These scripted outcomes do not define universal state rules.
-On the compliant choice, show both actual diffs: the unfinished order-saving
-function becomes a repository call, and service calls return to the shared client.
-Explain that the requested implementation landed while preserving both Decisions.
-On completion, lead with the five-item simulated success receipt, then report
-sample cleanup and the new-session requirement. Never present completion for a
-skip, pending tour, or error. Offer to propose one real project Decision for
-individual approval using the seeding procedure below; keep it separate from the
-fictional examples, and continue one at a time only if the user wants to proceed.
+Render each result once. Consume the JSON; do not dump it, echo the CLI narration,
+or add a second prose recap. Use compact Markdown, short code blocks, and visible
+state changes. Aim for at most 120 narrative words per choice, excluding code;
+do not fill the budget. Keep a short **Simulated tour** label on each response.
+
+Once isolated, lead with **Add order saving**. Show one supporting quote flowing
+into the extracted Decision: `Source → Decision [provisional]`. Give each Decision
+only its headline, one-line **Why**, and file scope; label the extracted scope as
+a demo mapping. The JSON's `sourceNote`, `decisions`, and `proposal` retain the
+full source, evidence, rationale, and rejected alternatives for questions.
+
+Pause for only two teaching choices: adopt the proposal, then choose the shared
+repository correction or retry direct storage. Use `confirm` only after the user's
+confirmation; a setup request or `--yes` is not that answer. Follow `skipAction`
+if the user declines or stops. Acknowledge approval with **Proposed → Adopted**.
+
+Present **WARNING — edit allowed** and **BLOCKED — file unchanged** separately.
+For each, show the governing Decision, one reason, and compact file evidence.
+Use the returned before/after bytes: show the warning's changed lines, and the
+blocked write stopping before `orders.ts` with its actual contents unchanged.
+Omit diff transport headers and hunk metadata. On retry, repeat only the block,
+its reason, unchanged-file evidence, and correction choice. These are scripted
+verdicts, not universal rules for Decision states; live gates vary by agent and
+state (Claude may request permission where other agents block).
+
+On correction, show both actual diffs and **PASS — order saving added**. Finish
+with `✓ Extracted · ✓ Adopted · ✓ Warned · ✓ Blocked · ✓ Corrected`, sample cleanup,
+and the new-session reminder. Never show completion for a skip, pending tour, or
+error. Offer one real Decision for individual approval; continue one at a time
+only if the user wants to proceed. Keep supporting detail on request instead of
+expanding every record. Direct terminal users can replay with `prim demo --details`.
 
 Never record these examples with `decisions create`, save them to shared memory,
 or include them in later seeding candidates. The tour excludes passive capture
