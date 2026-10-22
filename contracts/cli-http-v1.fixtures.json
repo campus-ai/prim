@@ -25,6 +25,103 @@
   ],
   "cases": [
     {
+      "name": "demo run revision",
+      "definition": "DemoRunRequest",
+      "valid": true,
+      "value": {
+        "runId": "demo123",
+        "revision": 2
+      }
+    },
+    {
+      "name": "demo completion receipt",
+      "definition": "DemoCompleteRequest",
+      "valid": true,
+      "value": {
+        "runId": "demo123",
+        "revision": 4,
+        "appliedDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "demo pending status",
+      "definition": "DemoStatusResponse",
+      "valid": true,
+      "value": {
+        "scenarioVersion": 1,
+        "fictional": true,
+        "evaluation": "live",
+        "runId": "demo123",
+        "revision": 0,
+        "stage": "ready",
+        "authorName": "Avery",
+        "email": "not_queued"
+      }
+    },
+    {
+      "name": "demo replacement reason",
+      "definition": "DemoResolveRequest",
+      "valid": true,
+      "value": {
+        "runId": "demo123",
+        "revision": 2,
+        "choice": "supersede",
+        "reason": "Customers requested contact exports"
+      }
+    },
+    {
+      "name": "demo start",
+      "definition": "DemoStartRequest",
+      "valid": true,
+      "value": {
+        "scenarioVersion": 1,
+        "localRunId": "ac115e2e-ec5a-4b51-b27a-e2a60df68913"
+      }
+    },
+    {
+      "name": "demo cannot choose recipient",
+      "definition": "DemoStartRequest",
+      "valid": false,
+      "value": {
+        "scenarioVersion": 1,
+        "localRunId": "ac115e2e-ec5a-4b51-b27a-e2a60df68913",
+        "recipient": "other@example.com"
+      }
+    },
+    {
+      "name": "demo supersession requires reason",
+      "definition": "DemoResolveRequest",
+      "valid": false,
+      "value": {
+        "runId": "demo123",
+        "revision": 1,
+        "choice": "supersede",
+        "reason": " "
+      }
+    },
+    {
+      "name": "demo adherence",
+      "definition": "DemoResolveRequest",
+      "valid": true,
+      "value": {
+        "runId": "demo123",
+        "revision": 1,
+        "choice": "adhere"
+      }
+    },
+    {
+      "name": "demo cannot author arbitrary replacement",
+      "definition": "DemoResolveRequest",
+      "valid": false,
+      "value": {
+        "runId": "demo123",
+        "revision": 1,
+        "choice": "supersede",
+        "reason": "Approved customer request",
+        "replacement": "anything"
+      }
+    },
+    {
       "name": "WorkOS Connect device configuration",
       "definition": "WorkosConnectDeviceConfigurationSuccess",
       "valid": true,
