@@ -21,7 +21,7 @@ pins `@latest`, so the user never installs or manages a prim version and always
 runs the newest CLI.
 
 First, identify which agent you are — **Claude Code**, **Cursor**, **OpenAI Codex**,
-or **Hermes**. It changes one flag in the install command (Cursor and Hermes are
+or **Hermes**. It changes one flag in the install command (Codex, Cursor and Hermes are
 auto-detected, so you can skip even that), how you present the welcome at the end, and which
 memory surface you mine for seeding proposals; nothing else.
 
@@ -29,7 +29,7 @@ memory surface you mine for seeding proposals; nothing else.
 
 Run the install as one command. Show one concise setup status and actionable
 warnings; keep child diagnostics out of the narrated tour. `setup --details`
-retains full diagnostic output. A cold `npx` download can be quiet: keep polling
+expands human diagnostics on STDERR while preserving one JSON result on STDOUT. A cold `npx` download can be quiet: keep polling
 the same process rather than launching a duplicate setup. If it fails, report its
 actual exit and error before retrying.
 
@@ -65,8 +65,8 @@ Note: **Conflict Gates** can warn, ask, or block when **Enforcement** is enabled
 for your organization. Decision capture in active repos runs independently.
 
 **This is yours to drive — never hand it to the user.** If your harness still
-interrupts a step, keep driving until it goes through (approve it, retry, work
-around it); do not skip it and do not ask the user to run it. If enable or health
+interrupts a step, keep driving within the host’s permission policy using the access already
+authorized for setup; do not skip it and do not ask the user to run it. If enable or health
 fails, surface its actual error; never reinterpret that failure as requiring fresh
 activation approval. `setup` is idempotent, so re-running is always safe. It exits
 0 on success and non-zero only if a **required** step failed. The daemon is required
@@ -86,7 +86,7 @@ stays responsive:
 
 - Run `setup` in the **background**, and surface the URL the moment it appears:
   "Approve in the browser to continue — if it didn't open, click: `<url>`".
-- When the background `setup` finishes, move on to the welcome below. (If you want
+- When the background `setup` finishes, follow its `nextAction` before welcome. (If you want
   a progress signal, `npx --yes @primitive.ai/prim@latest auth status --json`
   exits 0 once authorized — it won't prompt, since step 1 already authorized prim.)
 - **Headless / CI** (no browser, or `PRIM_TOKEN` already set): export `PRIM_TOKEN`
@@ -95,12 +95,41 @@ stays responsive:
 
 ### Codex only
 
-`setup --agent codex` installs the hooks into `~/.codex/hooks.json`. Run the
+`setup` detects Codex through `CODEX_THREAD_ID`; `--agent codex` also selects it explicitly. It installs the hooks into `~/.codex/hooks.json`. Run the
 returned tour command first: its acknowledgment is the readiness check. If it
 returns pending, inspect `/hooks` and approve only if a trust action is offered.
 Hooks already shown as active need no extra approval. Retry once, then diagnose
 hook errors if still pending; don't send the user through repeated trust/restart
 instructions. A missing acknowledgment is not proof of untrusted hooks.
+
+Use `demo status <runId>` for content-free diagnostics, even before isolation.
+It reports the installed runtime and the latest observed **PreToolUse/Bash**
+invocation, recognition result, session match, and bounded write-error code.
+No observation means unknown: check the host hook event/error view, not a broad
+filesystem inventory. `codex status` reports configuration, not proof of execution;
+missing project hooks are optional when user hooks are complete. Local command
+hooks require a supported locally orchestrated host session; see
+[Codex hook coverage](https://learn.chatgpt.com/docs/hooks). Never bypass host trust
+or fabricate acknowledgment when that hook path is unavailable.
+
+`demo resume <runId>` refreshes an expired launcher and returns the next isolated
+action without revealing story content. Setup reuses a pending run prepared in
+the same Codex session and directory; explicit `demo` still starts a fresh replay.
+After a single trust retry, require new diagnostic evidence or a concrete repair
+before retrying. Do not create another run to reset this budget.
+
+For EPERM/EACCES, preserve the actual error and use the local-state access already
+authorized for setup, within host policy. Do not recursively chmod configuration.
+For npm bootstrap delays, report progress after about 15 seconds and poll the
+existing invocation. Silence is not evidence of a network or sandbox failure.
+On an actual npm cache error, allocate a fresh temporary cache, retry once with
+`npm_config_cache` pointing there, and reuse it. Never clear the user's cache.
+Setup prints the authorization URL itself; no computer-use browser control is needed.
+
+Preserve doctor warnings in the final setup result. For a shebangless direct
+`.husky` hook, keep its bytes intact and follow doctor’s remedy: add the intended
+shell shebang or run the repository’s Husky prepare script to select `.husky/_`,
+then rerun setup. Do not silently change an unknown hook interpreter or Git config.
 
 ### Cursor only
 
@@ -123,7 +152,7 @@ Hermes with `hermes --accept-hooks chat` or `HERMES_ACCEPT_HOOKS=1` set."
 
 Default setup returns one JSON object: `onboarding` holds the story instructions,
 `nextAction` starts it, and `welcome` holds the viewer-seeding result when available.
-After successful setup, follow `nextAction` automatically. Always
+After successful setup, follow `nextAction` automatically in the same authorized request; do not stop at welcome. Always
 pass `--agent <claude|codex|cursor|hermes>`, including in a PTY. Its standalone
 command verifies session isolation before revealing the story. If pending, use the
 returned reason and diagnostic action; never fabricate acknowledgment or read

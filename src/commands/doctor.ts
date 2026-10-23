@@ -624,7 +624,7 @@ function managedHookRemedy(inspection: ManagedHookInspection): string | undefine
       }
       return "run `prim hooks install`";
     case "unsupported_interpreter":
-      return "verify the hook interpreter; direct shell hooks need a supported shebang (for example #!/bin/sh); Husky v9 must use its .husky/_ dispatcher";
+      return "existing hook preserved: add a supported shebang (for example #!/bin/sh) to a direct shell hook, or run the repository’s Husky prepare script so Husky v9 selects .husky/_; then rerun prim setup. Primitive does not rewrite an unknown interpreter or change core.hooksPath silently";
     case "entrypoint_missing":
       return "run `prim enable` to stage the hook runtime";
     default:

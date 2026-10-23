@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 import { diffLines } from "diff";
 import { demoApi, demoStatus } from "../demo/api.js";
+import { isolationDiagnostics } from "../demo/diagnostics.js";
 import { cleanSandbox, createSandbox, readSample, writeSample } from "../demo/sandbox.js";
 import {
   type DemoAction,
@@ -12,14 +13,17 @@ import {
   RUN_ID,
   demoCommand,
   demoDiagnosticCommand,
+  demoResumeCommand,
   demoWelcomeCommand,
   exclusionPath,
   finishOnboarding,
   lockRun,
   lockRunAsync,
   pendingRuns,
+  preparationKey,
   prepareRun,
   readDemoJson,
+  readRun,
   saveRun,
 } from "../demo/state.js";
 import {
@@ -56,7 +60,7 @@ function compactDiff(before: string, after: string): string {
 }
 export function demoTrustGuidance(agent?: Agent): string {
   if (agent === "codex")
-    return "Check /hooks in Codex. Approve only if a trust action is offered. If hooks are already active, retry the exact standalone command once; do not keep asking for trust or a new session. If still pending, run diagnosticAction and inspect hook errors.";
+    return "Check /hooks in Codex. Approve only if a trust action is offered. If hooks are already active, retry the exact standalone command once; do not keep asking for trust or a new session. If still pending, run diagnosticAction once. Inspect its expected PreToolUse/Bash event and runtime; UserPromptSubmit does not acknowledge the tour. Do not prepare a new run.";
   if (agent === "hermes")
     return "Approve the installed prim hooks when Hermes prompts, then retry the exact nextAction.";
   if (agent === "cursor")
@@ -104,7 +108,7 @@ function resultFor(run: DemoRun) {
   };
 }
 function present(run: DemoRun): string {
-  if (run.stage === "prepared") return "Tour ready. Run nextAction to check session isolation.";
+  if (run.stage === "prepared") return "Tour prepared → Isolation pending → Story not started.";
   if (run.stage === "skipped") return "Tour skipped. Owned sample files removed.";
   if (run.stage === "prompt")
     return `${label}\n\nImagine you’re a new engineer joining a team. In this story, you previously authored a Decision; now experience it as the new engineer. We’ll email the outcome to your signed-in address.\n${diagram("[1 Enter task] → [2 Your Decision stops it] → [3 Choose → Email]")}\n\nEnter this prompt in this chat:\n\n\`\`\`text\n${DEMO_TASK}\n\`\`\``;
@@ -199,12 +203,42 @@ async function finishResolution(run: DemoRun, choice: DemoChoice, reason?: strin
     finishOnboarding("completed");
   }
 }
+function pendingIsolation(
+  run: DemoRun,
+  isolation: string,
+  action: DemoAction,
+  choice?: DemoChoice,
+  reason?: string,
+) {
+  return {
+    fictional: true,
+    evaluation: "live",
+    runId: run.id,
+    stage: "pending",
+    isolation,
+    ...(action === "status"
+      ? { resumeAction: demoResumeCommand(run) }
+      : { nextAction: demoCommand(run, action, choice, reason) }),
+    diagnostics: isolationDiagnostics(run),
+    ...(action === "status" ? {} : { diagnosticAction: demoDiagnosticCommand(run) }),
+    skipAction: demoCommand(run, "skip"),
+    presentation: `Tour prepared → **Isolation pending** → ${run.stage === "prepared" ? "Story not started" : "Story paused"}.\n\n${isolation}. Checking the installed pre-tool hook before continuing.`,
+    guidance: demoTrustGuidance(run.agent),
+    recovery: `${action === "status" ? "Use this evidence to repair the hook before resumeAction." : "Run diagnosticAction once."} If no hook observation exists, the CLI has no evidence this command reached its installed pre-tool hook. Check the host hook event/error view and configuration-directory access; absence of a log is not proof of healthy hooks. Retry only after a repair, using this run. Never fabricate acknowledgment or read sample files.`,
+  };
+}
 export async function advanceDemo(
   id: string,
   action: DemoAction,
   choice?: DemoChoice,
   reason?: string,
 ) {
+  // Read-only diagnostics must work even when the host cannot create a lock.
+  if (action === "status") {
+    const run = readRun(id);
+    if (!run.terminal && !run.acknowledgment)
+      return pendingIsolation(run, "acknowledgment-missing", action);
+  }
   return await lockRunAsync(id, async (run) => {
     if (action === "resolve") requireResolution(choice, reason);
     if (action === "skip") {
@@ -222,19 +256,11 @@ export async function advanceDemo(
       throw new Error(
         `Legacy tour: clean up with ${demoCommand(run, "skip")}, then run prim demo again`,
       );
-    const isolation = consumeAcknowledgment(run, action, choice, reason);
-    if (isolation)
-      return {
-        fictional: true,
-        evaluation: "live",
-        runId: id,
-        stage: "pending",
-        isolation,
-        nextAction: demoCommand(run, action, choice, reason),
-        diagnosticAction: demoDiagnosticCommand(run),
-        skipAction: demoCommand(run, "skip"),
-        presentation: `Session isolation pending (${isolation}). ${demoTrustGuidance(run.agent)}`,
-      };
+    const isolation =
+      action === "status" && !run.terminal && !run.acknowledgment
+        ? "acknowledgment-missing"
+        : consumeAcknowledgment(run, action, choice, reason);
+    if (isolation) return pendingIsolation(run, isolation, action, choice, reason);
     if (action === "status") {
       const server = run.server ? await demoStatus(run.server.runId) : undefined;
       return { ...handoff(run), ...(server ? { server } : {}) };
@@ -315,8 +341,21 @@ function parseAgent(value?: string): Agent | undefined {
 }
 function reportError(error: unknown) {
   const message = terminalSafeLine(error instanceof Error ? error.message : String(error));
+  const code = (error as NodeJS.ErrnoException)?.code;
   process.stderr.write(`[prim] demo: ${message}\n`);
-  printJson({ fictional: true, evaluation: "live", stage: "error", message });
+  printJson({
+    fictional: true,
+    evaluation: "live",
+    stage: "error",
+    message,
+    ...(code === "EPERM" || code === "EACCES"
+      ? {
+          code,
+          recovery:
+            "The host denied access to Primitive local state. Run the same action with the configuration-directory access authorized for setup, within host policy. Do not create another run or change permissions recursively.",
+        }
+      : {}),
+  });
   process.exitCode = 1;
 }
 async function terminalTour(run: DemoRun) {
@@ -359,7 +398,8 @@ export function registerDemoCommands(program: Command): void {
     .description("Experience your Decision protecting a fictional teammate change")
     .option("--agent <agent>", "calling agent; requires session isolation")
     .option("--details", "include supporting story detail")
-    .action(async (options: { agent?: string }, command: Command) => {
+    .option("--resume-pending", "reuse a pending tour prepared in this Codex session")
+    .action(async (options: { agent?: string; resumePending?: boolean }, command: Command) => {
       try {
         const agent = parseAgent(options.agent);
         const terminal =
@@ -371,28 +411,79 @@ export function registerDemoCommands(program: Command): void {
           !process.env.CODEX_THREAD_ID &&
           !process.env.CURSOR_AGENT &&
           !process.env.HERMES_INTERACTIVE;
-        const recovery = pendingRuns().map((id) =>
-          lockRun(id, (run) => ({
-            runId: id,
-            skipAction: demoCommand(
-              { ...run, launcher: [process.execPath, resolve(process.argv[1])] },
-              "skip",
-            ),
-          })),
-        );
-        const run = prepareRun(agent, terminal);
+        // Atomic state reads are sufficient for a recovery inventory. A busy
+        // unrelated run must not prevent preparing an independent tour.
+        const runs = pendingRuns().map(readRun);
+        const recovery = runs.map((run) => ({
+          runId: run.id,
+          resumeAction: run.version === 2 ? demoResumeCommand(run) : undefined,
+          skipAction: demoCommand(
+            { ...run, launcher: [process.execPath, resolve(process.argv[1])] },
+            "skip",
+          ),
+        }));
+        const key = preparationKey(agent);
+        const pending =
+          options.resumePending && key
+            ? runs.find(
+                (run) => run.version === 2 && run.preparationKey === key && run.agent === agent,
+              )
+            : undefined;
+        const run = pending
+          ? lockRun(pending.id, (run) => {
+              run.launcher = [process.execPath, resolve(process.argv[1])];
+              run.acknowledgment = undefined;
+              saveRun(run);
+              return run;
+            })
+          : prepareRun(agent, terminal);
         if (terminal) {
           const result = await terminalTour(run);
           if (!process.stdout.isTTY) printJson(result);
           return;
         }
-        process.stderr.write("[prim] Tour ready → run nextAction to check session isolation.\n");
+        process.stderr.write(
+          "[prim] Tour prepared → verify isolation to continue. Follow nextAction.\n",
+        );
         printJson({
-          ...handoff(run),
+          fictional: true,
+          evaluation: "live",
+          runId: run.id,
+          stage: run.stage,
+          nextAction: demoCommand(run, run.stage === "prepared" ? "start" : "status"),
+          skipAction: demoCommand(run, "skip"),
+          statusAction: demoDiagnosticCommand(run),
+          presentation: `Tour prepared → Isolation pending → ${run.stage === "prepared" ? "Story not started" : "Story paused"}.`,
           instructions:
-            "Run nextAction exactly as a standalone command. Render presentation once, preserving diagrams. At awaitUserPrompt, wait for the user to enter that task before running attemptAction. At the block, wait for adhere or supersede; supersede requires the user's own reason and approval of the displayed replacement. Append --reason and the reason using the same single-quoted argv format (escape an apostrophe as '\\''). Never invent a reason, delegate this tour, or save fictional samples to memory or real Decisions. On completion display success before following welcome. A new session resumes passive capture.",
+            "Continue nextAction now within the authorized setup request; do not stop at welcome or ask whether to begin. Run nextAction exactly as a standalone command with the same authorized local-state access as setup. Render presentation once, preserving diagrams. At awaitUserPrompt, wait for the user to enter that task before running attemptAction. At the block, wait for adhere or supersede; supersede requires the user's own reason and approval of the displayed replacement. Append --reason and the reason using the same single-quoted argv format (escape an apostrophe as '\\''). Never invent a reason, delegate this tour, or save fictional samples to memory or real Decisions. On completion display success before following welcome. A new session resumes passive capture.",
           recoverableRuns: recovery,
         });
+      } catch (error) {
+        reportError(error);
+      }
+    });
+  demo
+    .command("resume <runId>")
+    .description("Recover this run's launcher without revealing story content")
+    .action((id: string) => {
+      try {
+        printJson(
+          lockRun(id, (run) => {
+            if (run.version !== 2) throw new Error("Legacy tour must be skipped before replay");
+            run.launcher = [process.execPath, resolve(process.argv[1])];
+            run.acknowledgment = undefined;
+            saveRun(run);
+            return {
+              fictional: true,
+              evaluation: "live",
+              runId: id,
+              stage: "pending",
+              nextAction: demoCommand(run, run.stage === "prepared" ? "start" : "status"),
+              diagnosticAction: demoDiagnosticCommand(run),
+              presentation: "Run nextAction to verify isolation and resume this tour.",
+            };
+          }),
+        );
       } catch (error) {
         reportError(error);
       }
