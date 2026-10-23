@@ -307,8 +307,8 @@ export function resolveScope(input: string | undefined): Scope {
 }
 
 const TRUST_NOTICE =
-  "[prim] Codex requires hook trust: run `/hooks` in Codex to review and trust these hooks " +
-  "(or start Codex with --dangerously-bypass-hook-trust). Until trusted, the hooks will not fire.";
+  "[prim] Codex hooks installed. The tour's nextAction checks whether this session can run them. " +
+  "If pending, inspect /hooks; approve only if a trust action is offered. Active hooks need no additional approval.";
 
 export function registerCodexCommands(program: Command): void {
   const codex = program

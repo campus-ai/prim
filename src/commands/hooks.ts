@@ -857,11 +857,12 @@ export function registerHooksCommands(program: Command) {
           } else if (
             await askConfirmation(
               "Husky detected. Install prim hooks into .husky/ instead of .git/hooks/?",
+              process.stderr,
             )
           ) {
             return installHooks(gitRoot, "husky");
           } else {
-            console.log("Falling back to .git/hooks install.");
+            console.error("Falling back to .git/hooks install.");
           }
           return installHooks(gitRoot, "git-hooks");
         }

@@ -1241,8 +1241,9 @@ describe("daemon delivery state through a real ingestion sweep", () => {
       daemon = runDaemonProcess(moduleUrl, home, apiUrl);
       const socketPath = join(config, "sock");
       await eventually(
-        () => existsSync(socketPath),
-        () => `daemon socket did not appear: ${daemon?.stderr() ?? ""}`,
+        // A Unix socket path can exist before listen() accepts connections.
+        () => daemon?.stderr().includes(`[prim-daemon] listening on ${socketPath}\n`) === true,
+        () => `daemon socket did not start listening: ${daemon?.stderr() ?? ""}`,
       );
       await options.check({
         socketPath,

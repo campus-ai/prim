@@ -45,24 +45,38 @@ skill, and the welcome:
 prim setup                 # add --agent cursor, codex, or hermes; --no-daemon explicitly opts out
 ```
 
-After successful setup, a first-run, 2–3 minute **simulated tour** demonstrates
-sample ingestion, Decision creation, a warning, a blocked write, and a correction.
-Your agent guides two choices; no sample Decisions enter the real graph.
-The tour follows one order-saving task and ends with a receipt of the demonstrated
-lifecycle, then offers one real project Decision for your individual approval.
-Use `prim setup --skip-demo` to skip and remember that choice, or
-`prim demo --agent <claude|codex|cursor|hermes>` to replay.
-For a person at a terminal, `prim demo` prompts directly with compact Decision
-cards, write outcomes, and file diffs. Use `prim demo --details` for the full source
-and supporting detail. Interactive terminal output omits the completion JSON;
-redirected STDOUT and agent commands retain machine-readable JSON.
+After successful setup, the optional **author story** puts you in a new engineer's
+shoes in a disposable project:
 
-The agent tour waits for trusted hooks before showing samples and excludes
-passive capture for the remainder of that agent session, including resumes.
-Start a new session afterward for normal capture. Explicitly approved real
-Decisions can still be created, and other sessions continue capturing.
-The tour uses disposable local files and scripted verdicts; it does not test
-production ingestion or Enforcement. It offers real-memory seeding afterward.
+```text
+Implement CSV export → Your earlier Decision blocks email → Adhere or supersede
+                                                        → Real outcome email
+```
+
+Enter the feature prompt in the same agent chat. The real semantic evaluator checks
+it against your private, fictional prior Decision. Choose a name-only export or
+approve the displayed replacement with your own short reason. A real email explains
+what your Decision protected or why it changed. Continue once that email is queued;
+queued and provider-accepted do not mean delivered to your inbox.
+
+The compact diagrams and actual file evidence live in each JSON `presentation`.
+Your agent renders them once. After owned-file cleanup, participants without real
+Decisions enter the existing individually approved creation flow. Existing Decisions
+remain intact; unavailable history is not treated as an empty graph.
+
+Use `prim setup --skip-demo` to remember a skip, or
+`prim demo --agent <claude|codex|cursor|hermes>` to replay. Direct terminal `prim demo`
+uses the same prompts. Setup defaults to compact diagnostics; `prim setup --details`
+shows full child output. Default agent setup returns one JSON result with `welcome`,
+`onboarding`, and its `nextAction`. Existing completed tours do not replay automatically.
+
+Agent hooks must acknowledge isolation before any sample is shown. Passive capture
+then stays excluded for this session, including resumes; start a new session to
+resume it. Other sessions, real-work enforcement and explicitly approved real
+Decision creation remain available. Synthetic records never join the team's graph.
+This exercises a real evaluator and demo-only blocking policy, not native production
+Enforcement or live ingestion. Backend/email unavailability leaves the optional
+story pending while successful setup remains successful.
 
 Or run the steps individually:
 

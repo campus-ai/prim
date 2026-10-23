@@ -291,8 +291,8 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
     .command("welcome")
     .description("Print a brief orientation to Primitive's decision graph")
     .option("--agent <agent>", "claude, codex, cursor, or hermes — tailors the capture guidance")
-    .option("--defer-seeding", "let setup's local tour finish before proposing real Decisions")
-    .option("--after-demo", "return a short transition after the local tour")
+    .option("--defer-seeding", "let setup's author story finish before proposing real Decisions")
+    .option("--after-demo", "return a short transition after the author story")
     .option("--capture-excluded", "explain the demo session's passive capture exclusion")
     .action(
       async (options: {
@@ -304,7 +304,7 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
         const agent = resolveWelcomeAgent(options.agent, process.env);
         if (options.deferSeeding) {
           process.stderr.write(
-            "Welcome to Primitive. Setup is complete; the optional simulated tour comes before real Decision seeding.\n",
+            "Welcome to Primitive. Setup is complete; the optional author story comes before real Decision seeding.\n",
           );
           printJson({ welcomed: true, onboarding: "demo", seedingDeferred: true });
           return;
