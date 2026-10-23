@@ -527,15 +527,12 @@ function supportedShebangEnd(content: Buffer, spec: ManagedHookSpec): number {
   return Buffer.byteLength(text.slice(0, newline + 1), "utf8");
 }
 
-function shellInsertionPoint(
-  content: Buffer,
-  allowShebangless: boolean,
-  spec: ManagedHookSpec,
-): number {
+function shellInsertionPoint(content: Buffer, spec: ManagedHookSpec): number {
   const text = decodeHookText(content, spec);
   if (text.startsWith("#!")) return supportedShebangEnd(content, spec);
-  if (allowShebangless) return 0;
-  throw new Error(`unsupported ${spec.hookName} hook interpreter`);
+  // Git retries ENOEXEC through sh. Preserve that interpreter and the original
+  // bytes; a shebangless direct hook is just as valid as a Husky shell script.
+  return 0;
 }
 
 function allIndexes(haystack: Buffer, needle: Buffer): number[] {
@@ -590,13 +587,8 @@ const HUSKY_V8_SOURCE_RE =
  * `exit`/`exec` and reads post-rewrite's stdin first — or, in a Husky v8
  * hook, right after the `husky.sh` line, so it runs once and honors HUSKY=0.
  */
-function blockInsertionPoint(
-  content: Buffer,
-  allowShebangless: boolean,
-  spec: ManagedHookSpec,
-  huskyV8: boolean,
-): number {
-  const shebangEnd = shellInsertionPoint(content, allowShebangless, spec);
+function blockInsertionPoint(content: Buffer, spec: ManagedHookSpec, huskyV8: boolean): number {
+  const shebangEnd = shellInsertionPoint(content, spec);
   if (!huskyV8) return shebangEnd;
   const rest = content.subarray(shebangEnd).toString("utf8");
   const match = HUSKY_V8_SOURCE_RE.exec(rest);
@@ -726,7 +718,6 @@ function insertBlock(content: Buffer, at: number, spec: ManagedHookSpec): Buffer
 /** Legacy whole-file forms that prove Prim ownership, migrated wholesale. */
 function migratedLegacyContent(
   existing: Buffer,
-  allowShebangless: boolean,
   spec: ManagedHookSpec,
   huskyV8: boolean,
 ): Buffer | undefined {
@@ -750,7 +741,7 @@ function migratedLegacyContent(
     ]);
     return insertBlock(
       withoutLegacyGate,
-      blockInsertionPoint(withoutLegacyGate, allowShebangless, spec, huskyV8),
+      blockInsertionPoint(withoutLegacyGate, spec, huskyV8),
       spec,
     );
   }
@@ -779,7 +770,6 @@ type Merge = {
  */
 function mergedContent(
   existing: Buffer | undefined,
-  allowShebangless: boolean,
   spec: ManagedHookSpec,
   relocate: boolean,
   huskyV8: boolean,
@@ -787,7 +777,7 @@ function mergedContent(
   if (!existing) return { content: createdScaffold(spec), migrates: false };
   const range = blockRange(existing, spec);
   if (range.kind === "absent") {
-    const migrated = migratedLegacyContent(existing, allowShebangless, spec, huskyV8);
+    const migrated = migratedLegacyContent(existing, spec, huskyV8);
     if (migrated) return { content: migrated, migrates: true };
   } else if (range.kind !== "newer") {
     const oldCreated = oldCreatedPrefixes(spec).some(
@@ -803,8 +793,8 @@ function mergedContent(
       };
     }
   }
-  const shebangEnd = shellInsertionPoint(existing, allowShebangless, spec);
-  const insertion = blockInsertionPoint(existing, allowShebangless, spec, huskyV8);
+  const shebangEnd = shellInsertionPoint(existing, spec);
+  const insertion = blockInsertionPoint(existing, spec, huskyV8);
   switch (range.kind) {
     case "newer":
       return { content: existing, migrates: false };
@@ -820,11 +810,7 @@ function mergedContent(
       if (relocate && misplaced) {
         const without = withoutRange(existing, range.start, range.end);
         return {
-          content: insertBlock(
-            without,
-            blockInsertionPoint(without, allowShebangless, spec, huskyV8),
-            spec,
-          ),
+          content: insertBlock(without, blockInsertionPoint(without, spec, huskyV8), spec),
           migrates: range.kind === "stale",
         };
       }
@@ -940,16 +926,12 @@ function unlinkHookUnchanged(
  * modulo version), in a place it surely runs: before any exit/exec/return,
  * conditional or not.
  */
-function workingLegacyBlock(
-  content: Buffer,
-  target: EffectiveManagedHook,
-  spec: ManagedHookSpec,
-): boolean {
+function workingLegacyBlock(content: Buffer, spec: ManagedHookSpec): boolean {
   try {
     const range = blockRange(content, spec);
     if (range.kind !== "stale") return false;
     const block = content.subarray(range.start, range.end).toString("utf8");
-    const from = shellInsertionPoint(content, target.kind === "husky_v9", spec);
+    const from = shellInsertionPoint(content, spec);
     return (
       isRecognizedLegacyBlock(spec.hookName, block) &&
       !mayTerminateBefore(content, from, range.start)
@@ -992,13 +974,13 @@ function ensureTarget(
     return skip("skipped");
   }
   const huskyV8 = isHuskyV8Hook(target.hookPath);
-  const next = mergedContent(existing, target.kind === "husky_v9", spec, policy.relocate, huskyV8);
+  const next = mergedContent(existing, spec, policy.relocate, huskyV8);
   if (existing && next.content.equals(existing)) return skip("unchanged");
   if (!policy.writable(target.location)) {
     if (target.location === "worktree") return skip("deferred");
     // A pre-v1 block prim provably wrote, reachable and executable, still
     // captures: leaving it is a missed upgrade, not a failure.
-    return skip(existing && workingLegacyBlock(existing, target, spec) ? "kept" : "external");
+    return skip(existing && workingLegacyBlock(existing, spec) ? "kept" : "external");
   }
   // A pre-v1 invocation still captures on its own; a v1 block does nothing
   // until the entrypoint is staged. Never trade working capture for an inert one.
@@ -1115,7 +1097,7 @@ export function inspectEffectiveGitHook(
   let insertion: number;
   try {
     content = readHookFile(target.hookPath);
-    insertion = shellInsertionPoint(content, target.kind === "husky_v9", spec);
+    insertion = shellInsertionPoint(content, spec);
     range = blockRange(content, spec);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -1129,9 +1111,9 @@ export function inspectEffectiveGitHook(
     );
   }
   const huskyV8 = isHuskyV8Hook(target.hookPath);
-  const preferred = blockInsertionPoint(content, target.kind === "husky_v9", spec, huskyV8);
+  const preferred = blockInsertionPoint(content, spec, huskyV8);
   const current = range.kind === "current" || range.kind === "newer";
-  const legacy = range.kind === "stale" && workingLegacyBlock(content, target, spec);
+  const legacy = range.kind === "stale" && workingLegacyBlock(content, spec);
   // Real failures first; `legacy_block` (still captures, without the runtime)
   // and `misplaced_block` (runs twice) are the only warnings.
   const reason: ManagedHookInspection["reason"] =
@@ -1279,7 +1261,7 @@ function uninstallTarget(target: EffectiveManagedHook, spec: ManagedHookSpec): U
     }
     return unchanged;
   }
-  const shebangEnd = shellInsertionPoint(existing, target.kind === "husky_v9", spec);
+  const shebangEnd = shellInsertionPoint(existing, spec);
   const suffix = existing.subarray(range.end);
   const createdSuffix = Buffer.from(`\n# ${spec.createdMark}\n`);
   if (

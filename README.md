@@ -107,7 +107,7 @@ so the agent runs it directly — instead of fetching a doc and executing a comm
 it, which an auto-mode safety classifier blocks as untrusted-origin code:
 
 ```text
-Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and surface its output. Drive it yourself; I'll only click Authorize in the browser. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
+Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and show concise progress plus actionable warnings. Drive setup and its onboarding nextAction yourself; I'll handle browser authorization and any hook-trust review the agent requires. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
 ```
 
 That single command runs the whole install and current-repository activation in one

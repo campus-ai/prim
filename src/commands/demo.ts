@@ -37,6 +37,7 @@ import {
 } from "../demo/story.js";
 import type { Agent } from "../hooks/agent.js";
 import { bold, color } from "../lib/ansi.js";
+import { codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import { isNonInteractive } from "../lib/confirmation.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 
@@ -61,7 +62,7 @@ function compactDiff(before: string, after: string): string {
 }
 export function demoTrustGuidance(agent?: Agent): string {
   if (agent === "codex")
-    return "Check /hooks in Codex. Approve only if a trust action is offered. If hooks are already active, retry the exact standalone command once; do not keep asking for trust or a new session. If still pending, run diagnosticAction once. Inspect its expected PreToolUse/Bash event and runtime; UserPromptSubmit does not acknowledge the tour. Do not prepare a new run.";
+    return "Run diagnosticAction once. Codex can report hooks trusted while its running session still uses the configuration from before installation. Follow the diagnostic's repairAction when provided; otherwise inspect /hooks for errors or review. Never ask for trust again when hooks are already trusted. Keep this run.";
   if (agent === "hermes")
     return "Approve the installed prim hooks when Hermes prompts, then retry the exact nextAction.";
   if (agent === "cursor")
@@ -247,13 +248,30 @@ async function finishResolution(run: DemoRun, choice: DemoChoice, reason?: strin
     finishOnboarding("completed");
   }
 }
-function pendingIsolation(
+async function pendingIsolation(
   run: DemoRun,
   isolation: string,
   action: DemoAction,
   choice?: DemoChoice,
   reason?: string,
 ) {
+  const host = run.agent === "codex" && action === "status" ? await inspectCodexHost() : undefined;
+  const diagnostics = isolationDiagnostics(run);
+  const repairAction =
+    host?.trust === "trusted" &&
+    !diagnostics.hookObservation &&
+    diagnostics.runtime.state === "ready"
+      ? [...run.launcher, "codex", "refresh"]
+          .map((part) => `'${part.replaceAll("'", "'\\''")}'`)
+          .join(" ")
+      : undefined;
+  const guidance = diagnostics.hookObservation
+    ? diagnostics.hookObservation.result === "acknowledged"
+      ? `The pre-tool hook previously acknowledged this tour, but the current acknowledgment is invalid (${isolation}). Run the exact resume action in the bound session to obtain a fresh acknowledgment; do not repeat setup or trust review.`
+      : `The pre-tool hook reached Primitive: ${diagnostics.hookObservation.result}${diagnostics.hookObservation.errorCode ? ` (${diagnostics.hookObservation.errorCode})` : ""}. Repair that reported failure before resuming this same tour; do not repeat setup or trust review.`
+    : host
+      ? codexHostGuidance(host)
+      : demoTrustGuidance(run.agent);
   return {
     fictional: true,
     evaluation: "live",
@@ -263,11 +281,12 @@ function pendingIsolation(
     ...(action === "status"
       ? { resumeAction: demoResumeCommand(run) }
       : { nextAction: demoCommand(run, action, choice, reason) }),
-    diagnostics: isolationDiagnostics(run),
+    diagnostics: { ...diagnostics, ...(host ? { host, trust: host.trust } : {}) },
+    ...(repairAction ? { repairAction } : {}),
     ...(action === "status" ? {} : { diagnosticAction: demoDiagnosticCommand(run) }),
     skipAction: demoCommand(run, "skip"),
-    presentation: `Tour prepared → **Isolation pending** → ${run.stage === "prepared" ? "Story not started" : "Story paused"}.\n\n${isolation}. Checking the installed pre-tool hook before continuing.`,
-    guidance: demoTrustGuidance(run.agent),
+    presentation: `Tour prepared → **Isolation pending** → ${run.stage === "prepared" ? "Story not started" : "Story paused"}.\n\n${action === "status" ? guidance : "The pre-tool hook has not verified isolation. Run the returned diagnostic action."}`,
+    guidance,
     recovery: `${action === "status" ? "Use this evidence to repair the hook before resumeAction." : "Run diagnosticAction once."} If no hook observation exists, the CLI has no evidence this command reached its installed pre-tool hook. Check the host hook event/error view and configuration-directory access; absence of a log is not proof of healthy hooks. Retry only after a repair, using this run. Never fabricate acknowledgment or read sample files.`,
   };
 }

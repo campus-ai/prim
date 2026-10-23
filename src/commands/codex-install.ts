@@ -44,6 +44,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-path.js";
+import { codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import { mainWorktreeRoot } from "../lib/git.js";
 import { inspectHookRuntime, stageHookRuntime } from "../lib/hook-runtime.js";
 import {
@@ -94,14 +95,14 @@ const CODEX_REGISTRATIONS: Registration[] = [
   makeRegistration("SessionStart", "*", SESSION_START_BIN, CODEX_ARGS),
 ];
 
-const USER_SCOPE_PATH = join(homedir(), ".codex", "hooks.json");
+const userScopePath = () => join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "hooks.json");
 // Anchored at the git repo root (the `<repo>/.codex` layer Codex actually reads),
 // not the bare cwd — see projectRoot() in claude-install.ts. Falls back to cwd
 // outside a repo.
 const projectScopePath = (): string => join(projectRoot(), ".codex", "hooks.json");
 
 function settingsPathFor(scope: Scope): string {
-  return scope === "user" ? USER_SCOPE_PATH : projectScopePath();
+  return scope === "user" ? userScopePath() : projectScopePath();
 }
 
 export function applyInstall(
@@ -164,7 +165,7 @@ export function hookRuntimeResolutions(settings: ClaudeSettings): HookCommandRes
 /** Inspect hook runtime requirements without changing Codex settings. */
 export function inspectHookRuntimeResolutions(): HookCommandResolution[] {
   return [
-    ...hookRuntimeResolutions(readSettings(USER_SCOPE_PATH)),
+    ...hookRuntimeResolutions(readSettings(userScopePath())),
     ...hookRuntimeResolutions(readSettings(projectScopePath())),
   ];
 }
@@ -267,7 +268,7 @@ export function performStatus(): { user: ScopeStatus; project: ScopeStatus } {
       complete: hasCompleteHookRegistration(settings),
     };
   };
-  return { user: statusFor(USER_SCOPE_PATH), project: statusFor(projectScopePath()) };
+  return { user: statusFor(userScopePath()), project: statusFor(projectScopePath()) };
 }
 
 /**
@@ -307,8 +308,7 @@ export function resolveScope(input: string | undefined): Scope {
 }
 
 const TRUST_NOTICE =
-  "[prim] Codex hooks installed. The tour's nextAction checks whether this session can run them. " +
-  "If pending, inspect /hooks; approve only if a trust action is offered. Active hooks need no additional approval.";
+  "[prim] Codex hooks installed. The tour's nextAction verifies actual hook execution before revealing the story.";
 
 export function registerCodexCommands(program: Command): void {
   const codex = program
@@ -323,7 +323,7 @@ export function registerCodexCommands(program: Command): void {
       "user (default, ~/.codex/hooks.json) or project (this checkout's .codex/hooks.json)",
     )
     .option("--force", "Replace any drifted prim hook entries")
-    .action((opts: { scope?: string; force?: boolean }) => {
+    .action(async (opts: { scope?: string; force?: boolean }) => {
       const scope = resolveScope(opts.scope);
       const result = performInstall(scope, opts.force ?? false);
       if (result.changed) {
@@ -332,7 +332,20 @@ export function registerCodexCommands(program: Command): void {
         console.error(`[prim] Codex integration already present at ${result.path} (no changes)`);
       }
       console.error(TRUST_NOTICE);
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      const host = await inspectCodexHost(Boolean(process.env.CODEX_THREAD_ID));
+      console.error(`[prim] ${codexHostGuidance(host)}`);
+      console.log(JSON.stringify({ ...result, host }, null, JSON_INDENT));
+    });
+
+  codex
+    .command("refresh")
+    .description("Reload installed hooks in the calling Codex session without changing trust")
+    .action(async () => {
+      const host = await inspectCodexHost(true);
+      const guidance = codexHostGuidance(host);
+      console.error(`[prim] ${guidance}`);
+      console.log(JSON.stringify({ host, guidance }));
+      if (host.reload !== "refreshed") process.exitCode = 1;
     });
 
   codex
@@ -356,12 +369,14 @@ export function registerCodexCommands(program: Command): void {
   codex
     .command("status")
     .description("Report whether each prim surface (gate, capture) is installed per scope")
-    .action(() => {
+    .action(async () => {
       const result = performStatus();
+      const host = await inspectCodexHost();
       const readiness = {
         configured: result.user.complete || result.project.complete,
         runtime: inspectHookRuntime(),
-        trust: "unknown",
+        trust: host.trust,
+        host,
         hookExecution: "not-verified",
         passiveCapture: "not-verified",
       };

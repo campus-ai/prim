@@ -7,7 +7,7 @@
 > command directly instead, so it originates from **you**:
 >
 > ```text
-> Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and surface its output. Drive it yourself; I'll only click Authorize in the browser. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
+> Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and show concise progress plus actionable warnings. Drive setup and its onboarding nextAction yourself; I'll handle browser authorization and any hook-trust review the agent requires. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
 > ```
 >
 > The rest of this file is the detailed guide the agent follows once `setup` is
@@ -95,28 +95,37 @@ stays responsive:
 
 ### Codex only
 
-`setup` detects Codex through `CODEX_THREAD_ID`; `--agent codex` also selects it explicitly. It installs the hooks into `~/.codex/hooks.json`. Run the
-returned tour command first: its acknowledgment is the readiness check. If it
-returns pending, inspect `/hooks` and approve only if a trust action is offered.
-Hooks already shown as active need no extra approval. Retry once, then diagnose
-hook errors if still pending; don't send the user through repeated trust/restart
-instructions. A missing acknowledgment is not proof of untrusted hooks.
+`setup` detects Codex through `CODEX_THREAD_ID`; `--agent codex` also selects it explicitly.
+It installs hooks in `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`) and asks
+Codex's local app server to reload the calling session's configuration. This uses
+Codex's native empty configuration reload: it changes no configuration values,
+hook trust, or approvals. Codex refreshes loaded sessions through that operation;
+Primitive first verifies that this host owns the calling session.
 
-Use `demo status <runId>` for content-free diagnostics, even before isolation.
-It reports the installed runtime and the latest observed **PreToolUse/Bash**
-invocation, recognition result, session match, and bounded write-error code.
-No observation means unknown: check the host hook event/error view, not a broad
-filesystem inventory. `codex status` reports configuration, not proof of execution;
-missing project hooks are optional when user hooks are complete. Local command
-hooks require a supported locally orchestrated host session; see
-[Codex hook coverage](https://learn.chatgpt.com/docs/hooks). Never bypass host trust
-or fabricate acknowledgment when that hook path is unavailable.
+Run the returned tour command first: its real **PreToolUse/Bash** acknowledgment
+is still the isolation check. Installed, trusted hooks are not proof of execution.
+If pending, run `diagnosticAction` once. It reports the installed runtime, the
+latest content-free hook observation, and Codex's native trust inventory.
+
+- `repairAction`: run it once in this agent session, then follow `resumeAction`.
+  This reloads already-trusted hooks that the running session has not picked up.
+- `review-required`: have the user review the Primitive entries in `/hooks`.
+  Never trust hooks or approve browser authorization on the user's behalf.
+- `disabled`: surface that setting; do not silently enable it.
+- A missing or incompatible local app-server connection: exit and resume the
+  **same Codex session**, then follow the retained tour's `resumeAction`.
+  Do not rerun setup or create a new tour to reset the retry budget.
+
+`prim codex status` reads native trust when the local host is available;
+`prim codex refresh` performs the bounded reload explicitly. Neither claims
+capture is verified. After one repair attempt, use actual hook errors rather than
+looping retries. A missing observation remains unknown, not proof of untrusted
+hooks. Local hooks require a supported host; see
+[Codex hook coverage](https://learn.chatgpt.com/docs/hooks).
 
 `demo resume <runId>` refreshes an expired launcher and returns the next isolated
 action without revealing story content. Setup reuses a pending run prepared in
-the same Codex session and directory; explicit `demo` still starts a fresh replay.
-After a single trust retry, require new diagnostic evidence or a concrete repair
-before retrying. Do not create another run to reset this budget.
+the same Codex session and directory; explicit `demo` starts a fresh replay.
 
 For EPERM/EACCES, preserve the actual error and use the local-state access already
 authorized for setup, within host policy. Do not recursively chmod configuration.
@@ -126,10 +135,11 @@ On an actual npm cache error, allocate a fresh temporary cache, retry once with
 `npm_config_cache` pointing there, and reuse it. Never clear the user's cache.
 Setup prints the authorization URL itself; no computer-use browser control is needed.
 
-Preserve doctor warnings in the final setup result. For a shebangless direct
-`.husky` hook, keep its bytes intact and follow doctor’s remedy: add the intended
-shell shebang or run the repository’s Husky prepare script to select `.husky/_`,
-then rerun setup. Do not silently change an unknown hook interpreter or Git config.
+Preserve doctor warnings in the final setup result. Executable shebangless hooks
+use Git’s existing `sh` fallback; Primitive inserts only its owned block and
+preserves the original commands. Explicit unsupported interpreters, binary files,
+non-executable direct hooks, and unsafe targets remain errors. Do not change the
+repository’s hook interpreter or `core.hooksPath` to conceal a warning.
 
 ### Cursor only
 
