@@ -28,6 +28,7 @@ export type DemoRun = {
   terminal: boolean;
   launcher: [string, string];
   binding?: string;
+  preparationKey?: string;
   acknowledgment?: { command: string; at: number };
   server?: import("../contract/cli-http-v1.js").DemoStatusResponse;
   needsStatus?: boolean;
@@ -95,10 +96,18 @@ export function prepareRun(agent?: Agent, terminal = false): DemoRun {
     stage: "prepared",
     terminal,
     agent,
+    preparationKey: preparationKey(agent),
     launcher: [process.execPath, resolve(process.argv[1])],
   };
   saveRun(run);
   return run;
+}
+
+/** A hint for setup recovery, never an isolation acknowledgment. */
+export function preparationKey(agent?: Agent): string | undefined {
+  return agent === "codex" && process.env.CODEX_THREAD_ID
+    ? sessionKey(agent, `${process.env.CODEX_THREAD_ID}\0${process.cwd()}`)
+    : undefined;
 }
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -136,11 +145,13 @@ export function demoWelcomeCommand(run: DemoRun): string {
 
 /** Diagnostics must also work when prim is available only through npx. */
 export function demoDiagnosticCommand(run: DemoRun): string {
-  return [
-    process.execPath,
-    resolve(process.argv[1]),
-    ...(run.agent ? [run.agent === "claude_code" ? "claude" : run.agent, "status"] : ["doctor"]),
-  ]
+  return [process.execPath, resolve(process.argv[1]), "demo", "status", run.id]
+    .map(quote)
+    .join(" ");
+}
+
+export function demoResumeCommand(run: DemoRun): string {
+  return [process.execPath, resolve(process.argv[1]), "demo", "resume", run.id]
     .map(quote)
     .join(" ");
 }
