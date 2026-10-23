@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.107](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.106...v0.1.0-alpha.107) (2026-10-23)
+
+
+### Bug Fixes
+
+* **onboarding:** detect Codex during setup and preserve health warnings instead of claiming verified capture ([#389](https://github.com/campus-ai/prim/pull/389)).
+* **onboarding:** diagnose missing isolation acknowledgments and resume pending tours without retry loops, duplicate runs, or expired launchers ([#389](https://github.com/campus-ai/prim/pull/389)).
+* **onboarding:** clarify progress and recovery guidance while keeping setup output machine-readable ([#389](https://github.com/campus-ai/prim/pull/389)).
+
 ## [0.1.0-alpha.106](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.105...v0.1.0-alpha.106) (2026-10-23)
 
 
