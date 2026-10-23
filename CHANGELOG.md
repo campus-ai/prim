@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.109](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.108...v0.1.0-alpha.109) (2026-10-23)
+
+
+### Bug Fixes
+
+* **setup:** reload installed Codex hooks before onboarding ([3b1d223](https://github.com/campus-ai/prim/commit/3b1d223187e8ed45c776a33460e9596b39d3250a))
+* **setup:** restore fresh Codex onboarding ([d49c43a](https://github.com/campus-ai/prim/commit/d49c43a10bef12e9363ecdd24d8355e30b8e5e1c))
+
 ## [0.1.0-alpha.108](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.107...v0.1.0-alpha.108) (2026-10-23)
 
 
