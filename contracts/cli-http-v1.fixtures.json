@@ -55,6 +55,11 @@
         "revision": 0,
         "stage": "ready",
         "authorName": "Avery",
+        "story": {
+          "orgName": "Example Team",
+          "recipient": "avery@example.invalid",
+          "decisionDate": "October, 8 2026"
+        },
         "email": "not_queued"
       }
     },

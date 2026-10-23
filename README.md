@@ -49,7 +49,7 @@ After successful setup, the optional **author story** puts you in a new engineer
 shoes in a disposable project:
 
 ```text
-Implement CSV export → Your earlier Decision blocks email → Adhere or supersede
+Implement CSV export → Your earlier Decision blocks email → Accept or Supercede
                                                         → Real outcome email
 ```
 

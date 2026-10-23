@@ -558,6 +558,11 @@ export interface DemoStatusResponse {
   revision: number;
   stage: "ready" | "checking" | "blocked" | "approved" | "completed" | "skipped" | "expired";
   authorName: string;
+  story: {
+    orgName: string;
+    recipient: string;
+    decisionDate: string;
+  };
   email: "not_queued" | "queued" | "accepted" | "failed" | "suppressed";
   verdict?: "block" | "pass" | "pending";
   reasonCode?: string;

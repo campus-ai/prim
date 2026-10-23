@@ -11241,8 +11241,9 @@ validate43.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDemoStatusResponse = validate44;
 const schema78 = {"$id":"urn:primitive:cli-http-v1:DemoStatusResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse"};
-const schema79 = {"type":"object","properties":{"scenarioVersion":{"type":"number","const":1},"fictional":{"type":"boolean","const":true},"evaluation":{"type":"string","const":"live"},"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"stage":{"type":"string","enum":["ready","checking","blocked","approved","completed","skipped","expired"]},"authorName":{"type":"string","maxLength":200},"email":{"type":"string","enum":["not_queued","queued","accepted","failed","suppressed"]},"verdict":{"type":"string","enum":["block","pass","pending"]},"reasonCode":{"type":"string","maxLength":100},"choice":{"type":"string","enum":["adhere","supersede"]},"reason":{"type":"string","maxLength":500},"approvedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["scenarioVersion","fictional","evaluation","runId","revision","stage","authorName","email"],"additionalProperties":false};
+const schema79 = {"type":"object","properties":{"scenarioVersion":{"type":"number","const":1},"fictional":{"type":"boolean","const":true},"evaluation":{"type":"string","const":"live"},"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"stage":{"type":"string","enum":["ready","checking","blocked","approved","completed","skipped","expired"]},"authorName":{"type":"string","maxLength":200},"story":{"type":"object","properties":{"orgName":{"type":"string","maxLength":200},"recipient":{"type":"string","format":"email","pattern":"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"},"decisionDate":{"type":"string","maxLength":100}},"required":["orgName","recipient","decisionDate"],"additionalProperties":false},"email":{"type":"string","enum":["not_queued","queued","accepted","failed","suppressed"]},"verdict":{"type":"string","enum":["block","pass","pending"]},"reasonCode":{"type":"string","maxLength":100},"choice":{"type":"string","enum":["adhere","supersede"]},"reason":{"type":"string","maxLength":500},"approvedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["scenarioVersion","fictional","evaluation","runId","revision","stage","authorName","story","email"],"additionalProperties":false};
 const func34 = Object.prototype.hasOwnProperty;
+const pattern12 = new RegExp("^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$", "u");
 
 function validate44(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DemoStatusResponse" */;
@@ -11259,7 +11260,7 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if(((((((((data.scenarioVersion === undefined) && (missing0 = "scenarioVersion")) || ((data.fictional === undefined) && (missing0 = "fictional"))) || ((data.evaluation === undefined) && (missing0 = "evaluation"))) || ((data.runId === undefined) && (missing0 = "runId"))) || ((data.revision === undefined) && (missing0 = "revision"))) || ((data.stage === undefined) && (missing0 = "stage"))) || ((data.authorName === undefined) && (missing0 = "authorName"))) || ((data.email === undefined) && (missing0 = "email"))){
+if((((((((((data.scenarioVersion === undefined) && (missing0 = "scenarioVersion")) || ((data.fictional === undefined) && (missing0 = "fictional"))) || ((data.evaluation === undefined) && (missing0 = "evaluation"))) || ((data.runId === undefined) && (missing0 = "runId"))) || ((data.revision === undefined) && (missing0 = "revision"))) || ((data.stage === undefined) && (missing0 = "stage"))) || ((data.authorName === undefined) && (missing0 = "authorName"))) || ((data.story === undefined) && (missing0 = "story"))) || ((data.email === undefined) && (missing0 = "email"))){
 validate44.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
@@ -11410,16 +11411,99 @@ else {
 var valid1 = true;
 }
 if(valid1){
-if(data.email !== undefined){
-let data7 = data.email;
+if(data.story !== undefined){
+let data7 = data.story;
 const _errs17 = errors;
-if(typeof data7 !== "string"){
-validate44.errors = [{instancePath:instancePath+"/email",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/email/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if(errors === _errs17){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
+let missing1;
+if((((data7.orgName === undefined) && (missing1 = "orgName")) || ((data7.recipient === undefined) && (missing1 = "recipient"))) || ((data7.decisionDate === undefined) && (missing1 = "decisionDate"))){
+validate44.errors = [{instancePath:instancePath+"/story",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
 return false;
 }
-if(!(((((data7 === "not_queued") || (data7 === "queued")) || (data7 === "accepted")) || (data7 === "failed")) || (data7 === "suppressed"))){
-validate44.errors = [{instancePath:instancePath+"/email",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/email/enum",keyword:"enum",params:{allowedValues: schema79.properties.email.enum},message:"must be equal to one of the allowed values"}];
+else {
+const _errs19 = errors;
+for(const key1 in data7){
+if(!(((key1 === "orgName") || (key1 === "recipient")) || (key1 === "decisionDate"))){
+validate44.errors = [{instancePath:instancePath+"/story",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
 return false;
+break;
+}
+}
+if(_errs19 === errors){
+if(data7.orgName !== undefined){
+let data8 = data7.orgName;
+const _errs20 = errors;
+if(errors === _errs20){
+if(typeof data8 === "string"){
+if(func1(data8) > 200){
+validate44.errors = [{instancePath:instancePath+"/story/orgName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/orgName/maxLength",keyword:"maxLength",params:{limit: 200},message:"must NOT have more than 200 characters"}];
+return false;
+}
+}
+else {
+validate44.errors = [{instancePath:instancePath+"/story/orgName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/orgName/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid2 = _errs20 === errors;
+}
+else {
+var valid2 = true;
+}
+if(valid2){
+if(data7.recipient !== undefined){
+let data9 = data7.recipient;
+const _errs22 = errors;
+if(errors === _errs22){
+if(errors === _errs22){
+if(typeof data9 === "string"){
+if(!pattern12.test(data9)){
+validate44.errors = [{instancePath:instancePath+"/story/recipient",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/recipient/pattern",keyword:"pattern",params:{pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"},message:"must match pattern \""+"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"+"\""}];
+return false;
+}
+}
+else {
+validate44.errors = [{instancePath:instancePath+"/story/recipient",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/recipient/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+}
+var valid2 = _errs22 === errors;
+}
+else {
+var valid2 = true;
+}
+if(valid2){
+if(data7.decisionDate !== undefined){
+let data10 = data7.decisionDate;
+const _errs24 = errors;
+if(errors === _errs24){
+if(typeof data10 === "string"){
+if(func1(data10) > 100){
+validate44.errors = [{instancePath:instancePath+"/story/decisionDate",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/decisionDate/maxLength",keyword:"maxLength",params:{limit: 100},message:"must NOT have more than 100 characters"}];
+return false;
+}
+}
+else {
+validate44.errors = [{instancePath:instancePath+"/story/decisionDate",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/decisionDate/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid2 = _errs24 === errors;
+}
+else {
+var valid2 = true;
+}
+}
+}
+}
+}
+}
+else {
+validate44.errors = [{instancePath:instancePath+"/story",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
 }
 var valid1 = _errs17 === errors;
 }
@@ -11427,29 +11511,46 @@ else {
 var valid1 = true;
 }
 if(valid1){
+if(data.email !== undefined){
+let data11 = data.email;
+const _errs26 = errors;
+if(typeof data11 !== "string"){
+validate44.errors = [{instancePath:instancePath+"/email",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/email/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if(!(((((data11 === "not_queued") || (data11 === "queued")) || (data11 === "accepted")) || (data11 === "failed")) || (data11 === "suppressed"))){
+validate44.errors = [{instancePath:instancePath+"/email",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/email/enum",keyword:"enum",params:{allowedValues: schema79.properties.email.enum},message:"must be equal to one of the allowed values"}];
+return false;
+}
+var valid1 = _errs26 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
 if(data.verdict !== undefined){
-let data8 = data.verdict;
-const _errs19 = errors;
-if(typeof data8 !== "string"){
+let data12 = data.verdict;
+const _errs28 = errors;
+if(typeof data12 !== "string"){
 validate44.errors = [{instancePath:instancePath+"/verdict",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/verdict/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!(((data8 === "block") || (data8 === "pass")) || (data8 === "pending"))){
+if(!(((data12 === "block") || (data12 === "pass")) || (data12 === "pending"))){
 validate44.errors = [{instancePath:instancePath+"/verdict",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/verdict/enum",keyword:"enum",params:{allowedValues: schema79.properties.verdict.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
-var valid1 = _errs19 === errors;
+var valid1 = _errs28 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
 if(data.reasonCode !== undefined){
-let data9 = data.reasonCode;
-const _errs21 = errors;
-if(errors === _errs21){
-if(typeof data9 === "string"){
-if(func1(data9) > 100){
+let data13 = data.reasonCode;
+const _errs30 = errors;
+if(errors === _errs30){
+if(typeof data13 === "string"){
+if(func1(data13) > 100){
 validate44.errors = [{instancePath:instancePath+"/reasonCode",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/reasonCode/maxLength",keyword:"maxLength",params:{limit: 100},message:"must NOT have more than 100 characters"}];
 return false;
 }
@@ -11459,35 +11560,35 @@ validate44.errors = [{instancePath:instancePath+"/reasonCode",schemaPath:"https:
 return false;
 }
 }
-var valid1 = _errs21 === errors;
+var valid1 = _errs30 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
 if(data.choice !== undefined){
-let data10 = data.choice;
-const _errs23 = errors;
-if(typeof data10 !== "string"){
+let data14 = data.choice;
+const _errs32 = errors;
+if(typeof data14 !== "string"){
 validate44.errors = [{instancePath:instancePath+"/choice",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/choice/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((data10 === "adhere") || (data10 === "supersede"))){
+if(!((data14 === "adhere") || (data14 === "supersede"))){
 validate44.errors = [{instancePath:instancePath+"/choice",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/choice/enum",keyword:"enum",params:{allowedValues: schema79.properties.choice.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
-var valid1 = _errs23 === errors;
+var valid1 = _errs32 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
 if(data.reason !== undefined){
-let data11 = data.reason;
-const _errs25 = errors;
-if(errors === _errs25){
-if(typeof data11 === "string"){
-if(func1(data11) > 500){
+let data15 = data.reason;
+const _errs34 = errors;
+if(errors === _errs34){
+if(typeof data15 === "string"){
+if(func1(data15) > 500){
 validate44.errors = [{instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/reason/maxLength",keyword:"maxLength",params:{limit: 500},message:"must NOT have more than 500 characters"}];
 return false;
 }
@@ -11497,18 +11598,18 @@ validate44.errors = [{instancePath:instancePath+"/reason",schemaPath:"https://ap
 return false;
 }
 }
-var valid1 = _errs25 === errors;
+var valid1 = _errs34 === errors;
 }
 else {
 var valid1 = true;
 }
 if(valid1){
 if(data.approvedDigest !== undefined){
-let data12 = data.approvedDigest;
-const _errs27 = errors;
-if(errors === _errs27){
-if(typeof data12 === "string"){
-if(!pattern5.test(data12)){
+let data16 = data.approvedDigest;
+const _errs36 = errors;
+if(errors === _errs36){
+if(typeof data16 === "string"){
+if(!pattern5.test(data16)){
 validate44.errors = [{instancePath:instancePath+"/approvedDigest",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/approvedDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
@@ -11518,10 +11619,11 @@ validate44.errors = [{instancePath:instancePath+"/approvedDigest",schemaPath:"ht
 return false;
 }
 }
-var valid1 = _errs27 === errors;
+var valid1 = _errs36 === errors;
 }
 else {
 var valid1 = true;
+}
 }
 }
 }
@@ -12524,7 +12626,7 @@ validate48.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isFeedbackLeaseResponseStructure = validate49;
 const schema88 = {"$id":"urn:primitive:cli-http-v1:FeedbackLeaseResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse"};
 const schema89 = {"anyOf":[{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"empty"},"hasMore":{"type":"boolean","const":false}},"required":["protocolVersion","status","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"leased"},"events":{"minItems":1,"maxItems":40,"type":"array","items":{"type":"object","properties":{"eventId":{"type":"string","minLength":1,"maxLength":128},"leaseVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"decisionId":{"type":"string","minLength":1,"maxLength":128},"intent":{"type":"string"},"webUrl":{"type":"string"},"kind":{"type":"string","enum":["confirm_prompt","publish_prompt"]}},"required":["eventId","leaseVersion","shortId","intent","webUrl"],"additionalProperties":{}}},"hasMore":{"type":"boolean"}},"required":["protocolVersion","status","events","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"unavailable"},"reason":{"type":"string","const":"organization_unbound"}},"required":["protocolVersion","status","reason"],"additionalProperties":{}}],"x-primitive-runtime-refinements":["feedback_response_version_negotiation","feedback_publish_prompt_decision_id","unique_feedback_event_ids"]};
-const pattern13 = new RegExp("^[0-9a-f]{8}$", "u");
+const pattern14 = new RegExp("^[0-9a-f]{8}$", "u");
 
 function validate49(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:FeedbackLeaseResponse" */;
@@ -12906,7 +13008,7 @@ let data9 = data6.shortId;
 const _errs27 = errors;
 if(errors === _errs27){
 if(typeof data9 === "string"){
-if(!pattern13.test(data9)){
+if(!pattern14.test(data9)){
 const err24 = {instancePath:instancePath+"/events/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err24];
@@ -14097,8 +14199,8 @@ validate51.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isGitHubInstallIntentStartResponse = validate52;
 const schema94 = {"$id":"urn:primitive:cli-http-v1:GitHubInstallIntentStartResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse"};
 const schema95 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":1},"mode":{"type":"string","const":"install_intent_v1"},"status":{"type":"string","const":"pending"},"intentId":{"type":"string","pattern":"^[A-Za-z0-9]{1,128}$"},"browserUrl":{"type":"string","pattern":"^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"},"expiresAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"pollAfterMs":{"type":"number","const":1000}},"required":["protocolVersion","mode","status","intentId","browserUrl","expiresAt","pollAfterMs"],"additionalProperties":false};
-const pattern14 = new RegExp("^[A-Za-z0-9]{1,128}$", "u");
-const pattern15 = new RegExp("^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$", "u");
+const pattern15 = new RegExp("^[A-Za-z0-9]{1,128}$", "u");
+const pattern16 = new RegExp("^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$", "u");
 
 function validate52(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:GitHubInstallIntentStartResponse" */;
@@ -14185,7 +14287,7 @@ let data3 = data.intentId;
 const _errs9 = errors;
 if(errors === _errs9){
 if(typeof data3 === "string"){
-if(!pattern14.test(data3)){
+if(!pattern15.test(data3)){
 validate52.errors = [{instancePath:instancePath+"/intentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse/properties/intentId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,128}$"+"\""}];
 return false;
 }
@@ -14206,7 +14308,7 @@ let data4 = data.browserUrl;
 const _errs11 = errors;
 if(errors === _errs11){
 if(typeof data4 === "string"){
-if(!pattern15.test(data4)){
+if(!pattern16.test(data4)){
 validate52.errors = [{instancePath:instancePath+"/browserUrl",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse/properties/browserUrl/pattern",keyword:"pattern",params:{pattern: "^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"},message:"must match pattern \""+"^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"+"\""}];
 return false;
 }
@@ -14662,7 +14764,7 @@ let data0 = data.intentId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern14.test(data0)){
+if(!pattern15.test(data0)){
 validate54.errors = [{instancePath:instancePath+"/intentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStatusRequest/properties/intentId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,128}$"+"\""}];
 return false;
 }
@@ -16421,7 +16523,7 @@ validate55.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isMoveIngestRequest = validate56;
 const schema102 = {"$id":"urn:primitive:cli-http-v1:MoveIngestRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest"};
 const schema103 = {"type":"object","properties":{"batch":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","const":4}},"required":["moveId","capturedAt","sessionId","eventType","capturedOrganizationId","captureAuthorityKind","decisionLifecycleProtocolVersion","envelopeVersion"],"additionalProperties":{}},{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","exclusiveMaximum":4}},"required":["moveId","capturedAt","sessionId","eventType"],"additionalProperties":{}}]}}},"required":["batch"],"additionalProperties":{}};
-const pattern17 = new RegExp("^[A-Za-z0-9_-]+$", "u");
+const pattern18 = new RegExp("^[A-Za-z0-9_-]+$", "u");
 
 function validate56(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:MoveIngestRequest" */;
@@ -16826,7 +16928,7 @@ vErrors.push(err21);
 errors++;
 }
 else {
-if(!pattern17.test(data11)){
+if(!pattern18.test(data11)){
 const err22 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err22];
@@ -17416,7 +17518,7 @@ vErrors.push(err57);
 errors++;
 }
 else {
-if(!pattern17.test(data26)){
+if(!pattern18.test(data26)){
 const err58 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err58];
@@ -17691,10 +17793,10 @@ validate56.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isPreflightRequestV3Structure = validate57;
 const schema104 = {"$id":"urn:primitive:cli-http-v1:PreflightRequestV3","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3"};
 const schema105 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":3},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"invocationId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"repoSyncId":{"type":"string","pattern":"^[A-Za-z0-9]{1,64}$"},"paths":{"maxItems":32,"type":"array","items":{"type":"string"}},"coverage":{"type":"string","enum":["complete","unverified"]},"branch":{"type":"string","maxLength":255,"pattern":"^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"},"clientMode":{"type":"string","enum":["block","warn"]},"clientVersion":{"type":"string","maxLength":32,"pattern":"^[A-Za-z0-9][A-Za-z0-9._+-]*$"},"proposal":{"type":"string"}},"required":["protocolVersion","agent","sessionId","invocationId","repoSyncId","paths","coverage","proposal"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_repository_paths","unique_repository_paths","complete_coverage_requires_path","proposal_utf8_max_6144","degrade_invalid_rollout_fields","degrade_invalid_branch"]};
-const pattern19 = new RegExp("^[A-Za-z0-9._:-]{1,128}$", "u");
-const pattern21 = new RegExp("^[A-Za-z0-9]{1,64}$", "u");
-const pattern22 = new RegExp("^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$", "u");
-const pattern23 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._+-]*$", "u");
+const pattern20 = new RegExp("^[A-Za-z0-9._:-]{1,128}$", "u");
+const pattern22 = new RegExp("^[A-Za-z0-9]{1,64}$", "u");
+const pattern23 = new RegExp("^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$", "u");
+const pattern24 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._+-]*$", "u");
 
 function validate57(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PreflightRequestV3" */;
@@ -17764,7 +17866,7 @@ let data2 = data.sessionId;
 const _errs8 = errors;
 if(errors === _errs8){
 if(typeof data2 === "string"){
-if(!pattern19.test(data2)){
+if(!pattern20.test(data2)){
 validate57.errors = [{instancePath:instancePath+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/sessionId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -17785,7 +17887,7 @@ let data3 = data.invocationId;
 const _errs10 = errors;
 if(errors === _errs10){
 if(typeof data3 === "string"){
-if(!pattern19.test(data3)){
+if(!pattern20.test(data3)){
 validate57.errors = [{instancePath:instancePath+"/invocationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/invocationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -17806,7 +17908,7 @@ let data4 = data.repoSyncId;
 const _errs12 = errors;
 if(errors === _errs12){
 if(typeof data4 === "string"){
-if(!pattern21.test(data4)){
+if(!pattern22.test(data4)){
 validate57.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/repoSyncId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""}];
 return false;
 }
@@ -17885,7 +17987,7 @@ validate57.errors = [{instancePath:instancePath+"/branch",schemaPath:"https://ap
 return false;
 }
 else {
-if(!pattern22.test(data8)){
+if(!pattern23.test(data8)){
 validate57.errors = [{instancePath:instancePath+"/branch",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/branch/pattern",keyword:"pattern",params:{pattern: "^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"},message:"must match pattern \""+"^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"+"\""}];
 return false;
 }
@@ -17929,7 +18031,7 @@ validate57.errors = [{instancePath:instancePath+"/clientVersion",schemaPath:"htt
 return false;
 }
 else {
-if(!pattern23.test(data10)){
+if(!pattern24.test(data10)){
 validate57.errors = [{instancePath:instancePath+"/clientVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/clientVersion/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]*$"},message:"must match pattern \""+"^[A-Za-z0-9][A-Za-z0-9._+-]*$"+"\""}];
 return false;
 }
@@ -18026,7 +18128,7 @@ let data1 = data.checkId;
 const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
-if(!pattern19.test(data1)){
+if(!pattern20.test(data1)){
 validate58.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/checkId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -18355,8 +18457,8 @@ validate58.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isPresenceHeartbeatRequest = validate59;
 const schema108 = {"$id":"urn:primitive:cli-http-v1:PresenceHeartbeatRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest"};
 const schema109 = {"type":"object","properties":{"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,128}$"},"clientInstanceId":{"type":"string","pattern":"^pci_[A-Za-z0-9_-]{43}$"},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991}},"required":["sessionId"],"additionalProperties":{}};
-const pattern25 = new RegExp("^[A-Za-z0-9._-]{1,128}$", "u");
-const pattern26 = new RegExp("^pci_[A-Za-z0-9_-]{43}$", "u");
+const pattern26 = new RegExp("^[A-Za-z0-9._-]{1,128}$", "u");
+const pattern27 = new RegExp("^pci_[A-Za-z0-9_-]{43}$", "u");
 
 function validate59(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PresenceHeartbeatRequest" */;
@@ -18383,7 +18485,7 @@ let data0 = data.sessionId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern25.test(data0)){
+if(!pattern26.test(data0)){
 validate59.errors = [{instancePath:instancePath+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/sessionId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._-]{1,128}$"+"\""}];
 return false;
 }
@@ -18404,7 +18506,7 @@ let data1 = data.clientInstanceId;
 const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
-if(!pattern26.test(data1)){
+if(!pattern27.test(data1)){
 validate59.errors = [{instancePath:instancePath+"/clientInstanceId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/clientInstanceId/pattern",keyword:"pattern",params:{pattern: "^pci_[A-Za-z0-9_-]{43}$"},message:"must match pattern \""+"^pci_[A-Za-z0-9_-]{43}$"+"\""}];
 return false;
 }
@@ -19151,7 +19253,7 @@ validate62.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isRepositoryBindRequest = validate63;
 const schema116 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest"};
 const schema117 = {"type":"object","properties":{"repositoryFullName":{"type":"string","pattern":"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"}},"required":["repositoryFullName"],"additionalProperties":false};
-const pattern27 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
+const pattern28 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
 
 function validate63(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindRequest" */;
@@ -19187,7 +19289,7 @@ let data0 = data.repositoryFullName;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern27.test(data0)){
+if(!pattern28.test(data0)){
 validate63.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/pattern",keyword:"pattern",params:{pattern: "^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"},message:"must match pattern \""+"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"+"\""}];
 return false;
 }
@@ -19266,7 +19368,7 @@ validate64.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isUserApiKeyListRequest = validate65;
 const schema120 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest"};
 const schema121 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"},"limit":{"type":"integer","minimum":1,"maximum":100},"after":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"}},"required":["requestId","limit"],"additionalProperties":false};
-const pattern29 = new RegExp("^api_key_[A-Za-z0-9_-]+$", "u");
+const pattern30 = new RegExp("^api_key_[A-Za-z0-9_-]+$", "u");
 
 function validate65(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyListRequest" */;
@@ -19360,7 +19462,7 @@ validate65.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api
 return false;
 }
 else {
-if(!pattern29.test(data2)){
+if(!pattern30.test(data2)){
 validate65.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
@@ -19395,9 +19497,9 @@ validate65.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isUserApiKeyListResponse = validate66;
 const schema122 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse"};
 const schema123 = {"type":"object","properties":{"apiKeys":{"maxItems":100,"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false}},"nextCursor":{"anyOf":[{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},{"type":"null"}]}},"required":["apiKeys","nextCursor"],"additionalProperties":false};
-const pattern31 = new RegExp("^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$", "u");
-const pattern32 = new RegExp("^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "u");
-const pattern33 = new RegExp("^[\\x21-\\x7e]+$", "u");
+const pattern32 = new RegExp("^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$", "u");
+const pattern33 = new RegExp("^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "u");
+const pattern34 = new RegExp("^[\\x21-\\x7e]+$", "u");
 
 function validate66(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyListResponse" */;
@@ -19475,7 +19577,7 @@ validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPat
 return false;
 }
 else {
-if(!pattern29.test(data2)){
+if(!pattern30.test(data2)){
 validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
@@ -19508,7 +19610,7 @@ validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaP
 return false;
 }
 else {
-if(!pattern31.test(data3)){
+if(!pattern32.test(data3)){
 validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
@@ -19541,7 +19643,7 @@ validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedVal
 return false;
 }
 else {
-if(!pattern32.test(data4)){
+if(!pattern33.test(data4)){
 validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
@@ -19586,7 +19688,7 @@ validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/"
 return false;
 }
 else {
-if(!pattern33.test(data6)){
+if(!pattern34.test(data6)){
 validate66.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
@@ -19904,7 +20006,7 @@ vErrors.push(err11);
 errors++;
 }
 else {
-if(!pattern29.test(data11)){
+if(!pattern30.test(data11)){
 const err12 = {instancePath:instancePath+"/nextCursor",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/nextCursor/anyOf/0/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err12];
@@ -20033,7 +20135,7 @@ validate67.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.ge
 return false;
 }
 else {
-if(!pattern29.test(data0)){
+if(!pattern30.test(data0)){
 validate67.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
@@ -20066,7 +20168,7 @@ validate67.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.
 return false;
 }
 else {
-if(!pattern31.test(data1)){
+if(!pattern32.test(data1)){
 validate67.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
@@ -20099,7 +20201,7 @@ validate67.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"h
 return false;
 }
 else {
-if(!pattern32.test(data2)){
+if(!pattern33.test(data2)){
 validate67.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
@@ -20144,7 +20246,7 @@ validate67.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:
 return false;
 }
 else {
-if(!pattern33.test(data4)){
+if(!pattern34.test(data4)){
 validate67.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
@@ -20488,7 +20590,7 @@ validate68.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.
 return false;
 }
 else {
-if(!pattern31.test(data1)){
+if(!pattern32.test(data1)){
 validate68.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
@@ -20550,7 +20652,7 @@ validate68.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isUserApiKeyMintResponse = validate69;
 const schema128 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMintResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse"};
 const schema129 = {"type":"object","properties":{"apiKey":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false},"secret":{"type":"string","minLength":4,"maxLength":4096,"pattern":"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"}},"required":["apiKey","secret"],"additionalProperties":false};
-const pattern45 = new RegExp("^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$", "u");
+const pattern46 = new RegExp("^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$", "u");
 
 function validate69(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyMintResponse" */;
@@ -20616,7 +20718,7 @@ validate69.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https:/
 return false;
 }
 else {
-if(!pattern29.test(data1)){
+if(!pattern30.test(data1)){
 validate69.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
@@ -20649,7 +20751,7 @@ validate69.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https
 return false;
 }
 else {
-if(!pattern31.test(data2)){
+if(!pattern32.test(data2)){
 validate69.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
@@ -20682,7 +20784,7 @@ validate69.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schema
 return false;
 }
 else {
-if(!pattern32.test(data3)){
+if(!pattern33.test(data3)){
 validate69.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
@@ -20727,7 +20829,7 @@ validate69.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,sche
 return false;
 }
 else {
-if(!pattern33.test(data5)){
+if(!pattern34.test(data5)){
 validate69.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
@@ -21018,7 +21120,7 @@ validate69.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://ap
 return false;
 }
 else {
-if(!pattern45.test(data10)){
+if(!pattern46.test(data10)){
 validate69.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/pattern",keyword:"pattern",params:{pattern: "^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"},message:"must match pattern \""+"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"+"\""}];
 return false;
 }
@@ -21159,7 +21261,7 @@ validate71.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://
 return false;
 }
 else {
-if(!pattern29.test(data0)){
+if(!pattern30.test(data0)){
 validate71.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
@@ -21459,7 +21561,7 @@ validate73.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isWorkosConnectDeviceConfigurationSuccessStructure = validate74;
 const schema138 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess"};
 const schema139 = {"type":"object","properties":{"protocol_version":{"type":"number","const":1},"issuer":{"type":"string","format":"uri"},"client_id":{"type":"string","maxLength":256,"pattern":"^client_[A-Za-z0-9_-]+$"},"default_scopes":{"minItems":4,"maxItems":4,"type":"array","items":{"type":"string","enum":["openid","profile","email","offline_access"]}}},"required":["protocol_version","issuer","client_id","default_scopes"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_https_origin","exact_workos_connect_device_scopes"]};
-const pattern48 = new RegExp("^client_[A-Za-z0-9_-]+$", "u");
+const pattern49 = new RegExp("^client_[A-Za-z0-9_-]+$", "u");
 
 function validate74(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess" */;
@@ -21533,7 +21635,7 @@ validate74.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https:/
 return false;
 }
 else {
-if(!pattern48.test(data2)){
+if(!pattern49.test(data2)){
 validate74.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/pattern",keyword:"pattern",params:{pattern: "^client_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^client_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
