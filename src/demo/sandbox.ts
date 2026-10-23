@@ -19,11 +19,14 @@ import {
   WARNING_EDIT,
 } from "./scenario.js";
 import { type DemoRun, saveRun } from "./state.js";
+import { DEMO_ADHERE, DEMO_INITIAL, DEMO_SUPERSEDE } from "./story.js";
 
 export const decisionBytes = (adopted: boolean) =>
   `${JSON.stringify(adopted ? SAMPLE_DECISIONS : SAMPLE_DECISIONS.slice(0, 1), null, 2)}\n`;
 
 function allowedFiles(run: DemoRun): Record<string, readonly string[]> {
+  if (run.version === 2)
+    return { ".owner": [run.id], "customers.ts": [DEMO_INITIAL, DEMO_ADHERE, DEMO_SUPERSEDE] };
   return {
     ".owner": [run.id],
     "note.md": [SAMPLE_NOTE],
@@ -75,12 +78,16 @@ export function createSandbox(run: DemoRun): void {
     saveRun(run);
   }
   const root = inspectSandbox(run);
-  for (const [name, content] of Object.entries({
-    ".owner": run.id,
-    "note.md": SAMPLE_NOTE,
-    ...SAMPLE_FILES,
-    "decisions.json": decisionBytes(false),
-  })) {
+  const files =
+    run.version === 2
+      ? { ".owner": run.id, "customers.ts": DEMO_INITIAL }
+      : {
+          ".owner": run.id,
+          "note.md": SAMPLE_NOTE,
+          ...SAMPLE_FILES,
+          "decisions.json": decisionBytes(false),
+        };
+  for (const [name, content] of Object.entries(files)) {
     const path = join(root, name);
     if (!existsSync(path)) atomicWriteFile(path, content, { mode: 0o600 });
   }
@@ -88,7 +95,7 @@ export function createSandbox(run: DemoRun): void {
 
 export function writeSample(
   run: DemoRun,
-  name: "service.ts" | "orders.ts" | "decisions.json",
+  name: "service.ts" | "orders.ts" | "decisions.json" | "customers.ts",
   bytes: string,
 ): void {
   const root = inspectSandbox(run);
@@ -96,7 +103,7 @@ export function writeSample(
   atomicWriteFile(join(root, name), bytes, { mode: 0o600 });
 }
 
-export function readSample(run: DemoRun, name: keyof typeof SAMPLE_FILES): string {
+export function readSample(run: DemoRun, name: keyof typeof SAMPLE_FILES | "customers.ts"): string {
   return readFileSync(join(inspectSandbox(run), name), "utf8");
 }
 

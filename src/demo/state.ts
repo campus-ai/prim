@@ -1,17 +1,27 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { isDemoStatusResponse } from "../contract/cli-http-v1.js";
 import type { Agent } from "../hooks/agent.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
-import { withFileLockSync } from "../lib/file-lock.js";
+import { withFileLock, withFileLockSync } from "../lib/file-lock.js";
 import { primConfigDirectory } from "../lib/paths.js";
 
 export const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-export type DemoStage = "prepared" | "proposal" | "conflict" | "completed" | "skipped";
-export type DemoAction = "start" | "confirm" | "resolve" | "skip";
-export type DemoChoice = "repository" | "local-storage";
+export type DemoStage =
+  | "prepared"
+  | "proposal"
+  | "conflict"
+  | "prompt"
+  | "approved"
+  | "applied"
+  | "cleanup"
+  | "completed"
+  | "skipped";
+export type DemoAction = "start" | "attempt" | "resolve" | "status" | "skip";
+export type DemoChoice = "adhere" | "supersede";
 export type DemoRun = {
-  version: 1;
+  version: 1 | 2;
   id: string;
   stage: DemoStage;
   agent?: Agent;
@@ -19,6 +29,9 @@ export type DemoRun = {
   launcher: [string, string];
   binding?: string;
   acknowledgment?: { command: string; at: number };
+  server?: import("../contract/cli-http-v1.js").DemoStatusResponse;
+  needsStatus?: boolean;
+  receipt?: { revision: number; appliedDigest: string };
   sandbox?: { path: string; device: number; inode: number };
 };
 
@@ -41,9 +54,25 @@ export function saveDemoJson(path: string, value: unknown): void {
 export function readRun(id: string): DemoRun {
   const run = readDemoJson(runPath(id)) as DemoRun;
   if (
-    run.version !== 1 ||
+    ![1, 2].includes(run.version) ||
     run.id !== id ||
-    !["prepared", "proposal", "conflict", "completed", "skipped"].includes(run.stage) ||
+    ![
+      "prepared",
+      "proposal",
+      "conflict",
+      "prompt",
+      "approved",
+      "applied",
+      "cleanup",
+      "completed",
+      "skipped",
+    ].includes(run.stage) ||
+    (run.needsStatus !== undefined && typeof run.needsStatus !== "boolean") ||
+    (run.server !== undefined && !isDemoStatusResponse(run.server)) ||
+    (run.receipt !== undefined &&
+      (!Number.isSafeInteger(run.receipt.revision) ||
+        run.receipt.revision < 0 ||
+        !/^[a-f0-9]{64}$/u.test(run.receipt.appliedDigest))) ||
     typeof run.terminal !== "boolean" ||
     !Array.isArray(run.launcher) ||
     run.launcher.length !== 2 ||
@@ -61,7 +90,7 @@ export const lockRun = <T>(id: string, action: (run: DemoRun) => T): T =>
 
 export function prepareRun(agent?: Agent, terminal = false): DemoRun {
   const run: DemoRun = {
-    version: 1,
+    version: 2,
     id: randomUUID(),
     stage: "prepared",
     terminal,
@@ -73,13 +102,44 @@ export function prepareRun(agent?: Agent, terminal = false): DemoRun {
 }
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-export function demoCommand(run: DemoRun, action: DemoAction, choice?: DemoChoice): string {
+export function demoCommand(
+  run: DemoRun,
+  action: DemoAction,
+  choice?: DemoChoice,
+  reason?: string,
+): string {
   return [
     ...run.launcher,
     "demo",
     action,
     run.id,
     ...(choice === undefined ? [] : ["--choice", choice]),
+    ...(reason === undefined ? [] : ["--reason", reason]),
+  ]
+    .map(quote)
+    .join(" ");
+}
+
+/** Use the executable running this stage, including recovery from an expired npx cache. */
+export function demoWelcomeCommand(run: DemoRun): string {
+  return [
+    process.execPath,
+    resolve(process.argv[1]),
+    "welcome",
+    "--after-demo",
+    ...(run.agent ? ["--agent", run.agent === "claude_code" ? "claude" : run.agent] : []),
+    ...(run.binding ? ["--capture-excluded"] : []),
+  ]
+    .map(quote)
+    .join(" ");
+}
+
+/** Diagnostics must also work when prim is available only through npx. */
+export function demoDiagnosticCommand(run: DemoRun): string {
+  return [
+    process.execPath,
+    resolve(process.argv[1]),
+    ...(run.agent ? [run.agent === "claude_code" ? "claude" : run.agent, "status"] : ["doctor"]),
   ]
     .map(quote)
     .join(" ");
@@ -127,4 +187,34 @@ export function sessionExcluded(agent: Agent, session: unknown): boolean {
     throw new Error("invalid demo capture exclusion");
   }
   return true;
+}
+
+export const lockRunAsync = <T>(id: string, action: (run: DemoRun) => Promise<T>): Promise<T> =>
+  withFileLock(`${runPath(id)}.lock`, () => action(readRun(id)), { timeoutMs: 500 });
+
+/** Parse only our single-quoted argv serialization; never interpret shell syntax. */
+export function demoArgv(command: string): string[] | undefined {
+  const result: string[] = [];
+  let i = 0;
+  while (i < command.length) {
+    if (command[i++] !== "'") return;
+    let value = "";
+    let closed = false;
+    while (i < command.length) {
+      if (command.slice(i, i + 4) === "'\\''") {
+        value += "'";
+        i += 4;
+      } else if (command[i] === "'") {
+        i++;
+        closed = true;
+        break;
+      } else {
+        value += command[i++];
+      }
+    }
+    if (!closed) return;
+    result.push(value);
+    if (i === command.length) return result;
+    if (command[i++] !== " " || i === command.length) return;
+  }
 }

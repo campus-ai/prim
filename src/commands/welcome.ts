@@ -93,8 +93,8 @@ type AgentCopyKey = WelcomeAgent | "generic";
 const CAPTURE_LINES: Record<AgentCopyKey, string[]> = {
   claude: ["Capture is automatic — keep coding; your decisions are recorded for you."],
   codex: [
-    "Capture starts once you trust the prim hooks — run /hooks in Codex;",
-    "until then nothing is recorded.",
+    "Capture starts once the prim hooks are active — check /hooks in Codex;",
+    "approve them only if prompted.",
   ],
   cursor: ["Capture is automatic in trusted Cursor workspaces; restart Cursor CLI for the footer."],
   hermes: [
@@ -111,7 +111,7 @@ const CAPTURE_LINES: Record<AgentCopyKey, string[]> = {
 const PASSIVE_LINES: Record<AgentCopyKey, string[]> = {
   claude: ["Otherwise Primitive captures decisions passively while you work."],
   codex: [
-    "Once you trust the prim hooks (/hooks in Codex), Primitive captures",
+    "Once the prim hooks are active (/hooks in Codex), Primitive captures",
     "decisions passively while you work.",
   ],
   cursor: ["In trusted Cursor workspaces, Primitive captures decisions passively while you work."],
@@ -129,7 +129,7 @@ const PASSIVE_LINES: Record<AgentCopyKey, string[]> = {
 const GUIDANCE_PASSIVE: Record<AgentCopyKey, string> = {
   claude: "Otherwise, Primitive passively captures decisions in the background while you work.",
   codex:
-    "Otherwise, once you trust the prim hooks (run /hooks in Codex), Primitive passively captures decisions in the background while you work.",
+    "Otherwise, once the prim hooks are active (check /hooks in Codex), Primitive passively captures decisions in the background while you work.",
   cursor:
     "Otherwise, Primitive passively captures decisions in trusted Cursor workspaces while you work.",
   hermes:
@@ -292,9 +292,15 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
     .description("Print a brief orientation to Primitive's decision graph")
     .option("--agent <agent>", "claude, codex, cursor, or hermes — tailors the capture guidance")
     .option("--defer-seeding", "let setup's local tour finish before proposing real Decisions")
+    .option("--after-demo", "return a short transition after the local tour")
     .option("--capture-excluded", "explain the demo session's passive capture exclusion")
     .action(
-      async (options: { agent?: string; deferSeeding?: boolean; captureExcluded?: boolean }) => {
+      async (options: {
+        agent?: string;
+        deferSeeding?: boolean;
+        captureExcluded?: boolean;
+        afterDemo?: boolean;
+      }) => {
         const agent = resolveWelcomeAgent(options.agent, process.env);
         if (options.deferSeeding) {
           process.stderr.write(
@@ -305,6 +311,23 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
         }
         const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);
         const state = welcomeStateFromRecent(result);
+        if (options.afterDemo) {
+          printJson({
+            welcomed: true,
+            org: state.org,
+            presentation:
+              state.org === "seed"
+                ? "Ready for your first real Decision? I can propose one from shared repository memory for your approval. Approved Decisions are visible to your team."
+                : state.org === "active"
+                  ? "Ready for real work. Ask your agent to add a Decision whenever you need one."
+                  : "Your Decision history is unavailable; no seeding assumptions were made. Retry welcome when the connection is available.",
+            ...(state.org === "seed"
+              ? { seedGuidance: seedGuidanceFor(agent, options.captureExcluded) }
+              : {}),
+            captureExcluded: options.captureExcluded === true,
+          });
+          return;
+        }
         process.stderr.write(`${formatWelcome(state, agent, options.captureExcluded)}\n`);
         printJson(welcomeJson(state, agent, options.captureExcluded));
       },

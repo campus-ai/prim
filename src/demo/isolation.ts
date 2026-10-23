@@ -3,6 +3,8 @@ import type { Agent } from "../hooks/agent.js";
 import {
   type DemoAction,
   type DemoChoice,
+  RUN_ID,
+  demoArgv,
   demoCommand,
   exclusionPath,
   lockRun,
@@ -37,26 +39,28 @@ export function observeDemoInvocation(
     const input = envelope.tool_input as { command?: unknown } | undefined;
     const command = input?.command;
     if (envelope.tool_name === tool && typeof command === "string" && command.length < 8192) {
-      const ids = command.match(
-        /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gu,
-      );
-      if (ids?.length === 1 && existsSync(runPath(ids[0]))) {
-        invocation = lockRun(ids[0], (run) => {
-          const actions: [DemoAction, DemoChoice?][] = [
-            ["start"],
-            ["confirm"],
-            ["resolve", "repository"],
-            ["resolve", "local-storage"],
-            ["skip"],
-          ];
-          const match = actions.find(
-            ([action, choice]) => demoCommand(run, action, choice) === command,
-          );
+      const argv = demoArgv(command);
+      const id = argv?.[4];
+      if (id && RUN_ID.test(id) && existsSync(runPath(id))) {
+        invocation = lockRun(id, (run) => {
+          const action = argv?.[3] as DemoAction;
+          const choice = argv?.[6] as DemoChoice | undefined;
+          const reason = argv?.[8];
+          const recognized = ["start", "attempt", "resolve", "status", "skip"].includes(action);
+          const validChoice =
+            action !== "resolve" ||
+            choice === "adhere" ||
+            (choice === "supersede" &&
+              typeof reason === "string" &&
+              reason.trim().length > 0 &&
+              reason.length <= 500);
+          const match =
+            recognized && validChoice && demoCommand(run, action, choice, reason) === command;
           if (run.terminal || !match) {
             return false;
           }
           // Skipping before any sample is revealed must not suspend capture.
-          if (match[0] === "skip") return true;
+          if (action === "skip") return true;
           const key = sessionKey(agent, session);
           if ((run.agent && run.agent !== agent) || (run.binding && run.binding !== key)) {
             run.acknowledgment = undefined;
