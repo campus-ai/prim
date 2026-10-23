@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0-alpha.106](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.105...v0.1.0-alpha.106) (2026-10-23)
+
+
+### Features
+
+* **onboarding:** consume the private story API contract ([e745d71](https://github.com/campus-ai/prim/commit/e745d713d311106f52f092874736ecd13a7e6d27))
+* **onboarding:** consume the private story contract ([098c268](https://github.com/campus-ai/prim/commit/098c26895c09bc8ca2d75c331ff3493c9bed154e))
+* **onboarding:** experience your Decision protecting a teammate ([1d315e5](https://github.com/campus-ai/prim/commit/1d315e5e3b1c9353febf434c321804edb547b4be))
+* **onboarding:** guide setup through the author story ([530d1e8](https://github.com/campus-ai/prim/commit/530d1e88105902f27f096d2b0d10cd12900d2069))
+* **onboarding:** guide setup through the author story ([26707e0](https://github.com/campus-ai/prim/commit/26707e0f53b1097b5c19cae03434c95c9fe7fb0e))
+* **onboarding:** replace the lecture with an author story ([fb4e47a](https://github.com/campus-ai/prim/commit/fb4e47a03cdc4a0d0b0a04c04cd899a66a59349f))
+
+
+### Bug Fixes
+
+* **onboarding:** refresh lost backend revisions before retry ([0c3ad02](https://github.com/campus-ai/prim/commit/0c3ad021578937f605cb77693abfa94a31edca4c))
+
 ## [0.1.0-alpha.105](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.104...v0.1.0-alpha.105) (2026-10-22)
 
 
