@@ -304,7 +304,7 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
         const agent = resolveWelcomeAgent(options.agent, process.env);
         if (options.deferSeeding) {
           process.stderr.write(
-            "Primitive installed → session isolation next → story → real Decisions. Follow setup’s nextAction.\n",
+            "Welcome to Primitive. Setup is complete; the optional author story comes before real Decision seeding.\n",
           );
           printJson({ welcomed: true, onboarding: "demo", seedingDeferred: true });
           return;

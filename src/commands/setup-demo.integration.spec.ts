@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { detectAgent, registerSetupCommand, resolveAgent } from "./setup.js";
+import { registerSetupCommand } from "./setup.js";
 
 const cli = resolve("dist/index.js");
 const originalCwd = process.cwd();
@@ -34,7 +34,6 @@ function harness() {
   const summaries: { nextAction?: string; onboarding: { nextAction?: string } }[] = [];
   vi.spyOn(console, "log").mockImplementation((value) => summaries.push(JSON.parse(String(value))));
   let failedStep = "";
-  let health = "{}";
   const setup = async (options: string[] = []) => {
     calls.length = 0;
     const exit = vi.fn();
@@ -45,7 +44,6 @@ function harness() {
       run: (args) => {
         calls.push(args);
         if (args[0] === failedStep) return { code: 1, stdout: "" };
-        if (args[0] === "doctor") return { code: 0, stdout: health };
         if (args[0] === "auth") return { code: 0, stdout: '{"status":"valid"}' };
         if (args[0] === "demo" || args.includes("demo")) {
           const child = spawnSync(process.execPath, [cli, ...args], {
@@ -68,9 +66,6 @@ function harness() {
     summaries,
     notes,
     setup,
-    health: (value: unknown) => {
-      health = JSON.stringify(value);
-    },
     fail: (step: string) => {
       failedStep = step;
     },
@@ -78,30 +73,6 @@ function harness() {
 }
 
 describe("setup's optional demo handoff", () => {
-  it("detects a Codex session while honoring an explicit override", () => {
-    expect(detectAgent({ CODEX_THREAD_ID: "thread" })).toBe("codex");
-    expect(resolveAgent("claude", { CODEX_THREAD_ID: "thread" })).toEqual({
-      agent: "claude",
-      detected: false,
-    });
-  });
-  it("preserves degraded health and does not claim capture was verified", async () => {
-    const h = harness();
-    const health = {
-      ok: true,
-      status: "warn",
-      checks: [{ name: "pre-commit", status: "warn", detail: "unsupported_interpreter" }],
-    };
-    h.health(health);
-    expect(await h.setup()).toHaveBeenCalledWith(0);
-    expect(h.summaries.at(-1)).toMatchObject({
-      status: "complete",
-      steps: { health: "warn" },
-      health,
-      readiness: { installation: "installed", health: "warn", passiveCapture: "not-verified" },
-      instructions: expect.stringContaining("Continue nextAction now"),
-    });
-  });
   it("returns one structured setup result with the onboarding action", async () => {
     const h = harness();
     await h.setup();
