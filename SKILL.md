@@ -190,8 +190,8 @@ If blocked, end with the observed cause (or explicitly unknown boundary), the
 single next repair, and the command to resume the retained run.
 
 Render each `presentation` once as Markdown, preserving diagrams and file evidence.
-Do not echo JSON/STDERR, expand the records, or add a prose recap. Keep the
-**Fictional project · real conflict check** label. This uses the production semantic
+Do not echo JSON/STDERR, expand the records, or add a prose recap. Keep the returned
+**[DEMO]** titles. This uses the production semantic
 evaluator on private demo records and a demo-only blocking policy; native production
 hooks did not supply the verdict. Production outcomes still vary by agent and
 Decision state, including Claude's permission prompt.
@@ -201,10 +201,13 @@ same chat. At `awaitUserPrompt`, show the copyable CSV-export task and **wait fo
 user to enter it**. Only then run `attemptAction`. Do not auto-submit it, ask them to
 adopt the prior Decision, or implement the feature yourself.
 
-At the actual block, show the unchanged file and ask **Adhere or Supersede?**
-Adhere uses `choices.adhere`. Supersede approves the displayed replacement,
+At the actual block, show the returned unchanged file and **Accept / Supercede** choices.
+Accept uses `choices.adhere`; Supercede uses `choices.supersede`. Supercede approves the replacement,
 **Allow customer names and email addresses in CSV exports**, and requires a short
-reason in the user's own words. Append `'--reason'` and their single-quoted reason
+reason in the user's own words. If missing, ask `choices.supersede.prompt` exactly;
+if already supplied, do not ask again. The exploration prompts in the success message
+are suggestions for the participant, not actions to execute automatically.
+Append `'--reason'` and their single-quoted reason
 to `choices.supersede.command`; escape any apostrophe as `'\''`, matching the
 command's existing shell quoting. Never invent a reason or execute a placeholder.
 Do not call production `reconcile` or `decisions create` for these samples.

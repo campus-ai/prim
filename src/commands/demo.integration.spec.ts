@@ -198,6 +198,11 @@ async function serveStory(f: ReturnType<typeof fixture>) {
           revision: 0,
           stage: "ready",
           authorName: "Avery",
+          story: {
+            orgName: "Example Team",
+            recipient: "avery@example.invalid",
+            decisionDate: "October, 8 2026",
+          },
           email: "not_queued",
         });
       res.end(JSON.stringify(runs.get(id)));
@@ -304,19 +309,21 @@ describe("packaged author story", () => {
       expect(requests).toEqual([]);
       const started = (await f.call(agent, prepared.nextAction)).json;
       expect(started.stage).toBe("prompt");
+      expect(started.presentation).toContain("Example Team's team");
       expect(started.nextAction).toBeUndefined();
       expect(started.awaitUserPrompt).toContain("including name and email");
       expect(requests).toEqual(["/api/cli/demo/start"]);
       expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
       const blocked = (await f.call(agent, started.attemptAction)).json;
       expect(blocked.stage).toBe("conflict");
-      expect(blocked.presentation).toContain("YOUR DECISION STOPPED THIS");
-      expect(blocked.presentation).toContain("customers.ts unchanged");
+      expect(blocked.presentation).toContain("[DEMO] Primitive Caught a Conflict");
+      expect(blocked.presentation).toContain(DEMO_INITIAL.trimEnd());
+      expect(blocked.presentation).toContain("Avery's Decision from October, 8 2026");
       expect(readFileSync(join(started.sandbox, "customers.ts"), "utf8")).toBe(DEMO_INITIAL);
       const completed = await f.call(agent, blocked.choices.adhere);
       expect(completed.json.stage).toBe("completed");
-      expect(completed.json.presentation).toContain("PASS — CSV export implemented");
-      expect(completed.json.presentation).toContain("EMAIL QUEUED");
+      expect(completed.json.presentation).toContain("[DEMO] Accepted Avery's Decision");
+      expect(completed.json.presentation).toContain("Check avery@example.invalid");
       expect(completed.stderr).toBe("");
       expect(completed.stdout.trim().split("\n")).toHaveLength(1);
       expect(existsSync(started.sandbox)).toBe(false);
@@ -416,6 +423,10 @@ describe("packaged author story", () => {
     const done = (await f.call("codex", interrupted.nextAction)).json;
     expect(done.stage).toBe("completed");
     expect(done.server.reason).toBe(reason);
+    expect(done.presentation).toContain("[DEMO] Superceded Avery's Decision");
+    expect(blocked.choices.supersede.prompt).toBe(
+      "What's your rationale for superceding Avery's existing Decision?",
+    );
     expect(api.queues()).toBe(1);
     expect(api.requests.filter((path) => path.endsWith("/resolve"))).toHaveLength(1);
     const completes = api.bodies.filter((body) => "appliedDigest" in body);

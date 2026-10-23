@@ -627,6 +627,26 @@
           "type": "string",
           "maxLength": 200
         },
+        "story": {
+          "type": "object",
+          "properties": {
+            "orgName": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "recipient": {
+              "type": "string",
+              "format": "email",
+              "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+            },
+            "decisionDate": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          "required": ["orgName", "recipient", "decisionDate"],
+          "additionalProperties": false
+        },
         "email": {
           "type": "string",
           "enum": ["not_queued", "queued", "accepted", "failed", "suppressed"]
@@ -660,6 +680,7 @@
         "revision",
         "stage",
         "authorName",
+        "story",
         "email"
       ],
       "additionalProperties": false

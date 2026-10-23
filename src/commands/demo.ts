@@ -30,6 +30,7 @@ import {
   DEMO_ADHERE,
   DEMO_INITIAL,
   DEMO_ORIGINAL,
+  DEMO_RATIONALE,
   DEMO_REPLACEMENT,
   DEMO_SUPERSEDE,
   DEMO_TASK,
@@ -110,14 +111,56 @@ function resultFor(run: DemoRun) {
 function present(run: DemoRun): string {
   if (run.stage === "prepared") return "Tour prepared → Isolation pending → Story not started.";
   if (run.stage === "skipped") return "Tour skipped. Owned sample files removed.";
+  const server = run.server;
+  if (!server) throw new Error("Start the story first");
   if (run.stage === "prompt")
-    return `${label}\n\nImagine you’re a new engineer joining a team. In this story, you previously authored a Decision; now experience it as the new engineer. We’ll email the outcome to your signed-in address.\n${diagram("[1 Enter task] → [2 Your Decision stops it] → [3 Choose → Email]")}\n\nEnter this prompt in this chat:\n\n\`\`\`text\n${DEMO_TASK}\n\`\`\``;
+    return `[DEMO] How Primitive Catches Conflicts
+
+You're a new engineer on ${safeMarkdown(server.story.orgName)}'s team.
+And you've been tasked with implementing CSV export functionality for customer records.
+Enter this prompt to do so:
+${DEMO_TASK}`;
   if (run.stage === "conflict")
-    return `${label}\n\n**YOUR DECISION STOPPED THIS**\n${diagram("CSV export [name, email]\n                   │\n            ✕ email excluded\n                   │\n         customers.ts unchanged")}\n\n**${DEMO_ORIGINAL}**\nFictional prior author: ${safeMarkdown(run.server?.authorName ?? "you")}\n\n\`\`\`ts\n${readSample(run, "customers.ts").trimEnd()}\n\`\`\`\n\nChoose **Adhere** (export names only) or **Supersede** with **${DEMO_REPLACEMENT}** and your short reason.`;
-  if (run.stage === "completed" || run.stage === "cleanup") {
+    return `[DEMO] Primitive Caught a Conflict
+
+You proposed:
+"${DEMO_TASK}"
+
+But this conflicts with ${safeMarkdown(server.authorName)}'s Decision from ${safeMarkdown(server.story.decisionDate)}:
+Intent: ${DEMO_ORIGINAL}
+Rationale ${DEMO_RATIONALE}
+
+\`\`\`
+${readSample(run, "customers.ts").trimEnd()}
+\`\`\`
+
+You can either:
+- Accept ${safeMarkdown(server.authorName)}'s Decision and export only names, or
+- Supercede ${safeMarkdown(server.authorName)}'s Decision and proceed with exporting both names and email addresses`;
+  if (run.stage === "completed") {
+    const accepted = server.choice === "adhere";
+    const after = accepted ? DEMO_ADHERE : DEMO_SUPERSEDE;
+    return `[DEMO] ${accepted ? "Accepted" : "Superceded"} ${safeMarkdown(server.authorName)}'s Decision
+
+Implemented CSV Export with ${accepted ? "only names" : "both names and email addresses"}:
+\`\`\`
+${compactDiff(DEMO_INITIAL, after)}
+\`\`\`
+
+Check ${safeMarkdown(server.story.recipient)} for details regarding this Decision.
+
+Start a new session and continue working to begin capturing Decisions.
+Or, you can explore existing Decisions by prompting your agent e.g.:
+- Show me my team's recent decisions and summarize what each one settled.
+- Pick the most load-bearing decision in our graph and walk me through its blast radius — what would changing it disturb?
+- Before I refactor, check which prior decisions govern the files I'm about to touch.
+- Find a file governed by one of our decisions, try a conflicting edit, and show me what the conflict gate says. Don't keep the change.
+- Is anything in our decision graph under review or waiting on me? Show me what needs attention.`;
+  }
+  if (run.stage === "cleanup") {
     const choice = run.server?.choice;
     const after = choice === "adhere" ? DEMO_ADHERE : DEMO_SUPERSEDE;
-    return `${label}\n\n**PASS — CSV export implemented**\n${diagram(`CSV [${choice === "adhere" ? "name" : "name, email"}] → CHECK PASSED → IMPLEMENTED\nYour Decision → ${choice === "adhere" ? "preserved" : "replacement + your reason"} → EMAIL ${run.server?.email.toUpperCase()}`)}\n\n\`\`\`diff\n${compactDiff(DEMO_INITIAL, after)}\n\`\`\`\n\n${run.stage === "cleanup" ? "Sample cleanup still needs attention." : "Owned sample files removed."} ${run.server?.email === "accepted" ? "The provider accepted the email; inbox delivery is not confirmed." : "Queued is not inbox delivery."}\n\n${run.binding ? captureNotice : "Ready for your real Decisions."}`;
+    return `${label}\n\n**PASS — CSV export implemented**\n${diagram(`CSV [${choice === "adhere" ? "name" : "name, email"}] → CHECK PASSED → IMPLEMENTED\nYour Decision → ${choice === "adhere" ? "preserved" : "replacement + your reason"} → EMAIL ${run.server?.email.toUpperCase()}`)}\n\n\`\`\`diff\n${compactDiff(DEMO_INITIAL, after)}\n\`\`\`\n\nSample cleanup still needs attention. ${run.server?.email === "accepted" ? "The provider accepted the email; inbox delivery is not confirmed." : "Queued is not inbox delivery."}\n\n${run.binding ? captureNotice : "Ready for your real Decisions."}`;
   }
   return `${label}\n\nChecked edit saved; email finalization is pending. Retry the same resolution to finish. No second email will be queued.`;
 }
@@ -135,6 +178,7 @@ function handoff(run: DemoRun) {
           command: demoCommand(run, "resolve", "supersede"),
           requiredArgument: "--reason <user-provided reason>",
           replacement: DEMO_REPLACEMENT,
+          prompt: `What's your rationale for superceding ${safeMarkdown(run.server?.authorName ?? "the author")}'s existing Decision?`,
         },
       },
     };
@@ -366,7 +410,7 @@ async function terminalTour(run: DemoRun) {
       .replace(/```/gu, "")
       .replace(/\*\*(.*?)\*\*/gu, (_match: string, title: string) => bold(title));
     process.stderr.write(
-      `${text.replace("YOUR DECISION STOPPED THIS", color("YOUR DECISION STOPPED THIS", "red")).replace("PASS — CSV export implemented", color("PASS — CSV export implemented", "green"))}\n`,
+      `${text.replace("[DEMO] Primitive Caught a Conflict", color("[DEMO] Primitive Caught a Conflict", "red")).replace("PASS — CSV export implemented", color("PASS — CSV export implemented", "green"))}\n`,
     );
     if (["completed", "skipped"].includes(result.stage) && "nextAction" in result) {
       process.stderr.write(`Next: ${result.nextAction}\n`);
@@ -380,13 +424,18 @@ async function terminalTour(run: DemoRun) {
     if (task.trim() !== DEMO_TASK) return show(await advanceDemo(run.id, "skip"));
     const blocked = show(await advanceDemo(run.id, "attempt"));
     if (blocked.stage !== "conflict") return blocked;
-    const choice = (await rl.question("Adhere or supersede? [adhere/supersede/skip] "))
+    const answer = (await rl.question("Accept or Supercede? [accept/supercede/skip] "))
       .trim()
       .toLowerCase();
+    const choice = answer === "accept" ? "adhere" : answer === "supercede" ? "supersede" : answer;
     if (choice !== "adhere" && choice !== "supersede")
       return show(await advanceDemo(run.id, "skip"));
     const reason =
-      choice === "supersede" ? await rl.question("Your reason for the replacement: ") : undefined;
+      choice === "supersede"
+        ? await rl.question(
+            `What's your rationale for superceding ${terminalSafeLine("server" in blocked ? (blocked.server?.authorName ?? "the author") : "the author")}'s existing Decision? `,
+          )
+        : undefined;
     return show(await advanceDemo(run.id, "resolve", choice, reason));
   } finally {
     rl.close();
