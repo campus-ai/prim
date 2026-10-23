@@ -161,17 +161,19 @@ observed hook execution, and verified capture are different states. Preserve
 `health` warnings and `readiness` rather than declaring everything active.
 
 If isolation is pending, run `diagnosticAction` once. It is safe before isolation:
-it reports the installed runtime and the last content-free observation for this
-run. The acknowledgment event is **PreToolUse**, with **Bash** for Codex/Claude,
-**Shell** for Cursor, and **terminal** for Hermes. Missing evidence is unknown,
-not proof of disabled hooks or absence of errors. Check the host's hook event/error
-view; do not list the agent's home directory or dump transcripts. After the one
-trust retry, retry only after a concrete repair. Use `resumeAction` for the same
-run, including after an expired npm cache; do not restart the retry budget by
-creating a fresh run. If the host does not execute local command hooks in this
-session, explain that limitation and retain the resume action for a supported
-local session. Never simulate the acknowledgment. Offer skip only as an option,
-not as the diagnosis.
+it reports the installed runtime, native Codex trust when available, and the last
+content-free observation for this run. The acknowledgment event is **PreToolUse**,
+with **Bash** for Codex/Claude, **Shell** for Cursor, and **terminal** for Hermes.
+Codex snapshots hooks in running sessions: a trusted file is not proof that the
+session loaded it. Setup requests a native reload without changing trust. If the
+diagnostic returns `repairAction`, run it once, then follow `resumeAction` for the
+same run. If refresh cannot reach the calling host, have the user exit and resume
+that same Codex session to load its hooks. Ask for hook review only when reported;
+never repeat trust instructions for already-trusted hooks. Missing evidence is
+unknown, not proof of healthy or disabled hooks. After one repair, retry only on
+new evidence. Retain the run even after an expired npm cache. Never fabricate an
+acknowledgment, dump hook configuration/transcripts, or restart the retry budget
+with a new tour. Offer skip only as an option, not as the diagnosis.
 
 Run follow-up actions with the configuration-directory access already authorized
 for setup, subject to host policy. Report EPERM/EACCES with the actual path and

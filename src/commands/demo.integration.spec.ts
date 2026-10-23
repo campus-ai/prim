@@ -16,7 +16,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 import { DEMO_ADHERE, DEMO_INITIAL, DEMO_SUPERSEDE } from "../demo/story.js";
+import { stableHookCommand } from "../lib/bin-path.js";
 
 const exec = promisify(execFile);
 const cli = resolve("dist/index.js");
@@ -41,6 +43,8 @@ function fixture() {
   const env = {
     ...process.env,
     HOME: join(root, "home"),
+    CODEX_HOME: join(root, "home", ".codex"),
+    CODEX_THREAD_ID: "tour-session",
     PRIM_CONFIG_DIR: config,
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_DATA_HOME: join(root, "data"),
@@ -520,6 +524,67 @@ describe("packaged author story", () => {
     });
     expect(status.stderr).toContain("not installed (optional when another scope is complete)");
     expect(status.stderr).not.toContain("✗");
+  });
+
+  it("reloads Codex on install and repairs a trusted pending run without manufacturing isolation", async () => {
+    const f = fixture();
+    const api = await serveStory(f);
+    const hostRoot = mkdtempSync("/tmp/prim-demo-host-");
+    roots.push(hostRoot);
+    f.env.CODEX_HOME = hostRoot;
+    const socketDir = join(hostRoot, "app-server-control");
+    mkdirSync(socketDir);
+    const host = createServer();
+    servers.push(host);
+    const ws = new WebSocketServer({ server: host });
+    const requests: { method: string; params: unknown }[] = [];
+    ws.on("connection", (socket) =>
+      socket.on("message", (raw) => {
+        const request = JSON.parse(raw.toString());
+        requests.push(request);
+        if (request.id === undefined) return;
+        const result =
+          request.method === "thread/loaded/list"
+            ? { data: ["tour-session"] }
+            : request.method === "hooks/list"
+              ? {
+                  data: [
+                    {
+                      cwd: request.params.cwds[0],
+                      errors: [],
+                      hooks: [
+                        {
+                          command: stableHookCommand("prim-hook", "--agent codex"),
+                          enabled: true,
+                          trustStatus: "trusted",
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {};
+        socket.send(JSON.stringify({ id: request.id, result }));
+      }),
+    );
+    await new Promise<void>((done) =>
+      host.listen(join(socketDir, "app-server-control.sock"), done),
+    );
+    const install = (await f.run(["codex", "install"])).json;
+    expect(install.host).toMatchObject({ reload: "refreshed", trust: "trusted" });
+    const prepared = (await f.run(["demo", "--agent", "codex"])).json;
+    const reloads = () => requests.filter((request) => request.method === "config/batchWrite");
+    const status = (await f.shell(prepared.statusAction)).json;
+    expect(status.diagnostics).toMatchObject({ trust: "trusted", hookObservation: null });
+    expect(reloads()).toHaveLength(1);
+    expect(status.repairAction).toContain("'codex' 'refresh'");
+    expect((await f.shell(status.repairAction)).json.host.reload).toBe("refreshed");
+    expect(reloads()).toHaveLength(2);
+    for (const request of reloads())
+      expect(request.params).toEqual({ edits: [], reloadUserConfig: true });
+    expect((await f.shell(prepared.nextAction)).json.stage).toBe("pending");
+    expect(api.requests).toEqual([]);
+    expect(existsSync(join(f.config, "demo", "excluded-sessions"))).toBe(false);
+    expect((await f.call("codex", prepared.nextAction)).json.stage).toBe("prompt");
   });
   it("reports a hook state-write failure without exposing sample content", async () => {
     const f = fixture();

@@ -338,6 +338,32 @@ describe("effective post-commit hook", () => {
     expect(readFileSync(path, "utf8")).toBe(source);
   });
 
+  it.each([".husky", ".git/hooks"])(
+    "preserves Git's sh fallback for a shebangless hook in %s",
+    (directory) => {
+      const root = repository("shebangless");
+      mkdirSync(join(root, directory), { recursive: true });
+      git(root, "config", "core.hooksPath", directory);
+      const path = join(root, directory, "pre-commit");
+      const source = "printf 'original-hook\\n' >> hook-ran\n";
+      writeFileSync(path, source, { mode: 0o755 });
+      git(root, "hook", "run", "pre-commit");
+      expect(readFileSync(join(root, "hook-ran"), "utf8")).toBe("original-hook\n");
+      ensureEffectiveGitHook("pre-commit", root);
+      const installed = readFileSync(path, "utf8");
+      expect(installed).not.toMatch(/^#!/u);
+      expect(installed.endsWith(source)).toBe(true);
+      git(root, "hook", "run", "pre-commit");
+      expect(readFileSync(join(root, "hook-ran"), "utf8")).toBe("original-hook\noriginal-hook\n");
+      expect(inspectEffectiveGitHook("pre-commit", root).covered).toBe(true);
+      ensureEffectiveGitHook("pre-commit", root);
+      expect(readFileSync(path, "utf8")).toBe(installed);
+      uninstallEffectiveGitHook("pre-commit", root);
+      expect(readFileSync(path, "utf8")).toBe(source);
+      expect(git(root, "config", "--get", "core.hooksPath")).toBe(directory);
+    },
+  );
+
   it.each([
     ["exit", "#!/bin/sh\nprintf foreign\nexit 0\n"],
     ["exec", '#!/bin/sh\nexec other-hook "$@"\n'],

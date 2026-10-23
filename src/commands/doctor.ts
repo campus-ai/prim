@@ -51,6 +51,7 @@ import {
 } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { type HookCommandResolution, packageVersion } from "../lib/bin-path.js";
+import { type CodexHostStatus, codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import {
   POST_COMMIT_GRACE_MS,
   type PostCommitFiring,
@@ -791,6 +792,7 @@ export function classifyCodexHooks(
   statuses: readonly AgentHookSurface[],
   uncoveredWorktree: string | null = null,
   capturedAt?: number,
+  host?: CodexHostStatus,
 ): Check {
   const installed = statuses.filter((status) => status.present);
   if (installed.length === 0) {
@@ -812,11 +814,16 @@ export function classifyCodexHooks(
   }
   return {
     name: "codex-hooks",
-    status: capturedAt === undefined ? "warn" : "ok",
+    status:
+      capturedAt === undefined || host?.trust === "review-required" || host?.trust === "disabled"
+        ? "warn"
+        : "ok",
     detail:
-      capturedAt === undefined
-        ? "installed; conversation capture unverified; Codex trust unknown — verify with `/hooks`"
-        : `installed; conversation capture observed ${new Date(capturedAt).toISOString()}; current trust unknown`,
+      host && host.trust !== "unknown"
+        ? `installed; ${capturedAt === undefined ? "conversation capture unverified" : `conversation capture observed ${new Date(capturedAt).toISOString()}`}; ${host.trust === "trusted" ? "Codex reports hooks enabled and trusted" : codexHostGuidance(host)}`
+        : capturedAt === undefined
+          ? "installed; conversation capture unverified; Codex trust unknown — verify with `/hooks`"
+          : `installed; conversation capture observed ${new Date(capturedAt).toISOString()}; current trust unknown`,
   };
 }
 
@@ -876,7 +883,7 @@ export function classifyHermesHooks(status: AgentHookSurface & { autoAccept: boo
       };
 }
 
-function checkAgentHooks(): Check[] {
+async function checkAgentHooks(): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const status = codexStatus();
@@ -885,6 +892,7 @@ function checkAgentHooks(): Check[] {
         [status.project, status.user],
         uncoveredWorktreeHooks(status),
         lastConversationCaptured(process.cwd(), "codex"),
+        status.user.present || status.project.present ? await inspectCodexHost() : undefined,
       ),
     );
   } catch (error) {
@@ -1173,7 +1181,7 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
     after: [
       await checkJournalOrganization(),
       checkFeedbackHooks(),
-      ...checkAgentHooks(),
+      ...(await checkAgentHooks()),
       checkHookRuntime(),
       await checkRepositoryBinding(),
       checkManagedHook("pre-commit"),
