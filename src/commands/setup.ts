@@ -20,7 +20,7 @@
  *
  * AX: human progress, prompts, and warnings stay live on STDERR. Default
  * output omits installation child JSON in favor of a setup summary; --details
- * streams full child output. Welcome/demo retain their structured handoffs.
+ * expands human diagnostics on STDERR. STDOUT remains one setup result.
  * Idempotent — every underlying step is, so re-running is safe.
  */
 
@@ -351,22 +351,12 @@ function detectProjectConflicts(
   return conflicts;
 }
 
-/**
- * Infer the calling agent from the environment when `--agent` is omitted, so a
- * bare `prim setup` — what an onboarding agent copy/pastes — wires the
- * integration that matches the agent actually running it, without the model
- * having to self-identify. Only a positive, per-session runtime signal flips the
- * default: Hermes's interactive entrypoint sets HERMES_INTERACTIVE
- * unconditionally — a runtime flag, not a config var a user exports — and it is
- * absent from a Claude Code or Codex shell, so it never mis-flags them.
- * Everything else falls back to claude (today's default), leaving manual runs
- * and unrecognized agents unchanged. Codex keeps its explicit `--agent codex`
- * path: its shell carries no equally stable marker to key on.
- */
+/** Prefer positive runtime markers; explicit --agent always overrides detection. */
 export function detectAgent(env: NodeJS.ProcessEnv): SetupAgent {
   if (env.HERMES_INTERACTIVE) {
     return "hermes";
   }
+  if (env.CODEX_THREAD_ID) return "codex";
   if (env.CURSOR_AGENT) {
     return "cursor";
   }
@@ -392,7 +382,7 @@ export function resolveAgent(
   return { agent: detectAgent(env), detected: true };
 }
 
-type StepResult = "ok" | "failed" | "skipped";
+type StepResult = "ok" | "warn" | "failed" | "skipped";
 
 export type SetupAuthStatus = "valid" | "invalid" | "unreachable";
 
@@ -446,7 +436,7 @@ export function registerSetupCommand(
       "with the default user scope, remove any project-scoped prim config in this repo (else just warn)",
     )
     .option("--no-daemon", "stop and disable the companion daemon")
-    .option("--details", "show full installation diagnostics and child output")
+    .option("--details", "show full human installation diagnostics on STDERR")
     .option("--skip-demo", "skip the optional author story and remember that choice")
     .action((opts: SetupCommandOptions) => {
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
@@ -489,24 +479,20 @@ export function registerSetupCommand(
         ((args: string[], capture = false): { code: number; stdout: string } => {
           // Keep auth/confirmation prompts live on STDERR. Only consume the
           // installation steps' redundant STDOUT; welcome/demo own their payloads.
-          const compact = !opts.details;
-          const structuredChild = args.includes("demo") || args[0] === "welcome";
           const childArgs = opts.details ? args.filter((arg) => arg !== "--compact") : args;
           const r = spawnSync(
             process.execPath,
             [self, ...childArgs],
             setupStepSpawnOptions(capture, process.env, {
               startsDaemon: opts.daemon,
-              compact: compact || structuredChild,
+              compact: true,
             }),
           );
-          if (!capture && opts.details && structuredChild && r.stdout)
-            process.stdout.write(r.stdout);
-          if (!capture && compact && r.status !== 0 && r.stdout) process.stderr.write(r.stdout);
+          if (!capture && r.status !== 0 && r.stdout) process.stderr.write(r.stdout);
           if (r.error) process.stderr.write(`[prim] ${r.error.message}\n`);
           return {
             code: r.status ?? 1,
-            stdout: capture || compact || structuredChild ? (r.stdout ?? "") : "",
+            stdout: r.stdout ?? "",
           };
         });
 
@@ -635,11 +621,20 @@ export function registerSetupCommand(
       }
 
       // Doctor verifies that same final state when the daemon was requested.
+      let health: Record<string, unknown> | undefined;
       const healthStep = setupSteps.find((candidate) => candidate.key === "health");
       if (healthStep) {
         note(`${healthStep.label} · verifying…`);
-        const { code } = run(healthStep.args);
-        results[healthStep.key] = code === 0 ? "ok" : healthStep.required ? "failed" : "skipped";
+        const { code, stdout } = run(healthStep.args);
+        health = setupChildPayload(stdout);
+        results[healthStep.key] =
+          code !== 0 || health?.status === "fail"
+            ? healthStep.required
+              ? "failed"
+              : "skipped"
+            : health?.status === "warn"
+              ? "warn"
+              : "ok";
       }
 
       // Final · welcome — its output (orientation + any seeding guidance)
@@ -700,6 +695,7 @@ export function registerSetupCommand(
         const demoResult = run([
           ...(globals.nonInteractive ? ["--non-interactive"] : []),
           "demo",
+          "--resume-pending",
           ...(agentDriven ? ["--agent", agent] : []),
         ]);
         onboarding = setupChildPayload(demoResult.stdout) ?? {
@@ -724,6 +720,19 @@ export function registerSetupCommand(
           setup: true,
           status: failed.length ? "incomplete" : "complete",
           steps: results,
+          ...(health ? { health } : {}),
+          readiness: {
+            installation: failed.length ? "incomplete" : "installed",
+            health: results.health ?? "not-checked",
+            passiveCapture: "not-verified",
+            onboarding: onboarding?.stage ?? (opts.skipDemo ? "skipped" : "not-due"),
+          },
+          ...(onboarding?.nextAction
+            ? {
+                instructions:
+                  "Setup installation is complete. Continue nextAction now; onboarding is pending. Render each presentation once. Do not stop at welcome, repeat raw output, or claim passive capture is verified.",
+              }
+            : {}),
           welcome: setupChildPayload(welcomeResult.stdout),
           ...(onboarding ? { onboarding, nextAction: onboarding.nextAction } : {}),
         });

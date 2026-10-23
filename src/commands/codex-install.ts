@@ -45,7 +45,7 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-path.js";
 import { mainWorktreeRoot } from "../lib/git.js";
-import { stageHookRuntime } from "../lib/hook-runtime.js";
+import { inspectHookRuntime, stageHookRuntime } from "../lib/hook-runtime.js";
 import {
   type ClaudeSettings,
   type HookEntry,
@@ -358,13 +358,23 @@ export function registerCodexCommands(program: Command): void {
     .description("Report whether each prim surface (gate, capture) is installed per scope")
     .action(() => {
       const result = performStatus();
+      const readiness = {
+        configured: result.user.complete || result.project.complete,
+        runtime: inspectHookRuntime(),
+        trust: "unknown",
+        hookExecution: "not-verified",
+        passiveCapture: "not-verified",
+      };
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
-        `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} (${s.path})`;
+        `[prim] ${label}: ${!s.present ? "not installed (optional when another scope is complete)" : `configured gate ${mark(s.gate)} · capture ${mark(s.capture)}`} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
       const uncovered = uncoveredWorktreeHooks(result);
       if (uncovered !== null)
         console.error(`[prim] warning: ${uncoveredWorktreeAdvice(uncovered)}`);
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      console.error(
+        "[prim] Configuration is not proof of hook execution or capture. Use the pending tour’s diagnosticAction to check isolation.",
+      );
+      console.log(JSON.stringify({ ...result, readiness }, null, JSON_INDENT));
     });
 }

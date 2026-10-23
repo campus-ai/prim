@@ -155,6 +155,40 @@ commands, read fixtures, or manufacture an acknowledgment. If pending, use the
 returned isolation reason and diagnostic action. Unknown trust is not proof that
 hooks are disabled; for Codex, check `/hooks` and approve only if prompted.
 
+Setup authorization includes following its returned `nextAction`; do not end the
+turn at welcome or ask whether to start the tour. Installation, hook configuration,
+observed hook execution, and verified capture are different states. Preserve
+`health` warnings and `readiness` rather than declaring everything active.
+
+If isolation is pending, run `diagnosticAction` once. It is safe before isolation:
+it reports the installed runtime and the last content-free observation for this
+run. The acknowledgment event is **PreToolUse**, with **Bash** for Codex/Claude,
+**Shell** for Cursor, and **terminal** for Hermes. Missing evidence is unknown,
+not proof of disabled hooks or absence of errors. Check the host's hook event/error
+view; do not list the agent's home directory or dump transcripts. After the one
+trust retry, retry only after a concrete repair. Use `resumeAction` for the same
+run, including after an expired npm cache; do not restart the retry budget by
+creating a fresh run. If the host does not execute local command hooks in this
+session, explain that limitation and retain the resume action for a supported
+local session. Never simulate the acknowledgment. Offer skip only as an option,
+not as the diagnosis.
+
+Run follow-up actions with the configuration-directory access already authorized
+for setup, subject to host policy. Report EPERM/EACCES with the actual path and
+remedy; never infer sandbox/network failure from a quiet command. While npm is
+starting, give a brief progress update after about 15 seconds and keep polling
+that invocation; do not launch duplicates. Only after an actual npm cache error,
+retry once with a newly allocated temporary `npm_config_cache` directory. Reuse
+that cache for subsequent commands. Do not clear the user's cache or change
+permissions recursively. Bootstrap happens before Primitive can print progress.
+Setup opens the authorization browser itself: surface its URL and let the user
+click Authorize; do not invoke computer-use tools to automate that click.
+
+Render the returned presentation once; keep raw JSON, launch paths, UUIDs and
+routine STDERR out of the conversation. Surface actionable warnings verbatim.
+If blocked, end with the observed cause (or explicitly unknown boundary), the
+single next repair, and the command to resume the retained run.
+
 Render each `presentation` once as Markdown, preserving diagrams and file evidence.
 Do not echo JSON/STDERR, expand the records, or add a prose recap. Keep the
 **Fictional project · real conflict check** label. This uses the production semantic
