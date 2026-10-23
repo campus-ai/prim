@@ -32,6 +32,11 @@ import {
   isDecisionSupersedeRequest,
   isDecisionsAffectingResponse,
   isDecisionsRecentResponseStructure,
+  isDemoCompleteRequest,
+  isDemoResolveRequest,
+  isDemoRunRequest,
+  isDemoStartRequest,
+  isDemoStatusResponse,
   isDurableMoveIngestResponse,
   isFeedbackAckRequestStructure,
   isFeedbackAckResponseStructure,
@@ -68,6 +73,11 @@ import {
 export type * from "../generated/cli-http-v1.types.js";
 
 export {
+  isDemoStartRequest,
+  isDemoRunRequest,
+  isDemoResolveRequest,
+  isDemoCompleteRequest,
+  isDemoStatusResponse,
   isCliAuthStatusResponse,
   isCliErrorResponse,
   isDecisionCascadeResponse,
@@ -360,6 +370,11 @@ export function isGitHubInstallIntentStatusResponse(
 
 /** Complete definition registry used by shared cross-repository fixtures. */
 export const cliHttpV1Validators = {
+  DemoStartRequest: isDemoStartRequest,
+  DemoRunRequest: isDemoRunRequest,
+  DemoResolveRequest: isDemoResolveRequest,
+  DemoCompleteRequest: isDemoCompleteRequest,
+  DemoStatusResponse: isDemoStatusResponse,
   CliAuthStatusResponse: isCliAuthStatusResponse,
   CliErrorResponse: isCliErrorResponse,
   DecisionCascadeResponse: isDecisionCascadeResponse,

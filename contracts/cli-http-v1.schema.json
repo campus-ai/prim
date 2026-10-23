@@ -6,6 +6,81 @@
   "x-primitive-contract-version": 6,
   "x-primitive-scope": "critical-path",
   "x-primitive-operations": {
+    "demoStart": {
+      "method": "POST",
+      "path": "/api/cli/demo/start",
+      "request": {
+        "$ref": "#/$defs/DemoStartRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "demoCheck": {
+      "method": "POST",
+      "path": "/api/cli/demo/check",
+      "request": {
+        "$ref": "#/$defs/DemoRunRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "demoResolve": {
+      "method": "POST",
+      "path": "/api/cli/demo/resolve",
+      "request": {
+        "$ref": "#/$defs/DemoResolveRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "demoComplete": {
+      "method": "POST",
+      "path": "/api/cli/demo/complete",
+      "request": {
+        "$ref": "#/$defs/DemoCompleteRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "demoSkip": {
+      "method": "POST",
+      "path": "/api/cli/demo/skip",
+      "request": {
+        "$ref": "#/$defs/DemoRunRequest"
+      },
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
+    "demoStatus": {
+      "method": "GET",
+      "path": "/api/cli/demo/{runId}",
+      "success": {
+        "$ref": "#/$defs/DemoStatusResponse"
+      },
+      "error": {
+        "$ref": "#/$defs/CliErrorResponse"
+      }
+    },
     "workosConnectDeviceConfiguration": {
       "method": "GET",
       "path": "/api/cli/auth/connect/config",
@@ -410,6 +485,185 @@
     }
   },
   "$defs": {
+    "DemoStartRequest": {
+      "type": "object",
+      "properties": {
+        "scenarioVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "localRunId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": ["scenarioVersion", "localRunId"],
+      "additionalProperties": false
+    },
+    "DemoRunRequest": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]{1,64}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["runId", "revision"],
+      "additionalProperties": false
+    },
+    "DemoResolveRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9]{1,64}$"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "choice": {
+              "type": "string",
+              "const": "adhere"
+            }
+          },
+          "required": ["runId", "revision", "choice"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9]{1,64}$"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "choice": {
+              "type": "string",
+              "const": "supersede"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "\\S"
+            }
+          },
+          "required": ["runId", "revision", "choice", "reason"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DemoCompleteRequest": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]{1,64}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "appliedDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": ["runId", "revision", "appliedDigest"],
+      "additionalProperties": false
+    },
+    "DemoStatusResponse": {
+      "type": "object",
+      "properties": {
+        "scenarioVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "fictional": {
+          "type": "boolean",
+          "const": true
+        },
+        "evaluation": {
+          "type": "string",
+          "const": "live"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]{1,64}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "checking",
+            "blocked",
+            "approved",
+            "completed",
+            "skipped",
+            "expired"
+          ]
+        },
+        "authorName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "email": {
+          "type": "string",
+          "enum": ["not_queued", "queued", "accepted", "failed", "suppressed"]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["block", "pass", "pending"]
+        },
+        "reasonCode": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "choice": {
+          "type": "string",
+          "enum": ["adhere", "supersede"]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "approvedDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "scenarioVersion",
+        "fictional",
+        "evaluation",
+        "runId",
+        "revision",
+        "stage",
+        "authorName",
+        "email"
+      ],
+      "additionalProperties": false
+    },
     "CliAuthStatusResponse": {
       "type": "object",
       "properties": {

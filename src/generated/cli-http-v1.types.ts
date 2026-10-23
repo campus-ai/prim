@@ -521,6 +521,51 @@ export interface DecisionsRecentResponse {
   [k: string]: unknown | undefined;
 }
 
+export interface DemoCompleteRequest {
+  runId: string;
+  revision: number;
+  appliedDigest: string;
+}
+
+export type DemoResolveRequest =
+  | {
+      runId: string;
+      revision: number;
+      choice: "adhere";
+    }
+  | {
+      runId: string;
+      revision: number;
+      choice: "supersede";
+      reason: string;
+    };
+
+export interface DemoRunRequest {
+  runId: string;
+  revision: number;
+}
+
+export interface DemoStartRequest {
+  scenarioVersion: 1;
+  localRunId: string;
+}
+
+export interface DemoStatusResponse {
+  scenarioVersion: 1;
+  fictional: true;
+  evaluation: "live";
+  runId: string;
+  revision: number;
+  stage: "ready" | "checking" | "blocked" | "approved" | "completed" | "skipped" | "expired";
+  authorName: string;
+  email: "not_queued" | "queued" | "accepted" | "failed" | "suppressed";
+  verdict?: "block" | "pass" | "pending";
+  reasonCode?: string;
+  choice?: "adhere" | "supersede";
+  reason?: string;
+  approvedDigest?: string;
+}
+
 export interface DurableMoveIngestResponse {
   disposition: "persisted";
   acknowledged: number;
