@@ -5,8 +5,7 @@
 
 ### Features
 
-* **onboarding:** use approved story copy and resolution prompts ([1387204](https://github.com/campus-ai/prim/commit/1387204ad9ef0bd830c67a826b11c3e419135f27))
-* **onboarding:** use approved story copy and resolution prompts ([f44bade](https://github.com/campus-ai/prim/commit/f44badeb653179177217b8d9a5a52ce9b029c861))
+* **onboarding:** replace demo narration with the approved task, personalized conflict, Accept/Supercede choices, rationale prompt, and outcome messages. Preserve the existing welcome and seeding flow.
 
 ## [0.1.0-alpha.107](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.106...v0.1.0-alpha.107) (2026-10-23)
 
