@@ -5,15 +5,9 @@
 
 ### Bug Fixes
 
-* **onboarding:** recover setup handoffs without retry loops ([77e16b8](https://github.com/campus-ai/prim/commit/77e16b85cca6a182ec12e7f2f2334352a898ad79))
-* **onboarding:** recover setup handoffs without retry loops ([d316e71](https://github.com/campus-ai/prim/commit/d316e710eb97e3570eaf0a784d4883317744f4ef))
-* **onboarding:** recover setup handoffs without retry loops ([498e385](https://github.com/campus-ai/prim/commit/498e385bcbcc35ffe4a14c55f7403113eab275e6))
-
-
-### Reverts
-
-* **onboarding:** restore main pending review ([134bfbc](https://github.com/campus-ai/prim/commit/134bfbcaaa9c8ed65ddd4c16c128fe5bc0371a3b))
-* **onboarding:** restore main pending review ([e637c68](https://github.com/campus-ai/prim/commit/e637c689a0ddb2aca839c894a5e6e70dd0b4fe0c))
+* **onboarding:** detect Codex during setup and preserve health warnings instead of claiming verified capture ([#389](https://github.com/campus-ai/prim/pull/389)).
+* **onboarding:** diagnose missing isolation acknowledgments and resume pending tours without retry loops, duplicate runs, or expired launchers ([#389](https://github.com/campus-ai/prim/pull/389)).
+* **onboarding:** clarify progress and recovery guidance while keeping setup output machine-readable ([#389](https://github.com/campus-ai/prim/pull/389)).
 
 ## [0.1.0-alpha.106](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.105...v0.1.0-alpha.106) (2026-10-23)
 
