@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.108](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.107...v0.1.0-alpha.108) (2026-10-23)
+
+
+### Features
+
+* **onboarding:** replace demo narration with the approved task, personalized conflict, Accept/Supercede choices, rationale prompt, and outcome messages. Preserve the existing welcome and seeding flow.
+
 ## [0.1.0-alpha.107](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.106...v0.1.0-alpha.107) (2026-10-23)
 
 
