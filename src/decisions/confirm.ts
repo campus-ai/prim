@@ -94,8 +94,8 @@ const AMBIGUOUS_RE = /ambiguous/i;
 const NOT_AUTHOR_RE = /author/i;
 
 export class ConfirmNotFoundError extends Error {
-  constructor(idOrShortId: string) {
-    super(`Decision not found: ${idOrShortId}`);
+  constructor(_idOrShortId: string) {
+    super("Decision not found");
     this.name = "ConfirmNotFoundError";
   }
 }
@@ -165,7 +165,7 @@ export function formatConfirmHuman(result: ConfirmResult): string {
       return `[prim] ${id} has no pending confirmation request — nothing to acknowledge.`;
     }
     case "ambiguous":
-      return `[prim] shortId "${request.idOrShortId}" is ambiguous in this organization — retry with the full decision id.`;
+      return "[prim] Decision identity unavailable; retry after identity repair.";
     default:
       // The only remaining variant — `not_author`. TypeScript narrows
       // `outcome` to it here, so the union stays exhaustively covered.

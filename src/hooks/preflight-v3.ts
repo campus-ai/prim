@@ -194,9 +194,9 @@ export function resultForPreflight(
     if (!value || typeof value !== "object") return [];
     const { decisionId, shortId } = value as Record<string, unknown>;
     const id =
-      typeof shortId === "string" && safe.test(shortId)
+      typeof shortId === "string" && /^[0-9a-f]{8}$/u.test(shortId)
         ? `dec_${shortId}`
-        : typeof decisionId === "string" && safe.test(decisionId)
+        : typeof decisionId === "string" && /^dec_[0-9a-f]{8}$/u.test(decisionId)
           ? decisionId
           : undefined;
     if (!id) return [];

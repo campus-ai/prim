@@ -153,8 +153,7 @@ export function formatRelateHuman(result: RelateResult): string {
     case "would_cycle":
       return `[prim] refusing to link — ${outcome.detail}.`;
     default: {
-      const typed = outcome.which === "parent" ? request.parent : request.child;
-      return `[prim] the ${outcome.which} id "${typed}" is ambiguous in this organization — retry with the full decision id.`;
+      return `[prim] the ${outcome.which} Decision identity is unavailable; retry after identity repair.`;
     }
   }
 }

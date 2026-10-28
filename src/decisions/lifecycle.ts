@@ -117,8 +117,7 @@ const PAST_PARTICIPLE = {
 
 const ORG_UNBOUND_MESSAGE = "CLI token is not bound to an organization";
 const NOT_AUTHOR_MESSAGE = "Only the decision's author can perform this action";
-const AMBIGUOUS_MESSAGE =
-  "shortId is ambiguous in this organization; retry with the full decision id";
+const AMBIGUOUS_MESSAGE = "Decision identity unavailable; retry after identity repair";
 const DECISION_NOT_FOUND_MESSAGE = "Decision not found";
 const REPLACEMENT_NOT_FOUND_MESSAGE = "Replacement decision not found";
 const SELF_REPLACEMENT_MESSAGE = "A decision cannot supersede itself";

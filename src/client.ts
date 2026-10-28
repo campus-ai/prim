@@ -1,3 +1,4 @@
+import { publicDecisionResponse } from "./decisions/identity.js";
 /** REST client and shared credential store for the prim CLI. */
 
 import { createHash } from "node:crypto";
@@ -784,7 +785,7 @@ async function responseValue(response: Response): Promise<unknown> {
       typeof errorRecord?.error === "string" ? errorRecord.error : `HTTP ${response.status}`;
     throw new HttpError(response.status, message, errorBody);
   }
-  return response.json();
+  return publicDecisionResponse(await response.json());
 }
 
 async function request(
