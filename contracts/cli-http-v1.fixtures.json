@@ -581,6 +581,25 @@
       }
     },
     {
+      "name": "paged exhaustive preflight participation",
+      "definition": "PreflightDetailsV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "checkId": "check123",
+        "page": [
+          {
+            "decisionId": "decision100",
+            "state": "evaluated",
+            "conflict": true,
+            "evaluatedAt": 1787078400000
+          }
+        ],
+        "cursor": "participation-cursor",
+        "isDone": false
+      }
+    },
+    {
       "name": "completed exhaustive preflight",
       "definition": "PreflightResponseV4",
       "valid": true,
