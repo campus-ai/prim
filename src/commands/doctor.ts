@@ -73,6 +73,7 @@ import {
 } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type HookRuntimeInspection, inspectHookRuntime } from "../lib/hook-runtime.js";
+import { type PreflightHost, inspectFailureProtection } from "../lib/preflight-host.js";
 import {
   type RepositoryBindingResult,
   resolveRepositoryBinding,
@@ -1173,6 +1174,27 @@ export type DoctorProbes = {
   independent: () => Promise<{ before: Check[]; after: Check[] }>;
 };
 
+function checkPreflightHosts(): Check[] {
+  const hosts: PreflightHost[] = [];
+  if (Object.values(claudeStatus()).some((scope) => scope.gate)) hosts.push("claude");
+  if (Object.values(codexStatus()).some((scope) => scope.gate)) hosts.push("codex");
+  if (Object.values(cursorStatus()).some((scope) => scope.gate)) hosts.push("cursor");
+  if (hermesStatus().gate) hosts.push("hermes");
+  return hosts.map((host) => {
+    const protection = inspectFailureProtection(host);
+    return {
+      name: `${host} gate failure protection`,
+      status:
+        protection.status === "supported"
+          ? "ok"
+          : protection.status === "limited"
+            ? "warn"
+            : "fail",
+      detail: protection.detail,
+    };
+  });
+}
+
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
   const backend = await checkBackend();
   const firing = inspectFiringHere();
@@ -1183,6 +1205,7 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
       checkFeedbackHooks(),
       ...(await checkAgentHooks()),
       checkHookRuntime(),
+      ...checkPreflightHosts(),
       await checkRepositoryBinding(),
       checkManagedHook("pre-commit"),
       checkManagedHook("post-commit", firing),
