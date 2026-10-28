@@ -9,10 +9,10 @@ import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-sco
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
-// The server's 8.5-second evaluation lease starts after authorization and
-// candidate selection. Leave time for that setup, finalization, and transport
-// so a late conflict verdict reaches the hook before it fails open.
-export const PREFLIGHT_TIMEOUT_MS = 12_000;
+// The server allows a 7.5-second semantic evaluation plus one second for its
+// owner to finalize. Leave one additional second for the response to reach
+// the hook before failing open visibly.
+export const PREFLIGHT_TIMEOUT_MS = 6_500;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export const MAX_CLIENT_VERSION_CHARS = 32;
