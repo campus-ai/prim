@@ -935,6 +935,7 @@ export interface PreflightResponseV3 {
      */
     decisionId: string;
     shortId?: string;
+    title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {

@@ -3846,6 +3846,9 @@
               "shortId": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{8}$"
+              },
+              "title": {
+                "type": "string"
               }
             },
             "required": ["decisionId"],

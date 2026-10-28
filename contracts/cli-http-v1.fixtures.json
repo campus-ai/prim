@@ -605,7 +605,8 @@
         "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
         "conflicts": [
           {
-            "decisionId": "dec_0123abcd"
+            "decisionId": "dec_0123abcd",
+            "title": "Keep retries durable across worker restarts"
           }
         ],
         "bypassed": [],
