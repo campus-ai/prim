@@ -9,7 +9,7 @@ description: Use the prim CLI for Primitive’s decision graph. MUST INVOKE befo
 
 ## Mental model
 
-In an active repo, prim passively captures the **decisions** your team makes -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with. When **Enforcement** is enabled for an organization, prim can warn, pause, or block the edit until you reconcile the decision and retry. Capture in active repos runs independently.
+In an active repo, prim passively captures the **decisions** your team makes -- which library, which pattern, which config value -- into a queryable graph, and links them: a decision can depend on earlier decisions (auto-linked from shared files, or related by hand — see *Relate decisions*) and reference the files it touched. **Conflict Gates** can check a later change against that graph and surface any load-bearing decision it conflicts with. When **Enforcement** is enabled for an organization, prim can warn, pause, or block the edit until the conflict is resolved or the required human review authorizes a retry. Capture in active repos runs independently.
 
 Low-level capture runs automatically in active repos through the session hooks installed by `npx --yes @primitive.ai/prim claude install` (Claude Code), `npx --yes @primitive.ai/prim cursor install` (Cursor), `npx --yes @primitive.ai/prim codex install` (Codex), or `npx --yes @primitive.ai/prim hermes install` (Hermes). An inactive repo is not passively captured. Deliberately record higher-order forks in the road through `prim decisions create` as described below. Your job is also to **read** the graph before load-bearing edits and **answer** the occasional rationale confirmation. (Responding to Conflict Gates applies only once Enforcement is enabled — see below.)
 
@@ -34,15 +34,25 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 
 ## Conflict Gates & Enforcement
 
-**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. When **Enforcement** is enabled for an organization, a conflicting edit can be warned, blocked, or paused for confirmation until you reconcile the decision and retry. Automatic decision capture in active repos (above) runs independently.
+**Conflict Gates** check each edit against the decision graph before it lands and surface any load-bearing decision it conflicts with. When **Enforcement** is enabled for an organization, a conflicting edit can be warned, blocked, or paused for confirmation until the conflict is resolved or the required human review authorizes a retry. Automatic decision capture in active repos (above) runs independently.
 
 When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit; Cursor: Write/Delete/Shell; Codex: apply_patch; Hermes: write_file/patch) a PreToolUse hook scores the target file against the graph:
 
-- **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
-- **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. Cursor, Codex, and Hermes cannot pause at this gate, so a would-be `ask` arrives as a **deny** carrying the reconcile directive: reconcile and retry, or set `PRIM_HOOK_MODE=warn` to downgrade it to context-only.
+- **deny** -- the edit is blocked. Read the reason and conflicting Decisions. Under strict organization policy, present the review link to the human: provisional conflicts require their explicit review, and adopted conflicts require an owner/admin exception. Do not approve on their behalf or use `reconcile` as a strict-policy bypass. Otherwise choose an approach that respects the Decision.
+- **ask** -- a validated interactive Claude host requests permission for a provisional conflict. Wait for the human's answer. This is a host permission request, not server-verified approval. Unsupported or prompt-disabled contexts use browser review instead.
+- **warn / additional context** -- the edit proceeds, but a relevant prior Decision is surfaced. Read it. `PRIM_HOOK_MODE=warn` cannot lower the organization's strict minimum. Cursor, Codex, and Hermes deny strict conflicts until browser review authorizes the exact retry.
 - **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
 
 When enabled, the gate sends its preflight check directly to Primitive and fail-opens on infrastructure errors (for example, a network failure or org-unbound token) -- a service problem would not block your edit. That is why an "unavailable" note matters: it is the honest signal that the check, not your edit, is what failed.
+
+Browser grants last five minutes and can be used once. Retry the same session,
+repository, branch, paths, and complete tool input; changed input or Decision
+evidence requires a fresh check. The 24-hour review preview can be shortened.
+An adopted exception leaves any unapproved provisional conflicts requiring review.
+The recurring provisional review queue changes a Decision's lifecycle separately;
+closing a queue item does not authorize an edit. If `prim doctor` reports an older
+runtime, update Primitive and reinstall the agent integration: publishing or
+installing a new CLI alone does not replace pinned hook runtimes.
 
 ## Read the graph before large or load-bearing edits
 
@@ -56,7 +66,9 @@ Then tailor the delivery to this requester, not a generic reader. Take your cues
 
 ## Reconcile and the verdict footer
 
-Reconcile and the verdict footer are part of Conflict Gates **Enforcement**; the `reconcile` command stays available regardless. When Enforcement is enabled for your organization:
+Reconcile outcome recording remains available under either policy. The bypass
+described below is available only when an owner/admin has selected the previous
+(`legacy`) organization policy. Strict policy rejects it; use human review.
 
 `npx --yes @primitive.ai/prim reconcile <idOrShortId>` mints a single-use bypass for the named decision -- it prints `[prim] reconcile bypass issued for dec_<short> (expires in ...)` to STDERR, with the bypass JSON on STDOUT. Your *next* edit to the governed file then goes through, and on that edit prim prints a verdict footer to STDERR -- confirmation the override was recorded, not silently dropped:
 
@@ -354,8 +366,8 @@ Examples:
 ## Pitfalls
 
 - **An "unavailable" / "not verified" decision check is not an all-clear.** Treat constraints as UNKNOWN and proceed deliberately; never read the silence as approval — the same holds for Conflict Gates once enabled.
-- **When Enforcement is enabled, a `deny` means a real prior decision conflicts.** Reconcile only when you genuinely intend to override it; otherwise pick an approach that respects it.
-- **Reconcile bypasses are single-use and short-lived.** One bypass clears your *next* edit to the governed file; it is not a standing override.
+- **Read a denied check's reason before retrying.** Strict conflicts need the linked human review; changed evidence needs fresh checking. A warning preference cannot authorize the edit.
+- **Legacy reconcile bypasses are single-use and short-lived.** They do not authorize strict conflicts. Strict browser grants are bound to the exact reviewed operation.
 - **Capture of coding activity is automatic only in active repos; never inject moves by hand.** If an active repo's decisions aren't showing up, check that the session hooks are installed (`claude status` / `cursor status` / `codex status` / `hermes status`) and the daemon is running. Deliberately authoring a higher-order fork—either at the user's request or under the conservative proactive policy above—is a separate, supported path through `decisions create`; in an inactive repo, honor the per-invocation approval boundary above.
 - **Don't fabricate rationale on a confirmation.** If you don't know why a decision was made, say so rather than guessing.
 

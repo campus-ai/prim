@@ -55,6 +55,8 @@ jobs:
 
       - run: pnpm build
 
+      - run: pnpm check:approval-copy-golden
+
       - run: pnpm test
 
       - name: Exercise launchd convergence

@@ -140,6 +140,23 @@ function blockingReason(results: ConflictCheckResult[]): string {
   return [...new Set(parts)].join("\n\n") || "[primitive] conflict detected (no detail available)";
 }
 
+function approvalReason(results: ConflictCheckResult[]): string {
+  const summaries = results
+    .filter((result) => result.verdict === "ask" || result.verdict === "deny")
+    .map((result) => result.reason)
+    .filter(Boolean);
+  return [
+    ...new Set(summaries),
+    "Approve runs this edit once; it does not change these decisions.",
+  ].join("\n");
+}
+
+function agentContext(results: ConflictCheckResult[]): string {
+  return [...new Set(results.map((result) => result.additionalContext).filter(Boolean))].join(
+    "\n\n",
+  );
+}
+
 function advisoryNote(aggregate: ConflictVerdict, results: ConflictCheckResult[]): string {
   const details = results.flatMap((result) => [
     ...(aggregate === "warn" ? [result.reason] : []),
@@ -162,7 +179,18 @@ export function buildHookOutput(
   aggregate: ConflictVerdict,
   results: ConflictCheckResult[],
 ): HookOutput {
-  if (aggregate === "deny" || aggregate === "ask") {
+  if (aggregate === "ask") {
+    const context = agentContext(results);
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: approvalReason(results),
+        ...(context ? { additionalContext: context } : {}),
+      },
+    };
+  }
+  if (aggregate === "deny") {
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
@@ -473,10 +501,9 @@ export function readHookMode(env: HookEnv): HookMode {
 }
 
 /**
- * Honors `PRIM_HOOK_MODE=warn` by demoting `ask` and `deny` verdicts to
- * `warn` — the hook still surfaces the conflict to Claude but doesn't
- * actually pause. Useful for the ramp-up period where we want telemetry on
- * what WOULD have blocked without inflicting the block on the user.
+ * Computes the local preference. The preflight caller must apply the
+ * organization's minimum afterward; strict conflicts cannot be demoted
+ * by this preference.
  */
 export function demoteForMode(verdict: ConflictVerdict, mode: HookMode): ConflictVerdict {
   if (mode === "off") {

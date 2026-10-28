@@ -22,6 +22,7 @@ import { atomicWriteFile, syncDirectory, syncFile } from "./atomic-file.js";
 import { STABLE_HOOK_LAUNCHER_NAME, packageRoot, packageVersion } from "./bin-path.js";
 import { withFileLockSync } from "./file-lock.js";
 import { GIT_HOOK_ENTRYPOINT_CONTENT, GIT_HOOK_ENTRYPOINT_NAME } from "./git-hook-contract.js";
+import { STRICT_POLICY_RUNTIME_CAPABILITY } from "./hook-capabilities.js";
 import { type PrimConfigDirectoryOptions, primConfigDirectory } from "./paths.js";
 import { compareSemver } from "./semver.js";
 
@@ -99,7 +100,7 @@ export type RemoveHookRuntimeResult = {
 };
 
 export type HookRuntimeInspection =
-  | Readonly<{ state: "ready"; version: string }>
+  | Readonly<{ state: "ready"; version: string; strictPolicySupported?: boolean }>
   | Readonly<{ state: "missing" | "invalid" }>;
 
 export function hookRuntimePaths(options: PrimConfigDirectoryOptions = {}): HookRuntimePaths {
@@ -443,9 +444,20 @@ export function inspectHookRuntime(
     if (!selected) return { state: "invalid" };
     assertOwnedHookRuntime(paths);
     if (!hasSafeRuntimeLayout(paths, selected)) return { state: "invalid" };
-    return recordedNodeMatchesCurrentProcess(selected.manifest.nodePath)
-      ? { state: "ready", version: selected.manifest.version }
-      : { state: "invalid" };
+    if (!recordedNodeMatchesCurrentProcess(selected.manifest.nodePath)) {
+      return { state: "invalid" };
+    }
+    // The selected release was already checked against every manifest hash.
+    // Read its diagnostic marker without executing runtime bytes.
+    const strictPolicySupported = readFileSync(
+      join(selected.dir, HOOK_RUNTIME_ENTRIES["prim-pre-tool-use"]),
+      "utf8",
+    ).includes(STRICT_POLICY_RUNTIME_CAPABILITY);
+    return {
+      state: "ready",
+      version: selected.manifest.version,
+      ...(strictPolicySupported ? { strictPolicySupported: true } : {}),
+    };
   } catch {
     return { state: "invalid" };
   }

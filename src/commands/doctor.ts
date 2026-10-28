@@ -963,13 +963,21 @@ export function classifyHookRuntime(
     return {
       name: "hook-runtime",
       status: "fail",
-      detail: `selected immutable runtime ${relation} this CLI — reinstall an agent integration`,
+      detail: `selected immutable runtime ${relation} this CLI — reinstall an agent integration${inspection.strictPolicySupported ? "" : "; upgrade required: strict conflict enforcement is unverified"}`,
+    };
+  }
+  if (!inspection.strictPolicySupported) {
+    return {
+      name: "hook-runtime",
+      status: "fail",
+      detail:
+        "upgrade required: strict conflict enforcement is unverified — update Primitive and reinstall an agent integration",
     };
   }
   return {
     name: "hook-runtime",
     status: "ok",
-    detail: `immutable runtime ready · v${inspection.version}`,
+    detail: `immutable runtime ready · v${inspection.version} · strict conflict policy supported`,
   };
 }
 

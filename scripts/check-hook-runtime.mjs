@@ -37,6 +37,15 @@ try {
   run(process.execPath, ["dist/index.js", "claude", "install", "--scope", "user"]);
   const output = run(join(config, "prim-hook-launcher-v1"), ["prim-session-start"], "{}").trim();
   if (output !== "{}") throw new Error(`prim-session-start emitted unexpected output: ${output}`);
+  const capabilities = JSON.parse(
+    run(join(config, "prim-hook-launcher-v1"), ["prim-pre-tool-use", "--capabilities"]),
+  );
+  if (
+    capabilities.schemaVersion !== 1 ||
+    !capabilities.capabilities.includes("primitive-strict-policy-v1")
+  ) {
+    throw new Error("immutable conflict gate did not report strict policy support");
+  }
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
