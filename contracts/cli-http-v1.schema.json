@@ -3792,6 +3792,9 @@
               },
               "shortId": {
                 "type": "string"
+              },
+              "title": {
+                "type": "string"
               }
             },
             "required": ["decisionId"],
@@ -3816,6 +3819,109 @@
             "required": ["decisionId"],
             "additionalProperties": {}
           }
+        },
+        "evaluationCoverage": {
+          "type": "object",
+          "properties": {
+            "candidateCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "submittedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "evaluatedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "partial",
+                "unavailable",
+                "not_run",
+                "unknown"
+              ]
+            },
+            "semanticBatchCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "completedSemanticBatchCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "selectionOmissions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "exact_scope",
+                      "location_scope",
+                      "organization_scope",
+                      "candidate_scan",
+                      "candidate_limit",
+                      "bypass_scan"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": ["scan_limit", "candidate_limit", "bucket_limit"]
+                  },
+                  "omittedCountLowerBound": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["source", "reason", "omittedCountLowerBound"],
+                "additionalProperties": false
+              }
+            },
+            "evidenceOmissions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "decisionId": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "prompt_budget",
+                      "batch_limit",
+                      "evaluation_failed",
+                      "evaluation_deadline"
+                    ]
+                  }
+                },
+                "required": ["decisionId", "reason"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "candidateCount",
+            "submittedCount",
+            "evaluatedCount",
+            "status",
+            "semanticBatchCount",
+            "completedSemanticBatchCount",
+            "selectionOmissions",
+            "evidenceOmissions"
+          ],
+          "additionalProperties": false
         },
         "decisionDisclosures": {
           "minItems": 1,

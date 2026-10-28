@@ -36,6 +36,7 @@ import { packageVersion } from "../lib/bin-path.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { currentBranch, githubRepositoryFullName } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
+import { editPreview } from "./approval-copy.js";
 import {
   appendCodexContext,
   hasVisibleCodexMessage,
@@ -278,7 +279,10 @@ async function main(): Promise<void> {
       await emitUnverified("enforcement service returned an incompatible response", envelope);
       return;
     }
-    result = resultForPreflight(response);
+    result = resultForPreflight(
+      response,
+      editPreview(toolName, envelope.tool_input, targets.paths),
+    );
   } catch (error) {
     await emitUnverified(preflightFailure(error), envelope);
     return;

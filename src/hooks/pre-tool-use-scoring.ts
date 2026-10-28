@@ -140,6 +140,23 @@ function blockingReason(results: ConflictCheckResult[]): string {
   return [...new Set(parts)].join("\n\n") || "[primitive] conflict detected (no detail available)";
 }
 
+function approvalReason(results: ConflictCheckResult[]): string {
+  const summaries = results
+    .filter((result) => result.verdict === "ask" || result.verdict === "deny")
+    .map((result) => result.reason)
+    .filter(Boolean);
+  return [
+    ...new Set(summaries),
+    "Approve runs this edit once; it does not change these decisions.",
+  ].join("\n");
+}
+
+function agentContext(results: ConflictCheckResult[]): string {
+  return [...new Set(results.map((result) => result.additionalContext).filter(Boolean))].join(
+    "\n\n",
+  );
+}
+
 function advisoryNote(aggregate: ConflictVerdict, results: ConflictCheckResult[]): string {
   const details = results.flatMap((result) => [
     ...(aggregate === "warn" ? [result.reason] : []),
@@ -162,7 +179,18 @@ export function buildHookOutput(
   aggregate: ConflictVerdict,
   results: ConflictCheckResult[],
 ): HookOutput {
-  if (aggregate === "deny" || aggregate === "ask") {
+  if (aggregate === "ask") {
+    const context = agentContext(results);
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: approvalReason(results),
+        ...(context ? { additionalContext: context } : {}),
+      },
+    };
+  }
+  if (aggregate === "deny") {
     return {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",

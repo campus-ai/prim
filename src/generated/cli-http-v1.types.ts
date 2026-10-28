@@ -875,6 +875,7 @@ export interface PreflightResponseV3 {
   conflicts: {
     decisionId: string;
     shortId?: string;
+    title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {
@@ -883,6 +884,24 @@ export interface PreflightResponseV3 {
     shortId?: string;
     [k: string]: unknown | undefined;
   }[];
+  evaluationCoverage?: {
+    candidateCount: number;
+    submittedCount: number;
+    evaluatedCount: number;
+    status: "completed" | "partial" | "unavailable" | "not_run" | "unknown";
+    semanticBatchCount: number;
+    completedSemanticBatchCount: number;
+    selectionOmissions: {
+      source:
+        "exact_scope" | "location_scope" | "organization_scope" | "candidate_scan" | "candidate_limit" | "bypass_scan";
+      reason: "scan_limit" | "candidate_limit" | "bucket_limit";
+      omittedCountLowerBound: number;
+    }[];
+    evidenceOmissions: {
+      decisionId: string;
+      reason: "prompt_budget" | "batch_limit" | "evaluation_failed" | "evaluation_deadline";
+    }[];
+  };
   /**
    * @minItems 1
    * @maxItems 16
