@@ -37,6 +37,7 @@ import {
   stableHookCommand,
 } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
+import { reportFailureProtection } from "../lib/preflight-host.js";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
@@ -92,7 +93,7 @@ const CAPTURE_EVENTS = [
 // The conflict gate is synchronous — Hermes waits on its block/allow — so it
 // carries an explicit timeout ceiling; the shim's npx cold-start fallback can
 // otherwise precede the binary's own internal timeouts.
-const GATE_TIMEOUT_SECONDS = 10;
+const GATE_TIMEOUT_SECONDS = 300;
 
 type HermesReg = { event: string; matcher?: string; bin: string; timeout?: number };
 
@@ -146,6 +147,7 @@ function entryFor(reg: HermesReg): HookEntry {
   if (reg.timeout !== undefined) {
     entry.timeout = reg.timeout;
   }
+  if (reg.bin === GATE_BIN) entry.fail_closed = true;
   return entry;
 }
 
@@ -161,9 +163,14 @@ export function ensureReg(list: HookEntry[], reg: HermesReg, force: boolean): Ho
     (e) =>
       e.command === entry.command &&
       (e.matcher ?? "") === (entry.matcher ?? "") &&
-      (e.timeout ?? null) === (entry.timeout ?? null),
+      (e.timeout ?? null) === (entry.timeout ?? null) &&
+      e.fail_closed === entry.fail_closed,
   );
-  if (present && !force) {
+  if (
+    present &&
+    !force &&
+    (reg.bin !== GATE_BIN || list.filter((e) => commandUsesBin(e.command, reg.bin)).length === 1)
+  ) {
     return list;
   }
   return [...stripBin(list, reg.bin), entry];
@@ -248,7 +255,8 @@ function entryMatchesRegistration(owned: OwnedRegistrationEntry, registration: H
     owned.event === registration.event &&
     owned.entry.command === expected.command &&
     (owned.entry.matcher ?? "") === (expected.matcher ?? "") &&
-    (owned.entry.timeout ?? null) === (expected.timeout ?? null)
+    (owned.entry.timeout ?? null) === (expected.timeout ?? null) &&
+    owned.entry.fail_closed === expected.fail_closed
   );
 }
 
@@ -790,13 +798,14 @@ export function registerHermesCommands(program: Command): void {
         force: opts.force ?? false,
         autoAccept: opts.autoAccept ?? false,
       });
+      const failureProtection = reportFailureProtection("hermes");
       console.error(
         result.changed
           ? `[prim] Hermes integration installed at ${result.path}`
           : `[prim] Hermes integration already present at ${result.path} (no changes)`,
       );
       console.error(TRUST_NOTICE);
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, JSON_INDENT));
     });
 
   hermes
@@ -817,10 +826,11 @@ export function registerHermesCommands(program: Command): void {
     .description("Report whether each prim surface (gate, capture) is installed")
     .action(() => {
       const result = performStatus();
+      const failureProtection = result.gate ? reportFailureProtection("hermes") : undefined;
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       console.error(
         `[prim] hermes: gate ${mark(result.gate)} · capture ${mark(result.capture)} (${result.path})`,
       );
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, JSON_INDENT));
     });
 }

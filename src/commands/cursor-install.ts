@@ -10,6 +10,7 @@ import {
   stableHookCommand,
 } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
+import { reportFailureProtection } from "../lib/preflight-host.js";
 import { type Scope, projectRoot } from "./claude-install.js";
 
 const CAPTURE_BIN = "prim-hook";
@@ -54,7 +55,7 @@ type CursorRegistration = {
 
 const REGISTRATIONS: readonly CursorRegistration[] = [
   ...CURSOR_EVENTS.map((event) => ({ event, bin: CAPTURE_BIN })),
-  { event: "preToolUse", bin: GATE_BIN, matcher: "Write|Delete|Shell", timeout: 10 },
+  { event: "preToolUse", bin: GATE_BIN, matcher: "Write|Delete|Shell", timeout: 300 },
   { event: "postToolUse", bin: POST_TOOL_BIN },
   { event: "postToolUseFailure", bin: POST_TOOL_BIN },
   { event: "sessionStart", bin: SESSION_START_BIN },
@@ -167,6 +168,7 @@ function hookFor(registration: CursorRegistration, scope: Scope): CursorHook {
     command: commandFor(registration, scope),
     ...(registration.matcher ? { matcher: registration.matcher } : {}),
     ...(registration.timeout ? { timeout: registration.timeout } : {}),
+    ...(registration.bin === GATE_BIN ? { failClosed: true } : {}),
   };
 }
 
@@ -392,13 +394,14 @@ export function registerCursorCommands(program: Command): void {
     .option("--force", "Repair drifted Primitive entries; custom Cursor fields remain untouched")
     .action((opts: { scope?: string; force?: boolean }) => {
       const result = performInstall(resolveScope(opts.scope), opts.force);
+      const failureProtection = reportFailureProtection("cursor");
       console.error(
         result.changed
           ? `[prim] Cursor integration installed (${result.scope} scope) at ${result.path}`
           : `[prim] Cursor integration already present at ${result.path}`,
       );
       if (result.restartRequired) console.error("[prim] restart Cursor CLI to load the footer");
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, 2));
     });
   cursor
     .command("uninstall")
@@ -419,11 +422,13 @@ export function registerCursorCommands(program: Command): void {
     .description("Report native Cursor hook and footer status")
     .action(() => {
       const result = performStatus();
+      const failureProtection =
+        result.user.gate || result.project.gate ? reportFailureProtection("cursor") : undefined;
       const mark = (value: boolean | undefined): string => (value ? "✓" : "✗");
       console.error(
         `[prim] user: gate ${mark(result.user.gate)} · capture ${mark(result.user.capture)} · footer ${mark(result.user.footer)} (${result.user.path})\n` +
           `[prim] project: gate ${mark(result.project.gate)} · capture ${mark(result.project.capture)} (${result.project.path})`,
       );
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, 2));
     });
 }

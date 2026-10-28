@@ -47,6 +47,8 @@ import { type HookCommandResolution, hookCommandResolutions } from "../lib/bin-p
 import { codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import { mainWorktreeRoot } from "../lib/git.js";
 import { inspectHookRuntime, stageHookRuntime } from "../lib/hook-runtime.js";
+
+import { reportFailureProtection } from "../lib/preflight-host.js";
 import {
   type ClaudeSettings,
   type HookEntry,
@@ -179,7 +181,10 @@ function entryMatchesRegistration(
     owned.entry.matcher === registration.matcher &&
     owned.entry.hooks?.length === 1 &&
     owned.entry.hooks[0].type === "command" &&
-    owned.entry.hooks[0].command === registration.command
+    owned.entry.hooks[0].command === registration.command &&
+    owned.entry.hooks[0].timeout === registration.timeout &&
+    owned.entry.hooks[0].onFailure === registration.onFailure &&
+    (registration.bin !== GATE_BIN || owned.entry.hooks[0].async !== true)
   );
 }
 
@@ -326,6 +331,7 @@ export function registerCodexCommands(program: Command): void {
     .action(async (opts: { scope?: string; force?: boolean }) => {
       const scope = resolveScope(opts.scope);
       const result = performInstall(scope, opts.force ?? false);
+      const failureProtection = reportFailureProtection("codex");
       if (result.changed) {
         console.error(`[prim] Codex integration installed (${scope} scope) at ${result.path}`);
       } else {
@@ -334,7 +340,7 @@ export function registerCodexCommands(program: Command): void {
       console.error(TRUST_NOTICE);
       const host = await inspectCodexHost(Boolean(process.env.CODEX_THREAD_ID));
       console.error(`[prim] ${codexHostGuidance(host)}`);
-      console.log(JSON.stringify({ ...result, host }, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, host, failureProtection }, null, JSON_INDENT));
     });
 
   codex
@@ -371,6 +377,8 @@ export function registerCodexCommands(program: Command): void {
     .description("Report whether each prim surface (gate, capture) is installed per scope")
     .action(async () => {
       const result = performStatus();
+      const failureProtection =
+        result.user.gate || result.project.gate ? reportFailureProtection("codex") : undefined;
       const host = await inspectCodexHost();
       const readiness = {
         configured: result.user.complete || result.project.complete,
@@ -390,6 +398,6 @@ export function registerCodexCommands(program: Command): void {
       console.error(
         "[prim] Configuration is not proof of hook execution or capture. Use the pending tour’s diagnosticAction to check isolation.",
       );
-      console.log(JSON.stringify({ ...result, readiness }, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, readiness, failureProtection }, null, JSON_INDENT));
     });
 }
