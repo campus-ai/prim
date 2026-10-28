@@ -613,7 +613,8 @@
         "message": "100 Decisions evaluated",
         "conflicts": [
           {
-            "decisionId": "decision100"
+            "decisionId": "decision100",
+            "title": "Keep retries durable"
           }
         ],
         "bypassed": [],
@@ -728,7 +729,8 @@
         "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
         "conflicts": [
           {
-            "decisionId": "decision-conflict"
+            "decisionId": "decision-conflict",
+            "title": "Keep retries durable across worker restarts"
           }
         ],
         "bypassed": [],

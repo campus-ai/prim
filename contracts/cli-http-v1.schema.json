@@ -3899,6 +3899,9 @@
               },
               "shortId": {
                 "type": "string"
+              },
+              "title": {
+                "type": "string"
               }
             },
             "required": ["decisionId"],
@@ -4146,6 +4149,9 @@
                 "type": "string"
               },
               "shortId": {
+                "type": "string"
+              },
+              "title": {
                 "type": "string"
               }
             },
