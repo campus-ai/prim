@@ -4,6 +4,7 @@ import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
+import { approvalSummary } from "./approval-copy.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
@@ -178,7 +179,10 @@ export async function requestPreflight(
   });
   return parsePreflightResponse(response);
 }
-export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
+export function resultForPreflight(
+  response: PreflightResponse,
+  preview = "Review the requested change.",
+): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
   // The wire response remains untouched for protocol compatibility. These
   // values cross into terminal and hook presentation, so normalize them once
@@ -205,7 +209,21 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
         : []),
     ];
   });
-  const reason = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const guidance = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const reason =
+    response.conflicts.length > 0 || response.verdict === "ask" || response.verdict === "block"
+      ? approvalSummary(
+          {
+            conflicts: response.conflicts,
+            message,
+            reasonCode: response.reasonCode,
+            evaluationCoverage: response.evaluationCoverage as
+              | { status?: unknown; selectionOmissions?: unknown; evidenceOmissions?: unknown }
+              | undefined,
+          },
+          preview,
+        )
+      : message;
   const disclosureContext = decisionDisclosureContext(response);
   return {
     verdict,
@@ -213,7 +231,7 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
     reason,
     additionalContext: [
       disclosureContext,
-      ["warn", "ask", "block"].includes(response.verdict) ? reason : "",
+      ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
     ]
       .filter(Boolean)
       .join("\n"),
