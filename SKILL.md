@@ -40,9 +40,11 @@ When Enforcement is enabled, before an edit (Claude Code: Edit/Write/MultiEdit; 
 
 - **deny** -- the edit is blocked: it conflicts with a load-bearing prior decision. Don't fight it. Read the reason line; it names the decision id. If you genuinely intend to override that decision, run `npx --yes @primitive.ai/prim reconcile dec_<shortId>`, then retry the edit once. Otherwise choose an approach that respects the decision.
 - **warn / additional context** -- the edit proceeds, but a relevant prior decision is surfaced. Read it. Cursor, Codex, and Hermes cannot pause at this gate, so a would-be `ask` arrives as a **deny** carrying the reconcile directive: reconcile and retry, or set `PRIM_HOOK_MODE=warn` to downgrade it to context-only.
-- **"decision check skipped / not verified" or "... partial / truncated"** -- the check could not fully run. Treat constraints as UNKNOWN, not clear; never read silence as approval.
+- **"Operation paused"** -- the check has not covered every eligible Decision. The tool is denied, including in warn mode. Use the supplied `prim decisions preflight resume <checkId>` command, then retry the tool call. `prim decisions preflight status <checkId>` inspects progress without restarting it.
 
-When enabled, the gate sends its preflight check directly to Primitive and fail-opens on infrastructure errors (for example, a network failure or org-unbound token) -- a service problem would not block your edit. That is why an "unavailable" note matters: it is the honest signal that the check, not your edit, is what failed.
+When enabled, the V4 gate polls durable evaluation for up to 240 seconds, with each request bounded to 10 seconds. Incomplete coverage, network/auth failures, malformed responses, and expired checks pause the tool operation. Completed checks retain normal block/warn policy. The full tool input is hashed before the proposal is redacted and truncated, so a changed retry cannot reuse another proposal’s evaluation. The backend must support V4; the CLI never falls back to V3.
+
+Run `prim <agent> install` to repair the 300-second hook timeout and host failure policy, then `prim doctor`. Claude requires 2.1.295+ (`onFailure: "block"`); Cursor requires the verified 3.24.9+ baseline (`failClosed: true`); Hermes requires installed `fail_closed` support. Codex honors an explicit deny but has no documented fail-closed policy for a crashed, killed, or host-timed-out hook; doctor reports that limitation. Restart or refresh the host as directed after changing hook settings.
 
 ## Read the graph before large or load-bearing edits
 

@@ -95,6 +95,7 @@ import {
   formatShowJson,
 } from "../decisions/show.js";
 import { checkAffectedDecisions, formatDecisionsWarning } from "../hooks/decisions-check.js";
+import { hasCompleteCoverage, requestPreflight, waitForPreflight } from "../hooks/preflight-v4.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
@@ -297,6 +298,38 @@ function locationScopeFromOptions(
 
 export function registerDecisionsCommands(program: Command): void {
   const decisions = program.command("decisions").description("Inspect the project Decision Graph");
+
+  const preflight = decisions
+    .command("preflight")
+    .description("Inspect or resume a paused Decision check");
+  preflight
+    .command("status <checkId>")
+    .description("Show the current state without restarting work")
+    .action(async (checkId: string) => {
+      const result = await requestPreflight({ protocolVersion: 4, operation: "status", checkId });
+      printJson(result);
+      console.error(`[prim] Decision check ${result.state}: ${terminalSafeLine(result.message)}`);
+      if (!hasCompleteCoverage(result)) process.exitCode = EXIT_FAILURE;
+    });
+  preflight
+    .command("resume <checkId>")
+    .description("Resume evaluation and wait up to 240 seconds; then retry the original tool call")
+    .action(async (checkId: string) => {
+      const result = await waitForPreflight(
+        { protocolVersion: 4, operation: "resume", checkId },
+        {
+          onProgress: ({ evaluationCoverage: coverage }) =>
+            console.error(
+              `[prim] Checking Decisions: ${coverage.evaluatedCount + coverage.bypassedCount}/${coverage.candidateCount}${coverage.discoveryComplete ? "" : "+"} covered.`,
+            ),
+        },
+      );
+      printJson(result);
+      console.error(
+        `[prim] Decision check ${result.state}: ${terminalSafeLine(result.message)}${hasCompleteCoverage(result) ? "; retry the original tool call" : "; operation remains paused"}`,
+      );
+      if (!hasCompleteCoverage(result)) process.exitCode = EXIT_FAILURE;
+    });
 
   decisions
     .command("check")

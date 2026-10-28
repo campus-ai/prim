@@ -61,6 +61,9 @@
     "format:check": "biome check src/ scripts/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:preflight-host": "node scripts/check-codex-preflight-host.mjs",
+    "test:preflight-host:claude": "node scripts/check-claude-preflight-host.mjs",
+    "test:preflight-v4": "node scripts/check-preflight-v4-e2e.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

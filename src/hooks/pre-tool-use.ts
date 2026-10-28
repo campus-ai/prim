@@ -2,31 +2,16 @@
 /**
  * prim PreToolUse hook for Claude Code and Codex.
  *
- * Reads the PreToolUse JSON envelope from stdin, calls the server-side
- * conflict-check endpoint once for the proposed tool invocation,
+ * Reads the PreToolUse JSON envelope from stdin, polls the server-side
+ * conflict-check endpoint for the proposed tool invocation,
  * and emits the agent's contract JSON document on stdout that either allows,
  * asks, or denies the tool call. Visible Codex verdicts also carry the
  * Primitive situation report; Decision digests have a dedicated prompt path.
  *
- * Three load-bearing invariants:
- *   1. STDOUT is exclusively the hook output JSON. Anything else lives on
- *      STDERR (which Claude Code surfaces as user-visible context on exit
- *      code 2, but is otherwise informational).
- *   2. Exit code is 0 on every happy / fail-open path. Non-zero exits cause
- *      Claude Code to treat the hook as broken, which is louder than we want.
- *   3. INFRASTRUCTURE failures NEVER block the user. Before a definite
- *      mutation can be identified, malformed or irrelevant input fails open
- *      silently. Once a mutation is identified, service failure or an
- *      unverified target fails open with a visible "not verified" warning,
- *      never a clean allow.
- *
- * Config knobs (env vars):
- *   PRIM_BYPASS=1                 — skip the check entirely
- *   PRIM_HOOK_MODE=block|warn|off — default `block`; `warn` demotes
- *                                   ask/deny to warn (telemetry only)
- *
- * Conflict policy is owned entirely by the server; the hook sends one bounded
- * request for the complete invocation and consumes the returned verdict.
+ * STDOUT is exclusively host hook JSON. Active mutations require complete V4
+ * evaluation; service failures and incomplete results pause the operation,
+ * including in warn mode. PRIM_BYPASS=1 and PRIM_HOOK_MODE=off remain explicit
+ * local opt-outs. Completed semantic conflicts retain the configured mode.
  */
 
 import { HttpError, resolveAuthCredential } from "../client.js";
@@ -63,18 +48,24 @@ import {
   failOpenOutput,
   readHookMode,
 } from "./pre-tool-use-scoring.js";
+import { boundedClientVersion, proposalFor, resolvePreflightTargets } from "./preflight-v3.js";
+
 import {
   PREFLIGHT_PROTOCOL_VERSION,
+  PREFLIGHT_WAIT_MS,
+  PreflightPausedError,
   type PreflightRequest,
-  boundedClientVersion,
-  proposalFor,
-  requestPreflight,
-  resolvePreflightTargets,
+  hasCompleteCoverage,
+  pausedResult,
   resultForPreflight,
-  unverifiedResult,
-} from "./preflight-v3.js";
+  toolInputDigest,
+  waitForPreflight,
+} from "./preflight-v4.js";
 
 const STDIN_TIMEOUT_MS = 1_000;
+const deadline =
+  performance.now() + Math.max(0, PREFLIGHT_WAIT_MS - Math.ceil(process.uptime() * 1_000));
+let activeMutation = false;
 
 type PreToolUseInput = {
   session_id?: string;
@@ -148,33 +139,17 @@ function preflightFailure(error: unknown): string {
   return "authentication required; run `prim auth login`; change was not verified";
 }
 
-async function emitUnverified(message: string, envelope?: PreToolUseInput): Promise<void> {
-  const result = unverifiedResult(message);
-  if (agent === "hermes") {
-    process.stderr.write(`[primitive] ${message}\n`);
-    await emit(failOpenHermes());
-  } else if (agent === "cursor") {
-    process.stderr.write(`[primitive] ${message}\n`);
-    await emit(buildCursorOutput("allow", [result]));
-  } else {
-    let output =
-      agent === "codex" ? buildCodexOutput("allow", [result]) : buildHookOutput("allow", [result]);
-    if (agent === "codex" && typeof envelope?.session_id === "string" && envelope.session_id) {
-      try {
-        const context = await prepareCodexContext({
-          cwd: envelope.cwd ?? process.cwd(),
-          sessionId: envelope.session_id,
-          includeDigest: false,
-        });
-        output = appendCodexContext(output, context.context);
-        await emitWithAcknowledgment(output, context.acknowledge);
-        return;
-      } catch {
-        // Preserve the existing unverified message if context augmentation fails.
-      }
-    }
-    await emit(output);
-  }
+async function emitUnverified(message: string, checkId?: string): Promise<void> {
+  const result = pausedResult(message, checkId);
+  const output =
+    agent === "hermes"
+      ? buildHermesOutput("deny", [result])
+      : agent === "cursor"
+        ? buildCursorOutput("deny", [result])
+        : agent === "codex"
+          ? buildCodexOutput("deny", [result])
+          : buildHookOutput("deny", [result]);
+  await emit(output);
 }
 
 async function main(): Promise<void> {
@@ -236,8 +211,9 @@ async function main(): Promise<void> {
     await emit(failOpen());
     return;
   }
+  activeMutation = true;
   if (agent === "cursor" && targets.coverage === "unverified") {
-    await emitUnverified("tool targets were ambiguous or outside the active repository", envelope);
+    await emitUnverified("tool targets were ambiguous or outside the active repository");
     return;
   }
   const binding = repoSyncId(cwd);
@@ -247,7 +223,6 @@ async function main(): Promise<void> {
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
     await emitUnverified(
       "GitHub repo connection is required for repository-specific file attribution, Conflict Gate verification, and commit correlation; or tool invocation identity is unavailable",
-      envelope,
     );
     return;
   }
@@ -260,6 +235,8 @@ async function main(): Promise<void> {
   });
   const request: PreflightRequest = {
     protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
+    operation: "start",
+    toolInputDigest: toolInputDigest(toolName, envelope.tool_input),
     agent,
     clientMode: mode,
     clientVersion: boundedClientVersion(packageVersion()),
@@ -273,20 +250,27 @@ async function main(): Promise<void> {
   };
   let result: ConflictCheckResult;
   try {
-    const response = await requestPreflight(request);
-    if (!response) {
-      await emitUnverified("enforcement service returned an incompatible response", envelope);
+    const response = await waitForPreflight(request, {
+      deadline,
+      onProgress: ({ evaluationCoverage: coverage }) => {
+        process.stderr.write(
+          `[primitive] Checking Decisions: ${coverage.evaluatedCount + coverage.bypassedCount}/${coverage.candidateCount}${coverage.discoveryComplete ? "" : "+"} covered.\n`,
+        );
+      },
+    });
+    if (!hasCompleteCoverage(response)) {
+      await emitUnverified(response.message || response.reasonCode, response.checkId);
       return;
     }
     result = resultForPreflight(response);
   } catch (error) {
-    await emitUnverified(preflightFailure(error), envelope);
+    await emitUnverified(
+      error instanceof PreflightPausedError ? error.message : preflightFailure(error),
+      error instanceof PreflightPausedError ? error.checkId : undefined,
+    );
     return;
   }
-  const aggregate = demoteForMode(
-    result.verdict === "unavailable" ? "allow" : result.verdict,
-    mode,
-  );
+  const aggregate = demoteForMode(result.verdict === "unavailable" ? "deny" : result.verdict, mode);
   if (agent === "hermes" && aggregate !== "deny" && aggregate !== "ask") {
     const advisory = hermesAdvisory(result, aggregate);
     if (advisory) process.stderr.write(`${advisory}\n`);
@@ -318,5 +302,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(async () => {
-  await emit(failOpen());
+  if (activeMutation) await emitUnverified("The Decision check could not complete");
+  else await emit(failOpen());
 });
