@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 6,
+  "contractVersion": 7,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -533,6 +533,110 @@
       }
     },
     {
+      "name": "resumable exhaustive preflight start",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "start",
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "invocation-1",
+        "repoSyncId": "repoSync123",
+        "paths": ["src/index.ts"],
+        "coverage": "complete",
+        "proposal": "Preserve retries",
+        "toolInputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "resumable preflight status",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "status",
+        "checkId": "check123"
+      }
+    },
+    {
+      "name": "resumable preflight resume",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "resume",
+        "checkId": "check123"
+      }
+    },
+    {
+      "name": "paged preflight details",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "details",
+        "checkId": "check123",
+        "cursor": null
+      }
+    },
+    {
+      "name": "completed exhaustive preflight",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "completed",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "100 Decisions evaluated",
+        "conflicts": [
+          {
+            "decisionId": "decision100"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 100,
+          "submittedCount": 100,
+          "evaluatedCount": 100,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "completed",
+          "semanticBatchCount": 13,
+          "completedSemanticBatchCount": 13
+        }
+      }
+    },
+    {
+      "name": "paused coverage is not a Decision conflict",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "paused",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "evaluation_failed",
+        "message": "Resume unfinished work",
+        "conflicts": [],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 100,
+          "submittedCount": 16,
+          "evaluatedCount": 8,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "partial",
+          "semanticBatchCount": 13,
+          "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
       "name": "canonical preflight paths",
       "definition": "PreflightRequestV3",
       "valid": true,
@@ -592,6 +696,48 @@
         "message": "Repository is unavailable.",
         "conflicts": [],
         "bypassed": []
+      }
+    },
+    {
+      "name": "preflight partial evaluation preserves conflict and omissions",
+      "definition": "PreflightResponseV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
+        "conflicts": [
+          {
+            "decisionId": "decision-conflict"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 3,
+          "submittedCount": 2,
+          "evaluatedCount": 1,
+          "status": "partial",
+          "semanticBatchCount": 2,
+          "completedSemanticBatchCount": 1,
+          "selectionOmissions": [
+            {
+              "source": "candidate_limit",
+              "reason": "candidate_limit",
+              "omittedCountLowerBound": 5
+            }
+          ],
+          "evidenceOmissions": [
+            {
+              "decisionId": "decision-failed",
+              "reason": "evaluation_failed"
+            },
+            {
+              "decisionId": "decision-large",
+              "reason": "prompt_budget"
+            }
+          ]
+        }
       }
     },
     {

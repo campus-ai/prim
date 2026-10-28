@@ -849,6 +849,19 @@ export interface MoveIngestRequest {
   [k: string]: unknown | undefined;
 }
 
+export interface PreflightDetailsV4 {
+  protocolVersion: 4;
+  checkId: string;
+  page: {
+    decisionId: string;
+    state: "pending" | "evaluated" | "bypassed";
+    conflict: boolean;
+    evaluatedAt?: number;
+  }[];
+  cursor: string;
+  isDone: boolean;
+}
+
 export interface PreflightRequestV3 {
   protocolVersion: 3;
   agent: "claude_code" | "codex" | "cursor" | "hermes";
@@ -865,6 +878,42 @@ export interface PreflightRequestV3 {
   clientVersion?: string;
   proposal: string;
 }
+
+export type PreflightRequestV4 =
+  | {
+      protocolVersion: 4;
+      agent: "claude_code" | "codex" | "cursor" | "hermes";
+      sessionId: string;
+      invocationId: string;
+      repoSyncId: string;
+      /**
+       * @maxItems 32
+       */
+      paths: string[];
+      coverage: "complete" | "unverified";
+      branch?: string;
+      clientMode?: "block" | "warn";
+      clientVersion?: string;
+      proposal: string;
+      operation: "start";
+      toolInputDigest: string;
+    }
+  | {
+      protocolVersion: 4;
+      operation: "status";
+      checkId: string;
+    }
+  | {
+      protocolVersion: 4;
+      operation: "resume";
+      checkId: string;
+    }
+  | {
+      protocolVersion: 4;
+      operation: "details";
+      checkId: string;
+      cursor?: string | null;
+    };
 
 export interface PreflightResponseV3 {
   protocolVersion: 3;
@@ -883,6 +932,24 @@ export interface PreflightResponseV3 {
     shortId?: string;
     [k: string]: unknown | undefined;
   }[];
+  evaluationCoverage?: {
+    candidateCount: number;
+    submittedCount: number;
+    evaluatedCount: number;
+    status: "completed" | "partial" | "unavailable" | "not_run" | "unknown";
+    semanticBatchCount: number;
+    completedSemanticBatchCount: number;
+    selectionOmissions: {
+      source:
+        "exact_scope" | "location_scope" | "organization_scope" | "candidate_scan" | "candidate_limit" | "bypass_scan";
+      reason: "scan_limit" | "candidate_limit" | "bucket_limit";
+      omittedCountLowerBound: number;
+    }[];
+    evidenceOmissions: {
+      decisionId: string;
+      reason: "prompt_budget" | "batch_limit" | "evaluation_failed" | "evaluation_deadline";
+    }[];
+  };
   /**
    * @minItems 1
    * @maxItems 16
@@ -1601,6 +1668,38 @@ export interface PreflightResponseV3 {
         }
       ];
   [k: string]: unknown | undefined;
+}
+
+export interface PreflightResponseV4 {
+  protocolVersion: 4;
+  state: "processing" | "completed" | "paused" | "expired";
+  checkId?: string;
+  evaluationId?: string;
+  verdict: "allow" | "warn" | "ask" | "block" | "unavailable";
+  reasonCode: string;
+  message: string;
+  conflicts: {
+    decisionId: string;
+    shortId?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  bypassed: {
+    decisionId: string;
+    bypassId?: string;
+    shortId?: string;
+    [k: string]: unknown | undefined;
+  }[];
+  evaluationCoverage: {
+    candidateCount: number;
+    submittedCount: number;
+    evaluatedCount: number;
+    bypassedCount: number;
+    discoveryComplete: boolean;
+    status: "completed" | "partial" | "unavailable" | "not_run" | "unknown";
+    semanticBatchCount: number;
+    completedSemanticBatchCount: number;
+  };
+  retryAfterMs?: number;
 }
 
 export interface PresenceHeartbeatRequest {
