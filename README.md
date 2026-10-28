@@ -10,8 +10,8 @@ presence — from the command line and via session + git hooks.
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
 > load-bearing decision it conflicts with. When **Enforcement** is enabled for your
-> organization, gates can warn, pause, or block a conflicting edit until you reconcile
-> the decision and retry. Automatic decision capture in active repositories is separate.
+> organization, gates can warn, pause, or block a conflicting edit until the conflict
+> is resolved or the required human review authorizes a retry. Automatic decision capture in active repositories is separate.
 
 ## Installation
 
@@ -365,7 +365,7 @@ would create a cycle (exit 2); an unresolved id exits 4.
 ### Reconcile
 
 ```bash
-prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
+prim reconcile <id>    # Mint a single-use bypass under legacy organization policy
 ```
 
 Record what happened after resolving a specific conflict:
@@ -381,8 +381,27 @@ The conflict output supplies the check ID. Only the person whose edit was
 checked can resolve that check. Repeating the same outcome is safe; changing an
 already recorded outcome is rejected. These declarations do not issue a bypass.
 
-Without `--check` and `--outcome`, when Conflict Gates **Enforcement** is enabled
-for your organization, `prim reconcile <id>` authorizes one retry for the named decision.
+Without `--check` and `--outcome`, `prim reconcile <id>` authorizes one retry only
+under legacy organization policy. Strict policy rejects this unrestricted bypass.
+
+Strict policy requires human review for high-confidence provisional contradictions
+and an owner/admin exception for adopted contradictions, including aged Decisions.
+Client warning preferences cannot weaken these requirements. Open the review link
+from the first conflict. Browser approval lasts five minutes, can be used once,
+and binds the exact original operation and current Decision evidence. Changed input
+requires fresh checking. The preview is capped and available for a 24-hour review
+window. An adopted exception leaves unapproved provisional conflicts requiring review.
+
+Validated interactive Claude contexts may request native approval for provisional
+conflicts. Other contexts deny until browser review authorizes a retry. Native
+approval relies on the host's permission handling and is recorded as requested,
+not as server-verified human approval. The recurring provisional review queue is
+separate from operation approval.
+
+After updating Primitive, reinstall each agent integration to update its pinned
+hook runtime. `prim doctor` reports older runtimes as upgrade required / enforcement
+unverified. Publishing or installing a CLI release alone does not upgrade existing
+hooks.
 
 ### Hooks
 

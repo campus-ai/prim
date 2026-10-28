@@ -22,8 +22,8 @@
  *
  * Config knobs (env vars):
  *   PRIM_BYPASS=1                 — skip the check entirely
- *   PRIM_HOOK_MODE=block|warn|off — default `block`; `warn` demotes
- *                                   ask/deny to warn (telemetry only)
+ *   PRIM_HOOK_MODE=block|warn|off — default `block`; `warn` demotes only
+ *                                   below the organization's strict minimum
  *
  * Conflict policy is owned entirely by the server; the hook sends one bounded
  * request for the complete invocation and consumes the returned verdict.
@@ -35,12 +35,16 @@ import { isRepoActive, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { currentBranch, githubRepositoryFullName } from "../lib/git.js";
+import { STRICT_POLICY_RUNTIME_CAPABILITY } from "../lib/hook-capabilities.js";
 import { parseAgent } from "./agent.js";
+import { editPreview } from "./approval-copy.js";
+import { detectClaudeNativeReview } from "./claude-native-review.js";
 import {
   appendCodexContext,
   hasVisibleCodexMessage,
   prepareCodexContext,
 } from "./codex-context.js";
+import { toolInputDigest } from "./conflict-operation.js";
 import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
 import { readHookStdin } from "./hook-stdin.js";
 import { normalizeEnvelope } from "./normalize.js";
@@ -56,7 +60,6 @@ import {
   buildCursorOutput,
   buildHermesOutput,
   buildHookOutput,
-  demoteForMode,
   failOpenCodex,
   failOpenCursor,
   failOpenHermes,
@@ -67,6 +70,7 @@ import {
   PREFLIGHT_PROTOCOL_VERSION,
   type PreflightRequest,
   boundedClientVersion,
+  effectivePreflightVerdict,
   proposalFor,
   requestPreflight,
   resolvePreflightTargets,
@@ -84,6 +88,8 @@ type PreToolUseInput = {
   tool_use_id?: string;
   extra?: { tool_call_id?: unknown };
   cwd?: string;
+  permission_mode?: unknown;
+  agent_id?: unknown;
 };
 
 // The agent is stable for the process (stamped into the install command), so
@@ -178,6 +184,12 @@ async function emitUnverified(message: string, envelope?: PreToolUseInput): Prom
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes("--capabilities")) {
+    process.stdout.write(
+      `${JSON.stringify({ schemaVersion: 1, capabilities: [STRICT_POLICY_RUNTIME_CAPABILITY] })}\n`,
+    );
+    return;
+  }
   let raw: string;
   try {
     raw = await readHookStdin(STDIN_TIMEOUT_MS);
@@ -258,6 +270,20 @@ async function main(): Promise<void> {
     paths: targets.paths,
     pathsComplete: targets.coverage === "complete",
   });
+  const nativeReview =
+    agent === "claude_code" &&
+    detectClaudeNativeReview({
+      permissionMode: envelope.permission_mode,
+      agentId: envelope.agent_id,
+      cwd,
+    }).supported;
+  let digest: string;
+  try {
+    digest = toolInputDigest(toolName, envelope.tool_input);
+  } catch {
+    await emitUnverified("the full tool input could not be bound to a review", envelope);
+    return;
+  }
   const request: PreflightRequest = {
     protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
     agent,
@@ -268,25 +294,32 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
+    toolName,
+    toolInputDigest: digest,
+    enforcementCapabilities: { strictPolicy: true, nativeReview },
     ...(branch === undefined ? {} : { branch }),
     proposal: collectScopeAdmits ? proposalFor(envelope.tool_input) : "",
   };
   let result: ConflictCheckResult;
+  let aggregate: ConflictVerdict;
   try {
     const response = await requestPreflight(request);
     if (!response) {
       await emitUnverified("enforcement service returned an incompatible response", envelope);
       return;
     }
-    result = resultForPreflight(response);
+    result = resultForPreflight(
+      response,
+      editPreview(toolName, envelope.tool_input, targets.paths),
+    );
+    aggregate = effectivePreflightVerdict(response, mode, nativeReview);
+    // Presentation must describe the enforced minimum, even if the response
+    // verdict was weaker or a native ask must fall back to browser review.
+    if (aggregate === "ask" || aggregate === "deny") result.verdict = aggregate;
   } catch (error) {
     await emitUnverified(preflightFailure(error), envelope);
     return;
   }
-  const aggregate = demoteForMode(
-    result.verdict === "unavailable" ? "allow" : result.verdict,
-    mode,
-  );
   if (agent === "hermes" && aggregate !== "deny" && aggregate !== "ask") {
     const advisory = hermesAdvisory(result, aggregate);
     if (advisory) process.stderr.write(`${advisory}\n`);

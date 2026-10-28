@@ -4,7 +4,15 @@ import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
-import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
+import { approvalSummary } from "./approval-copy.js";
+import { canonicalToolJson } from "./conflict-operation.js";
+import {
+  type ConflictCheckResult,
+  type ConflictVerdict,
+  type HookMode,
+  demoteForMode,
+  extractFileTargets,
+} from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
@@ -38,8 +46,20 @@ export function boundedClientVersion(raw: string | null | undefined): string {
 export type Coverage = "complete" | "unverified";
 export type PreflightClientMode = "block" | "warn";
 // biome-ignore format: keep the small wire contract compact
-export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; branch?: string; proposal: string };
-export type PreflightResponse = PreflightResponseV3;
+export type PreflightRequest = { protocolVersion: typeof PREFLIGHT_PROTOCOL_VERSION; agent: Agent; clientMode: PreflightClientMode; clientVersion: string; sessionId: string; invocationId: string; repoSyncId: string; paths: string[]; coverage: Coverage; branch?: string; proposal: string; toolName?: string; toolInputDigest?: string; enforcementCapabilities?: {strictPolicy: true; nativeReview: boolean} };
+// Additive working-tree V3 extension. The published contract and provenance
+// remain pinned until the backend change has a committed release identity.
+export type PreflightPolicy = {
+  mode: "strict" | "legacy";
+  revision: number;
+  minimum: "none" | "review" | "deny";
+  compatibility: "supported" | "upgrade_required";
+};
+export type PreflightResponse = PreflightResponseV3 & {
+  policy?: PreflightPolicy;
+  reviewUrl?: string;
+  operationId?: string;
+};
 // biome-ignore format: compact internal shapes keep this boundary auditable
 export type TargetResolution = {
   paths: string[];
@@ -104,7 +124,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
 }
 export function proposalFor(toolInput: unknown): string {
   const redacted = scrub(toolInput, DEFAULT_RULES);
-  return truncateUtf8(JSON.stringify(redacted) ?? "", MAX_PROPOSAL_BYTES);
+  return truncateUtf8(canonicalToolJson(redacted), MAX_PROPOSAL_BYTES);
 }
 export function parsePreflightResponse(value: unknown): PreflightResponse | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -124,6 +144,13 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
   if (
     response.checkId !== undefined &&
     (typeof response.checkId !== "string" || !DISCLOSED_DECISION_ID_RE.test(response.checkId))
+  )
+    return null;
+  if (response.policy !== undefined && !validPolicy(response.policy)) return null;
+  if (response.reviewUrl !== undefined && !validReviewUrl(response.reviewUrl)) return null;
+  if (
+    response.operationId !== undefined &&
+    (typeof response.operationId !== "string" || !/^[a-f0-9]{64}$/u.test(response.operationId))
   )
     return null;
   const disclosures = response.decisionDisclosures;
@@ -160,6 +187,61 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
   return response as unknown as PreflightResponse;
 }
 
+function validPolicy(value: unknown): value is PreflightPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Record<string, unknown>;
+  return (
+    (policy.mode === "strict" || policy.mode === "legacy") &&
+    Number.isSafeInteger(policy.revision) &&
+    (policy.revision as number) >= 0 &&
+    ["none", "review", "deny"].includes(policy.minimum as string) &&
+    ["supported", "upgrade_required"].includes(policy.compatibility as string)
+  );
+}
+
+function validReviewUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 2048 || /[^\x21-\x7e]/u.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return (
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      !url.search &&
+      (url.protocol === "https:" ||
+        (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) &&
+      /^\/reviews\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Apply organization authority after the local display preference. */
+export function effectivePreflightVerdict(
+  response: PreflightResponse,
+  mode: HookMode,
+  nativeReview: boolean,
+): ConflictVerdict {
+  const declared =
+    response.verdict === "block"
+      ? "deny"
+      : response.verdict === "unavailable"
+        ? "allow"
+        : response.verdict;
+  const preferred = demoteForMode(declared, mode);
+  if (response.policy?.mode !== "strict") return preferred;
+  if (response.policy.minimum === "deny") return "deny";
+  if (response.policy.minimum === "review") {
+    return response.verdict === "block" || !nativeReview ? "deny" : "ask";
+  }
+  // A strict server block/ask must remain effective even when an older or
+  // inconsistent response omitted its more specific minimum.
+  if (declared === "deny") return "deny";
+  if (declared === "ask") return nativeReview ? "ask" : "deny";
+  return preferred;
+}
+
 /** Render only a bounded, terminal-safe lookup command for each hidden row. */
 export function decisionDisclosureContext(response: PreflightResponse): string {
   return (
@@ -178,7 +260,10 @@ export async function requestPreflight(
   });
   return parsePreflightResponse(response);
 }
-export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
+export function resultForPreflight(
+  response: PreflightResponse,
+  preview = "Review the requested change.",
+): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
   // The wire response remains untouched for protocol compatibility. These
   // values cross into terminal and hook presentation, so normalize them once
@@ -186,26 +271,61 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
   const message = boundedHealthError(response.message) ?? "";
   const unavailable = message || boundedHealthError(response.reasonCode);
   const safe = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-  const directives = response.conflicts.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const { decisionId, shortId } = value as Record<string, unknown>;
-    const id =
-      typeof shortId === "string" && safe.test(shortId)
-        ? `dec_${shortId}`
-        : typeof decisionId === "string" && safe.test(decisionId)
-          ? decisionId
-          : undefined;
-    if (!id) return [];
-    return [
-      `To reconcile, run: prim reconcile ${id}`,
-      ...(response.checkId && safe.test(response.checkId)
-        ? [
-            `Check: ${response.checkId}. After resolving, record the confirmed outcome: prim reconcile ${id} --check ${response.checkId} --outcome followed (retained Decision), or --outcome superseded (after replacing it). A bypass alone is not a resolution.`,
-          ]
-        : []),
-    ];
-  });
-  const reason = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const directives =
+    response.policy?.mode === "strict"
+      ? [
+          ...(response.reviewUrl ? [`Human review: ${response.reviewUrl}`] : []),
+          ...(response.operationId ? [`Operation: ${response.operationId}`] : []),
+          ...(["ask", "block"].includes(response.verdict) || response.policy.minimum !== "none"
+            ? [
+                "Review this exact change before retrying. Browser approval lasts five minutes and can be used once. Legacy bypasses do not authorize strict conflicts.",
+              ]
+            : []),
+        ]
+      : response.conflicts.flatMap((value) => {
+          if (!value || typeof value !== "object") return [];
+          const { decisionId, shortId } = value as Record<string, unknown>;
+          const id =
+            typeof shortId === "string" && safe.test(shortId)
+              ? `dec_${shortId}`
+              : typeof decisionId === "string" && safe.test(decisionId)
+                ? decisionId
+                : undefined;
+          if (!id) return [];
+          return [
+            `To reconcile, run: prim reconcile ${id}`,
+            ...(response.checkId && safe.test(response.checkId)
+              ? [
+                  `Check: ${response.checkId}. After resolving, record the confirmed outcome: prim reconcile ${id} --check ${response.checkId} --outcome followed (retained Decision), or --outcome superseded (after replacing it). A bypass alone is not a resolution.`,
+                ]
+              : []),
+          ];
+        });
+  const compatibilityNotice =
+    response.policy?.compatibility === "upgrade_required"
+      ? "[primitive] upgrade required: this hook runtime cannot verify strict enforcement. Update Primitive and reinstall this agent integration."
+      : "";
+  const guidance = [message, ...new Set(directives), compatibilityNotice]
+    .filter(Boolean)
+    .join("\n");
+  const reason =
+    response.conflicts.length > 0 ||
+    response.verdict === "ask" ||
+    response.verdict === "block" ||
+    response.policy?.minimum === "review" ||
+    response.policy?.minimum === "deny"
+      ? approvalSummary(
+          {
+            conflicts: response.conflicts,
+            message,
+            reasonCode: response.reasonCode,
+            evaluationCoverage: response.evaluationCoverage as
+              | { status?: unknown; selectionOmissions?: unknown; evidenceOmissions?: unknown }
+              | undefined,
+          },
+          preview,
+        )
+      : message;
   const disclosureContext = decisionDisclosureContext(response);
   return {
     verdict,
@@ -213,7 +333,8 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
     reason,
     additionalContext: [
       disclosureContext,
-      ["warn", "ask", "block"].includes(response.verdict) ? reason : "",
+      compatibilityNotice,
+      ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
     ]
       .filter(Boolean)
       .join("\n"),
