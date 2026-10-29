@@ -10,7 +10,7 @@ presence — from the command line and via session + git hooks.
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
 > load-bearing decision it conflicts with. When **Enforcement** is enabled for your
-> organization, gates can warn, pause, or block a conflicting edit until you reconcile
+> organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
 ## Installation
@@ -365,7 +365,7 @@ would create a cycle (exit 2); an unresolved id exits 4.
 ### Reconcile
 
 ```bash
-prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
+prim reconcile <id>    # Rejected: human_approval_required (exit 2)
 ```
 
 Record what happened after resolving a specific conflict:
@@ -381,8 +381,11 @@ The conflict output supplies the check ID. Only the person whose edit was
 checked can resolve that check. Repeating the same outcome is safe; changing an
 already recorded outcome is rejected. These declarations do not issue a bypass.
 
-Without `--check` and `--outcome`, when Conflict Gates **Enforcement** is enabled
-for your organization, `prim reconcile <id>` authorizes one retry for the named decision.
+Bypasses are disabled until an agent host can supply verifiable human approval.
+Bare `prim reconcile <id>` rejects locally, including with `--yes`,
+`--non-interactive`, or `--flag`. Sandbox escalation and automatic approval
+review do not authorize an override. A blocked edit must remain blocked or be
+changed to respect the governing Decisions.
 
 ### Hooks
 

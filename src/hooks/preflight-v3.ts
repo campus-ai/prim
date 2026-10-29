@@ -179,9 +179,25 @@ export async function requestPreflight(
   });
   return parsePreflightResponse(response);
 }
+// Show the replacement rather than spending the excerpt on a long old_string.
+function proposedChangeExcerpt(proposal: string): string | undefined {
+  try {
+    const input = JSON.parse(proposal);
+    if (input && typeof input === "object") {
+      for (const key of ["new_string", "new_str", "content", "command"]) {
+        if (typeof input[key] === "string") return boundedHealthError(input[key]);
+      }
+    }
+  } catch {
+    // The bounded, redacted proposal can end before the JSON object closes.
+  }
+  return boundedHealthError(proposal);
+}
+
 export function resultForPreflight(
   response: PreflightResponse,
   preview = "Review the requested change.",
+  invocation?: Pick<PreflightRequest, "paths" | "proposal">,
 ): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
   // The wire response remains untouched for protocol compatibility. These
@@ -192,7 +208,7 @@ export function resultForPreflight(
   const safe = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
   const directives = response.conflicts.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
-    const { decisionId, shortId } = value as Record<string, unknown>;
+    const { decisionId, shortId, title } = value as Record<string, unknown>;
     const id =
       typeof shortId === "string" && safe.test(shortId)
         ? `dec_${shortId}`
@@ -201,15 +217,33 @@ export function resultForPreflight(
           : undefined;
     if (!id) return [];
     return [
-      `To reconcile, run: prim reconcile ${id}`,
+      `Governing Decision ${id}${typeof title === "string" && boundedHealthError(title) ? `: ${boundedHealthError(title)}` : ""}.`,
       ...(response.checkId && safe.test(response.checkId)
         ? [
-            `Check: ${response.checkId}. After resolving, record the confirmed outcome: prim reconcile ${id} --check ${response.checkId} --outcome followed (retained Decision), or --outcome superseded (after replacing it). A bypass alone is not a resolution.`,
+            `Check: ${response.checkId}. After resolving, record the confirmed outcome: prim reconcile ${id} --check ${response.checkId} --outcome followed (retained Decision), or --outcome superseded (after replacing it). Recording a resolution does not authorize an override.`,
           ]
         : []),
     ];
   });
-  const guidance = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const blocked = response.verdict === "ask" || response.verdict === "block";
+  const proposal = invocation ? proposedChangeExcerpt(invocation.proposal) : undefined;
+  const editContext =
+    blocked && invocation
+      ? [
+          `Proposed edit to: ${invocation.paths.map((path) => boundedHealthError(path)).join(", ")}.`,
+          ...(proposal ? [`Proposed change (excerpt): ${proposal}`] : []),
+        ]
+      : [];
+  const approvalContext = blocked
+    ? [
+        "Overriding these Decisions requires explicit human approval naming each Decision and the proposed conflicting edit.",
+        "Reconcile bypasses are disabled: this host integration cannot provide verifiable human approval for a bypass. Keep the edit blocked and choose a compatible change.",
+        "Sandbox escalation, automatic review, prefix permissions, --yes, and an agent's assertion of approval do not authorize an override.",
+      ]
+    : [];
+  const guidance = [message, ...editContext, ...new Set(directives), ...approvalContext]
+    .filter(Boolean)
+    .join("\n");
   const reason =
     response.conflicts.length > 0 || response.verdict === "ask" || response.verdict === "block"
       ? approvalSummary(
