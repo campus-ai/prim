@@ -59,6 +59,8 @@ jobs:
 
       - run: pnpm check:approval-copy-golden
 
+      - run: pnpm check:decision-identity-golden
+
       - run: pnpm test
 
       - name: Exercise launchd convergence

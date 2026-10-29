@@ -78,8 +78,8 @@ export interface CascadeDeps {
 const defaultDeps: CascadeDeps = { getClient };
 
 export class CascadeNotFoundError extends Error {
-  constructor(idOrShortId: string) {
-    super(`Decision not found: ${idOrShortId}`);
+  constructor(_idOrShortId: string) {
+    super("Decision not found");
     this.name = "CascadeNotFoundError";
   }
 }

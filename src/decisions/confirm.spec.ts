@@ -69,12 +69,12 @@ describe("formatConfirmHuman — freshly applied", () => {
     expect(out).toContain("gone stale");
   });
 
-  it("falls back to the raw id when shortId is absent", () => {
+  it("withholds the raw id when shortId is absent", () => {
     const result: ConfirmResult = {
       request: { idOrShortId: DECISION_ID, confirmed: true },
       outcome: { outcome: "confirmed", decisionId: DECISION_ID, shortId: undefined },
     };
-    expect(formatConfirmHuman(result)).toBe(`[prim] ${DECISION_ID} confirmed.`);
+    expect(formatConfirmHuman(result)).toBe("[prim] Decision identity unavailable confirmed.");
   });
 });
 
@@ -130,8 +130,8 @@ describe("formatConfirmHuman — folded HTTP errors", () => {
       outcome: { outcome: "ambiguous" },
     };
     const out = formatConfirmHuman(result);
-    expect(out).toContain('"230" is ambiguous');
-    expect(out).toContain("full decision id");
+    expect(out).toContain("Decision identity unavailable; retry after identity repair");
+    expect(out).not.toContain("full decision id");
   });
 
   it("renders the not_author outcome distinctly", () => {

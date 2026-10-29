@@ -29,7 +29,7 @@ The CLI auto-refreshes a still-valid session from the stored refresh token (proa
 
 1. Every command accepts `--help`. When unsure of flags, run `npx --yes @primitive.ai/prim <cmd> --help` rather than guessing.
 2. The CLI prints API errors as one-liners to stderr and exits non-zero. Treat any non-zero exit as actionable. If auth-related, re-check `auth status`.
-3. `<idOrShortId>` arguments accept either a full decision ID or the short ID shown in feeds (and gate reasons, when Conflict Gates are enabled).
+3. `<idOrShortId>` arguments use the `dec_<8 hex>` ID shown in feeds and gate reasons. Bare short IDs and legacy full IDs remain accepted as inputs.
 4. In `npx --yes @primitive.ai/prim ...`, `npx --yes` is npm's flag and only skips npm's package-install confirmation. It is not user consent for a Primitive action. Prim's global flag appears after the package name: `npx --yes @primitive.ai/prim --yes ...`.
 
 ## Conflict Gates & Enforcement
@@ -53,6 +53,16 @@ When enabled, the gate sends its preflight check directly to Primitive and fail-
 Before presenting decision reads, use the current conversation, task, and available memory to understand what matters to the requester and how they want it delivered. Do not dump the API's chronological rows unchanged. Group related decisions around goals or workstreams, lead with decisions that affect the requester's current work, and surface conflicts, supersessions, or consequential tradeoffs before background activity. Explain why an item is relevant when the connection is supported; do not invent relevance or rationale. Preserve the response's `unavailable`, truncation, and count semantics when reshaping it.
 
 Then tailor the delivery to this requester, not a generic reader. Take your cues from the signals actually present — durable preferences in memory, the format and depth they've used or asked for earlier in the conversation, and the shape of their current goal — and match the form (a one-line answer, a table, grouped headers, or prose), the depth (a bare intent versus full rationale, alternatives, and tradeoffs), the altitude (strategic direction versus specific ids and files), the fields they actually track, and the register of the exchange. Where a preference isn't evidenced, default to a concise, skimmable summary — read taste from signal the way you read rationale, never conjuring a persona from thin air. Tailoring changes how the facts land, never which facts: keep every conflict, supersession, and consequential tradeoff in view even when the requester wants it terse, and never let style override the `unavailable`, truncation, and count semantics above.
+
+## Referring to Decisions
+
+A Decision's public ID is `dec_<8 lowercase hex characters>`. Use it in commands,
+written references, and links: `https://app.getprimitive.ai/decisions/dec_<short>`.
+Use `webUrl` when present; otherwise build that URL from the public `id` or
+`decisionId`. Intent-labelled Markdown links are supported. No lookup of an
+internal record ID is needed to construct a link. Full IDs remain accepted only
+as legacy inputs; never ask for or print them. Public JSON identity fields contain
+prefixed short IDs; `shortId` remains a bare eight-character compatibility alias.
 
 ## Record a resolution
 
@@ -301,7 +311,7 @@ Safe to run repeatedly:
 
 - **Idempotent** — re-linking an existing edge (or unlinking a missing one) is a no-op that still exits 0 (`already_linked` / `not_linked`).
 - **Acyclic** — a self-loop, or any link that would close a dependency cycle, is refused with exit 2 (with the offending chain when it's short enough to render); the graph stays a DAG.
-- **Exit codes** (treat non-zero as actionable): `0` success or no-op; `2` a refused link (self-loop, cycle, or an ambiguous short id — retry with the full id); `4` an id that doesn't resolve. After a non-zero exit, branch on the exit code and the `[prim]` STDERR verdict, **not** on STDOUT keys: only the exit-0 outcomes carry the full `{ outcome, childId, childShortId, parentId, parentShortId }`; a refused link prints a smaller `{ outcome, … }`, and an unresolved id (exit 4) prints nothing to STDOUT.
+- **Exit codes** (treat non-zero as actionable): `0` success or no-op; `2` a refused link (self-loop, cycle, or an unavailable identity — retry after identity repair); `4` an id that doesn't resolve. After a non-zero exit, branch on the exit code and the `[prim]` STDERR verdict, **not** on STDOUT keys: only the exit-0 outcomes carry the full `{ outcome, childId, childShortId, parentId, parentShortId }`; a refused link prints a smaller `{ outcome, … }`, and an unresolved id (exit 4) prints nothing to STDOUT.
 
 Like authoring, relate only what the user asks for — don't invent relationships they didn't state.
 

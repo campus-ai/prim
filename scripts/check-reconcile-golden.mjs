@@ -24,7 +24,7 @@ const server = createServer(async (request, response) => {
       JSON.stringify({
         ok: true,
         checkId: body.checkId,
-        decisionId: "decision-1",
+        decisionId: "dec_0123abcd",
         outcome: body.outcome,
         recordedAt: 1_700_000_000_000,
         duplicate: false,
@@ -45,8 +45,12 @@ const server = createServer(async (request, response) => {
           verdict === "allow"
             ? []
             : [
-                { decisionId: "decision-1", shortId: "0123abcd", title: "Keep durable retries" },
-                { decisionId: "decision-2", shortId: "abcd0123", title: "Preserve customer work" },
+                { decisionId: "dec_0123abcd", shortId: "0123abcd", title: "Keep durable retries" },
+                {
+                  decisionId: "dec_abcd0123",
+                  shortId: "abcd0123",
+                  title: "Preserve customer work",
+                },
               ],
         bypassed: [],
       }),
@@ -103,6 +107,14 @@ try {
     assert.deepEqual(JSON.parse(result.stdout), expectedRejection);
     assert.equal(result.stderr, `[prim] reconcile rejected: ${expectedRejection.message}\n`);
   }
+  const bareId = await run("dist/index.js", ["reconcile", "0123abcd"]);
+  assert.equal(bareId.code, 2);
+  assert.deepEqual(JSON.parse(bareId.stdout), expectedRejection);
+  const legacyId = "j57b04m7f2z3xv647yxxkcdzy17h6k2z";
+  const legacy = await run("dist/index.js", ["reconcile", legacyId]);
+  assert.equal(legacy.code, 2);
+  assert.equal(JSON.parse(legacy.stdout).error, "human_approval_required");
+  assert.ok(!`${legacy.stdout}${legacy.stderr}`.includes(legacyId));
   assert.deepEqual(requests, [], "Bare reconcile must reject without contacting the server");
   const help = await run("dist/index.js", ["reconcile", "--help"]);
   assert.equal(help.code, 0);

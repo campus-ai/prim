@@ -170,7 +170,7 @@ describe("renderCascade", () => {
         }),
       }),
     );
-    expect(out).toContain("dec_14c2038c");
+    expect(out).toContain("Decision identity unavailable");
     expect(out).toContain("Use Redis[2J");
     expect(out).toContain("reason: unsafe reason]52;c;payload");
     expect(out).not.toContain(esc);

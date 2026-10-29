@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { DECISION_IDENTITY_VERSION } from "./protocol.js";
 /**
  * `prim-daemon-server` — long-lived per-user companion for the prim hooks.
  *
@@ -895,6 +896,7 @@ function handleConnection(conn: Socket): void {
   conn.setTimeout(DAEMON_SOCKET_IDLE_TIMEOUT_MS, () => conn.end());
 
   const writeJsonResponse = (response: DaemonResponseEnvelope): void => {
+    response.decisionIdentityVersion = DECISION_IDENTITY_VERSION;
     let payload = Buffer.from(`${JSON.stringify(response)}\n`, "utf8");
     if (payload.length > DAEMON_JSON_RESPONSE_MAX_BYTES) {
       payload = Buffer.from(

@@ -7,6 +7,7 @@
 import type { Command } from "commander";
 import { HttpError, getClient } from "../client.js";
 import { isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
+import { decisionIdentifier } from "../decisions/identity.js";
 
 type ReconcileOptions = {
   check?: string;
@@ -48,7 +49,7 @@ export async function performReconcile(
     JSON.stringify({
       ok: false,
       error: "human_approval_required",
-      decisionId: idOrShortId,
+      decisionId: decisionIdentifier(idOrShortId),
       message,
     }),
   );
