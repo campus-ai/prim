@@ -362,6 +362,21 @@ creating it; do not guess.
 own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that
 would create a cycle (exit 2); an unresolved id exits 4.
 
+### Bash script coverage
+
+Conflict Gates also inspect Bash writes expressed as Python `-c`, Node.js
+`-e`/`--eval`, or quoted stdin heredocs. Static paths passed to Python `Path`
+writes or writable `open`, and Node.js `fs`/`fs.promises` writeFile/appendFile
+calls, participate in the existing preflight check. Simple path variables and
+direct import aliases are supported. Analysis never executes the script.
+
+Script coverage remains unverified: dynamic paths, reassignment, nested scopes,
+directory changes, wrappers, external scripts, and unsupported syntax can hide
+other writes. Unknown commands display a “not verified” warning in active repos;
+recognized read-only commands stay quiet. Known conflicts still prompt or block
+according to the existing policy. Embedded parsing stops at 64 KiB, targets are
+bounded to 32, and shell proposal truncation at 6,144 bytes is disclosed.
+
 ### Reconcile
 
 ```bash

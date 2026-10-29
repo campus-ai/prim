@@ -65,9 +65,13 @@
     "check:reconcile-golden": "node scripts/check-reconcile-golden.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check:shell-targets-golden": "node scripts/check-shell-targets-golden.mjs"
   },
   "dependencies": {
+    "@lezer/common": "^1.5.4",
+    "@lezer/javascript": "^1.5.6",
+    "@lezer/python": "^1.1.19",
     "commander": "^12.1.0",
     "diff": "^5.2.0",
     "unbash": "4.0.3",
