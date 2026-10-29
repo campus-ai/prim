@@ -41,9 +41,9 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || needs.release-please.outputs.tag_name }}
-      # Publish the reviewed short Decision ID release to the onboarding channel.
+      # Publish the reviewed bypass-enforcement release to the onboarding channel.
       # Later prereleases keep their existing alpha default.
-      npm_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || needs.release-please.outputs.tag_name == 'v0.1.0-alpha.112' && 'latest' || '' }}
+      npm_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || needs.release-please.outputs.tag_name == 'v0.1.0-alpha.113' && 'latest' || '' }}
     permissions:
       contents: read
       id-token: write
