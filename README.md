@@ -203,6 +203,25 @@ prim codex install                 # Install OpenAI Codex hooks (user scope; --s
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 
+For `$write-gameplan` or `$write-workstream` authoring in Codex, install the
+separate Primitive planning companion from the target repository after the
+public `$write-gameplan` skill is available:
+
+```bash
+prim setup --agent codex
+prim gameplan install --agent codex
+prim gameplan status
+```
+
+`gameplan install` adds the companion to this repository and a prompt dispatcher
+to the user's Codex hooks, including linked worktrees. It does not replace the
+public planning skill or install Conflict Gates; `setup` handles the latter.
+Review `/hooks` in Codex and start a fresh session. `prim gameplan uninstall`
+removes this repository's companion and leaves the shared user hook in place;
+pass `--remove-user-hook` only when no other repository needs it. A Decision
+scoped only to a code path named inside a gameplan is surfaced during planning,
+but the edit gate sees the changed gameplan path.
+
 Passive capture is repo-scoped even when these integrations are installed at user
 scope. `prim enable` marks the current Git repo active; `prim disable` makes it
 inactive. A project-scoped install activates its repo automatically. In an inactive

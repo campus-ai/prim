@@ -43,6 +43,7 @@
   "main": "./dist/index.js",
   "files": [
     "dist",
+    "assets",
     "LICENSE",
     "README.md",
     "SKILL.md"
@@ -53,6 +54,9 @@
     "contracts:check": "node scripts/generate-cli-contract.mjs --check",
     "contracts:provenance": "node scripts/update-cli-contract.mjs --check",
     "check:decision-identity-golden": "node scripts/check-decision-identity-golden.mjs",
+    "check:gameplan-companion": "node scripts/check-gameplan-companion.mjs",
+    "check:gameplan-e2e": "node scripts/check-gameplan-e2e.mjs",
+    "check:gameplan-package": "node scripts/check-gameplan-package.mjs",
     "check:approval-copy-golden": "node scripts/check-approval-copy-golden.mjs",
     "contracts:update": "node scripts/update-cli-contract.mjs",
     "postbuild": "chmod +x ./dist/index.js ./dist/statusline-main.js ./dist/hooks/pre-commit.js ./dist/hooks/post-commit.js ./dist/hooks/post-rewrite.js ./dist/hooks/prim-hook.js ./dist/hooks/pre-tool-use.js ./dist/hooks/post-tool-use.js ./dist/hooks/session-start.js ./dist/hooks/session-end.js ./dist/daemon/server.js && node scripts/check-hook-runtime.mjs",
