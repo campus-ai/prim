@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.111](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-10-28)
+
+
+### Bug Fixes
+
+* **hooks:** wait through the preflight server lease ([9404d9f](https://github.com/campus-ai/prim/commit/9404d9ffe051d7c9319c2c9c7b0e4617d7f5affc))
+
 ## [0.1.0-alpha.110](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.109...v0.1.0-alpha.110) (2026-10-28)
 
 
