@@ -62,6 +62,7 @@
     "format": "biome check --fix src/ scripts/",
     "format:check": "biome check src/ scripts/",
     "typecheck": "tsc --noEmit",
+    "check:reconcile-golden": "node scripts/check-reconcile-golden.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

@@ -282,6 +282,7 @@ async function main(): Promise<void> {
     result = resultForPreflight(
       response,
       editPreview(toolName, envelope.tool_input, targets.paths),
+      request,
     );
   } catch (error) {
     await emitUnverified(preflightFailure(error), envelope);
