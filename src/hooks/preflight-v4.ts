@@ -201,19 +201,30 @@ export function pausedResult(message: string, checkId?: string): ConflictCheckRe
   return { verdict: "deny", conflicts: [], reason, additionalContext: reason, truncated: false };
 }
 
-export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
+export function resultForPreflight(
+  response: PreflightResponse,
+  preview?: string,
+): ConflictCheckResult {
   if (!hasCompleteCoverage(response))
     return pausedResult(response.message || response.reasonCode, response.checkId);
-  return renderCompleted({
-    protocolVersion: 3,
-    verdict: response.verdict,
-    reasonCode: response.reasonCode,
-    message: response.message,
-    conflicts: response.conflicts,
-    bypassed: response.bypassed,
-    checkId: response.checkId,
-    decisionDisclosures: response.decisionDisclosures,
-  });
+  return renderCompleted(
+    {
+      protocolVersion: 3,
+      verdict: response.verdict,
+      reasonCode: response.reasonCode,
+      message: response.message,
+      conflicts: response.conflicts,
+      bypassed: response.bypassed,
+      checkId: response.checkId,
+      decisionDisclosures: response.decisionDisclosures,
+      evaluationCoverage: {
+        ...response.evaluationCoverage,
+        selectionOmissions: [],
+        evidenceOmissions: [],
+      },
+    },
+    preview,
+  );
 }
 
 export async function requestPreflight(

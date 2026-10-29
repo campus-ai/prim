@@ -57,6 +57,8 @@ jobs:
 
       - run: pnpm test:preflight-v4 --schema contracts/cli-http-v1.schema.json
 
+      - run: pnpm check:approval-copy-golden
+
       - run: pnpm test
 
       - name: Exercise launchd convergence

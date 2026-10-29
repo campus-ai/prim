@@ -4,14 +4,15 @@ import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
+import { approvalSummary } from "./approval-copy.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
 export const PREFLIGHT_PROTOCOL_VERSION = 3 as const;
-// The server allows a 7.5-second semantic evaluation plus one second for its
-// owner to finalize. Leave one additional second for the response to reach
-// the hook before failing open visibly.
-export const PREFLIGHT_TIMEOUT_MS = 6_500;
+// The server's 8.5-second evaluation lease starts after authorization and
+// candidate selection. Leave time for that setup, finalization, and transport
+// so a late conflict verdict reaches the hook before it fails open.
+export const PREFLIGHT_TIMEOUT_MS = 12_000;
 export const MAX_PREFLIGHT_PATHS = 32;
 export const MAX_PROPOSAL_BYTES = 6_144;
 export const MAX_CLIENT_VERSION_CHARS = 32;
@@ -178,7 +179,10 @@ export async function requestPreflight(
   });
   return parsePreflightResponse(response);
 }
-export function resultForPreflight(response: PreflightResponse): ConflictCheckResult {
+export function resultForPreflight(
+  response: PreflightResponse,
+  preview = "Review the requested change.",
+): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
   // The wire response remains untouched for protocol compatibility. These
   // values cross into terminal and hook presentation, so normalize them once
@@ -205,7 +209,21 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
         : []),
     ];
   });
-  const reason = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const guidance = [message, ...new Set(directives)].filter(Boolean).join("\n");
+  const reason =
+    response.conflicts.length > 0 || response.verdict === "ask" || response.verdict === "block"
+      ? approvalSummary(
+          {
+            conflicts: response.conflicts,
+            message,
+            reasonCode: response.reasonCode,
+            evaluationCoverage: response.evaluationCoverage as
+              | { status?: unknown; selectionOmissions?: unknown; evidenceOmissions?: unknown }
+              | undefined,
+          },
+          preview,
+        )
+      : message;
   const disclosureContext = decisionDisclosureContext(response);
   return {
     verdict,
@@ -213,7 +231,7 @@ export function resultForPreflight(response: PreflightResponse): ConflictCheckRe
     reason,
     additionalContext: [
       disclosureContext,
-      ["warn", "ask", "block"].includes(response.verdict) ? reason : "",
+      ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
     ]
       .filter(Boolean)
       .join("\n"),
