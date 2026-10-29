@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.114](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.113...v0.1.0-alpha.114) (2026-10-29)
+
+
+### Bug Fixes
+
+* **hooks:** check script writes before allowing Bash ([#407](https://github.com/campus-ai/prim/issues/407)) ([4cbb9a0](https://github.com/campus-ai/prim/commit/4cbb9a028ba2ab9c032851de906d40ef563dc3c5))
+
 ## [0.1.0-alpha.113](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.112...v0.1.0-alpha.113) (2026-10-29)
 
 
