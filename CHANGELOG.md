@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.115](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.114...v0.1.0-alpha.115) (2026-10-29)
+
+
+### Features
+
+* **gameplan:** install Primitive companion for Codex ([9aef35e](https://github.com/campus-ai/prim/commit/9aef35ea060175a492ab8b062c71722175c6eeb4))
+* **gameplan:** install Primitive companion for Codex ([04407bb](https://github.com/campus-ai/prim/commit/04407bb5aaa73006c906c1a9976c1e36d48a0634))
+
 ## [0.1.0-alpha.114](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.113...v0.1.0-alpha.114) (2026-10-29)
 
 
