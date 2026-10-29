@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.0-alpha.111](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-10-28)
+
+
+### Bug Fixes
+
+* **hooks:** wait through the preflight server lease ([9404d9f](https://github.com/campus-ai/prim/commit/9404d9ffe051d7c9319c2c9c7b0e4617d7f5affc))
+
+## [0.1.0-alpha.110](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.109...v0.1.0-alpha.110) (2026-10-28)
+
+
+### Features
+
+* **hooks:** explain V3 approval prompts ([6a4b02c](https://github.com/campus-ai/prim/commit/6a4b02cbe40874ab61fda3a0109aade1c873d3c9))
+
+
+### Bug Fixes
+
+* **hooks:** enforce host preflight failure safeguards ([53a43bf](https://github.com/campus-ai/prim/commit/53a43bfcf989c95b229099655ef1750e5da12954))
+* **hooks:** restore main through reviewed recovery ([e3827f6](https://github.com/campus-ai/prim/commit/e3827f6342975a46a805800115e1cb34c58dd4e5))
+* **hooks:** revert accidental preflight host push ([c541c25](https://github.com/campus-ai/prim/commit/c541c258dc3ac55e6b65b6c351d8380aa1bd451f))
+
 ## [0.1.0-alpha.109](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.108...v0.1.0-alpha.109) (2026-10-23)
 
 

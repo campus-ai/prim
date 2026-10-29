@@ -613,7 +613,8 @@
         "message": "100 Decisions evaluated",
         "conflicts": [
           {
-            "decisionId": "decision100"
+            "decisionId": "decision100",
+            "title": "Keep retries durable across worker restarts"
           }
         ],
         "bypassed": [],
@@ -652,6 +653,30 @@
           "status": "partial",
           "semanticBatchCount": 13,
           "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
+      "name": "unavailable preflight has no durable work identity",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "paused",
+        "verdict": "block",
+        "reasonCode": "preflight_unavailable",
+        "message": "Restore the enforcement service before retrying",
+        "conflicts": [],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 0,
+          "submittedCount": 0,
+          "evaluatedCount": 0,
+          "bypassedCount": 0,
+          "discoveryComplete": false,
+          "status": "not_run",
+          "semanticBatchCount": 0,
+          "completedSemanticBatchCount": 0
         }
       }
     },
@@ -728,7 +753,8 @@
         "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
         "conflicts": [
           {
-            "decisionId": "decision-conflict"
+            "decisionId": "decision-conflict",
+            "title": "Keep retries durable across worker restarts"
           }
         ],
         "bypassed": [],

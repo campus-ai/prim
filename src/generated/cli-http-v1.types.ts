@@ -924,6 +924,7 @@ export interface PreflightResponseV3 {
   conflicts: {
     decisionId: string;
     shortId?: string;
+    title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {
@@ -1681,6 +1682,7 @@ export interface PreflightResponseV4 {
   conflicts: {
     decisionId: string;
     shortId?: string;
+    title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {
