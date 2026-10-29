@@ -10,7 +10,7 @@ presence — from the command line and via session + git hooks.
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
 > load-bearing decision it conflicts with. When **Enforcement** is enabled for your
-> organization, gates can warn, pause, or block a conflicting edit until you reconcile
+> organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
 ## Installation
@@ -330,7 +330,7 @@ prim decisions link <child> --on <parent>    # Relate: <child> depends on <paren
 prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
 
-`<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
+`<id>` uses the canonical `dec_<8 hex>` Decision ID; bare short IDs and legacy full IDs remain accepted as inputs. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
 `decisions check` uses the checkout's current Primitive repository binding and
@@ -380,7 +380,7 @@ bounded to 32, and shell proposal truncation at 6,144 bytes is disclosed.
 ### Reconcile
 
 ```bash
-prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
+prim reconcile <id>    # Rejected: human_approval_required (exit 2)
 ```
 
 Record what happened after resolving a specific conflict:
@@ -396,8 +396,11 @@ The conflict output supplies the check ID. Only the person whose edit was
 checked can resolve that check. Repeating the same outcome is safe; changing an
 already recorded outcome is rejected. These declarations do not issue a bypass.
 
-Without `--check` and `--outcome`, when Conflict Gates **Enforcement** is enabled
-for your organization, `prim reconcile <id>` authorizes one retry for the named decision.
+Bypasses are disabled until an agent host can supply verifiable human approval.
+Bare `prim reconcile <id>` rejects locally, including with `--yes`,
+`--non-interactive`, or `--flag`. Sandbox escalation and automatic approval
+review do not authorize an override. A blocked edit must remain blocked or be
+changed to respect the governing Decisions.
 
 ### Hooks
 
@@ -536,3 +539,13 @@ pnpm lint         # Lint
 ## License
 
 [MIT](LICENSE)
+
+### Decision identifiers
+
+Decision IDs printed by prim are `dec_` followed by eight lowercase hexadecimal
+characters. Use the same ID in commands and at
+`https://app.getprimitive.ai/decisions/dec_<short>`. Public JSON fields such as
+`id`, `decisionId`, and relationship references use this prefixed ID; the
+`shortId` compatibility field contains the eight characters without the prefix.
+Existing full record IDs remain accepted as inputs. Upgrade the backend before
+this CLI; an unavailable identity produces an error rather than a storage ID.

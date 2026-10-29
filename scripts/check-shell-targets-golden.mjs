@@ -68,12 +68,15 @@ try {
       bypassed: [],
     },
     "Run a command affecting “a.ts”.",
+    { paths: ["a.ts"], proposal: proposalFor(proposal) },
     true,
   );
   const claude = buildHookOutput("ask", [conflict]);
   assert.equal(claude.hookSpecificOutput.permissionDecision, "ask");
   assert.match(claude.hookSpecificOutput.permissionDecisionReason, /shell proposal was truncated/);
   assert.match(claude.hookSpecificOutput.additionalContext, /shell proposal was truncated/);
+  assert.match(claude.hookSpecificOutput.additionalContext, /Proposed edit to: a\.ts/);
+  assert.match(claude.hookSpecificOutput.additionalContext, /Reconcile bypasses are disabled/);
   const codex = buildCodexOutput("ask", [conflict]);
   assert.equal(codex.hookSpecificOutput.permissionDecision, "deny");
   assert.match(codex.hookSpecificOutput.permissionDecisionReason, /shell proposal was truncated/);

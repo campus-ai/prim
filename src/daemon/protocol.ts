@@ -11,7 +11,10 @@ export interface DaemonRequestEnvelope {
   caller?: DaemonPrincipal;
 }
 
+export const DECISION_IDENTITY_VERSION = 7;
+
 export interface DaemonResponseEnvelope {
+  decisionIdentityVersion?: number;
   id: number;
   ok: boolean;
   result?: unknown;
@@ -49,6 +52,9 @@ export function parseDaemonResponseEnvelope(value: unknown): DaemonResponseEnvel
   if (value.error !== undefined && typeof value.error !== "string") return undefined;
   return {
     id: value.id,
+    ...(typeof value.decisionIdentityVersion === "number"
+      ? { decisionIdentityVersion: value.decisionIdentityVersion }
+      : {}),
     ok: value.ok,
     ...(value.result === undefined ? {} : { result: value.result }),
     ...(value.error === undefined ? {} : { error: value.error }),

@@ -290,8 +290,7 @@ export type HermesHookOutput = { action?: "block"; message?: string };
  * Maps the aggregate verdict into Hermes' block-or-allow contract. Both
  * `deny` and `ask` become a block: Hermes has no soft-confirm tier, so a
  * decision Claude would raise as an `ask` dialog is here a block whose
- * message carries the reason and the `prim reconcile …` directive (the agent
- * reconciles, then retries). `warn`/`allow` return an empty object; the caller
+ * message names the governing Decisions and keeps the edit blocked. `warn`/`allow` return an empty object; the caller
  * surfaces warnings on stderr and Hermes continues the tool, including for
  * `semantic_uncertain`.
  */

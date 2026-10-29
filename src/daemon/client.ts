@@ -1,3 +1,4 @@
+import { DECISION_IDENTITY_VERSION } from "./protocol.js";
 /**
  * Socket client for the prim-daemon.
  *
@@ -120,7 +121,14 @@ export function daemonRequest<T>(
           return;
         }
         clearTimeout(timer);
-        settle(res.ok && res.result !== undefined ? (res.result as T) : null);
+        settle(
+          (!(method.startsWith("decisions_") || method.startsWith("decision_")) ||
+            res.decisionIdentityVersion === DECISION_IDENTITY_VERSION) &&
+            res.ok &&
+            res.result !== undefined
+            ? (res.result as T)
+            : null,
+        );
       } catch {
         clearTimeout(timer);
         settle(null);

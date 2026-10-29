@@ -55,10 +55,13 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm build
+      - run: pnpm check:reconcile-golden
 
       - run: pnpm check:approval-copy-golden
 
       - run: pnpm check:shell-targets-golden
+
+      - run: pnpm check:decision-identity-golden
 
       - run: pnpm test
 

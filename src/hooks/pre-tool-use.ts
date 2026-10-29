@@ -288,6 +288,7 @@ async function main(): Promise<void> {
     result = resultForPreflight(
       response,
       editPreview(toolName, envelope.tool_input, targets.paths),
+      request,
       collectScopeAdmits &&
         (toolName === "Bash" || toolName === "Shell") &&
         proposalIsTruncated(envelope.tool_input),

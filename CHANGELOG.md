@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.113](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.112...v0.1.0-alpha.113) (2026-10-29)
+
+
+### Bug Fixes
+
+* **reconcile:** reject agent-issued decision overrides ([#408](https://github.com/campus-ai/prim/issues/408)) ([38bace5](https://github.com/campus-ai/prim/commit/38bace59654a8f73da994abd6aab148c7d75c211))
+
+## [0.1.0-alpha.112](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.111...v0.1.0-alpha.112) (2026-10-29)
+
+
+### Bug Fixes
+
+* **decisions:** use public short IDs across CLI output ([#402](https://github.com/campus-ai/prim/issues/402)) ([5267456](https://github.com/campus-ai/prim/commit/5267456e9f34a134267feaa96c1fd214ea902e8e))
+
 ## [0.1.0-alpha.111](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-10-28)
 
 

@@ -117,8 +117,7 @@ const PAST_PARTICIPLE = {
 
 const ORG_UNBOUND_MESSAGE = "CLI token is not bound to an organization";
 const NOT_AUTHOR_MESSAGE = "Only the decision's author can perform this action";
-const AMBIGUOUS_MESSAGE =
-  "shortId is ambiguous in this organization; retry with the full decision id";
+const AMBIGUOUS_MESSAGE = "Decision identity unavailable; retry after identity repair";
 const DECISION_NOT_FOUND_MESSAGE = "Decision not found";
 const REPLACEMENT_NOT_FOUND_MESSAGE = "Replacement decision not found";
 const SELF_REPLACEMENT_MESSAGE = "A decision cannot supersede itself";
@@ -219,7 +218,11 @@ function classifyHttpError(error: HttpError): DecisionLifecycleFailure {
   if (error.status === 403 && message === NOT_AUTHOR_MESSAGE) {
     return failure("not_author", DECISION_LIFECYCLE_EXIT.rejected, error.status);
   }
-  if (error.status === 409 && message === AMBIGUOUS_MESSAGE) {
+  if (
+    error.status === 409 &&
+    (message === AMBIGUOUS_MESSAGE ||
+      message === "shortId is ambiguous in this organization; retry with the full decision id")
+  ) {
     return failure("ambiguous_identifier", DECISION_LIFECYCLE_EXIT.rejected, error.status);
   }
   if (error.status === 409 && IMMUTABLE_MESSAGE.test(message)) {
@@ -273,7 +276,7 @@ function formatFailureHuman(
     case "not_author":
       return `[prim] ${verb} rejected: only the Decision's author can ${verb} it.`;
     case "ambiguous_identifier":
-      return `[prim] ${verb} rejected: a Decision identifier is ambiguous; retry with full Decision IDs.`;
+      return `[prim] ${verb} rejected: Decision identity unavailable; retry after identity repair.`;
     case "immutable":
       return `[prim] ${verb} rejected: this Decision is immutable; supersede it to change it.`;
     case "illegal_transition":
