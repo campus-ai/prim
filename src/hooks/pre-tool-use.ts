@@ -69,6 +69,7 @@ import {
   type PreflightRequest,
   boundedClientVersion,
   proposalFor,
+  proposalIsTruncated,
   requestPreflight,
   resolvePreflightTargets,
   resultForPreflight,
@@ -90,6 +91,7 @@ type PreToolUseInput = {
 // The agent is stable for the process (stamped into the install command), so
 // resolve it once — both main() and its catch handler emit through it.
 const agent = parseAgent(process.argv);
+let uncheckedMutation: PreToolUseInput | undefined;
 
 async function emit(
   output: HookOutput | CodexHookOutput | CursorHookOutput | HermesHookOutput,
@@ -233,8 +235,12 @@ async function main(): Promise<void> {
     await emit(failOpen());
     return;
   }
+  uncheckedMutation = envelope;
   if (targets.paths.length === 0 && !targets.definite) {
-    await emit(failOpen());
+    await emitUnverified(
+      "shell command write targets could not be determined; change was not verified",
+      envelope,
+    );
     return;
   }
   if (agent === "cursor" && targets.coverage === "unverified") {
@@ -282,6 +288,9 @@ async function main(): Promise<void> {
     result = resultForPreflight(
       response,
       editPreview(toolName, envelope.tool_input, targets.paths),
+      collectScopeAdmits &&
+        (toolName === "Bash" || toolName === "Shell") &&
+        proposalIsTruncated(envelope.tool_input),
     );
   } catch (error) {
     await emitUnverified(preflightFailure(error), envelope);
@@ -322,5 +331,10 @@ async function main(): Promise<void> {
 }
 
 main().catch(async () => {
-  await emit(failOpen());
+  if (uncheckedMutation)
+    await emitUnverified(
+      "hook failed while checking a possible write; change was not verified",
+      uncheckedMutation,
+    );
+  else await emit(failOpen());
 });

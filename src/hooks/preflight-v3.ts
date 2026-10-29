@@ -107,6 +107,11 @@ export function proposalFor(toolInput: unknown): string {
   const redacted = scrub(toolInput, DEFAULT_RULES);
   return truncateUtf8(JSON.stringify(redacted) ?? "", MAX_PROPOSAL_BYTES);
 }
+export function proposalIsTruncated(toolInput: unknown): boolean {
+  return (
+    Buffer.byteLength(JSON.stringify(scrub(toolInput, DEFAULT_RULES)) ?? "") > MAX_PROPOSAL_BYTES
+  );
+}
 export function parsePreflightResponse(value: unknown): PreflightResponse | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const response = value as Record<string, unknown>;
@@ -182,6 +187,7 @@ export async function requestPreflight(
 export function resultForPreflight(
   response: PreflightResponse,
   preview = "Review the requested change.",
+  proposalTruncated = false,
 ): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
   // The wire response remains untouched for protocol compatibility. These
@@ -225,12 +231,16 @@ export function resultForPreflight(
         )
       : message;
   const disclosureContext = decisionDisclosureContext(response);
+  const truncationNote = proposalTruncated
+    ? "[primitive] shell proposal was truncated; the complete change was not verified"
+    : "";
   return {
     verdict,
     conflicts: response.conflicts,
-    reason,
+    reason: [reason, truncationNote].filter(Boolean).join("\n"),
     additionalContext: [
       disclosureContext,
+      truncationNote,
       ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
     ]
       .filter(Boolean)
