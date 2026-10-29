@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.0-alpha.115](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.114...v0.1.0-alpha.115) (2026-10-29)
+
+
+### Features
+
+* **gameplan:** install Primitive companion for Codex ([9aef35e](https://github.com/campus-ai/prim/commit/9aef35ea060175a492ab8b062c71722175c6eeb4))
+* **gameplan:** install Primitive companion for Codex ([04407bb](https://github.com/campus-ai/prim/commit/04407bb5aaa73006c906c1a9976c1e36d48a0634))
+
+## [0.1.0-alpha.114](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.113...v0.1.0-alpha.114) (2026-10-29)
+
+
+### Bug Fixes
+
+* **hooks:** check script writes before allowing Bash ([#407](https://github.com/campus-ai/prim/issues/407)) ([4cbb9a0](https://github.com/campus-ai/prim/commit/4cbb9a028ba2ab9c032851de906d40ef563dc3c5))
+
+## [0.1.0-alpha.113](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.112...v0.1.0-alpha.113) (2026-10-29)
+
+
+### Bug Fixes
+
+* **reconcile:** reject agent-issued decision overrides ([#408](https://github.com/campus-ai/prim/issues/408)) ([38bace5](https://github.com/campus-ai/prim/commit/38bace59654a8f73da994abd6aab148c7d75c211))
+
+## [0.1.0-alpha.112](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.111...v0.1.0-alpha.112) (2026-10-29)
+
+
+### Bug Fixes
+
+* **decisions:** use public short IDs across CLI output ([#402](https://github.com/campus-ai/prim/issues/402)) ([5267456](https://github.com/campus-ai/prim/commit/5267456e9f34a134267feaa96c1fd214ea902e8e))
+
 ## [0.1.0-alpha.111](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-10-28)
 
 

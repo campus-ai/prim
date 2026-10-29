@@ -1,10 +1,17 @@
 import { type Command, type Redirect, type Statement, type Word, parse } from "unbash";
 import { parseApplyPatchTargets } from "./pre-tool-use-scoring.js";
+import { scriptWriteTargets } from "./script-targets.js";
 const OUTPUT_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
 const READ_ONLY_COMMANDS = new Set(": cat echo false printf pwd test true [".split(" "));
 const SINKS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
 const STATIC_PARTS = new Set(["Literal", "SingleQuoted", "AnsiCQuoted"]);
-type State = { paths: Set<string>; complete: boolean; mutation: boolean; definiteEdit: boolean };
+type State = {
+  paths: Set<string>;
+  complete: boolean;
+  mutation: boolean;
+  definiteEdit: boolean;
+  cwdUncertain: boolean;
+};
 type OptionSpec = {
   shortFlags?: string;
   shortValues?: string;
@@ -561,6 +568,47 @@ function operands(words: Word[], short = "", long: ReadonlySet<string> = new Set
   }
   return result;
 }
+function embeddedScript(command: Command, name: string, state: State): void {
+  unknown(state);
+  if (state.cwdUncertain || command.prefix.length) return;
+  const words = command.suffix.map((word) =>
+    (word.parts ? word.parts.every(staticPart) : staticWord(word) !== undefined) &&
+    !word.value.includes("\0")
+      ? word.value
+      : undefined,
+  );
+  if (words.some((word) => word === undefined)) return;
+  const args = words as string[];
+  const language = name === "node" ? "javascript" : "python";
+  if (language === "javascript" && /^--input-type=(module|commonjs)$/.test(args[0] ?? ""))
+    args.shift();
+  const inlineFlag = language === "python" ? ["-c"] : ["-e", "--eval"];
+  let source: string | undefined;
+  if (args.length === 2 && inlineFlag.includes(args[0])) source = args[1];
+  else if (args.length === 0 || (args.length === 1 && args[0] === "-")) {
+    const input = command.redirects.filter((redirect) => redirect.operator.startsWith("<"));
+    const heredoc = input[0];
+    if (input.length === 1 && heredoc.operator === "<<" && heredoc.heredocQuoted === true)
+      source = heredoc.content;
+  }
+  if (source !== undefined)
+    for (const path of scriptWriteTargets(source, language)) state.paths.add(path);
+}
+
+function changesDirectory(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(changesDirectory);
+  if (!value || typeof value !== "object") return false;
+  const node = value as Record<string, unknown>;
+  if (
+    node.type === "Command" &&
+    ["cd", "pushd", "popd", "eval", "source", "."].includes(
+      staticWord((value as Command).name) ?? "",
+    )
+  )
+    return true;
+  return Object.values(node).some(changesDirectory);
+}
+
 function visitCommand(command: Command, state: State): void {
   const name = staticWord(command.name);
   // unbash preserves tabs in `<<-` bodies, so leave those on the conservative
@@ -572,7 +620,9 @@ function visitCommand(command: Command, state: State): void {
   } else {
     for (const redirect of command.redirects) visitRedirect(redirect, state);
   }
-  if (
+  if (name && (name === "node" || /^python(?:3(?:\.\d+)?)?$/.test(name))) {
+    embeddedScript(command, name, state);
+  } else if (
     !name ||
     name.includes("/") ||
     (!literalApplyPatch && command.suffix.some((word) => !staticWord(word)))
@@ -641,6 +691,7 @@ export function analyzeShellTargets(source: string) {
       complete: !script.errors?.length,
       mutation: false,
       definiteEdit: false,
+      cwdUncertain: changesDirectory(script),
     };
     for (const statement of script.commands) visitStatement(statement, state);
     if (script.errors?.length) state.mutation = true;

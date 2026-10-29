@@ -5,7 +5,6 @@ const MAX_EXCERPT_CHARS = 80;
 const MAX_TITLE_CHARS = 140;
 const MAX_PATH_CHARS = 120;
 const MAX_VISIBLE_CONFLICTS = 3;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 
 type Conflict = {
   decisionId?: unknown;
@@ -64,9 +63,9 @@ export function editPreview(
 
 function decisionLabel(conflict: Conflict): string {
   const id =
-    typeof conflict.shortId === "string" && SAFE_ID.test(conflict.shortId)
+    typeof conflict.shortId === "string" && /^[0-9a-f]{8}$/u.test(conflict.shortId)
       ? `dec_${conflict.shortId}`
-      : typeof conflict.decisionId === "string" && SAFE_ID.test(conflict.decisionId)
+      : typeof conflict.decisionId === "string" && /^dec_[0-9a-f]{8}$/u.test(conflict.decisionId)
         ? conflict.decisionId
         : "unknown";
   const title =

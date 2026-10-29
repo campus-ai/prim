@@ -1,0 +1,434 @@
+[
+  {
+    "name": "reported-path-variable",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\np = Path('DecisionDetailPanel.tsx')\ns = p.read_text()\np.write_text(s + 'localStorage.setItem(\"copyHistory\", \"summary\")')\nPY",
+    "paths": [
+      "DecisionDetailPanel.tsx"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-inline",
+    "command": "python3 -c 'open(\"a.ts\", \"w\").write(\"hi\")'",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "path-alias-bytes",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path as P\nP('a.ts').write_bytes(b'hi')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "pathlib-alias",
+    "command": "python3 - <<'PY'\nimport pathlib as pl\npl.Path('a.ts').write_text('hi')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-string-variable",
+    "command": "python3 - <<'PY'\npath = 'a.ts'\nopen(path, 'a').write('hi')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-keyword-mode",
+    "command": "python3 - <<'PY'\nwith open('a.ts', mode='w') as f:\n f.write('hi')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-update-mode",
+    "command": "python3 - <<'PY'\nopen('a.ts', 'r+').write('hi')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-read-mode",
+    "command": "python3 - <<'PY'\nopen('a.ts', 'r').read()\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-reassigned",
+    "command": "python3 - <<'PY'\np = 'a.ts'\np = 'b.ts'\nopen(p, 'w').write('hi')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-shadowed-builtin",
+    "command": "python3 - <<'PY'\nopen = other\nopen('a.ts', 'w')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-function-scope",
+    "command": "python3 - <<'PY'\ndef f(open):\n open('a.ts', 'w')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-dynamic-path",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nPath(name).write_text('hi')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-fstring",
+    "command": "python3 - <<'PY'\nopen(f'{name}.ts', 'w')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-comment-string",
+    "command": "python3 - <<'PY'\n# open('a.ts', 'w')\ns = \"open('a.ts', 'w')\"\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-malformed",
+    "command": "python3 - <<'PY'\nopen('a.ts', 'w'\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-chdir",
+    "command": "python3 - <<'PY'\nimport os\nos.chdir('sub')\nopen('a.ts', 'w')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-inline",
+    "command": "node -e 'const fs = require(\"fs\"); fs.writeFileSync(\"a.ts\", \"hi\")'",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-string-variable",
+    "command": "node - <<'JS'\nconst fs = require('node:fs'); const path = 'a.ts'; fs.appendFileSync(path, 'hi');\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-promises",
+    "command": "node - <<'JS'\nconst fs = require('fs'); fs.promises.writeFile('a.ts', 'hi');\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-promises-require",
+    "command": "node - <<'JS'\nconst fs = require('node:fs/promises'); fs.appendFile('a.ts', 'hi');\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-named-import",
+    "command": "node --input-type=module --eval 'import {writeFile as write} from \"node:fs/promises\"; await write(\"a.ts\", \"hi\");'",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-default-import",
+    "command": "node - <<'JS'\nimport fs from 'node:fs'; fs.writeFileSync('a.ts', 'hi');\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-namespace-import",
+    "command": "node - <<'JS'\nimport * as fs from 'fs'; fs.writeFile('a.ts', 'hi', cb);\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-destructured-alias",
+    "command": "node - <<'JS'\nconst {writeFileSync: write} = require('fs'); write('a.ts', 'hi');\nJS",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-multiple-targets",
+    "command": "node - <<'JS'\nconst fs = require('fs'); fs.writeFileSync('a.ts', 'hi'); fs.appendFileSync('b.ts', 'hi');\nJS",
+    "paths": [
+      "a.ts",
+      "b.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-reassignment",
+    "command": "node - <<'JS'\nconst fs = require('fs'); let p = 'a.ts'; p = 'b.ts'; fs.writeFileSync(p, 'hi');\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-shadowed-require",
+    "command": "node - <<'JS'\nconst require = other; const fs = require('fs'); fs.writeFileSync('a.ts', 'hi');\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-callback-scope",
+    "command": "node - <<'JS'\nconst fs = require('fs'); function f(fs) { fs.writeFileSync('a.ts', 'hi'); }\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-template",
+    "command": "node - <<'JS'\nconst fs = require('fs'); fs.writeFileSync(`${p}.ts`, 'hi');\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-dynamic-path",
+    "command": "node - <<'JS'\nconst fs = require('fs'); fs.writeFileSync(p, 'hi');\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-comment-string",
+    "command": "node - <<'JS'\n// fs.writeFileSync('a.ts', 'hi');\nconst s = \"fs.writeFileSync('a.ts', 'hi')\";\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-malformed",
+    "command": "node - <<'JS'\nrequire('fs').writeFileSync('a.ts',\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-chdir",
+    "command": "node - <<'JS'\nconst fs = require('fs'); process.chdir('sub'); fs.writeFileSync('a.ts', 'hi');\nJS",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "shell-chdir",
+    "command": "cd sub && python3 -c 'open(\"a.ts\", \"w\")'",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "external-script",
+    "command": "python3 edit.py",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "unsupported-wrapper",
+    "command": "env python3 -c 'open(\"a.ts\", \"w\")'",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "expanded-heredoc",
+    "command": "python3 - <<PY\nopen('$FILE', 'w')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "quoted-heredoc-union",
+    "command": "python3 - <<'PY'\nopen('a.ts', 'w')\nPY\nprintf hi > b.ts",
+    "paths": [
+      "a.ts",
+      "b.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "read-only",
+    "command": "git status --short",
+    "paths": [],
+    "coverage": "complete",
+    "mutation": "none"
+  },
+  {
+    "name": "redirect-control",
+    "command": "printf hi > a.ts",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "path-spaces",
+    "command": "python3 - <<'PY'\nopen('some file.ts', 'w')\nPY",
+    "paths": [
+      "some file.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "unicode-escape-path",
+    "command": "python3 - <<'PY'\nopen('\\u0061.ts', 'w')\nPY",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-chdir-import",
+    "command": "python3 - <<'PY'\nfrom os import chdir as cd\ncd('sub')\nfrom pathlib import Path\nPath('a.ts').write_text('hi')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-exec",
+    "command": "python3 - <<'PY'\nexec(other)\nfrom pathlib import Path\nPath('a.ts').write_text('hi')\nPY",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-not-an-fs-module",
+    "command": "node -e 'const {writeFileSync: write} = \"fs\"; write(\"a.ts\", \"hi\")'",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "shell-eval-cwd",
+    "command": "eval 'cd sub'; python3 -c 'open(\"a.ts\", \"w\")'",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "shell-source-cwd",
+    "command": ". ./setup.sh; python3 -c 'open(\"a.ts\", \"w\")'",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-semicolon-path",
+    "command": "python3 - <<'SCRIPT'\nfrom pathlib import Path; p = Path('a.ts'); p.write_text('hi')\nSCRIPT",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-comprehension-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\n[open(p, 'w') for p in ['b.ts']]\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-walrus-rebind",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\n(p := 'b.ts')\nopen(p, 'w')\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-hoisted-shadow",
+    "command": "node - <<'SCRIPT'\nconst fs = require('fs'); fs.writeFileSync('a.ts', 'hi'); function require() {}\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-combined-import",
+    "command": "node - <<'SCRIPT'\nimport fs, {appendFileSync as append} from 'node:fs'; fs.writeFileSync('a.ts', 'hi'); append('b.ts', 'hi');\nSCRIPT",
+    "paths": [
+      "a.ts",
+      "b.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-generator-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\ng = (open(p, 'w') for p in ['b.ts'])\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-with-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\nwith manager() as p, open(p, 'w') as f:\n pass\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-lexical-require-shadow",
+    "command": "node - <<'SCRIPT'\nconst fs = require('fs'); fs.writeFileSync('a.ts','hi'); const require = other;\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  }
+]

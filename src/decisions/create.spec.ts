@@ -42,9 +42,9 @@ describe("formatCreateHuman", () => {
     expect(formatCreateHuman(OUTCOME)).toBe(`[prim] created dec_${SHORT_ID}.`);
   });
 
-  it("falls back to the full id when the server returned no shortId", () => {
+  it("withholds the internal id when the server returned no shortId", () => {
     expect(formatCreateHuman({ decisionId: FULL_ID, createdAt: 1 })).toBe(
-      `[prim] created ${FULL_ID}.`,
+      "[prim] created Decision identity unavailable.",
     );
   });
 });

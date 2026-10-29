@@ -14,6 +14,9 @@ export interface CliErrorResponse {
 
 export interface DecisionCascadeResponse {
   decision: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -31,6 +34,9 @@ export interface DecisionCascadeResponse {
     [k: string]: unknown | undefined;
   };
   downstream: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -96,12 +102,18 @@ export interface DecisionConfirmRequest {
 
 export type DecisionConfirmSuccessResponse =
   | {
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       shortId?: string;
       outcome: "stale" | "confirmed" | "corrected";
       [k: string]: unknown | undefined;
     }
   | {
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       shortId?: string;
       outcome: "already_responded";
@@ -110,6 +122,9 @@ export type DecisionConfirmSuccessResponse =
       [k: string]: unknown | undefined;
     }
   | {
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       shortId?: string;
       outcome: "no_pending_prompt";
@@ -168,6 +183,9 @@ export interface DecisionCreateRequest {
 }
 
 export interface DecisionCreateResponse {
+  /**
+   * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+   */
   decisionId: string;
   shortId: string;
   createdAt: number;
@@ -211,6 +229,9 @@ export interface DecisionCreateResponse {
 
 export interface DecisionDetailResponse {
   decision: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -222,6 +243,9 @@ export interface DecisionDetailResponse {
     producerKind?: string;
     stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
     status: "active" | "superseded" | "under_review";
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     supersededBy: string | null;
     confidence: "high" | "medium" | "low";
     reversibility?: "high" | "low";
@@ -243,6 +267,9 @@ export interface DecisionDetailResponse {
     [k: string]: unknown | undefined;
   }[];
   dependsOn: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -253,6 +280,9 @@ export interface DecisionDetailResponse {
     [k: string]: unknown | undefined;
   }[];
   dependents: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -324,8 +354,14 @@ export interface DecisionRelateRequest {
 
 export interface DecisionRelateSuccessResponse {
   outcome: "linked" | "already_linked" | "unlinked" | "not_linked";
+  /**
+   * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+   */
   childId: string;
   childShortId?: string;
+  /**
+   * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+   */
   parentId: string;
   parentShortId?: string;
   [k: string]: unknown | undefined;
@@ -412,6 +448,9 @@ export type DecisionRescopeResponse =
     }
   | {
       outcome: "ok";
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       shortId?: string;
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
@@ -461,6 +500,9 @@ export type DecisionStageSuccessResponse =
     }
   | {
       outcome: "ok";
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       shortId?: string;
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
@@ -475,6 +517,9 @@ export interface DecisionSupersedeRequest {
 
 export interface DecisionsAffectingResponse {
   decisions: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     intent: string;
     rationale?: string;
@@ -491,6 +536,9 @@ export interface DecisionsAffectingResponse {
 
 export interface DecisionsRecentResponse {
   decisions: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     id: string;
     shortId?: string;
     intent: string;
@@ -580,6 +628,9 @@ export interface DurableMoveIngestResponse {
     intent: string;
     decisionsSaved: number;
     decisionsSavedTruncated: boolean;
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     decisionShortId?: string;
   } | null;
@@ -644,6 +695,9 @@ export type FeedbackLeaseResponse =
           eventId: string;
           leaseVersion: number;
           shortId: string;
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId?: string;
           intent: string;
           webUrl: string;
@@ -654,6 +708,9 @@ export type FeedbackLeaseResponse =
           eventId: string;
           leaseVersion: number;
           shortId: string;
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId?: string;
           intent: string;
           webUrl: string;
@@ -853,6 +910,9 @@ export interface PreflightDetailsV4 {
   protocolVersion: 4;
   checkId: string;
   page: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     state: "pending" | "evaluated" | "bypassed";
     conflict: boolean;
@@ -922,12 +982,18 @@ export interface PreflightResponseV3 {
   reasonCode: string;
   message: string;
   conflicts: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     shortId?: string;
     title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     bypassId?: string;
     shortId?: string;
@@ -947,6 +1013,9 @@ export interface PreflightResponseV3 {
       omittedCountLowerBound: number;
     }[];
     evidenceOmissions: {
+      /**
+       * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+       */
       decisionId: string;
       reason: "prompt_budget" | "batch_limit" | "evaluation_failed" | "evaluation_deadline";
     }[];
@@ -958,6 +1027,9 @@ export interface PreflightResponseV3 {
   decisionDisclosures?:
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -965,28 +1037,17 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        }
-      ]
-    | [
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -994,48 +1055,25 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        }
-      ]
-    | [
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1043,68 +1081,33 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        }
-      ]
-    | [
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1112,88 +1115,41 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        }
-      ]
-    | [
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1201,108 +1157,49 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        }
-      ]
-    | [
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1310,61 +1207,57 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1372,66 +1265,65 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1439,71 +1331,73 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1511,76 +1405,81 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
-          decisionId: string;
-          shortId: string;
-          participation: "candidate" | "reconcile_bypass";
-        },
-        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1588,81 +1487,659 @@ export interface PreflightResponseV3 {
       ]
     | [
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
         },
         {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        }
+      ]
+    | [
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
+          decisionId: string;
+          shortId: string;
+          participation: "candidate" | "reconcile_bypass";
+        },
+        {
+          /**
+           * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+           */
           decisionId: string;
           shortId: string;
           participation: "candidate" | "reconcile_bypass";
@@ -1680,12 +2157,18 @@ export interface PreflightResponseV4 {
   reasonCode: string;
   message: string;
   conflicts: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     shortId?: string;
     title?: string;
     [k: string]: unknown | undefined;
   }[];
   bypassed: {
+    /**
+     * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+     */
     decisionId: string;
     bypassId?: string;
     shortId?: string;
@@ -1732,6 +2215,11 @@ export type PresenceHeartbeatResponse =
       [k: string]: unknown | undefined;
     };
 
+export interface ReconcileBypassRejection {
+  error: "human_approval_required";
+  message: string;
+}
+
 export interface ReconcileResolutionRequest {
   idOrShortId: string;
   checkId: string;
@@ -1741,6 +2229,9 @@ export interface ReconcileResolutionRequest {
 export interface ReconcileResolutionResponse {
   ok: true;
   checkId: string;
+  /**
+   * Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs.
+   */
   decisionId: string;
   outcome: "followed" | "superseded";
   recordedAt: number;

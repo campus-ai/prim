@@ -1,3 +1,4 @@
+import { renderIdentifier } from "./recent.js";
 /**
  * ASCII renderer for `prim decisions cascade`.
  *
@@ -203,8 +204,7 @@ function triggerLine(result: CascadeResult): string[] {
 
 export function renderCascade(result: CascadeResult): string {
   const d = result.decision;
-  const shortId = terminalSafeLine(d.shortId ?? "");
-  const id = shortId ? `dec_${shortId}` : terminalSafeLine(d.id);
+  const id = renderIdentifier(d);
   const idColored = color(id, "orange");
   const header = `what this would break · ${String(result.fanOut)} decision(s) · enforcing`;
   const lines: string[] = [header, "", "knowledge"];
