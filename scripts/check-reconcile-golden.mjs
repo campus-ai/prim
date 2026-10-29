@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,6 +13,7 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = await mkdtemp(join(tmpdir(), "prim-reconcile-golden-"));
 const requests = [];
 let verdict = "block";
+let planScopeOnly = false;
 const server = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -31,18 +32,20 @@ const server = createServer(async (request, response) => {
       }),
     );
   } else if (request.url === "/api/cli/decisions/conflict-check") {
+    const effectiveVerdict =
+      planScopeOnly && !body.paths?.includes("gameplans/pilot.yaml") ? "allow" : verdict;
     response.end(
       JSON.stringify({
         protocolVersion: 3,
         checkId: "check-1",
-        verdict,
-        reasonCode: verdict === "allow" ? "semantically_compatible" : "semantic_conflict",
+        verdict: effectiveVerdict,
+        reasonCode: effectiveVerdict === "allow" ? "semantically_compatible" : "semantic_conflict",
         message:
-          verdict === "allow"
+          effectiveVerdict === "allow"
             ? "Compatible change."
             : "The proposed change conflicts with an active governing Decision.",
         conflicts:
-          verdict === "allow"
+          effectiveVerdict === "allow"
             ? []
             : [
                 { decisionId: "dec_0123abcd", shortId: "0123abcd", title: "Keep durable retries" },
@@ -207,9 +210,31 @@ try {
   );
   verdict = "allow";
   assert.notEqual((await hook()).hookSpecificOutput?.permissionDecision, "deny");
+  planScopeOnly = true;
+  verdict = "block";
+  await mkdir(join(root, "gameplans"));
+  await writeFile(join(root, "gameplans", "pilot.yaml"), "projectName: pilot\n");
+  const planEdit = await run(
+    "dist/hooks/pre-tool-use.js",
+    ["--agent", "codex"],
+    JSON.stringify({
+      hook_event_name: "PreToolUse",
+      session_id: "gameplan-golden",
+      tool_use_id: "plan-edit",
+      cwd: root,
+      tool_name: "apply_patch",
+      tool_input: {
+        command:
+          "*** Begin Patch\n*** Update File: gameplans/pilot.yaml\n@@\n-projectName: pilot\n+projectName: new-pilot\n*** End Patch",
+      },
+    }),
+  );
+  assert.equal(planEdit.code, 0);
+  assert.equal(JSON.parse(planEdit.stdout).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(requests.at(-1).body.paths, ["gameplans/pilot.yaml"]);
   assert.ok(!requests.some((request) => request.path === "/api/cli/reconcile/issue"));
   process.stdout.write(
-    `${JSON.stringify({ ok: true, scenarios: ["offline rejection golden", "confirmation flags", "resolution recording", "block-reconcile-retry", "ask mapping", "compatible edit"] })}\n`,
+    `${JSON.stringify({ ok: true, scenarios: ["offline rejection golden", "confirmation flags", "resolution recording", "block-reconcile-retry", "ask mapping", "compatible edit", "plan-path conflict"] })}\n`,
   );
 } finally {
   server.closeAllConnections();

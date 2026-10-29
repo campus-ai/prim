@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptExpansion": [
+      {
+        "matcher": "(^|:)write-(gameplan|workstream)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/primitive-gameplan/scripts/activate.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/primitive-gameplan/scripts/activate.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
