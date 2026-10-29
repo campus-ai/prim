@@ -69,7 +69,7 @@ describe("formatRelateHuman — resolved outcomes echo direction", () => {
     expect(out).toContain("nothing to change");
   });
 
-  it("falls back to raw ids when shortIds are absent", () => {
+  it("withholds raw ids when shortIds are absent", () => {
     const out = formatRelateHuman(
       result({
         outcome: "linked",
@@ -79,7 +79,9 @@ describe("formatRelateHuman — resolved outcomes echo direction", () => {
         parentShortId: undefined,
       }),
     );
-    expect(out).toBe(`[prim] ${CHILD_ID} now depends on ${PARENT_ID}.`);
+    expect(out).toBe(
+      "[prim] Decision identity unavailable now depends on Decision identity unavailable.",
+    );
   });
 });
 
@@ -101,9 +103,9 @@ describe("formatRelateHuman — rejections", () => {
     expect(out).toContain("dec_a → dec_b");
   });
 
-  it("ambiguous names which id the user typed", () => {
+  it("ambiguous identifies the endpoint without echoing the supplied id", () => {
     const out = formatRelateHuman(result({ outcome: "ambiguous", which: "parent" }));
-    expect(out).toContain('the parent id "dec_3a4b96d9" is ambiguous');
+    expect(out).toContain("the parent Decision identity is unavailable");
   });
 
   it("renders the walk_cap detail (the fail-closed precaution message)", () => {
@@ -180,7 +182,9 @@ describe("fetchLink / fetchUnlink — HTTP folding", () => {
   it("folds 409 into ambiguous on the parent side", async () => {
     const res = await fetchLink("x", "y", {
       getClient: () =>
-        stub({ error: new Error("shortId is ambiguous in this organization (parent)") }),
+        stub({
+          error: new Error("Decision identity unavailable; retry after identity repair (parent)"),
+        }),
     });
     expect(res.outcome).toEqual({ outcome: "ambiguous", which: "parent" });
   });

@@ -87,15 +87,15 @@ const defaultDeps: ConfirmDeps = { getClient };
 // 404 → not_found; the only outcome that maps to a non-zero exit.
 const NOT_FOUND_RE = /not found/i;
 // 409 → ambiguous shortId.
-const AMBIGUOUS_RE = /ambiguous/i;
+const AMBIGUOUS_RE = /ambiguous|Decision identity unavailable; retry after identity repair/i;
 // 403 → not_author. The org-unbound 403 ("not bound to an organization")
 // is deliberately NOT matched here so it falls through as a generic auth
 // failure rather than masquerading as an authorship rejection.
 const NOT_AUTHOR_RE = /author/i;
 
 export class ConfirmNotFoundError extends Error {
-  constructor(idOrShortId: string) {
-    super(`Decision not found: ${idOrShortId}`);
+  constructor(_idOrShortId: string) {
+    super("Decision not found");
     this.name = "ConfirmNotFoundError";
   }
 }
@@ -165,7 +165,7 @@ export function formatConfirmHuman(result: ConfirmResult): string {
       return `[prim] ${id} has no pending confirmation request — nothing to acknowledge.`;
     }
     case "ambiguous":
-      return `[prim] shortId "${request.idOrShortId}" is ambiguous in this organization — retry with the full decision id.`;
+      return "[prim] Decision identity unavailable; retry after identity repair.";
     default:
       // The only remaining variant — `not_author`. TypeScript narrows
       // `outcome` to it here, so the union stays exhaustively covered.

@@ -1,3 +1,4 @@
+import { decisionIdentifier } from "./identity.js";
 /**
  * `prim decisions recent` — chronological team-wide feed.
  *
@@ -208,7 +209,6 @@ export async function fetchRecent(
   }
 }
 
-const SHORT_ID_PREFIX = "dec_";
 const ZERO_PAD_TWO = 2;
 
 function pad2(n: number): string {
@@ -340,19 +340,7 @@ export function formatRecentJson(result: DecisionsRecentResult): string {
   return JSON.stringify(result, null, 2);
 }
 
-/**
- * Render the rendered short identifier (e.g., `dec_8c2f1a07`) when
- * present; otherwise fall back to the raw Convex `_id` so the CLI
- * never shows a blank in front of a real decision. Kept as a helper
- * because both `recent` and `show` rendering need it.
- */
-export function renderIdentifier(row: {
-  shortId?: string | undefined;
-  id: string;
-}): string {
-  const shortId = terminalSafeLine(row.shortId ?? "");
-  if (shortId) {
-    return `${SHORT_ID_PREFIX}${shortId}`;
-  }
-  return terminalSafeLine(row.id);
+/** Render only the public Decision identity; never print a storage ID. */
+export function renderIdentifier(row: { shortId?: string | undefined; id: string }): string {
+  return decisionIdentifier(row.id, row.shortId) ?? "Decision identity unavailable";
 }
