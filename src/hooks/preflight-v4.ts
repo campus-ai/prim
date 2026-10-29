@@ -81,6 +81,21 @@ export function toolInputDigest(toolName: string, input: unknown): string {
     .digest("hex");
 }
 
+/** Pre-admission failures have no persisted check or evaluation to identify. */
+function isUnidentifiedPause(response: {
+  state?: unknown;
+  verdict?: unknown;
+  checkId?: unknown;
+  evaluationId?: unknown;
+}): boolean {
+  return (
+    response.state === "paused" &&
+    (response.verdict === "block" || response.verdict === "unavailable") &&
+    response.checkId === undefined &&
+    response.evaluationId === undefined
+  );
+}
+
 export function parsePreflightResponse(value: unknown): PreflightResponse | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const response = value as Record<string, unknown>;
@@ -97,6 +112,7 @@ export function parsePreflightResponse(value: unknown): PreflightResponse | null
       return null;
   }
   if (
+    !isUnidentifiedPause(response) &&
     !(
       response.state === "completed" &&
       (response.reasonCode === "enforcement_disabled" ||
@@ -271,6 +287,7 @@ export async function requestPreflight(
   if (
     operation.operation !== "start" &&
     response.checkId !== operation.checkId &&
+    !isUnidentifiedPause(response) &&
     !(response.reasonCode === "enforcement_disabled" && hasCompleteCoverage(response))
   )
     throw new PreflightPausedError(
@@ -305,6 +322,10 @@ export async function waitForPreflight(
           checkId,
         );
       throw error;
+    }
+    if (isUnidentifiedPause(response)) {
+      if (checkId) throw new PreflightPausedError(response.message || response.reasonCode, checkId);
+      return response;
     }
     if (
       evaluationId &&

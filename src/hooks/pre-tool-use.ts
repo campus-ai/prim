@@ -154,23 +154,35 @@ async function emitUnverified(message: string, checkId?: string): Promise<void> 
 }
 
 async function main(): Promise<void> {
+  const mode = readHookMode(process.env as HookEnv);
+  if (mode === "off") {
+    await emit(failOpen());
+    return;
+  }
   let raw: string;
   try {
     raw = await readHookStdin(STDIN_TIMEOUT_MS);
   } catch {
-    await emit(failOpen());
+    await emitUnverified("The tool input could not be read completely");
     return;
   }
   let envelope: PreToolUseInput;
   try {
-    const incoming = JSON.parse(raw) as Record<string, unknown>;
-    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(incoming, "prim-pre-tool-use")) {
+    const incoming: unknown = JSON.parse(raw);
+    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+      throw new Error("The hook envelope must be an object");
+    }
+    const fields = incoming as Record<string, unknown>;
+    if (agent !== "cursor" && shouldSuppressImportedCursorHandler(fields, "prim-pre-tool-use")) {
       await emit(failOpenCursor());
       return;
     }
-    envelope = normalizeEnvelope(incoming, agent) as PreToolUseInput;
+    envelope = normalizeEnvelope(fields, agent) as PreToolUseInput;
+    if (typeof envelope.hook_event_name !== "string" || !envelope.hook_event_name) {
+      throw new Error("The hook event identity is unavailable");
+    }
   } catch {
-    await emit(failOpen());
+    await emitUnverified("The tool invocation could not be identified safely");
     return;
   }
   try {
@@ -185,13 +197,11 @@ async function main(): Promise<void> {
     await emit(failOpen());
     return;
   }
-  const env = process.env as HookEnv;
-  const mode = readHookMode(env);
-  if (mode === "off") {
-    await emit(failOpen());
+  if (typeof envelope.tool_name !== "string" || !envelope.tool_name) {
+    await emitUnverified("The tool invocation is missing its tool identity");
     return;
   }
-  const toolName = typeof envelope.tool_name === "string" ? envelope.tool_name : "";
+  const toolName = envelope.tool_name;
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
   const targets = resolvePreflightTargets({

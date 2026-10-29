@@ -119,6 +119,25 @@ function processing(overrides = {}) {
   };
   return value;
 }
+function unidentifiedPause(overrides = {}) {
+  return completed({
+    state: "paused",
+    verdict: "block",
+    checkId: undefined,
+    evaluationId: undefined,
+    evaluationCoverage: {
+      candidateCount: 0,
+      submittedCount: 0,
+      evaluatedCount: 0,
+      bypassedCount: 0,
+      discoveryComplete: false,
+      status: "unavailable",
+      semanticBatchCount: 0,
+      completedSemanticBatchCount: 0,
+    },
+    ...overrides,
+  });
+}
 function envelope(agent, content = "new", invocationId = "tool-1") {
   const base = {
     cwd,
@@ -154,7 +173,7 @@ function envelope(agent, content = "new", invocationId = "tool-1") {
     };
   return base;
 }
-async function run(args, input, overrides = {}, nodeArgs = []) {
+async function run(args, input, overrides = {}, nodeArgs = [], rawInput = null) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [...nodeArgs, ...args], {
       cwd,
@@ -174,11 +193,15 @@ async function run(args, input, overrides = {}, nodeArgs = []) {
       reject(new Error(`Process timeout: ${args.join(" ")}\n${stderr}`));
     }, 15_000);
     child.once("error", reject);
+    child.stdin.on("error", (error) => {
+      // Explicit opt-outs can exit before a large fixture finishes writing.
+      if (error.code !== "EPIPE") reject(error);
+    });
     child.once("close", (code) => {
       clearTimeout(timeout);
       resolve({ code, stdout, stderr });
     });
-    child.stdin.end(input === undefined ? "" : JSON.stringify(input));
+    child.stdin.end(rawInput ?? (input === undefined ? "" : JSON.stringify(input)));
   });
 }
 async function hook(agent = "claude_code", options = {}) {
@@ -188,6 +211,7 @@ async function hook(agent = "claude_code", options = {}) {
     options.input ?? envelope(agent),
     options.env,
     options.nodeArgs,
+    options.rawInput,
   );
   assert.equal(result.code, 0, result.stderr);
   return { ...result, output: JSON.parse(result.stdout) };
@@ -222,6 +246,42 @@ try {
   ])
     writeFileSync(join(bin, host), `#!/bin/sh\nprintf '%s\\n' '${version}'\n`, { mode: 0o755 });
   for (const agent of ["claude_code", "cursor", "codex", "hermes"]) {
+    for (const [name, options] of [
+      ["oversized tool input", { input: envelope(agent, "x".repeat(1024 * 1024)) }],
+      ["malformed JSON", { rawInput: '{"hook_event_name":' }],
+      ["non-object envelope", { rawInput: "[]" }],
+      ["missing event identity", { input: { ...envelope(agent), hook_event_name: undefined } }],
+      ["missing tool identity", { input: { ...envelope(agent), tool_name: undefined } }],
+    ]) {
+      await scenario(`${agent}: ${name} pauses without a request`, async () => {
+        respond = () => completed();
+        const result = await hook(agent, { ...options, env: { PRIM_HOOK_MODE: "warn" } });
+        assert.ok(denied(agent, result.output), result.stdout);
+        assert.match(result.stdout, /Operation paused/u);
+        assert.equal(requests.length, 0);
+      });
+      for (const optOut of [{ PRIM_HOOK_MODE: "off" }, { PRIM_BYPASS: "1" }])
+        await scenario(`${agent}: explicit ${Object.keys(optOut)[0]} permits ${name}`, async () => {
+          const result = await hook(agent, { ...options, env: optOut });
+          assert.equal(denied(agent, result.output), false, result.stdout);
+          assert.equal(requests.length, 0);
+        });
+    }
+    await scenario(
+      `${agent}: ID-less pre-admission pause preserves the service reason`,
+      async () => {
+        respond = () =>
+          unidentifiedPause({
+            reasonCode: "repository_unavailable",
+            message: "The repository connection is unavailable",
+          });
+        const result = await hook(agent, { env: { PRIM_HOOK_MODE: "warn" } });
+        assert.ok(denied(agent, result.output), result.stdout);
+        assert.match(result.stdout, /The repository connection is unavailable/u);
+        assert.doesNotMatch(result.stdout, /incompatible V4|resume/u);
+        assert.equal(requests.length, 1);
+      },
+    );
     await scenario(`${agent}: pending waits for all 104 eligible Decisions`, async () => {
       respond = (body) => (body.operation === "start" ? processing() : completed());
       const result = await hook(agent);
@@ -253,6 +313,77 @@ try {
       });
     }
   }
+  const otherRepository = join(root, "other-repository");
+  execFileSync("git", ["init", "-q", otherRepository], { env });
+  for (const [name, input] of [
+    ["multiple repositories", { ...envelope("cursor"), workspace_roots: [cwd, otherRepository] }],
+    ["missing conversation identity", { ...envelope("cursor"), conversation_id: undefined }],
+  ]) {
+    await scenario(`cursor: normalization failure from ${name} pauses`, async () => {
+      const result = await hook("cursor", { input });
+      assert.ok(denied("cursor", result.output), result.stdout);
+      assert.equal(requests.length, 0);
+    });
+    for (const optOut of [{ PRIM_HOOK_MODE: "off" }, { PRIM_BYPASS: "1" }])
+      await scenario(`cursor: explicit ${Object.keys(optOut)[0]} permits ${name}`, async () => {
+        const result = await hook("cursor", { input, env: optOut });
+        assert.equal(denied("cursor", result.output), false, result.stdout);
+        assert.equal(requests.length, 0);
+      });
+  }
+  await scenario(
+    "ID-less pause during polling preserves the known check and service reason",
+    async () => {
+      respond = (body) =>
+        body.operation === "start"
+          ? processing()
+          : unidentifiedPause({
+              verdict: "unavailable",
+              reasonCode: "authority_changed",
+              message: "The credential authority changed",
+            });
+      const result = await hook();
+      assert.ok(denied("claude_code", result.output), result.stdout);
+      assert.match(result.stdout, /The credential authority changed/u);
+      assert.match(result.stdout, /preflight resume check1/u);
+      assert.doesNotMatch(result.stdout, /different check identity|changed evaluation identity/u);
+    },
+  );
+  await scenario("status preserves a legitimate ID-less paused response on stdout", async () => {
+    respond = () =>
+      unidentifiedPause({
+        reasonCode: "authority_changed",
+        message: "The credential authority changed",
+      });
+    const result = await run([
+      join(packageRoot, "dist/index.js"),
+      "decisions",
+      "preflight",
+      "status",
+      "check1",
+    ]);
+    assert.equal(result.code, 1, result.stderr);
+    assert.equal(JSON.parse(result.stdout).reasonCode, "authority_changed");
+  });
+  await scenario("resume preserves an ID-less pause reason after receiving progress", async () => {
+    respond = (body) =>
+      body.operation === "resume"
+        ? processing()
+        : unidentifiedPause({
+            reasonCode: "preflight_unavailable",
+            message: "The enforcement service is temporarily unavailable",
+          });
+    const result = await run([
+      join(packageRoot, "dist/index.js"),
+      "decisions",
+      "preflight",
+      "resume",
+      "check1",
+    ]);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /The enforcement service is temporarily unavailable/u);
+    assert.doesNotMatch(result.stderr, /different check identity|changed evaluation identity/u);
+  });
   await scenario("complete semantic block still demotes in warn mode", async () => {
     respond = () => completed({ verdict: "block", reasonCode: "conflict", message: "Conflict" });
     assert.equal(
@@ -265,6 +396,16 @@ try {
     assert.ok(denied("claude_code", (await hook()).output));
   });
   for (const [name, value] of [
+    ["ID-less completed response", completed({ checkId: undefined, evaluationId: undefined })],
+    ["ID-less processing response", processing({ checkId: undefined, evaluationId: undefined })],
+    [
+      "ID-less paused allow response",
+      completed({ state: "paused", checkId: undefined, evaluationId: undefined }),
+    ],
+    [
+      "partially identified pause",
+      completed({ state: "paused", verdict: "block", evaluationId: undefined }),
+    ],
     ["V3 response", { ...completed(), protocolVersion: 3 }],
     ["missing coverage", { ...completed(), evaluationCoverage: undefined }],
     [
