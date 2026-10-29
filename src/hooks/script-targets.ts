@@ -61,6 +61,14 @@ export function scriptWriteTargets(source: string, language: Language): string[]
     let nodes = 0;
     do {
       if (++nodes > 20_000 || cursor.type.isError) return [];
+      // A lexical declaration can shadow CommonJS require before its textual
+      // position. Leave all such scripts unresolved, including nested scopes.
+      if (
+        language === "javascript" &&
+        cursor.name === "VariableDefinition" &&
+        source.slice(cursor.from, cursor.to) === "require"
+      )
+        return [];
       // A cwd change invalidates relative attribution for the entire script.
       if (
         ["PropertyName", "VariableName", "VariableDefinition"].includes(cursor.name) &&
@@ -71,6 +79,15 @@ export function scriptWriteTargets(source: string, language: Language): string[]
     const bindings = new Map<string, Value | undefined>();
     if (language === "python") bindings.set("open", { kind: "symbol", value: "open" });
     else bindings.set("require", { kind: "symbol", value: "require" });
+    // JavaScript function declarations shadow earlier uses as well as later
+    // ones. Seed those names before following any straight-line bindings.
+    if (language === "javascript") {
+      for (const statement of children(tree.topNode)) {
+        if (statement.name !== "FunctionDeclaration") continue;
+        const name = statement.getChild("VariableDefinition");
+        if (name) bindings.set(source.slice(name.from, name.to), undefined);
+      }
+    }
     const paths = new Set<string>();
     const text = (node: SyntaxNode) => source.slice(node.from, node.to);
     const symbol = (value: string): Value => ({ kind: "symbol", value });
@@ -114,7 +131,12 @@ export function scriptWriteTargets(source: string, language: Language): string[]
     const inspect = (node: SyntaxNode): void => {
       // Do not attribute calls in unexecuted functions, classes, or callbacks.
       if (/Function|Class|Lambda|ArrowFunction/.test(node.name)) return;
-      if (["AssignmentExpression", "UpdateExpression"].includes(node.name)) {
+      if (
+        ["AssignmentExpression", "UpdateExpression", "NamedExpression"].includes(node.name) ||
+        node.name.includes("Comprehension")
+      ) {
+        // Comprehensions introduce bindings of their own, and Python named
+        // expressions can rebind a name outside the comprehension's scope.
         forget();
         return;
       }
@@ -176,12 +198,14 @@ export function scriptWriteTargets(source: string, language: Language): string[]
           if (match)
             bind(match[2] ?? match[1], WRITERS.has(match[1]) ? symbol("write") : undefined);
         }
-      } else {
-        const name = node.getChild("VariableDefinition");
-        if (name) bind(text(name), symbol("fs"));
       }
+      const name = node.getChild("VariableDefinition");
+      if (name) bind(text(name), symbol("fs"));
     };
-    for (const statement of children(tree.topNode)) {
+    const statements = children(tree.topNode).flatMap((statement) =>
+      statement.name === "StatementGroup" ? children(statement) : [statement],
+    );
+    for (const statement of statements) {
       if (["Comment", "LineComment", "BlockComment", ";"].includes(statement.name)) continue;
       if (["ImportStatement", "ImportDeclaration"].includes(statement.name)) {
         importStatement(statement);
@@ -218,8 +242,10 @@ export function scriptWriteTargets(source: string, language: Language): string[]
       else if (statement.name === "WithStatement") {
         // Opening in write mode itself mutates. The body is a separate scope
         // for our conservative analysis, so do not retain its bindings.
-        for (const child of children(statement))
+        for (const child of children(statement)) {
+          if (child.name === "as") forget();
           if (child.name === "CallExpression") inspect(child);
+        }
         forget();
       } else forget();
     }

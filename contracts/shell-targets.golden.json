@@ -369,5 +369,66 @@
     "paths": [],
     "coverage": "unverified",
     "mutation": "present"
+  },
+  {
+    "name": "python-semicolon-path",
+    "command": "python3 - <<'SCRIPT'\nfrom pathlib import Path; p = Path('a.ts'); p.write_text('hi')\nSCRIPT",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-comprehension-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\n[open(p, 'w') for p in ['b.ts']]\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-walrus-rebind",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\n(p := 'b.ts')\nopen(p, 'w')\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-hoisted-shadow",
+    "command": "node - <<'SCRIPT'\nconst fs = require('fs'); fs.writeFileSync('a.ts', 'hi'); function require() {}\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-combined-import",
+    "command": "node - <<'SCRIPT'\nimport fs, {appendFileSync as append} from 'node:fs'; fs.writeFileSync('a.ts', 'hi'); append('b.ts', 'hi');\nSCRIPT",
+    "paths": [
+      "a.ts",
+      "b.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-generator-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\ng = (open(p, 'w') for p in ['b.ts'])\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "python-with-shadow",
+    "command": "python3 - <<'SCRIPT'\np = 'a.ts'\nwith manager() as p, open(p, 'w') as f:\n pass\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "node-lexical-require-shadow",
+    "command": "node - <<'SCRIPT'\nconst fs = require('fs'); fs.writeFileSync('a.ts','hi'); const require = other;\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
   }
 ]
