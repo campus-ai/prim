@@ -40,6 +40,7 @@ import {
 } from "../lib/bin-path.js";
 import { gitToplevel } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
+import { reportFailureProtection } from "../lib/preflight-host.js";
 
 const CAPTURE_BIN = "prim-hook";
 const GATE_BIN = "prim-pre-tool-use";
@@ -104,6 +105,8 @@ export type Registration = {
   bin: string;
   /** The byte-stable, PATH-independent launcher command written into settings.json. */
   command: string;
+  timeout?: number;
+  onFailure?: "block";
 };
 
 export function makeRegistration(
@@ -117,6 +120,9 @@ export function makeRegistration(
     matcher,
     bin,
     command: stableHookCommand(bin, args),
+    ...(bin === GATE_BIN
+      ? { timeout: 300, ...(args.includes("--agent codex") ? {} : { onFailure: "block" as const }) }
+      : {}),
   };
 }
 
@@ -176,6 +182,9 @@ export type Scope = "user" | "project";
 export type HookCommand = {
   type?: string;
   command?: string;
+  async?: boolean;
+  timeout?: number;
+  onFailure?: "block";
 };
 
 export type HookEntry = {
@@ -186,6 +195,7 @@ export type HookEntry = {
 export type StatusLineConfig = {
   type?: string;
   command?: string;
+  async?: boolean;
   refreshInterval?: number;
 };
 
@@ -310,7 +320,10 @@ function entryMatchesRegistration(
     owned.entry.matcher === registration.matcher &&
     owned.entry.hooks?.length === 1 &&
     owned.entry.hooks[0].type === "command" &&
-    owned.entry.hooks[0].command === registration.command
+    owned.entry.hooks[0].command === registration.command &&
+    owned.entry.hooks[0].timeout === registration.timeout &&
+    owned.entry.hooks[0].onFailure === registration.onFailure &&
+    (registration.bin !== GATE_BIN || owned.entry.hooks[0].async !== true)
   );
 }
 
@@ -327,7 +340,17 @@ export function hasCompleteHookRegistration(settings: ClaudeSettings): boolean {
 }
 
 function canonicalEntry(reg: Registration): HookEntry {
-  return { matcher: reg.matcher, hooks: [{ type: "command", command: reg.command }] };
+  return {
+    matcher: reg.matcher,
+    hooks: [
+      {
+        type: "command",
+        command: reg.command,
+        ...(reg.timeout === undefined ? {} : { timeout: reg.timeout }),
+        ...(reg.onFailure === undefined ? {} : { onFailure: reg.onFailure }),
+      },
+    ],
+  };
 }
 
 /**
@@ -371,10 +394,21 @@ export function ensureRegistration(
   force: boolean,
 ): HookEntry[] {
   const isCanonical = (e: HookEntry): boolean =>
-    e.matcher === reg.matcher && e.hooks?.length === 1 && e.hooks[0].command === reg.command;
+    e.matcher === reg.matcher &&
+    e.hooks?.length === 1 &&
+    e.hooks[0].type === "command" &&
+    e.hooks[0].command === reg.command &&
+    e.hooks[0].timeout === reg.timeout &&
+    e.hooks[0].onFailure === reg.onFailure &&
+    (reg.bin !== GATE_BIN || e.hooks[0].async !== true);
   const hasStray = (e: HookEntry): boolean =>
     !isCanonical(e) && (e.hooks ?? []).some((h) => commandMatchesBin(h.command, reg.bin));
-  if (list.some(isCanonical) && !list.some(hasStray) && !force) {
+  if (
+    list.some(isCanonical) &&
+    !list.some(hasStray) &&
+    !force &&
+    (reg.bin !== GATE_BIN || list.filter(isCanonical).length === 1)
+  ) {
     return list;
   }
   return [...stripCommand(list, reg.bin), canonicalEntry(reg)];
@@ -789,6 +823,7 @@ export function registerClaudeCommands(program: Command): void {
     .action((opts: { scope?: string; force?: boolean }) => {
       const scope = resolveScope(opts.scope);
       const result = performInstall(scope, opts.force ?? false);
+      const failureProtection = reportFailureProtection("claude");
       if (result.changed) {
         console.error(
           `[prim] Claude Code integration installed (${scope} scope) at ${result.path}`,
@@ -815,7 +850,7 @@ export function registerClaudeCommands(program: Command): void {
           `[prim] ⚠ statusline skipped: an existing custom statusLine is preserved at ${owner}; run \`prim daemon status\` for Primitive health`,
         );
       }
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, JSON_INDENT));
     });
 
   claude
@@ -866,10 +901,12 @@ export function registerClaudeCommands(program: Command): void {
     )
     .action(() => {
       const result = performStatus();
+      const failureProtection =
+        result.user.gate || result.project.gate ? reportFailureProtection("claude") : undefined;
       const mark = (b: boolean): string => (b ? "✓" : "✗");
       const line = (label: string, s: ScopeStatus): string =>
         `[prim] ${label}: gate ${mark(s.gate)} · capture ${mark(s.capture)} · feedback ${mark(s.feedback)} · statusline ${s.statuslineState} (${s.path})`;
       console.error(`${line("user", result.user)}\n${line("project", result.project)}`);
-      console.log(JSON.stringify(result, null, JSON_INDENT));
+      console.log(JSON.stringify({ ...result, failureProtection }, null, JSON_INDENT));
     });
 }
