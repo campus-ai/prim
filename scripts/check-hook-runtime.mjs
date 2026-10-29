@@ -77,14 +77,11 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
-      if (result.hookSpecificOutput?.permissionDecision !== "allow")
+      if (result.hookSpecificOutput?.permissionDecision !== (message ? "deny" : "allow"))
         throw new Error("Unexpected hook disposition");
       if (message) {
-        if (
-          !result.systemMessage?.includes(message) ||
-          !result.hookSpecificOutput.additionalContext?.includes(message)
-        )
-          throw new Error(`Missing visible warning for ${command}`);
+        if (!result.hookSpecificOutput.permissionDecisionReason?.includes(message))
+          throw new Error(`Missing explicit pause for ${command}`);
       } else if (result.systemMessage) throw new Error("Read-only command warned");
     }
   }

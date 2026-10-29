@@ -68,6 +68,9 @@
     "typecheck": "tsc --noEmit",
     "check:reconcile-golden": "node scripts/check-reconcile-golden.mjs",
     "test": "vitest run",
+    "test:preflight-host": "node scripts/check-codex-preflight-host.mjs",
+    "test:preflight-host:claude": "node scripts/check-claude-preflight-host.mjs",
+    "test:preflight-v4": "node scripts/check-preflight-v4-e2e.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "check:shell-targets-golden": "node scripts/check-shell-targets-golden.mjs"

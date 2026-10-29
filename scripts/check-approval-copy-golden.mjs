@@ -17,6 +17,7 @@ try {
       "tsup",
       "src/hooks/approval-copy.ts",
       "src/hooks/preflight-v3.ts",
+      "src/hooks/preflight-v4.ts",
       "src/hooks/pre-tool-use-scoring.ts",
       "--format",
       "esm",
@@ -29,6 +30,9 @@ try {
 
   const { editPreview } = await import(pathToFileURL(join(output, "approval-copy.js")).href);
   const { resultForPreflight } = await import(pathToFileURL(join(output, "preflight-v3.js")).href);
+  const { resultForPreflight: resultForPreflightV4 } = await import(
+    pathToFileURL(join(output, "preflight-v4.js")).href
+  );
   const { buildHookOutput } = await import(
     pathToFileURL(join(output, "pre-tool-use-scoring.js")).href
   );
@@ -70,6 +74,45 @@ try {
   );
   assert.match(one.additionalContext, /prim reconcile dec_12345678/u);
   assert.doesNotMatch(one.permissionDecisionReason, /prim reconcile|--outcome/u);
+
+  const completeV4 = {
+    ...response([
+      { decisionId: "dec_12345678", shortId: "12345678", title: "Keep retries durable" },
+    ]),
+    protocolVersion: 4,
+    state: "completed",
+    checkId: "check1",
+    evaluationId: "evaluation1",
+    evaluationCoverage: {
+      candidateCount: 1,
+      submittedCount: 1,
+      evaluatedCount: 1,
+      bypassedCount: 0,
+      discoveryComplete: true,
+      status: "completed",
+      semanticBatchCount: 1,
+      completedSemanticBatchCount: 1,
+    },
+  };
+  const v4Result = resultForPreflightV4(completeV4, preview);
+  const v4Prompt = buildHookOutput(v4Result.verdict, [v4Result]).hookSpecificOutput;
+  assert.equal(v4Prompt.permissionDecision, "ask");
+  assert.equal(v4Prompt.permissionDecisionReason, one.permissionDecisionReason);
+  assert.match(v4Prompt.additionalContext, /prim reconcile dec_12345678/u);
+  assert.match(v4Prompt.additionalContext, /--check check1/u);
+
+  const incompleteV4 = resultForPreflightV4(
+    {
+      ...completeV4,
+      message: "Decision coverage is incomplete",
+      evaluationCoverage: { ...completeV4.evaluationCoverage, evaluatedCount: 0 },
+    },
+    preview,
+  );
+  const pausedPrompt = buildHookOutput(incompleteV4.verdict, [incompleteV4]).hookSpecificOutput;
+  assert.equal(pausedPrompt.permissionDecision, "deny");
+  assert.match(pausedPrompt.permissionDecisionReason, /Operation paused/u);
+  assert.doesNotMatch(pausedPrompt.permissionDecisionReason, /Approve runs this edit/u);
 
   const many = prompt(
     response(

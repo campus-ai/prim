@@ -36,8 +36,20 @@ const server = createServer(async (request, response) => {
       planScopeOnly && !body.paths?.includes("gameplans/pilot.yaml") ? "allow" : verdict;
     response.end(
       JSON.stringify({
-        protocolVersion: 3,
-        checkId: "check-1",
+        protocolVersion: 4,
+        state: "completed",
+        checkId: "check1",
+        evaluationId: "evaluation1",
+        evaluationCoverage: {
+          candidateCount: 2,
+          submittedCount: 2,
+          evaluatedCount: 2,
+          bypassedCount: 0,
+          discoveryComplete: true,
+          status: "completed",
+          semanticBatchCount: 1,
+          completedSemanticBatchCount: 1,
+        },
         verdict: effectiveVerdict,
         reasonCode: effectiveVerdict === "allow" ? "semantically_compatible" : "semantic_conflict",
         message:

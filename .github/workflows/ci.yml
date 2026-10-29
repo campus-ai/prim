@@ -58,6 +58,8 @@ jobs:
       - run: pnpm check:gameplan-e2e
       - run: pnpm check:reconcile-golden
 
+      - run: pnpm test:preflight-v4 --schema contracts/cli-http-v1.schema.json
+
       - run: pnpm check:approval-copy-golden
 
       - run: pnpm check:shell-targets-golden
