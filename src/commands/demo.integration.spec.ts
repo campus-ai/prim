@@ -186,7 +186,7 @@ async function serveStory(f: ReturnType<typeof fixture>) {
               conflicts: [],
               bypassed: [],
             }
-          : { decisionId: "real-decision", shortId: "1234abcd", createdAt: 1 };
+          : { decisionId: "dec_1234abcd", shortId: "1234abcd", createdAt: 1 };
       res.end(JSON.stringify(result));
       return;
     }
@@ -393,7 +393,7 @@ describe("packaged author story", () => {
         "--attribution",
         "user",
       ]);
-      expect(created.json.decisionId).toBe("real-decision");
+      expect(created.json.decisionId).toBe("dec_1234abcd");
       expect(requests).toContain("/api/cli/decisions/create");
       const welcome = await f.run([
         "welcome",

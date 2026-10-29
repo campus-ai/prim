@@ -330,7 +330,7 @@ prim decisions link <child> --on <parent>    # Relate: <child> depends on <paren
 prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
 
-`<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
+`<id>` uses the canonical `dec_<8 hex>` Decision ID; bare short IDs and legacy full IDs remain accepted as inputs. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
 `decisions check` uses the checkout's current Primitive repository binding and
@@ -521,3 +521,13 @@ pnpm lint         # Lint
 ## License
 
 [MIT](LICENSE)
+
+### Decision identifiers
+
+Decision IDs printed by prim are `dec_` followed by eight lowercase hexadecimal
+characters. Use the same ID in commands and at
+`https://app.getprimitive.ai/decisions/dec_<short>`. Public JSON fields such as
+`id`, `decisionId`, and relationship references use this prefixed ID; the
+`shortId` compatibility field contains the eight characters without the prefix.
+Existing full record IDs remain accepted as inputs. Upgrade the backend before
+this CLI; an unavailable identity produces an error rather than a storage ID.

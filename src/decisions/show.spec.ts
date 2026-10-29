@@ -292,13 +292,14 @@ describe("formatShowHuman", () => {
     expect(out).not.toContain("rationale:");
   });
 
-  it("renders the raw id when shortId is absent", () => {
+  it("withholds the raw id when shortId is absent", () => {
     const noShortId = {
       ...DETAIL,
       decision: { ...DETAIL.decision, shortId: undefined },
     };
     const out = formatShowHuman(noShortId);
-    expect(out).toContain("qx7fpmycwabtzke040y7vecnnh8870pg");
+    expect(out).not.toContain("qx7fpmycwabtzke040y7vecnnh8870pg");
+    expect(out).toContain("Decision identity unavailable");
   });
 
   it("renders a supersededBy line for a superseded decision", () => {

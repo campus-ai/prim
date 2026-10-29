@@ -1,3 +1,4 @@
+import { renderIdentifier } from "../decisions/recent.js";
 /**
  * `prim reconcile <idOrShortId> [--flag <conflictFlagId>] [--json]`
  * `prim reconcile <idOrShortId> --check <checkId> --outcome followed|superseded`
@@ -76,7 +77,7 @@ function formatExpiresIn(expiresAt: number): string {
 }
 
 function renderDecisionIdentifier(short: string | undefined, id: string): string {
-  return short ? `dec_${short}` : id;
+  return renderIdentifier({ id, shortId: short });
 }
 
 /**

@@ -68,7 +68,7 @@ describe("decisions lifecycle command registration", () => {
   it("rescopes a Decision with repeated coarse selector flags", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
       scope: {
@@ -90,7 +90,7 @@ describe("decisions lifecycle command registration", () => {
         "--non-interactive",
         "decisions",
         "rescope",
-        "decision-1",
+        "dec_0123abcd",
         "--scope-repo",
         "--scope-dir",
         "packages/api",
@@ -105,7 +105,7 @@ describe("decisions lifecycle command registration", () => {
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/rescope",
       {
-        id: "decision-1",
+        id: "dec_0123abcd",
         location: {
           repository: true,
           directories: ["packages/api"],
@@ -123,7 +123,7 @@ describe("decisions lifecycle command registration", () => {
   it("clears explicit location selectors when rescope receives none", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       stage: "adopted",
       scope: {
         location: { repository: false, directories: [], globs: [], branches: [] },
@@ -134,13 +134,13 @@ describe("decisions lifecycle command registration", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "rescope", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "rescope", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/rescope",
-      { id: "decision-1", location: null },
+      { id: "dec_0123abcd", location: null },
       expect.anything(),
     );
   });
@@ -148,20 +148,20 @@ describe("decisions lifecycle command registration", () => {
   it("publishes noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "publish", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "publish", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/publish",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -169,7 +169,7 @@ describe("decisions lifecycle command registration", () => {
     expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd published as provisional.");
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
     });
@@ -178,20 +178,20 @@ describe("decisions lifecycle command registration", () => {
   it("restores noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "draft",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "restore", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "restore", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/restore",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -199,7 +199,7 @@ describe("decisions lifecycle command registration", () => {
     expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd restored as a private draft.");
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "draft",
     });
@@ -208,20 +208,20 @@ describe("decisions lifecycle command registration", () => {
   it("ratifies noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "ratify", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "ratify", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/ratify",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -229,7 +229,7 @@ describe("decisions lifecycle command registration", () => {
     expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd ratified as adopted.");
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
@@ -238,20 +238,20 @@ describe("decisions lifecycle command registration", () => {
   it("promotes noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "promote", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "promote", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/ratify",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -259,7 +259,7 @@ describe("decisions lifecycle command registration", () => {
     expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd promoted as adopted.");
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
@@ -268,20 +268,20 @@ describe("decisions lifecycle command registration", () => {
   it("demotes noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "demote", "decision-1"], {
+    await buildProgram().parseAsync(["--non-interactive", "decisions", "demote", "dec_0123abcd"], {
       from: "user",
     });
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/demote",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -291,7 +291,7 @@ describe("decisions lifecycle command registration", () => {
     );
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
     });
@@ -300,20 +300,23 @@ describe("decisions lifecycle command registration", () => {
   it("withdraws noninteractively without invoking a confirmation prompt", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "abandoned",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    await buildProgram().parseAsync(["--non-interactive", "decisions", "withdraw", "decision-1"], {
-      from: "user",
-    });
+    await buildProgram().parseAsync(
+      ["--non-interactive", "decisions", "withdraw", "dec_0123abcd"],
+      {
+        from: "user",
+      },
+    );
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/withdraw",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -323,7 +326,7 @@ describe("decisions lifecycle command registration", () => {
     );
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "abandoned",
     });
@@ -332,28 +335,28 @@ describe("decisions lifecycle command registration", () => {
   it("supersedes noninteractively with a mandatory replacement", async () => {
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "old-decision",
+      decisionId: "dec_0123abcd",
       stage: "superseded",
     });
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await buildProgram().parseAsync(
-      ["--non-interactive", "decisions", "supersede", "old-decision", "--by", "new-decision"],
+      ["--non-interactive", "decisions", "supersede", "dec_0123abcd", "--by", "dec_89abcdef"],
       { from: "user" },
     );
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/supersede",
-      { id: "old-decision", by: "new-decision" },
+      { id: "dec_0123abcd", by: "dec_89abcdef" },
       { signal: expect.any(AbortSignal) },
     );
     expect(askConfirmation).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(0);
-    expect(stderr).toHaveBeenCalledWith("[prim] old-decision superseded by new-decision.");
+    expect(stderr).toHaveBeenCalledWith("[prim] dec_0123abcd superseded by dec_89abcdef.");
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       outcome: "ok",
-      decisionId: "old-decision",
+      decisionId: "dec_0123abcd",
       stage: "superseded",
     });
   });
@@ -363,7 +366,7 @@ describe("decisions lifecycle command registration", () => {
     program.configureOutput({ writeErr: () => undefined, writeOut: () => undefined });
 
     await expect(
-      program.parseAsync(["--non-interactive", "decisions", "supersede", "old-decision"], {
+      program.parseAsync(["--non-interactive", "decisions", "supersede", "dec_0123abcd"], {
         from: "user",
       }),
     ).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });

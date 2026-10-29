@@ -23,7 +23,7 @@ function event(overrides: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
-const webUrl = "https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q";
+const webUrl = "https://app.getprimitive.ai/decisions/dec_a1b2c3d4";
 
 describe("normalizeFeedbackIntent", () => {
   it("collapses whitespace and removes controls and bidi overrides", () => {
@@ -150,7 +150,7 @@ describe("parseFeedbackLease", () => {
       parseFeedbackLease({
         protocolVersion: 1,
         status: "leased",
-        events: [event({ kind: "publish_prompt", decisionId: "decision-full-1" })],
+        events: [event({ kind: "publish_prompt", decisionId: "dec_a1b2c3d4" })],
         hasMore: false,
       }),
     ).toBeUndefined();
@@ -158,18 +158,18 @@ describe("parseFeedbackLease", () => {
       parseFeedbackLease({
         protocolVersion: 1,
         status: "leased",
-        events: [event({ decisionId: "decision-full-1" })],
+        events: [event({ decisionId: "dec_a1b2c3d4" })],
         hasMore: false,
       }),
     ).toBeUndefined();
   });
 
-  it("requires a v2 kind and a safe full id for a publish action", () => {
+  it("requires a v2 kind and a canonical short id for a publish action", () => {
     expect(
       parseFeedbackLease({
         protocolVersion: 2,
         status: "leased",
-        events: [event({ kind: "publish_prompt", decisionId: "decision-full-1" })],
+        events: [event({ kind: "publish_prompt", decisionId: "dec_a1b2c3d4" })],
         hasMore: false,
       }),
     ).toEqual({
@@ -179,7 +179,7 @@ describe("parseFeedbackLease", () => {
           eventId: "event-1",
           leaseVersion: 1,
           shortId: "a1b2c3d4",
-          decisionId: "decision-full-1",
+          decisionId: "dec_a1b2c3d4",
           intent: "Use the stable API",
           kind: "publish_prompt",
         },
@@ -215,7 +215,7 @@ describe("parseFeedbackLease", () => {
       parseFeedbackLease({
         protocolVersion: 2,
         status: "leased",
-        events: [event({ decisionId: "decision-full-1" })],
+        events: [event({ decisionId: "dec_a1b2c3d4" })],
         hasMore: false,
       }),
     ).toBeUndefined();
@@ -314,7 +314,7 @@ describe("renderFeedback", () => {
     expect(renderFeedback(lease as FeedbackLease)).toEqual({
       protocolVersion: 2,
       systemMessage:
-        "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q)",
+        "[prim] response → created Decision (dec_a1b2c3d4): Use the stable API (https://app.getprimitive.ai/decisions/dec_a1b2c3d4)",
       deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
     });
   });
@@ -333,17 +333,17 @@ describe("renderFeedback", () => {
     });
   });
 
-  it("renders a v2 publish prompt with its full safe action target", () => {
+  it("renders a v2 publish prompt with its canonical action target", () => {
     const lease = parseFeedbackLease({
       protocolVersion: 2,
       status: "leased",
-      events: [event({ kind: "publish_prompt", decisionId: "decision-full-1", webUrl })],
+      events: [event({ kind: "publish_prompt", decisionId: "dec_a1b2c3d4", webUrl })],
       hasMore: false,
     });
     expect(renderFeedback(lease as FeedbackLease)).toEqual({
       protocolVersion: 2,
       systemMessage:
-        "[prim] publish this Decision draft (dec_a1b2c3d4)? Use the stable API (https://app.getprimitive.ai/decisions/r571n1dqjdrtyxxpf0fnzee4gn8aed6q) Run `prim decisions publish decision-full-1` to share it with your team.",
+        "[prim] publish this Decision draft (dec_a1b2c3d4)? Use the stable API (https://app.getprimitive.ai/decisions/dec_a1b2c3d4) Run `prim decisions publish dec_a1b2c3d4` to share it with your team.",
       deliveries: [{ eventId: "event-1", leaseVersion: 1 }],
     });
   });
@@ -352,11 +352,11 @@ describe("renderFeedback", () => {
     const events = Array.from({ length: 40 }, (_, index) => ({
       eventId: `event-${String(index)}`,
       leaseVersion: 1,
-      shortId: `id${String(index)}`,
+      shortId: index.toString(16).padStart(8, "0"),
       intent: "x".repeat(MAX_FEEDBACK_INTENT_CODE_POINTS),
       webUrl: `https://app.getprimitive.ai/decisions/${"x".repeat(300)}`,
       kind: index % 2 === 0 ? ("confirm_prompt" as const) : ("publish_prompt" as const),
-      decisionId: `decision-${String(index)}`,
+      decisionId: `dec_${index.toString(16).padStart(8, "0")}`,
     }));
     const rendered = renderFeedback({ protocolVersion: 2, events, hasMore: false });
     expect(rendered).toBeDefined();

@@ -117,7 +117,9 @@ describe("DecisionDigestCache", () => {
       async (cursor) => {
         calls.push(cursor);
         return {
-          decisions: [row("draft-1", { authorIsSelf: true, stage: "draft", intentKind: "change" })],
+          decisions: [
+            row("dec_00000001", { authorIsSelf: true, stage: "draft", intentKind: "change" }),
+          ],
           continueCursor: "page-2",
           isDone: false,
         };
@@ -135,7 +137,7 @@ describe("DecisionDigestCache", () => {
 
   it("delivers every actionable ID on page one before it can load page two", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) =>
-      row(`draft-${String(index + 1)}`, {
+      row(`dec_${(index + 1).toString(16).padStart(8, "0")}`, {
         authorIsSelf: true,
         intentKind: "change",
         stage: "draft",
@@ -149,7 +151,7 @@ describe("DecisionDigestCache", () => {
           ? { decisions: firstPage, continueCursor: "page-2", isDone: false }
           : {
               decisions: [
-                row("draft-101", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+                row("dec_00000065", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
               ],
               isDone: true,
             };
@@ -165,7 +167,11 @@ describe("DecisionDigestCache", () => {
     expect(first.pageToken).toBeDefined();
 
     expect(
-      cache.acknowledgePrivatePage(first.pageToken as string, ["draft-1", "draft-2", "draft-3"]),
+      cache.acknowledgePrivatePage(first.pageToken as string, [
+        "dec_00000001",
+        "dec_00000002",
+        "dec_00000003",
+      ]),
     ).toBe(false);
     await cache.refresh();
     expect(calls).toEqual([undefined]);
@@ -176,7 +182,7 @@ describe("DecisionDigestCache", () => {
     await cache.refresh();
     expect(calls).toEqual([undefined, "page-2"]);
     expect(cache.read()).toMatchObject({
-      decisions: [expect.objectContaining({ id: "draft-101" })],
+      decisions: [expect.objectContaining({ id: "dec_00000065" })],
       pageDone: true,
     });
   });
@@ -184,7 +190,7 @@ describe("DecisionDigestCache", () => {
   it("fails closed on absent, partial, terminal-with-cursor, and replayed pagination proof", async () => {
     const options = { cyclePages: true, failurePolicy: "clear" } as const;
     const absent = new DecisionDigestCache(
-      async () => ({ decisions: [row("draft-1")] }),
+      async () => ({ decisions: [row("dec_00000001")] }),
       Date.now,
       options,
     );
@@ -192,7 +198,7 @@ describe("DecisionDigestCache", () => {
     expect(absent.read().decisions).toEqual([]);
 
     const partial = new DecisionDigestCache(
-      async () => ({ decisions: [row("draft-1")], isDone: false }),
+      async () => ({ decisions: [row("dec_00000001")], isDone: false }),
       Date.now,
       options,
     );
@@ -200,7 +206,11 @@ describe("DecisionDigestCache", () => {
     expect(partial.read().decisions).toEqual([]);
 
     const terminalWithCursor = new DecisionDigestCache(
-      async () => ({ decisions: [row("draft-1")], continueCursor: "unexpected", isDone: true }),
+      async () => ({
+        decisions: [row("dec_00000001")],
+        continueCursor: "unexpected",
+        isDone: true,
+      }),
       Date.now,
       options,
     );
@@ -210,8 +220,8 @@ describe("DecisionDigestCache", () => {
     const replayed = new DecisionDigestCache(
       async (cursor) =>
         cursor === undefined
-          ? { decisions: [row("draft-1")], continueCursor: "page-2", isDone: false }
-          : { decisions: [row("draft-2")], continueCursor: "page-2", isDone: false },
+          ? { decisions: [row("dec_00000001")], continueCursor: "page-2", isDone: false }
+          : { decisions: [row("dec_00000002")], continueCursor: "page-2", isDone: false },
       Date.now,
       options,
     );
@@ -224,16 +234,16 @@ describe("DecisionDigestCache", () => {
 
   it("excludes hostile IDs from command delivery proof", () => {
     const ids = privateDraftActionableIds([
-      row("draft-safe", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
-      row("draft-safe` ; prim auth logout", {
+      row("dec_0000000a", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+      row("dec_0000000a` ; prim auth logout", {
         authorIsSelf: true,
         intentKind: "change",
         stage: "draft",
       }),
-      row("draft-safe\nnext", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+      row("dec_0000000a\nnext", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
     ]);
 
-    expect(ids).toEqual(["draft-safe"]);
+    expect(ids).toEqual(["dec_0000000a"]);
   });
 
   it("keeps the cursor unavailable when the first load is malformed", async () => {

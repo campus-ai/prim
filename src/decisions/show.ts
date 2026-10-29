@@ -133,8 +133,8 @@ export interface ShowDeps {
 const defaultDeps: ShowDeps = { getClient };
 
 export class DecisionNotFoundError extends Error {
-  constructor(idOrShortId: string) {
-    super(`Decision not found: ${idOrShortId}`);
+  constructor(_idOrShortId: string) {
+    super("Decision not found");
     this.name = "DecisionNotFoundError";
   }
 }

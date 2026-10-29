@@ -19,7 +19,7 @@ const SHORT_ID = /^[0-9a-f]{8}$/u;
 const MAX_EVENT_ID_CHARS = 128;
 const MAX_RAW_INTENT_CODE_UNITS = 512;
 const MAX_FEEDBACK_WEB_URL_CHARS = 2_048;
-const SAFE_PUBLISH_DECISION_ID = /^[A-Za-z0-9_-]+$/u;
+const SAFE_PUBLISH_DECISION_ID = /^dec_[0-9a-f]{8}$/u;
 
 export type FeedbackDeliveryToken = {
   eventId: string;
@@ -32,7 +32,7 @@ export type FeedbackKind = "confirm_prompt" | "publish_prompt";
 
 export type FeedbackEvent = FeedbackDeliveryToken & {
   shortId: string;
-  /** Full unambiguous identifier supplied only for a v2 publish prompt. */
+  /** Canonical public identifier supplied only for a v2 publish prompt. */
   decisionId?: string;
   intent: string;
   webUrl?: string;
@@ -160,14 +160,14 @@ function parseEvent(
   const decisionId =
     value.decisionId === undefined ? undefined : parseFeedbackDecisionId(value.decisionId);
   if (value.decisionId !== undefined && decisionId === undefined) return undefined;
-  // Full action targets are scoped to v2 publish events. Reject an unexpected
+  // Public action targets are scoped to v2 publish events. Reject an unexpected
   // value rather than silently accepting a protocol shape that later versions
   // may mean differently.
   if (decisionId !== undefined && (protocolVersion !== 2 || kind !== "publish_prompt")) {
     return undefined;
   }
   // Never build an inline command from an ambiguous short id or a malformed
-  // full id. Returning no lease leaves the entire delivery unacknowledged for
+  // public id. Returning no lease leaves the entire delivery unacknowledged for
   // a safe redelivery after the server data is repaired.
   if (protocolVersion === 2 && kind === "publish_prompt" && decisionId === undefined) {
     return undefined;
