@@ -10,6 +10,7 @@ import type {
   FeedbackLeaseResponse,
   GitHubInstallIntentStatusResponse,
   PreflightRequestV3,
+  PreflightRequestV4,
   WorkosConnectDeviceConfigurationSuccess,
 } from "../generated/cli-http-v1.types.js";
 import {
@@ -49,10 +50,14 @@ import {
   isGitHubInstallIntentStatusRequest,
   isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
+  isPreflightDetailsV4,
   isPreflightRequestV3Structure,
+  isPreflightRequestV4Structure,
   isPreflightResponseV3,
+  isPreflightResponseV4,
   isPresenceHeartbeatRequest,
   isPresenceHeartbeatResponse,
+  isReconcileBypassRejection,
   isReconcileResolutionRequest,
   isReconcileResolutionResponse,
   isRepositoryBindRequest,
@@ -109,10 +114,14 @@ export {
   isGitHubInstallIntentStatusRequest,
   isGitHubInstallIntentStatusResponseStructure,
   isMoveIngestRequest,
+  isPreflightDetailsV4,
   isPreflightRequestV3Structure,
+  isPreflightRequestV4Structure,
   isPreflightResponseV3,
+  isPreflightResponseV4,
   isPresenceHeartbeatRequest,
   isPresenceHeartbeatResponse,
+  isReconcileBypassRejection,
   isReconcileResolutionRequest,
   isReconcileResolutionResponse,
   isRepositoryBindRequest,
@@ -236,6 +245,13 @@ export function isPreflightRequestV3(value: unknown): value is PreflightRequestV
     (requestWithoutBranch.coverage !== "complete" || requestWithoutBranch.paths.length > 0) &&
     new TextEncoder().encode(requestWithoutBranch.proposal).length <= MAX_PROPOSAL_BYTES
   );
+}
+
+export function isPreflightRequestV4(value: unknown): value is PreflightRequestV4 {
+  if (!isPreflightRequestV4Structure(value)) return false;
+  if (value.operation !== "start") return true;
+  const { operation: _operation, toolInputDigest: _digest, ...request } = value;
+  return isPreflightRequestV3({ ...request, protocolVersion: 3 });
 }
 
 export function isFeedbackLeaseRequest(value: unknown): value is FeedbackLeaseRequest {
@@ -406,10 +422,14 @@ export const cliHttpV1Validators = {
   GitHubInstallIntentStatusRequest: isGitHubInstallIntentStatusRequest,
   GitHubInstallIntentStatusResponse: isGitHubInstallIntentStatusResponse,
   MoveIngestRequest: isMoveIngestRequest,
+  PreflightDetailsV4: isPreflightDetailsV4,
   PreflightRequestV3: isPreflightRequestV3,
+  PreflightRequestV4: isPreflightRequestV4,
   PreflightResponseV3: isPreflightResponseV3,
+  PreflightResponseV4: isPreflightResponseV4,
   PresenceHeartbeatRequest: isPresenceHeartbeatRequest,
   PresenceHeartbeatResponse: isPresenceHeartbeatResponse,
+  ReconcileBypassRejection: isReconcileBypassRejection,
   ReconcileResolutionRequest: isReconcileResolutionRequest,
   ReconcileResolutionResponse: isReconcileResolutionResponse,
   RepositoryBindRequest: isRepositoryBindRequest,

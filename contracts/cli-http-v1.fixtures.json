@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 7,
+  "contractVersion": 8,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -533,6 +533,202 @@
       }
     },
     {
+      "name": "resumable exhaustive preflight start",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "start",
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "invocation-1",
+        "repoSyncId": "repoSync123",
+        "paths": ["src/index.ts"],
+        "coverage": "complete",
+        "proposal": "Preserve retries",
+        "toolInputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "resumable preflight status",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "status",
+        "checkId": "check123"
+      }
+    },
+    {
+      "name": "resumable preflight resume",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "resume",
+        "checkId": "check123"
+      }
+    },
+    {
+      "name": "paged preflight details",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "details",
+        "checkId": "check123",
+        "cursor": null
+      }
+    },
+    {
+      "name": "paged exhaustive preflight participation",
+      "definition": "PreflightDetailsV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "checkId": "check123",
+        "page": [
+          {
+            "decisionId": "dec_0123abcd",
+            "state": "evaluated",
+            "conflict": true,
+            "evaluatedAt": 1787078400000
+          }
+        ],
+        "cursor": "participation-cursor",
+        "isDone": false
+      }
+    },
+    {
+      "name": "V4 participation rejects internal Decision IDs",
+      "definition": "PreflightDetailsV4",
+      "valid": false,
+      "value": {
+        "protocolVersion": 4,
+        "checkId": "check123",
+        "page": [
+          {
+            "decisionId": "jd70dyly0xv5k0sttfwv6vcvzs80z23g",
+            "state": "evaluated",
+            "conflict": false
+          }
+        ],
+        "cursor": "participation-cursor",
+        "isDone": true
+      }
+    },
+    {
+      "name": "completed exhaustive preflight",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "completed",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "100 Decisions evaluated",
+        "conflicts": [
+          {
+            "decisionId": "dec_0123abcd",
+            "title": "Keep retries durable across worker restarts"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 100,
+          "submittedCount": 100,
+          "evaluatedCount": 100,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "completed",
+          "semanticBatchCount": 13,
+          "completedSemanticBatchCount": 13
+        }
+      }
+    },
+    {
+      "name": "V4 conflicts reject internal Decision IDs",
+      "definition": "PreflightResponseV4",
+      "valid": false,
+      "value": {
+        "protocolVersion": 4,
+        "state": "completed",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "One Decision evaluated",
+        "conflicts": [
+          {
+            "decisionId": "jd70dyly0xv5k0sttfwv6vcvzs80z23g"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 1,
+          "submittedCount": 1,
+          "evaluatedCount": 1,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "completed",
+          "semanticBatchCount": 1,
+          "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
+      "name": "paused coverage is not a Decision conflict",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "paused",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "evaluation_failed",
+        "message": "Resume unfinished work",
+        "conflicts": [],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 100,
+          "submittedCount": 16,
+          "evaluatedCount": 8,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "partial",
+          "semanticBatchCount": 13,
+          "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
+      "name": "unavailable preflight has no durable work identity",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "paused",
+        "verdict": "block",
+        "reasonCode": "preflight_unavailable",
+        "message": "Restore the enforcement service before retrying",
+        "conflicts": [],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 0,
+          "submittedCount": 0,
+          "evaluatedCount": 0,
+          "bypassedCount": 0,
+          "discoveryComplete": false,
+          "status": "not_run",
+          "semanticBatchCount": 0,
+          "completedSemanticBatchCount": 0
+        }
+      }
+    },
+    {
       "name": "canonical preflight paths",
       "definition": "PreflightRequestV3",
       "valid": true,
@@ -770,6 +966,15 @@
             "participation": "candidate"
           }
         ]
+      }
+    },
+    {
+      "name": "reconcile bypass requires verified human approval",
+      "definition": "ReconcileBypassRejection",
+      "valid": true,
+      "value": {
+        "error": "human_approval_required",
+        "message": "Overriding a governing Decision requires explicit human approval. This host cannot provide verifiable human approval, so reconcile bypasses are disabled. Keep the edit blocked and choose a compatible change."
       }
     },
     {

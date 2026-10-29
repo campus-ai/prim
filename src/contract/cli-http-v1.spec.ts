@@ -440,7 +440,7 @@ describe("generated CLI HTTP request-core contract", () => {
     ];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct union member root");
   });
 
   it("fails generation closed when a refinement is attached to the schema root", async () => {
@@ -454,7 +454,7 @@ describe("generated CLI HTTP request-core contract", () => {
     artifact["x-primitive-runtime-refinements"] = ["canonical_repository_paths"];
     await expect(
       buildGeneratedOutputs(...generatedInput(artifact, fixtures, lock)),
-    ).rejects.toThrow("uses runtime refinements outside a definition or direct anyOf member root");
+    ).rejects.toThrow("uses runtime refinements outside a definition or direct union member root");
   });
 
   it("fails generation closed on unsupported schema keywords", async () => {
