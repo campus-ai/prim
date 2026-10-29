@@ -595,6 +595,49 @@
       }
     },
     {
+      "name": "preflight partial evaluation preserves conflict and omissions",
+      "definition": "PreflightResponseV3",
+      "valid": true,
+      "value": {
+        "protocolVersion": 3,
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
+        "conflicts": [
+          {
+            "decisionId": "decision-conflict",
+            "title": "Keep retries durable across worker restarts"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 3,
+          "submittedCount": 2,
+          "evaluatedCount": 1,
+          "status": "partial",
+          "semanticBatchCount": 2,
+          "completedSemanticBatchCount": 1,
+          "selectionOmissions": [
+            {
+              "source": "candidate_limit",
+              "reason": "candidate_limit",
+              "omittedCountLowerBound": 5
+            }
+          ],
+          "evidenceOmissions": [
+            {
+              "decisionId": "decision-failed",
+              "reason": "evaluation_failed"
+            },
+            {
+              "decisionId": "decision-large",
+              "reason": "prompt_budget"
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "preflight hidden Decision disclosure",
       "definition": "PreflightResponseV3",
       "valid": true,
