@@ -8,7 +8,7 @@ import {
 } from "./rescope.js";
 
 const REQUEST = {
-  id: "decision-1",
+  id: "dec_0123abcd",
   location: {
     repository: true,
     directories: ["packages/api"],
@@ -23,7 +23,7 @@ const REQUEST = {
 
 const RESPONSE = {
   outcome: "ok" as const,
-  decisionId: "decision-1",
+  decisionId: "dec_0123abcd",
   shortId: "0123abcd",
   stage: "adopted" as const,
   scope: {
@@ -88,11 +88,11 @@ describe("rescopeDecision", () => {
     const post = vi.fn().mockResolvedValue(RESPONSE);
     const output = dependencies(post);
 
-    await rescopeDecision({ id: "decision-1", location: null }, output.dependencies);
+    await rescopeDecision({ id: "dec_0123abcd", location: null }, output.dependencies);
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/rescope",
-      { id: "decision-1", location: null },
+      { id: "dec_0123abcd", location: null },
       expect.anything(),
     );
   });
@@ -101,11 +101,11 @@ describe("rescopeDecision", () => {
     const post = vi.fn().mockResolvedValue(RESPONSE);
     const output = dependencies(post);
 
-    await rescopeDecision({ id: "decision-1", time: null }, output.dependencies);
+    await rescopeDecision({ id: "dec_0123abcd", time: null }, output.dependencies);
 
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/rescope",
-      { id: "decision-1", time: null },
+      { id: "dec_0123abcd", time: null },
       expect.anything(),
     );
   });
@@ -124,7 +124,7 @@ describe("rescopeDecision", () => {
     const post = vi.fn().mockResolvedValue(response);
     const output = dependencies(post);
     const request = {
-      id: "decision-1",
+      id: "dec_0123abcd",
       users: [
         { kind: "user" as const, userId: "user-1" },
         { kind: "agent" as const, agent: "codex" as const },
@@ -182,7 +182,7 @@ describe("formatRescopeHuman", () => {
   it("renders a no-op using the requested identifier", () => {
     expect(
       formatRescopeHuman(
-        { id: "decision-1", location: null },
+        { id: "dec_0123abcd", location: null },
         {
           outcome: "no_op",
           stage: "adopted",
@@ -193,6 +193,6 @@ describe("formatRescopeHuman", () => {
           },
         },
       ),
-    ).toBe("[prim] decision-1 already has that scope; nothing to change.");
+    ).toBe("[prim] dec_0123abcd already has that scope; nothing to change.");
   });
 });

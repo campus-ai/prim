@@ -816,9 +816,7 @@ describe("daemon raw statusline socket", () => {
         request.url === "/api/cli/decisions/recent?limit=100&since=24h"
       ) {
         const decisionId =
-          request.headers.authorization === `Bearer ${tokenA}`
-            ? "cached-decision-a"
-            : "cached-decision-b";
+          request.headers.authorization === `Bearer ${tokenA}` ? "dec_0000000a" : "dec_0000000b";
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
@@ -896,7 +894,7 @@ describe("daemon raw statusline socket", () => {
         () => `daemon Decision cache did not warm: ${daemon?.stderr() ?? ""}`,
       );
       expect(digestSnapshot).toMatchObject({
-        decisions: [{ id: "cached-decision-b" }],
+        decisions: [{ id: "dec_0000000b" }],
         cachedAt: expect.any(Number),
       });
 
@@ -1054,7 +1052,7 @@ describe("daemon raw statusline socket", () => {
         { callerEnv: apiUrl },
         callerA,
       );
-      expect(afterRotation).not.toMatchObject({ decisions: [{ id: "cached-decision-b" }] });
+      expect(afterRotation).not.toMatchObject({ decisions: [{ id: "dec_0000000b" }] });
       const rotatedDigest = await eventuallyValue(
         async () =>
           await daemonRequest(
@@ -1066,11 +1064,11 @@ describe("daemon raw statusline socket", () => {
         (value) =>
           Array.isArray(value.decisions) &&
           (value.decisions as Array<{ id?: string }>).some(
-            (decision) => decision.id === "cached-decision-a",
+            (decision) => decision.id === "dec_0000000a",
           ),
         () => `daemon Decision cache did not re-key: ${daemon?.stderr() ?? ""}`,
       );
-      expect(rotatedDigest).toMatchObject({ decisions: [{ id: "cached-decision-a" }] });
+      expect(rotatedDigest).toMatchObject({ decisions: [{ id: "dec_0000000a" }] });
 
       // The JSON protocol has its own byte budget and a bad client cannot
       // wedge the listener for subsequent calls.

@@ -9,7 +9,7 @@ export const DECISION_DIGEST_CACHE_PATH =
   `&since=${DECISION_DIGEST_CACHE_WINDOW}`;
 export const DECISION_DRAFT_DIGEST_CACHE_PATH = `${DECISION_DIGEST_CACHE_PATH}&drafts=true`;
 
-const SAFE_PRIVATE_DRAFT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const SAFE_PRIVATE_DRAFT_ID = /^dec_[0-9a-f]{8}$/u;
 const MAX_DRAFT_CURSOR_LENGTH = 4_096;
 
 export function decisionDraftDigestCachePath(cursor?: string): string {

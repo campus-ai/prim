@@ -232,7 +232,7 @@ describe("generated CLI HTTP request-core contract", () => {
       leaseVersion: 1,
       shortId: "0123abcd",
       intent: "Adopt artifact v2",
-      webUrl: "https://app.getprimitive.ai/decisions/decision-1",
+      webUrl: "https://app.getprimitive.ai/decisions/dec_0123abcd",
     };
     const invalidV1 = {
       protocolVersion: 1,
@@ -254,7 +254,7 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(
       isFeedbackLeaseResponse({
         ...invalidV2,
-        events: [{ ...event, kind: "publish_prompt", decisionId: "decision-1" }],
+        events: [{ ...event, kind: "publish_prompt", decisionId: "dec_0123abcd" }],
       }),
     ).toBe(true);
     expect(
@@ -266,7 +266,7 @@ describe("generated CLI HTTP request-core contract", () => {
     expect(
       isFeedbackLeaseResponse({
         ...invalidV2,
-        events: [{ ...event, kind: "confirm_prompt", decisionId: "decision-1" }],
+        events: [{ ...event, kind: "confirm_prompt", decisionId: "dec_0123abcd" }],
       }),
     ).toBe(false);
     expect(

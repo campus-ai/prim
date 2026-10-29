@@ -94,23 +94,23 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
       internalReceipt: "must-not-print",
     });
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/publish",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal },
     );
     expect(machineOutput(stdout)).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "provisional",
     });
@@ -127,35 +127,35 @@ describe("Decision lifecycle success contract", () => {
       secret: "must-not-print",
     });
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "provisional" });
     expect(stdout.join("\n")).not.toContain("must-not-print");
-    expect(stderr).toEqual(["[prim] decision-1 is already provisional; nothing to change."]);
+    expect(stderr).toEqual(["[prim] dec_0123abcd is already provisional; nothing to change."]);
   });
 
   it("restores with the generated request and projects only generated success fields", async () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "draft",
       internalReceipt: "must-not-print",
     });
 
-    const exitCode = await restoreDecision("decision-1", dependencies);
+    const exitCode = await restoreDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/restore",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal },
     );
     expect(machineOutput(stdout)).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "draft",
     });
@@ -167,23 +167,23 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
       internalReceipt: "must-not-print",
     });
 
-    const exitCode = await ratifyDecision("decision-1", dependencies);
+    const exitCode = await ratifyDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/ratify",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal },
     );
     expect(machineOutput(stdout)).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
@@ -195,23 +195,23 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
       internalReceipt: "must-not-print",
     });
 
-    const exitCode = await promoteDecision("decision-1", dependencies);
+    const exitCode = await promoteDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/ratify",
-      { id: "decision-1" },
+      { id: "dec_0123abcd" },
       { signal },
     );
     expect(machineOutput(stdout)).toEqual({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       shortId: "0123abcd",
       stage: "adopted",
     });
@@ -223,23 +223,23 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({ outcome: "no_op", stage: "adopted" });
 
-    const exitCode = await promoteDecision("decision-1", dependencies);
+    const exitCode = await promoteDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "adopted" });
-    expect(stderr).toEqual(["[prim] decision-1 is already adopted; nothing to change."]);
+    expect(stderr).toEqual(["[prim] dec_0123abcd is already adopted; nothing to change."]);
   });
 
   it("rejects a generated promote response whose stage contradicts its endpoint", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       stage: "provisional",
       sensitive: "must-not-print",
     });
 
-    const exitCode = await promoteDecision("decision-1", dependencies);
+    const exitCode = await promoteDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -257,19 +257,19 @@ describe("Decision lifecycle success contract", () => {
       const { dependencies, post, signal, stderr, stdout } = harness();
       post.mockResolvedValueOnce({
         outcome: "ok",
-        decisionId: "decision-1",
+        decisionId: "dec_0123abcd",
         shortId: "0123abcd",
         stage,
         internalReceipt: "must-not-print",
       });
 
-      const exitCode = await invoke("decision-1", dependencies);
+      const exitCode = await invoke("dec_0123abcd", dependencies);
 
       expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
-      expect(post).toHaveBeenCalledWith(path, { id: "decision-1" }, { signal });
+      expect(post).toHaveBeenCalledWith(path, { id: "dec_0123abcd" }, { signal });
       expect(machineOutput(stdout)).toEqual({
         outcome: "ok",
-        decisionId: "decision-1",
+        decisionId: "dec_0123abcd",
         shortId: "0123abcd",
         stage,
       });
@@ -289,12 +289,12 @@ describe("Decision lifecycle success contract", () => {
         secret: "must-not-print",
       });
 
-      const exitCode = await invoke("decision-1", dependencies);
+      const exitCode = await invoke("dec_0123abcd", dependencies);
 
       expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
       expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage });
       expect(stdout.join("\n")).not.toContain("must-not-print");
-      expect(stderr).toEqual([`[prim] decision-1 is already ${stage}; nothing to change.`]);
+      expect(stderr).toEqual([`[prim] dec_0123abcd is already ${stage}; nothing to change.`]);
     },
   );
 
@@ -304,12 +304,12 @@ describe("Decision lifecycle success contract", () => {
       const { dependencies, post, stderr, stdout } = harness();
       post.mockResolvedValueOnce({
         outcome: "ok",
-        decisionId: "decision-1",
+        decisionId: "dec_0123abcd",
         stage: wrongStage,
         sensitive: "must-not-print",
       });
 
-      const exitCode = await invoke("decision-1", dependencies);
+      const exitCode = await invoke("dec_0123abcd", dependencies);
 
       expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
       expect(machineOutput(stdout)).toEqual({
@@ -326,60 +326,60 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({ outcome: "no_op", stage: "draft" });
 
-    const exitCode = await restoreDecision("decision-1", dependencies);
+    const exitCode = await restoreDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "draft" });
-    expect(stderr).toEqual(["[prim] decision-1 is already draft; nothing to change."]);
+    expect(stderr).toEqual(["[prim] dec_0123abcd is already draft; nothing to change."]);
   });
 
   it("supersedes with the generated request and makes the direction explicit", async () => {
     const { dependencies, post, signal, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "old-decision",
-      shortId: "old12345",
+      decisionId: "dec_0123abcd",
+      shortId: "0123abcd",
       stage: "superseded",
     });
 
-    const exitCode = await supersedeDecision("old-decision", "new-decision", dependencies);
+    const exitCode = await supersedeDecision("dec_0123abcd", "dec_89abcdef", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(post).toHaveBeenCalledWith(
       "/api/cli/decisions/supersede",
-      { id: "old-decision", by: "new-decision" },
+      { id: "dec_0123abcd", by: "dec_89abcdef" },
       { signal },
     );
     expect(machineOutput(stdout)).toEqual({
       outcome: "ok",
-      decisionId: "old-decision",
-      shortId: "old12345",
+      decisionId: "dec_0123abcd",
+      shortId: "0123abcd",
       stage: "superseded",
     });
-    expect(stderr).toEqual(["[prim] dec_old12345 superseded by new-decision."]);
+    expect(stderr).toEqual(["[prim] dec_0123abcd superseded by dec_89abcdef."]);
   });
 
   it("treats an already-superseded response as a successful no-op", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({ outcome: "no_op", stage: "superseded" });
 
-    const exitCode = await supersedeDecision("old-decision", "new-decision", dependencies);
+    const exitCode = await supersedeDecision("dec_0123abcd", "dec_89abcdef", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
     expect(machineOutput(stdout)).toEqual({ outcome: "no_op", stage: "superseded" });
-    expect(stderr).toEqual(["[prim] old-decision is already superseded; nothing to change."]);
+    expect(stderr).toEqual(["[prim] dec_0123abcd is already superseded; nothing to change."]);
   });
 
   it("rejects a generated-union response whose stage contradicts its endpoint", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       stage: "adopted",
       sensitive: "must-not-print",
     });
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -395,12 +395,12 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       stage: "provisional",
       sensitive: "must-not-print",
     });
 
-    const exitCode = await restoreDecision("decision-1", dependencies);
+    const exitCode = await restoreDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -416,12 +416,12 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
-      decisionId: "decision-1",
+      decisionId: "dec_0123abcd",
       stage: "provisional",
       sensitive: "must-not-print",
     });
 
-    const exitCode = await ratifyDecision("decision-1", dependencies);
+    const exitCode = await ratifyDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -437,14 +437,14 @@ describe("Decision lifecycle success contract", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({ outcome: "ok", token: "sensitive-success-value" });
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout).code).toBe("invalid_response");
     expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain("sensitive-success-value");
   });
 
-  it("keeps machine JSON unchanged while sanitizing human identifiers", async () => {
+  it("rejects noncanonical identifiers without reflecting them", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockResolvedValueOnce({
       outcome: "ok",
@@ -455,14 +455,14 @@ describe("Decision lifecycle success contract", () => {
 
     const exitCode = await supersedeDecision("old", "replacement\u001b[31m\u2066-id", dependencies);
 
-    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
-    expect(machineOutput(stdout).shortId).toBe("short\u202e-id");
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout).code).toBe("invalid_response");
     for (const unsafe of ["\u001b", "\u0007", "\u202e", "\u2066"]) {
-      expect(stderr[0]).not.toContain(unsafe);
+      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain(unsafe);
     }
   });
 
-  it("keeps withdrawn machine JSON unchanged while sanitizing its human identifier", async () => {
+  it("rejects noncanonical withdrawn identifiers without reflecting them", async () => {
     const { dependencies, post, stderr, stdout } = harness();
     const decisionId = "decision-\u001b]8;;https://bad.example\u0007link";
     const shortId = "short\u202e-id";
@@ -475,15 +475,10 @@ describe("Decision lifecycle success contract", () => {
 
     const exitCode = await withdrawDecision("request\u001b[31m\u2066-id", dependencies);
 
-    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.ok);
-    expect(machineOutput(stdout)).toMatchObject({
-      outcome: "ok",
-      decisionId,
-      shortId,
-      stage: "abandoned",
-    });
+    expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
+    expect(machineOutput(stdout).code).toBe("invalid_response");
     for (const unsafe of ["\u001b", "\u0007", "\u202e", "\u2066"]) {
-      expect(stderr[0]).not.toContain(unsafe);
+      expect(`${stdout.join("\n")} ${stderr.join("\n")}`).not.toContain(unsafe);
     }
   });
 });
@@ -559,7 +554,7 @@ describe("Decision lifecycle error contract and exits", () => {
       httpError(testCase.status, testCase.message, { token: "sensitive-error-value" }),
     );
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(testCase.exitCode);
     expect(machineOutput(stdout)).toEqual({
@@ -577,7 +572,7 @@ describe("Decision lifecycle error contract and exits", () => {
       const { dependencies, post, stderr, stdout } = harness();
       post.mockRejectedValueOnce(httpError(status, message, { feature: "retired-feature" }));
 
-      const result = await invoke("decision-1", dependencies);
+      const result = await invoke("dec_0123abcd", dependencies);
 
       expect(result).toBe(exitCode);
       expect(machineOutput(stdout)).toEqual({
@@ -599,7 +594,7 @@ describe("Decision lifecycle error contract and exits", () => {
       }),
     );
 
-    const exitCode = await demoteDecision("decision-1", dependencies);
+    const exitCode = await demoteDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
     expect(machineOutput(stdout)).toEqual({
@@ -620,7 +615,7 @@ describe("Decision lifecycle error contract and exits", () => {
       }),
     );
 
-    const exitCode = await demoteDecision("decision-1", dependencies);
+    const exitCode = await demoteDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
     expect(machineOutput(stdout)).toEqual({
@@ -639,7 +634,7 @@ describe("Decision lifecycle error contract and exits", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockRejectedValueOnce(httpError(404, "Not found"));
 
-    const exitCode = await withdrawDecision("decision-1", dependencies);
+    const exitCode = await withdrawDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -661,7 +656,7 @@ describe("Decision lifecycle error contract and exits", () => {
       }),
     );
 
-    const exitCode = await restoreDecision("decision-1", dependencies);
+    const exitCode = await restoreDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.rejected);
     expect(machineOutput(stdout)).toEqual({
@@ -680,7 +675,7 @@ describe("Decision lifecycle error contract and exits", () => {
     const { dependencies, post, stderr, stdout } = harness();
     post.mockRejectedValueOnce(httpError(404, "Not found"));
 
-    const exitCode = await restoreDecision("decision-1", dependencies);
+    const exitCode = await restoreDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -728,7 +723,7 @@ describe("Decision lifecycle error contract and exits", () => {
       new HttpError(401, "Authentication expired. Run `prim auth login` to re-authenticate."),
     );
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.auth);
     expect(machineOutput(stdout)).toEqual({
@@ -749,7 +744,7 @@ describe("Decision lifecycle error contract and exits", () => {
       }),
     );
 
-    const exitCode = await publishDecision("decision-1", dependencies);
+    const exitCode = await publishDecision("dec_0123abcd", dependencies);
 
     expect(exitCode).toBe(DECISION_LIFECYCLE_EXIT.server);
     expect(machineOutput(stdout)).toEqual({
@@ -769,7 +764,7 @@ describe("Decision lifecycle error contract and exits", () => {
     server.post.mockRejectedValueOnce(
       httpError(500, "database token sensitive-server-value", { trace: "sensitive-trace" }),
     );
-    expect(await publishDecision("decision-1", server.dependencies)).toBe(
+    expect(await publishDecision("dec_0123abcd", server.dependencies)).toBe(
       DECISION_LIFECYCLE_EXIT.server,
     );
     expect(machineOutput(server.stdout).code).toBe("server_error");
@@ -777,7 +772,7 @@ describe("Decision lifecycle error contract and exits", () => {
 
     const transport = harness();
     transport.post.mockRejectedValueOnce(new Error("fetch token sensitive-transport-value"));
-    expect(await publishDecision("decision-1", transport.dependencies)).toBe(
+    expect(await publishDecision("dec_0123abcd", transport.dependencies)).toBe(
       DECISION_LIFECYCLE_EXIT.server,
     );
     expect(machineOutput(transport.stdout).code).toBe("transport_error");

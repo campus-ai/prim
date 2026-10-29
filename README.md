@@ -10,7 +10,7 @@ presence — from the command line and via session + git hooks.
 > [!NOTE]
 > **Conflict Gates** check each edit against the decision graph and surface any
 > load-bearing decision it conflicts with. When **Enforcement** is enabled for your
-> organization, gates can warn, pause, or block a conflicting edit until you reconcile
+> organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
 When Enforcement is enabled, the V4 gate waits for complete Decision coverage.
@@ -222,6 +222,25 @@ prim codex install                 # Install OpenAI Codex hooks (user scope; --s
 prim hermes install                # Install Hermes Agent hooks (global ~/.hermes/config.yaml)
 ```
 
+For `$write-gameplan` or `$write-workstream` authoring in Codex, install the
+separate Primitive planning companion from the target repository after the
+public `$write-gameplan` skill is available:
+
+```bash
+prim setup --agent codex
+prim gameplan install --agent codex
+prim gameplan status
+```
+
+`gameplan install` adds the companion to this repository and a prompt dispatcher
+to the user's Codex hooks, including linked worktrees. It does not replace the
+public planning skill or install Conflict Gates; `setup` handles the latter.
+Review `/hooks` in Codex and start a fresh session. `prim gameplan uninstall`
+removes this repository's companion and leaves the shared user hook in place;
+pass `--remove-user-hook` only when no other repository needs it. A Decision
+scoped only to a code path named inside a gameplan is surfaced during planning,
+but the edit gate sees the changed gameplan path.
+
 Passive capture is repo-scoped even when these integrations are installed at user
 scope. `prim enable` marks the current Git repo active; `prim disable` makes it
 inactive. A project-scoped install activates its repo automatically. In an inactive
@@ -349,7 +368,7 @@ prim decisions link <child> --on <parent>    # Relate: <child> depends on <paren
 prim decisions unlink <child> --on <parent>  # Remove that dependency
 ```
 
-`<id>` accepts a full decision ID or its short ID. STDOUT is machine-readable
+`<id>` uses the canonical `dec_<8 hex>` Decision ID; bare short IDs and legacy full IDs remain accepted as inputs. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
 `decisions check` uses the checkout's current Primitive repository binding and
@@ -381,10 +400,25 @@ creating it; do not guess.
 own — `<child>` depends on `<parent>`. Both are idempotent and refuse any link that
 would create a cycle (exit 2); an unresolved id exits 4.
 
+### Bash script coverage
+
+Conflict Gates also inspect Bash writes expressed as Python `-c`, Node.js
+`-e`/`--eval`, or quoted stdin heredocs. Static paths passed to Python `Path`
+writes or writable `open`, and Node.js `fs`/`fs.promises` writeFile/appendFile
+calls, participate in the existing preflight check. Simple path variables and
+direct import aliases are supported. Analysis never executes the script.
+
+Script coverage remains unverified: dynamic paths, reassignment, nested scopes,
+directory changes, wrappers, external scripts, and unsupported syntax can hide
+other writes. Unknown commands display a “not verified” warning in active repos;
+recognized read-only commands stay quiet. Known conflicts still prompt or block
+according to the existing policy. Embedded parsing stops at 64 KiB, targets are
+bounded to 32, and shell proposal truncation at 6,144 bytes is disclosed.
+
 ### Reconcile
 
 ```bash
-prim reconcile <id>    # Mint a single-use bypass for a decision Conflict Gates flagged
+prim reconcile <id>    # Rejected: human_approval_required (exit 2)
 ```
 
 Record what happened after resolving a specific conflict:
@@ -400,8 +434,11 @@ The conflict output supplies the check ID. Only the person whose edit was
 checked can resolve that check. Repeating the same outcome is safe; changing an
 already recorded outcome is rejected. These declarations do not issue a bypass.
 
-Without `--check` and `--outcome`, when Conflict Gates **Enforcement** is enabled
-for your organization, `prim reconcile <id>` authorizes one retry for the named decision.
+Bypasses are disabled until an agent host can supply verifiable human approval.
+Bare `prim reconcile <id>` rejects locally, including with `--yes`,
+`--non-interactive`, or `--flag`. Sandbox escalation and automatic approval
+review do not authorize an override. A blocked edit must remain blocked or be
+changed to respect the governing Decisions.
 
 ### Hooks
 
@@ -564,3 +601,13 @@ check validates the built CLI against a supplied authoritative backend contract.
 ## License
 
 [MIT](LICENSE)
+
+### Decision identifiers
+
+Decision IDs printed by prim are `dec_` followed by eight lowercase hexadecimal
+characters. Use the same ID in commands and at
+`https://app.getprimitive.ai/decisions/dec_<short>`. Public JSON fields such as
+`id`, `decisionId`, and relationship references use this prefixed ID; the
+`shortId` compatibility field contains the eight characters without the prefix.
+Existing full record IDs remain accepted as inputs. Upgrade the backend before
+this CLI; an unavailable identity produces an error rather than a storage ID.

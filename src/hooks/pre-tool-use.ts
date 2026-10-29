@@ -49,7 +49,12 @@ import {
   failOpenOutput,
   readHookMode,
 } from "./pre-tool-use-scoring.js";
-import { boundedClientVersion, proposalFor, resolvePreflightTargets } from "./preflight-v3.js";
+import {
+  boundedClientVersion,
+  proposalFor,
+  proposalIsTruncated,
+  resolvePreflightTargets,
+} from "./preflight-v3.js";
 
 import {
   PREFLIGHT_PROTOCOL_VERSION,
@@ -218,11 +223,13 @@ async function main(): Promise<void> {
     await emit(failOpen());
     return;
   }
+  activeMutation = true;
   if (targets.paths.length === 0 && !targets.definite) {
-    await emit(failOpen());
+    await emitUnverified(
+      "shell command write targets could not be determined; change was not verified",
+    );
     return;
   }
-  activeMutation = true;
   if (agent === "cursor" && targets.coverage === "unverified") {
     await emitUnverified("tool targets were ambiguous or outside the active repository");
     return;
@@ -276,6 +283,10 @@ async function main(): Promise<void> {
     result = resultForPreflight(
       response,
       editPreview(toolName, envelope.tool_input, targets.paths),
+      request,
+      collectScopeAdmits &&
+        (toolName === "Bash" || toolName === "Shell") &&
+        proposalIsTruncated(envelope.tool_input),
     );
   } catch (error) {
     await emitUnverified(

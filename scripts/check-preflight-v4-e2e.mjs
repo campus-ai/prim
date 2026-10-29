@@ -384,6 +384,65 @@ try {
     assert.match(result.stderr, /The enforcement service is temporarily unavailable/u);
     assert.doesNotMatch(result.stderr, /different check identity|changed evaluation identity/u);
   });
+  await scenario("unresolved script writes pause before requesting a verdict", async () => {
+    respond = () => completed();
+    const input = {
+      ...envelope("claude_code"),
+      tool_name: "Bash",
+      tool_input: {
+        command: `node -e 'require("node:fs").writeFileSync(process.argv[1], "new")' target.txt`,
+      },
+    };
+    const result = await hook("claude_code", { input, env: { PRIM_HOOK_MODE: "warn" } });
+    assert.ok(denied("claude_code", result.output));
+    assert.match(result.stdout, /write targets could not be determined/u);
+    assert.equal(requests.length, 0);
+  });
+  await scenario(
+    "literal script writes retain V4 verification and explicit approval context",
+    async () => {
+      respond = () =>
+        completed({
+          verdict: "block",
+          reasonCode: "semantic_conflict",
+          conflicts: [
+            { decisionId: "dec_0123abcd", shortId: "0123abcd", title: "Keep durable retries" },
+          ],
+        });
+      const input = {
+        ...envelope("codex"),
+        tool_name: "Bash",
+        tool_input: {
+          command: `node -e 'require("node:fs").writeFileSync("target.txt", "memory")'`,
+        },
+      };
+      const result = await hook("codex", { input });
+      assert.ok(denied("codex", result.output));
+      assert.deepEqual(requests[0].body.paths, ["target.txt"]);
+      assert.equal(requests[0].body.protocolVersion, 4);
+      assert.equal(requests[0].body.coverage, "unverified");
+      for (const expected of [
+        "target.txt",
+        "memory",
+        "dec_0123abcd",
+        "explicit human approval",
+        "bypasses are disabled",
+      ])
+        assert.ok(result.stdout.includes(expected), expected);
+    },
+  );
+  await scenario("V4 preserves disclosure when a shell proposal is truncated", async () => {
+    respond = () => completed();
+    const input = {
+      ...envelope("claude_code"),
+      tool_name: "Bash",
+      tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
+    };
+    const result = await hook("claude_code", { input });
+    assert.equal(denied("claude_code", result.output), false);
+    assert.deepEqual(requests[0].body.paths, ["target.txt"]);
+    assert.match(result.stdout, /shell proposal was truncated/u);
+  });
   await scenario("complete semantic block still demotes in warn mode", async () => {
     respond = () => completed({ verdict: "block", reasonCode: "conflict", message: "Conflict" });
     assert.equal(

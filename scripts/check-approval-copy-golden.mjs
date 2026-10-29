@@ -59,7 +59,7 @@ try {
     buildHookOutput("ask", [resultForPreflight(value, edit)]).hookSpecificOutput;
 
   const one = prompt(
-    response([{ decisionId: "decision-1", shortId: "12345678", title: "Keep retries durable" }]),
+    response([{ decisionId: "dec_12345678", shortId: "12345678", title: "Keep retries durable" }]),
   );
   assert.equal(
     one.permissionDecisionReason,
@@ -76,7 +76,9 @@ try {
   assert.doesNotMatch(one.permissionDecisionReason, /prim reconcile|--outcome/u);
 
   const completeV4 = {
-    ...response([{ decisionId: "decision1", shortId: "12345678", title: "Keep retries durable" }]),
+    ...response([
+      { decisionId: "dec_12345678", shortId: "12345678", title: "Keep retries durable" },
+    ]),
     protocolVersion: 4,
     state: "completed",
     checkId: "check1",
@@ -115,14 +117,17 @@ try {
   const many = prompt(
     response(
       [
-        { decisionId: "decision-1", title: "Keep retries durable" },
-        { decisionId: "decision-2", title: "Do not discard queued work" },
+        { decisionId: "dec_12345678", title: "Keep retries durable" },
+        { decisionId: "dec_89abcdef", title: "Do not discard queued work" },
       ],
       { status: "partial", selectionOmissions: [{}], evidenceOmissions: [{}] },
     ),
   );
-  assert.match(many.permissionDecisionReason, /Decision decision-1: “Keep retries durable”/u);
-  assert.match(many.permissionDecisionReason, /Decision decision-2: “Do not discard queued work”/u);
+  assert.match(many.permissionDecisionReason, /Decision dec_12345678: “Keep retries durable”/u);
+  assert.match(
+    many.permissionDecisionReason,
+    /Decision dec_89abcdef: “Do not discard queued work”/u,
+  );
   assert.match(
     many.permissionDecisionReason,
     /Some potentially applicable decisions were not fully checked/u,
@@ -137,11 +142,15 @@ try {
     /Some potentially applicable decisions were not fully checked/u,
   );
 
-  const missing = prompt(response([{ decisionId: "decision-3" }]));
+  const missing = prompt(response([{ decisionId: "dec_fedcba98" }]));
   assert.match(
     missing.permissionDecisionReason,
-    /Decision decision-3: details unavailable; inspect it before approving/u,
+    /Decision dec_fedcba98: details unavailable; inspect it before approving/u,
   );
+
+  const internal = "j57b04m7f2z3xv647yxxkcdzy17h6k2z";
+  const unavailable = prompt(response([{ decisionId: internal, title: "Missing identity" }]));
+  assert.ok(!JSON.stringify(unavailable).includes(internal));
 
   const unsafePreview = editPreview(
     "Edit",
@@ -152,7 +161,7 @@ try {
     ["src/retry.ts"],
   );
   const unsafe = prompt(
-    response([{ decisionId: "decision-4", title: "Keep\nretries\u202edurable" }]),
+    response([{ decisionId: "dec_abcdef01", title: "Keep\nretries\u202edurable" }]),
     unsafePreview,
   );
   assert.ok(unsafe.permissionDecisionReason.length < 700);

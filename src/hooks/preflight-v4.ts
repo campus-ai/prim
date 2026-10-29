@@ -220,6 +220,8 @@ export function pausedResult(message: string, checkId?: string): ConflictCheckRe
 export function resultForPreflight(
   response: PreflightResponse,
   preview?: string,
+  invocation?: Pick<PreflightRequest, "paths" | "proposal">,
+  proposalTruncated = false,
 ): ConflictCheckResult {
   if (!hasCompleteCoverage(response))
     return pausedResult(response.message || response.reasonCode, response.checkId);
@@ -240,6 +242,8 @@ export function resultForPreflight(
       },
     },
     preview,
+    invocation,
+    proposalTruncated,
   );
 }
 

@@ -134,7 +134,7 @@ try {
     const observed = join(cwd, "hook-observed.json");
     const wrapper = join(cwd, "hook.mjs");
     const clock = join(cwd, "clock.mjs");
-    writeFileSync(clock, "process.uptime = () => 239.5;\n");
+    writeFileSync(clock, "process.uptime = () => 238;\n");
     writeFileSync(
       wrapper,
       `import { readFileSync, writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst raw = readFileSync(0, 'utf8');\nwriteFileSync(${JSON.stringify(observed)}, raw);\n${name === "crash" ? "process.exit(1);" : name === "timeout" ? "await new Promise(resolve => setTimeout(resolve, 5000));" : `const result = spawnSync(${JSON.stringify(process.execPath)}, [${name === "deadline" ? `'--import', ${JSON.stringify(clock)}, ` : ""}${JSON.stringify(join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"))}, '--agent', 'codex'], { input: raw, encoding: 'utf8', env: process.env }); process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exit(result.status ?? 1);`}\n`,

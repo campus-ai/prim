@@ -1,6 +1,6 @@
 {
   "name": "@primitive.ai/prim",
-  "version": "0.1.0-alpha.111",
+  "version": "0.1.0-alpha.115",
   "description": "CLI for Primitive's decision graph — passive decision capture, conflict gate, and team presence",
   "type": "module",
   "license": "MIT",
@@ -43,6 +43,7 @@
   "main": "./dist/index.js",
   "files": [
     "dist",
+    "assets",
     "LICENSE",
     "README.md",
     "SKILL.md"
@@ -52,6 +53,10 @@
     "contracts:generate": "node scripts/generate-cli-contract.mjs --write",
     "contracts:check": "node scripts/generate-cli-contract.mjs --check",
     "contracts:provenance": "node scripts/update-cli-contract.mjs --check",
+    "check:decision-identity-golden": "node scripts/check-decision-identity-golden.mjs",
+    "check:gameplan-companion": "node scripts/check-gameplan-companion.mjs",
+    "check:gameplan-e2e": "node scripts/check-gameplan-e2e.mjs",
+    "check:gameplan-package": "node scripts/check-gameplan-package.mjs",
     "check:approval-copy-golden": "node scripts/check-approval-copy-golden.mjs",
     "contracts:update": "node scripts/update-cli-contract.mjs",
     "postbuild": "chmod +x ./dist/index.js ./dist/statusline-main.js ./dist/hooks/pre-commit.js ./dist/hooks/post-commit.js ./dist/hooks/post-rewrite.js ./dist/hooks/prim-hook.js ./dist/hooks/pre-tool-use.js ./dist/hooks/post-tool-use.js ./dist/hooks/session-start.js ./dist/hooks/session-end.js ./dist/daemon/server.js && node scripts/check-hook-runtime.mjs",
@@ -61,14 +66,19 @@
     "format": "biome check --fix src/ scripts/",
     "format:check": "biome check src/ scripts/",
     "typecheck": "tsc --noEmit",
+    "check:reconcile-golden": "node scripts/check-reconcile-golden.mjs",
     "test": "vitest run",
     "test:preflight-host": "node scripts/check-codex-preflight-host.mjs",
     "test:preflight-host:claude": "node scripts/check-claude-preflight-host.mjs",
     "test:preflight-v4": "node scripts/check-preflight-v4-e2e.mjs",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check:shell-targets-golden": "node scripts/check-shell-targets-golden.mjs"
   },
   "dependencies": {
+    "@lezer/common": "^1.5.4",
+    "@lezer/javascript": "^1.5.6",
+    "@lezer/python": "^1.1.19",
     "commander": "^12.1.0",
     "diff": "^5.2.0",
     "unbash": "4.0.3",

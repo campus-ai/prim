@@ -294,7 +294,9 @@ validate22.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionCascadeResponse = validate23;
 const schema36 = {"$id":"urn:primitive:cli-http-v1:DecisionCascadeResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse"};
-const schema37 = {"type":"object","properties":{"decision":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}},"rationale":{"type":"string"},"reversibility":{"type":"string","enum":["high","low"]},"fanOut":{"type":"number"},"upstream":{"type":"object","properties":{"files":{"type":"array","items":{"type":"string"}}},"required":["files"],"additionalProperties":{}},"downstream":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"trigger":{"anyOf":[{"type":"object","properties":{"type":{"type":"string","enum":["file_edit","supersession","invalidation","confirmation_request"]},"file":{"type":"string"},"contextName":{"type":"string"},"flaggedAt":{"type":"number"},"authorName":{"type":"string"},"reason":{"type":"string"}},"required":["type","flaggedAt"],"additionalProperties":{}},{"type":"null"}]},"truncated":{"type":"boolean"}},"required":["decision","fanOut","upstream","downstream","trigger","truncated"],"additionalProperties":{}};
+const schema37 = {"type":"object","properties":{"decision":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}},"rationale":{"type":"string"},"reversibility":{"type":"string","enum":["high","low"]},"fanOut":{"type":"number"},"upstream":{"type":"object","properties":{"files":{"type":"array","items":{"type":"string"}}},"required":["files"],"additionalProperties":{}},"downstream":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"trigger":{"anyOf":[{"type":"object","properties":{"type":{"type":"string","enum":["file_edit","supersession","invalidation","confirmation_request"]},"file":{"type":"string"},"contextName":{"type":"string"},"flaggedAt":{"type":"number"},"authorName":{"type":"string"},"reason":{"type":"string"}},"required":["type","flaggedAt"],"additionalProperties":{}},{"type":"null"}]},"truncated":{"type":"boolean"}},"required":["decision","fanOut","upstream","downstream","trigger","truncated"],"additionalProperties":{}};
+const pattern4 = new RegExp("^dec_[0-9a-f]{8}$", "u");
+const pattern5 = new RegExp("^[0-9a-f]{8}$", "u");
 
 function validate23(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionCascadeResponse" */;
@@ -336,6 +338,12 @@ if(func1(data1) < 1){
 validate23.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/decision/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data1)){
+validate23.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/decision/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate23.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/decision/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -349,10 +357,19 @@ var valid2 = true;
 }
 if(valid2){
 if(data0.shortId !== undefined){
+let data2 = data0.shortId;
 const _errs8 = errors;
-if(typeof data0.shortId !== "string"){
+if(errors === _errs8){
+if(typeof data2 === "string"){
+if(!pattern5.test(data2)){
+validate23.errors = [{instancePath:instancePath+"/decision/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/decision/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate23.errors = [{instancePath:instancePath+"/decision/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/decision/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid2 = _errs8 === errors;
 }
@@ -562,6 +579,12 @@ if(func1(data16) < 1){
 validate23.errors = [{instancePath:instancePath+"/downstream/" + i1+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/downstream/items/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data16)){
+validate23.errors = [{instancePath:instancePath+"/downstream/" + i1+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/downstream/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate23.errors = [{instancePath:instancePath+"/downstream/" + i1+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/downstream/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -575,10 +598,19 @@ var valid6 = true;
 }
 if(valid6){
 if(data15.shortId !== undefined){
+let data17 = data15.shortId;
 const _errs40 = errors;
-if(typeof data15.shortId !== "string"){
+if(errors === _errs40){
+if(typeof data17 === "string"){
+if(!pattern5.test(data17)){
+validate23.errors = [{instancePath:instancePath+"/downstream/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/downstream/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate23.errors = [{instancePath:instancePath+"/downstream/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCascadeResponse/properties/downstream/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid6 = _errs40 === errors;
 }
@@ -1966,7 +1998,7 @@ validate25.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionConfirmSuccessResponse = validate26;
 const schema42 = {"$id":"urn:primitive:cli-http-v1:DecisionConfirmSuccessResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse"};
-const schema43 = {"anyOf":[{"type":"object","properties":{"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"outcome":{"type":"string","enum":["stale","confirmed","corrected"]}},"required":["decisionId","outcome"],"additionalProperties":{}},{"type":"object","properties":{"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"outcome":{"type":"string","const":"already_responded"},"confirmed":{"type":"boolean"},"respondedAt":{"type":"number"}},"required":["decisionId","outcome","respondedAt"],"additionalProperties":{}},{"type":"object","properties":{"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"outcome":{"type":"string","const":"no_pending_prompt"}},"required":["decisionId","outcome"],"additionalProperties":{}}]};
+const schema43 = {"anyOf":[{"type":"object","properties":{"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"outcome":{"type":"string","enum":["stale","confirmed","corrected"]}},"required":["decisionId","outcome"],"additionalProperties":{}},{"type":"object","properties":{"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"outcome":{"type":"string","const":"already_responded"},"confirmed":{"type":"boolean"},"respondedAt":{"type":"number"}},"required":["decisionId","outcome","respondedAt"],"additionalProperties":{}},{"type":"object","properties":{"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"outcome":{"type":"string","const":"no_pending_prompt"}},"required":["decisionId","outcome"],"additionalProperties":{}}]};
 
 function validate26(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionConfirmSuccessResponse" */;
@@ -2011,14 +2043,26 @@ vErrors.push(err1);
 }
 errors++;
 }
-}
 else {
-const err2 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern4.test(data0)){
+const err2 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err2];
 }
 else {
 vErrors.push(err2);
+}
+errors++;
+}
+}
+}
+else {
+const err3 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err3];
+}
+else {
+vErrors.push(err3);
 }
 errors++;
 }
@@ -2030,16 +2074,31 @@ var valid2 = true;
 }
 if(valid2){
 if(data.shortId !== undefined){
+let data1 = data.shortId;
 const _errs7 = errors;
-if(typeof data.shortId !== "string"){
-const err3 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs7){
+if(typeof data1 === "string"){
+if(!pattern5.test(data1)){
+const err4 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
-vErrors = [err3];
+vErrors = [err4];
 }
 else {
-vErrors.push(err3);
+vErrors.push(err4);
 }
 errors++;
+}
+}
+else {
+const err5 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
 }
 var valid2 = _errs7 === errors;
 }
@@ -2051,22 +2110,22 @@ if(data.outcome !== undefined){
 let data2 = data.outcome;
 const _errs9 = errors;
 if(typeof data2 !== "string"){
-const err4 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err6 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err4];
+vErrors = [err6];
 }
 else {
-vErrors.push(err4);
+vErrors.push(err6);
 }
 errors++;
 }
 if(!(((data2 === "stale") || (data2 === "confirmed")) || (data2 === "corrected"))){
-const err5 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema43.anyOf[0].properties.outcome.enum},message:"must be equal to one of the allowed values"};
+const err7 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema43.anyOf[0].properties.outcome.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err5];
+vErrors = [err7];
 }
 else {
-vErrors.push(err5);
+vErrors.push(err7);
 }
 errors++;
 }
@@ -2080,12 +2139,12 @@ var valid2 = true;
 }
 }
 else {
-const err6 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err8 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err6];
+vErrors = [err8];
 }
 else {
-vErrors.push(err6);
+vErrors.push(err8);
 }
 errors++;
 }
@@ -2100,12 +2159,12 @@ if(errors === _errs11){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing1;
 if((((data.decisionId === undefined) && (missing1 = "decisionId")) || ((data.outcome === undefined) && (missing1 = "outcome"))) || ((data.respondedAt === undefined) && (missing1 = "respondedAt"))){
-const err7 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
+const err9 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
 if(vErrors === null){
-vErrors = [err7];
+vErrors = [err9];
 }
 else {
-vErrors.push(err7);
+vErrors.push(err9);
 }
 errors++;
 }
@@ -2116,23 +2175,35 @@ const _errs14 = errors;
 if(errors === _errs14){
 if(typeof data3 === "string"){
 if(func1(data3) < 1){
-const err8 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/decisionId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err10 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/decisionId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
-vErrors = [err8];
+vErrors = [err10];
 }
 else {
-vErrors.push(err8);
+vErrors.push(err10);
+}
+errors++;
+}
+else {
+if(!pattern4.test(data3)){
+const err11 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
+if(vErrors === null){
+vErrors = [err11];
+}
+else {
+vErrors.push(err11);
 }
 errors++;
 }
 }
-else {
-const err9 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err9];
 }
 else {
-vErrors.push(err9);
+const err12 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err12];
+}
+else {
+vErrors.push(err12);
 }
 errors++;
 }
@@ -2144,16 +2215,31 @@ var valid3 = true;
 }
 if(valid3){
 if(data.shortId !== undefined){
+let data4 = data.shortId;
 const _errs16 = errors;
-if(typeof data.shortId !== "string"){
-const err10 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs16){
+if(typeof data4 === "string"){
+if(!pattern5.test(data4)){
+const err13 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
-vErrors = [err10];
+vErrors = [err13];
 }
 else {
-vErrors.push(err10);
+vErrors.push(err13);
 }
 errors++;
+}
+}
+else {
+const err14 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err14];
+}
+else {
+vErrors.push(err14);
+}
+errors++;
+}
 }
 var valid3 = _errs16 === errors;
 }
@@ -2165,22 +2251,22 @@ if(data.outcome !== undefined){
 let data5 = data.outcome;
 const _errs18 = errors;
 if(typeof data5 !== "string"){
-const err11 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err15 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err11];
+vErrors = [err15];
 }
 else {
-vErrors.push(err11);
+vErrors.push(err15);
 }
 errors++;
 }
 if("already_responded" !== data5){
-const err12 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/outcome/const",keyword:"const",params:{allowedValue: "already_responded"},message:"must be equal to constant"};
+const err16 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/outcome/const",keyword:"const",params:{allowedValue: "already_responded"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err12];
+vErrors = [err16];
 }
 else {
-vErrors.push(err12);
+vErrors.push(err16);
 }
 errors++;
 }
@@ -2193,12 +2279,12 @@ if(valid3){
 if(data.confirmed !== undefined){
 const _errs20 = errors;
 if(typeof data.confirmed !== "boolean"){
-const err13 = {instancePath:instancePath+"/confirmed",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/confirmed/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+const err17 = {instancePath:instancePath+"/confirmed",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/confirmed/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
-vErrors = [err13];
+vErrors = [err17];
 }
 else {
-vErrors.push(err13);
+vErrors.push(err17);
 }
 errors++;
 }
@@ -2212,12 +2298,12 @@ if(data.respondedAt !== undefined){
 let data7 = data.respondedAt;
 const _errs22 = errors;
 if(!((typeof data7 == "number") && (isFinite(data7)))){
-const err14 = {instancePath:instancePath+"/respondedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/respondedAt/type",keyword:"type",params:{type: "number"},message:"must be number"};
+const err18 = {instancePath:instancePath+"/respondedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/properties/respondedAt/type",keyword:"type",params:{type: "number"},message:"must be number"};
 if(vErrors === null){
-vErrors = [err14];
+vErrors = [err18];
 }
 else {
-vErrors.push(err14);
+vErrors.push(err18);
 }
 errors++;
 }
@@ -2233,12 +2319,12 @@ var valid3 = true;
 }
 }
 else {
-const err15 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err19 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err15];
+vErrors = [err19];
 }
 else {
-vErrors.push(err15);
+vErrors.push(err19);
 }
 errors++;
 }
@@ -2255,12 +2341,12 @@ if(errors === _errs24){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing2;
 if(((data.decisionId === undefined) && (missing2 = "decisionId")) || ((data.outcome === undefined) && (missing2 = "outcome"))){
-const err16 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
+const err20 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
-vErrors = [err16];
+vErrors = [err20];
 }
 else {
-vErrors.push(err16);
+vErrors.push(err20);
 }
 errors++;
 }
@@ -2271,23 +2357,35 @@ const _errs27 = errors;
 if(errors === _errs27){
 if(typeof data8 === "string"){
 if(func1(data8) < 1){
-const err17 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/decisionId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err21 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/decisionId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
-vErrors = [err17];
+vErrors = [err21];
 }
 else {
-vErrors.push(err17);
+vErrors.push(err21);
+}
+errors++;
+}
+else {
+if(!pattern4.test(data8)){
+const err22 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
+if(vErrors === null){
+vErrors = [err22];
+}
+else {
+vErrors.push(err22);
 }
 errors++;
 }
 }
-else {
-const err18 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err18];
 }
 else {
-vErrors.push(err18);
+const err23 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err23];
+}
+else {
+vErrors.push(err23);
 }
 errors++;
 }
@@ -2299,16 +2397,31 @@ var valid4 = true;
 }
 if(valid4){
 if(data.shortId !== undefined){
+let data9 = data.shortId;
 const _errs29 = errors;
-if(typeof data.shortId !== "string"){
-const err19 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs29){
+if(typeof data9 === "string"){
+if(!pattern5.test(data9)){
+const err24 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
-vErrors = [err19];
+vErrors = [err24];
 }
 else {
-vErrors.push(err19);
+vErrors.push(err24);
 }
 errors++;
+}
+}
+else {
+const err25 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err25];
+}
+else {
+vErrors.push(err25);
+}
+errors++;
+}
 }
 var valid4 = _errs29 === errors;
 }
@@ -2320,22 +2433,22 @@ if(data.outcome !== undefined){
 let data10 = data.outcome;
 const _errs31 = errors;
 if(typeof data10 !== "string"){
-const err20 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err26 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err20];
+vErrors = [err26];
 }
 else {
-vErrors.push(err20);
+vErrors.push(err26);
 }
 errors++;
 }
 if("no_pending_prompt" !== data10){
-const err21 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/outcome/const",keyword:"const",params:{allowedValue: "no_pending_prompt"},message:"must be equal to constant"};
+const err27 = {instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/properties/outcome/const",keyword:"const",params:{allowedValue: "no_pending_prompt"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err21];
+vErrors = [err27];
 }
 else {
-vErrors.push(err21);
+vErrors.push(err27);
 }
 errors++;
 }
@@ -2349,12 +2462,12 @@ var valid4 = true;
 }
 }
 else {
-const err22 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err28 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err22];
+vErrors = [err28];
 }
 else {
-vErrors.push(err22);
+vErrors.push(err28);
 }
 errors++;
 }
@@ -2367,12 +2480,12 @@ props0 = true;
 }
 }
 if(!valid1){
-const err23 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err29 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionConfirmSuccessResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err23];
+vErrors = [err29];
 }
 else {
-vErrors.push(err23);
+vErrors.push(err29);
 }
 errors++;
 validate26.errors = vErrors;
@@ -3441,7 +3554,7 @@ validate27.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionCreateResponse = validate28;
 const schema46 = {"$id":"urn:primitive:cli-http-v1:DecisionCreateResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse"};
-const schema47 = {"type":"object","properties":{"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"createdAt":{"type":"number"},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["decisionId","shortId","createdAt"],"additionalProperties":{}};
+const schema47 = {"type":"object","properties":{"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"createdAt":{"type":"number"},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["decisionId","shortId","createdAt"],"additionalProperties":{}};
 
 function validate28(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionCreateResponse" */;
@@ -3472,6 +3585,12 @@ if(func1(data0) < 1){
 validate28.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse/properties/decisionId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data0)){
+validate28.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate28.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -3485,10 +3604,19 @@ var valid1 = true;
 }
 if(valid1){
 if(data.shortId !== undefined){
+let data1 = data.shortId;
 const _errs5 = errors;
-if(typeof data.shortId !== "string"){
+if(errors === _errs5){
+if(typeof data1 === "string"){
+if(!pattern5.test(data1)){
+validate28.errors = [{instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate28.errors = [{instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionCreateResponse/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid1 = _errs5 === errors;
 }
@@ -4311,7 +4439,7 @@ validate28.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionDetailResponse = validate29;
 const schema48 = {"$id":"urn:primitive:cli-http-v1:DecisionDetailResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse"};
-const schema49 = {"type":"object","properties":{"decision":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"intentKind":{"type":"string","enum":["change","exploration","task_execution","unclear"]},"rationale":{"type":"string"},"decided":{"type":"array","items":{"type":"string"}},"alternatives":{"type":"array","items":{"type":"string"}},"area":{"type":"string"},"producerKind":{"type":"string"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"status":{"type":"string","enum":["active","superseded","under_review"]},"supersededBy":{"anyOf":[{"type":"string","minLength":1},{"type":"null"}]},"confidence":{"type":"string","enum":["high","medium","low"]},"reversibility":{"type":"string","enum":["high","low"]},"confirmed":{"type":"boolean"},"respondedAt":{"type":"number"},"fanOut":{"type":"number"},"classifiedAt":{"type":"number"},"authorName":{"type":"string"}},"required":["id","intent","intentKind","alternatives","stage","status","supersededBy","confidence","classifiedAt","authorName"],"additionalProperties":{}},"files":{"type":"array","items":{"type":"string"}},"flags":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["file_edit","supersession","invalidation","confirmation_request"]},"file":{"type":"string"},"flaggedAt":{"type":"number"},"acknowledgedAt":{"type":"number"},"gateVerdict":{"type":"string"},"reason":{"type":"string"}},"required":["type","flaggedAt"],"additionalProperties":{}}},"dependsOn":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"dependents":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1},"displayName":{"type":"string"}},"required":["kind","userId","displayName"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"truncated":{"type":"boolean"}},"required":["decision","files","flags","dependsOn","dependents","scope","truncated"],"additionalProperties":{}};
+const schema49 = {"type":"object","properties":{"decision":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"intentKind":{"type":"string","enum":["change","exploration","task_execution","unclear"]},"rationale":{"type":"string"},"decided":{"type":"array","items":{"type":"string"}},"alternatives":{"type":"array","items":{"type":"string"}},"area":{"type":"string"},"producerKind":{"type":"string"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"status":{"type":"string","enum":["active","superseded","under_review"]},"supersededBy":{"anyOf":[{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$"},{"type":"null"}],"description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"confidence":{"type":"string","enum":["high","medium","low"]},"reversibility":{"type":"string","enum":["high","low"]},"confirmed":{"type":"boolean"},"respondedAt":{"type":"number"},"fanOut":{"type":"number"},"classifiedAt":{"type":"number"},"authorName":{"type":"string"}},"required":["id","intent","intentKind","alternatives","stage","status","supersededBy","confidence","classifiedAt","authorName"],"additionalProperties":{}},"files":{"type":"array","items":{"type":"string"}},"flags":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["file_edit","supersession","invalidation","confirmation_request"]},"file":{"type":"string"},"flaggedAt":{"type":"number"},"acknowledgedAt":{"type":"number"},"gateVerdict":{"type":"string"},"reason":{"type":"string"}},"required":["type","flaggedAt"],"additionalProperties":{}}},"dependsOn":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"dependents":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"area":{"type":"string"},"authorName":{"type":"string"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]}},"required":["id","intent","authorName","classifiedAt","status"],"additionalProperties":{}}},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1},"displayName":{"type":"string"}},"required":["kind","userId","displayName"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"truncated":{"type":"boolean"}},"required":["decision","files","flags","dependsOn","dependents","scope","truncated"],"additionalProperties":{}};
 
 function validate29(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionDetailResponse" */;
@@ -4353,6 +4481,12 @@ if(func1(data1) < 1){
 validate29.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data1)){
+validate29.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate29.errors = [{instancePath:instancePath+"/decision/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -4366,10 +4500,19 @@ var valid2 = true;
 }
 if(valid2){
 if(data0.shortId !== undefined){
+let data2 = data0.shortId;
 const _errs8 = errors;
-if(typeof data0.shortId !== "string"){
+if(errors === _errs8){
+if(typeof data2 === "string"){
+if(!pattern5.test(data2)){
+validate29.errors = [{instancePath:instancePath+"/decision/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate29.errors = [{instancePath:instancePath+"/decision/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid2 = _errs8 === errors;
 }
@@ -4554,9 +4697,9 @@ vErrors.push(err0);
 }
 errors++;
 }
-}
 else {
-const err1 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern4.test(data14)){
+const err1 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf/0/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err1];
 }
@@ -4566,11 +4709,9 @@ vErrors.push(err1);
 errors++;
 }
 }
-var _valid0 = _errs34 === errors;
-valid5 = valid5 || _valid0;
-const _errs36 = errors;
-if(data14 !== null){
-const err2 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+}
+else {
+const err2 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf/0/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err2];
 }
@@ -4579,15 +4720,29 @@ vErrors.push(err2);
 }
 errors++;
 }
-var _valid0 = _errs36 === errors;
+}
+var _valid0 = _errs34 === errors;
 valid5 = valid5 || _valid0;
-if(!valid5){
-const err3 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const _errs36 = errors;
+if(data14 !== null){
+const err3 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err3];
 }
 else {
 vErrors.push(err3);
+}
+errors++;
+}
+var _valid0 = _errs36 === errors;
+valid5 = valid5 || _valid0;
+if(!valid5){
+const err4 = {instancePath:instancePath+"/decision/supersededBy",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/decision/properties/supersededBy/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+if(vErrors === null){
+vErrors = [err4];
+}
+else {
+vErrors.push(err4);
 }
 errors++;
 validate29.errors = vErrors;
@@ -4919,6 +5074,12 @@ if(func1(data34) < 1){
 validate29.errors = [{instancePath:instancePath+"/dependsOn/" + i4+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependsOn/items/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data34)){
+validate29.errors = [{instancePath:instancePath+"/dependsOn/" + i4+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependsOn/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate29.errors = [{instancePath:instancePath+"/dependsOn/" + i4+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependsOn/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -4932,10 +5093,19 @@ var valid10 = true;
 }
 if(valid10){
 if(data33.shortId !== undefined){
+let data35 = data33.shortId;
 const _errs80 = errors;
-if(typeof data33.shortId !== "string"){
+if(errors === _errs80){
+if(typeof data35 === "string"){
+if(!pattern5.test(data35)){
+validate29.errors = [{instancePath:instancePath+"/dependsOn/" + i4+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependsOn/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate29.errors = [{instancePath:instancePath+"/dependsOn/" + i4+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependsOn/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid10 = _errs80 === errors;
 }
@@ -5065,6 +5235,12 @@ if(func1(data43) < 1){
 validate29.errors = [{instancePath:instancePath+"/dependents/" + i5+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependents/items/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data43)){
+validate29.errors = [{instancePath:instancePath+"/dependents/" + i5+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependents/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate29.errors = [{instancePath:instancePath+"/dependents/" + i5+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependents/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -5078,10 +5254,19 @@ var valid12 = true;
 }
 if(valid12){
 if(data42.shortId !== undefined){
+let data44 = data42.shortId;
 const _errs99 = errors;
-if(typeof data42.shortId !== "string"){
+if(errors === _errs99){
+if(typeof data44 === "string"){
+if(!pattern5.test(data44)){
+validate29.errors = [{instancePath:instancePath+"/dependents/" + i5+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependents/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate29.errors = [{instancePath:instancePath+"/dependents/" + i5+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/dependents/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid12 = _errs99 === errors;
 }
@@ -5430,12 +5615,12 @@ if(errors === _errs144){
 if(data64 && typeof data64 == "object" && !Array.isArray(data64)){
 let missing7;
 if((((data64.kind === undefined) && (missing7 = "kind")) || ((data64.userId === undefined) && (missing7 = "userId"))) || ((data64.displayName === undefined) && (missing7 = "displayName"))){
-const err4 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
+const err5 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/required",keyword:"required",params:{missingProperty: missing7},message:"must have required property '"+missing7+"'"};
 if(vErrors === null){
-vErrors = [err4];
+vErrors = [err5];
 }
 else {
-vErrors.push(err4);
+vErrors.push(err5);
 }
 errors++;
 }
@@ -5443,12 +5628,12 @@ else {
 const _errs146 = errors;
 for(const key0 in data64){
 if(!(((key0 === "kind") || (key0 === "userId")) || (key0 === "displayName"))){
-const err5 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"};
+const err6 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err5];
+vErrors = [err6];
 }
 else {
-vErrors.push(err5);
+vErrors.push(err6);
 }
 errors++;
 break;
@@ -5459,22 +5644,22 @@ if(data64.kind !== undefined){
 let data65 = data64.kind;
 const _errs147 = errors;
 if(typeof data65 !== "string"){
-const err6 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err6];
-}
-else {
-vErrors.push(err6);
-}
-errors++;
-}
-if("user" !== data65){
-const err7 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "user"},message:"must be equal to constant"};
+const err7 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err7];
 }
 else {
 vErrors.push(err7);
+}
+errors++;
+}
+if("user" !== data65){
+const err8 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "user"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
 }
 errors++;
 }
@@ -5490,23 +5675,23 @@ const _errs149 = errors;
 if(errors === _errs149){
 if(typeof data66 === "string"){
 if(func1(data66) < 1){
-const err8 = {instancePath:instancePath+"/scope/users/" + i9+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/userId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
-if(vErrors === null){
-vErrors = [err8];
-}
-else {
-vErrors.push(err8);
-}
-errors++;
-}
-}
-else {
-const err9 = {instancePath:instancePath+"/scope/users/" + i9+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/userId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err9 = {instancePath:instancePath+"/scope/users/" + i9+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/userId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
 vErrors = [err9];
 }
 else {
 vErrors.push(err9);
+}
+errors++;
+}
+}
+else {
+const err10 = {instancePath:instancePath+"/scope/users/" + i9+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/userId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err10];
+}
+else {
+vErrors.push(err10);
 }
 errors++;
 }
@@ -5520,12 +5705,12 @@ if(valid21){
 if(data64.displayName !== undefined){
 const _errs151 = errors;
 if(typeof data64.displayName !== "string"){
-const err10 = {instancePath:instancePath+"/scope/users/" + i9+"/displayName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/displayName/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err11 = {instancePath:instancePath+"/scope/users/" + i9+"/displayName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/properties/displayName/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err10];
+vErrors = [err11];
 }
 else {
-vErrors.push(err10);
+vErrors.push(err11);
 }
 errors++;
 }
@@ -5540,12 +5725,12 @@ var valid21 = true;
 }
 }
 else {
-const err11 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err12 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err11];
+vErrors = [err12];
 }
 else {
-vErrors.push(err11);
+vErrors.push(err12);
 }
 errors++;
 }
@@ -5561,12 +5746,12 @@ if(errors === _errs153){
 if(data64 && typeof data64 == "object" && !Array.isArray(data64)){
 let missing8;
 if(((data64.kind === undefined) && (missing8 = "kind")) || ((data64.role === undefined) && (missing8 = "role"))){
-const err12 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
+const err13 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
 if(vErrors === null){
-vErrors = [err12];
+vErrors = [err13];
 }
 else {
-vErrors.push(err12);
+vErrors.push(err13);
 }
 errors++;
 }
@@ -5574,12 +5759,12 @@ else {
 const _errs155 = errors;
 for(const key1 in data64){
 if(!((key1 === "kind") || (key1 === "role"))){
-const err13 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
+const err14 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err13];
+vErrors = [err14];
 }
 else {
-vErrors.push(err13);
+vErrors.push(err14);
 }
 errors++;
 break;
@@ -5590,22 +5775,22 @@ if(data64.kind !== undefined){
 let data68 = data64.kind;
 const _errs156 = errors;
 if(typeof data68 !== "string"){
-const err14 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err14];
-}
-else {
-vErrors.push(err14);
-}
-errors++;
-}
-if("role" !== data68){
-const err15 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "role"},message:"must be equal to constant"};
+const err15 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err15];
 }
 else {
 vErrors.push(err15);
+}
+errors++;
+}
+if("role" !== data68){
+const err16 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "role"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err16];
+}
+else {
+vErrors.push(err16);
 }
 errors++;
 }
@@ -5619,22 +5804,22 @@ if(data64.role !== undefined){
 let data69 = data64.role;
 const _errs158 = errors;
 if(typeof data69 !== "string"){
-const err16 = {instancePath:instancePath+"/scope/users/" + i9+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/role/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err16];
-}
-else {
-vErrors.push(err16);
-}
-errors++;
-}
-if(!(((data69 === "owner") || (data69 === "admin")) || (data69 === "member"))){
-const err17 = {instancePath:instancePath+"/scope/users/" + i9+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/role/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[1].properties.role.enum},message:"must be equal to one of the allowed values"};
+const err17 = {instancePath:instancePath+"/scope/users/" + i9+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/role/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err17];
 }
 else {
 vErrors.push(err17);
+}
+errors++;
+}
+if(!(((data69 === "owner") || (data69 === "admin")) || (data69 === "member"))){
+const err18 = {instancePath:instancePath+"/scope/users/" + i9+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/properties/role/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[1].properties.role.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err18];
+}
+else {
+vErrors.push(err18);
 }
 errors++;
 }
@@ -5648,12 +5833,12 @@ var valid22 = true;
 }
 }
 else {
-const err18 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err19 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err18];
+vErrors = [err19];
 }
 else {
-vErrors.push(err18);
+vErrors.push(err19);
 }
 errors++;
 }
@@ -5676,12 +5861,12 @@ if(errors === _errs160){
 if(data64 && typeof data64 == "object" && !Array.isArray(data64)){
 let missing9;
 if(((data64.kind === undefined) && (missing9 = "kind")) || ((data64.agent === undefined) && (missing9 = "agent"))){
-const err19 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
+const err20 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
 if(vErrors === null){
-vErrors = [err19];
+vErrors = [err20];
 }
 else {
-vErrors.push(err19);
+vErrors.push(err20);
 }
 errors++;
 }
@@ -5689,12 +5874,12 @@ else {
 const _errs162 = errors;
 for(const key2 in data64){
 if(!((key2 === "kind") || (key2 === "agent"))){
-const err20 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
+const err21 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err20];
+vErrors = [err21];
 }
 else {
-vErrors.push(err20);
+vErrors.push(err21);
 }
 errors++;
 break;
@@ -5705,22 +5890,22 @@ if(data64.kind !== undefined){
 let data70 = data64.kind;
 const _errs163 = errors;
 if(typeof data70 !== "string"){
-const err21 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err21];
-}
-else {
-vErrors.push(err21);
-}
-errors++;
-}
-if("agent" !== data70){
-const err22 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/kind/const",keyword:"const",params:{allowedValue: "agent"},message:"must be equal to constant"};
+const err22 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err22];
 }
 else {
 vErrors.push(err22);
+}
+errors++;
+}
+if("agent" !== data70){
+const err23 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/kind/const",keyword:"const",params:{allowedValue: "agent"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err23];
+}
+else {
+vErrors.push(err23);
 }
 errors++;
 }
@@ -5734,22 +5919,22 @@ if(data64.agent !== undefined){
 let data71 = data64.agent;
 const _errs165 = errors;
 if(typeof data71 !== "string"){
-const err23 = {instancePath:instancePath+"/scope/users/" + i9+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/agent/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err23];
-}
-else {
-vErrors.push(err23);
-}
-errors++;
-}
-if(!((((data71 === "claude_code") || (data71 === "codex")) || (data71 === "cursor")) || (data71 === "hermes"))){
-const err24 = {instancePath:instancePath+"/scope/users/" + i9+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/agent/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[2].properties.agent.enum},message:"must be equal to one of the allowed values"};
+const err24 = {instancePath:instancePath+"/scope/users/" + i9+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/agent/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err24];
 }
 else {
 vErrors.push(err24);
+}
+errors++;
+}
+if(!((((data71 === "claude_code") || (data71 === "codex")) || (data71 === "cursor")) || (data71 === "hermes"))){
+const err25 = {instancePath:instancePath+"/scope/users/" + i9+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/properties/agent/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[2].properties.agent.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err25];
+}
+else {
+vErrors.push(err25);
 }
 errors++;
 }
@@ -5763,12 +5948,12 @@ var valid23 = true;
 }
 }
 else {
-const err25 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err26 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err25];
+vErrors = [err26];
 }
 else {
-vErrors.push(err25);
+vErrors.push(err26);
 }
 errors++;
 }
@@ -5791,12 +5976,12 @@ if(errors === _errs167){
 if(data64 && typeof data64 == "object" && !Array.isArray(data64)){
 let missing10;
 if(((data64.kind === undefined) && (missing10 = "kind")) || ((data64.credential === undefined) && (missing10 = "credential"))){
-const err26 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
+const err27 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
 if(vErrors === null){
-vErrors = [err26];
+vErrors = [err27];
 }
 else {
-vErrors.push(err26);
+vErrors.push(err27);
 }
 errors++;
 }
@@ -5804,12 +5989,12 @@ else {
 const _errs169 = errors;
 for(const key3 in data64){
 if(!((key3 === "kind") || (key3 === "credential"))){
-const err27 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
+const err28 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err27];
+vErrors = [err28];
 }
 else {
-vErrors.push(err27);
+vErrors.push(err28);
 }
 errors++;
 break;
@@ -5820,22 +6005,22 @@ if(data64.kind !== undefined){
 let data72 = data64.kind;
 const _errs170 = errors;
 if(typeof data72 !== "string"){
-const err28 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err28];
-}
-else {
-vErrors.push(err28);
-}
-errors++;
-}
-if("credential" !== data72){
-const err29 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/kind/const",keyword:"const",params:{allowedValue: "credential"},message:"must be equal to constant"};
+const err29 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err29];
 }
 else {
 vErrors.push(err29);
+}
+errors++;
+}
+if("credential" !== data72){
+const err30 = {instancePath:instancePath+"/scope/users/" + i9+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/kind/const",keyword:"const",params:{allowedValue: "credential"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err30];
+}
+else {
+vErrors.push(err30);
 }
 errors++;
 }
@@ -5849,22 +6034,22 @@ if(data64.credential !== undefined){
 let data73 = data64.credential;
 const _errs172 = errors;
 if(typeof data73 !== "string"){
-const err30 = {instancePath:instancePath+"/scope/users/" + i9+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/credential/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err30];
-}
-else {
-vErrors.push(err30);
-}
-errors++;
-}
-if(!(((data73 === "workos_jwt") || (data73 === "workos_api_key")) || (data73 === "service_token"))){
-const err31 = {instancePath:instancePath+"/scope/users/" + i9+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/credential/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[3].properties.credential.enum},message:"must be equal to one of the allowed values"};
+const err31 = {instancePath:instancePath+"/scope/users/" + i9+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/credential/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err31];
 }
 else {
 vErrors.push(err31);
+}
+errors++;
+}
+if(!(((data73 === "workos_jwt") || (data73 === "workos_api_key")) || (data73 === "service_token"))){
+const err32 = {instancePath:instancePath+"/scope/users/" + i9+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/properties/credential/enum",keyword:"enum",params:{allowedValues: schema49.properties.scope.properties.users.items.oneOf[3].properties.credential.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err32];
+}
+else {
+vErrors.push(err32);
 }
 errors++;
 }
@@ -5878,12 +6063,12 @@ var valid24 = true;
 }
 }
 else {
-const err32 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err33 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err32];
+vErrors = [err33];
 }
 else {
-vErrors.push(err32);
+vErrors.push(err33);
 }
 errors++;
 }
@@ -5905,12 +6090,12 @@ props0 = true;
 }
 }
 if(!valid20){
-const err33 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const err34 = {instancePath:instancePath+"/scope/users/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionDetailResponse/properties/scope/properties/users/items/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
-vErrors = [err33];
+vErrors = [err34];
 }
 else {
-vErrors.push(err33);
+vErrors.push(err34);
 }
 errors++;
 validate29.errors = vErrors;
@@ -6257,7 +6442,7 @@ validate32.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionRelateSuccessResponse = validate33;
 const schema56 = {"$id":"urn:primitive:cli-http-v1:DecisionRelateSuccessResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse"};
-const schema57 = {"type":"object","properties":{"outcome":{"type":"string","enum":["linked","already_linked","unlinked","not_linked"]},"childId":{"type":"string","minLength":1},"childShortId":{"type":"string"},"parentId":{"type":"string","minLength":1},"parentShortId":{"type":"string"}},"required":["outcome","childId","parentId"],"additionalProperties":{}};
+const schema57 = {"type":"object","properties":{"outcome":{"type":"string","enum":["linked","already_linked","unlinked","not_linked"]},"childId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"childShortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"parentId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"parentShortId":{"type":"string","pattern":"^[0-9a-f]{8}$"}},"required":["outcome","childId","parentId"],"additionalProperties":{}};
 
 function validate33(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionRelateSuccessResponse" */;
@@ -6305,6 +6490,12 @@ if(func1(data1) < 1){
 validate33.errors = [{instancePath:instancePath+"/childId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/childId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data1)){
+validate33.errors = [{instancePath:instancePath+"/childId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/childId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate33.errors = [{instancePath:instancePath+"/childId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/childId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -6318,10 +6509,19 @@ var valid1 = true;
 }
 if(valid1){
 if(data.childShortId !== undefined){
+let data2 = data.childShortId;
 const _errs7 = errors;
-if(typeof data.childShortId !== "string"){
+if(errors === _errs7){
+if(typeof data2 === "string"){
+if(!pattern5.test(data2)){
+validate33.errors = [{instancePath:instancePath+"/childShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/childShortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate33.errors = [{instancePath:instancePath+"/childShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/childShortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid1 = _errs7 === errors;
 }
@@ -6338,6 +6538,12 @@ if(func1(data3) < 1){
 validate33.errors = [{instancePath:instancePath+"/parentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/parentId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data3)){
+validate33.errors = [{instancePath:instancePath+"/parentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/parentId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate33.errors = [{instancePath:instancePath+"/parentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/parentId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -6351,10 +6557,19 @@ var valid1 = true;
 }
 if(valid1){
 if(data.parentShortId !== undefined){
+let data4 = data.parentShortId;
 const _errs11 = errors;
-if(typeof data.parentShortId !== "string"){
+if(errors === _errs11){
+if(typeof data4 === "string"){
+if(!pattern5.test(data4)){
+validate33.errors = [{instancePath:instancePath+"/parentShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/parentShortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate33.errors = [{instancePath:instancePath+"/parentShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRelateSuccessResponse/properties/parentShortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid1 = _errs11 === errors;
 }
@@ -7381,7 +7596,7 @@ validate34.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionRescopeResponse = validate35;
 const schema60 = {"$id":"urn:primitive:cli-http-v1:DecisionRescopeResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse"};
-const schema61 = {"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","const":"no_op"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["outcome","stage","scope"],"additionalProperties":{}},{"type":"object","properties":{"outcome":{"type":"string","const":"ok"},"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["outcome","decisionId","stage","scope"],"additionalProperties":{}}]};
+const schema61 = {"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","const":"no_op"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["outcome","stage","scope"],"additionalProperties":{}},{"type":"object","properties":{"outcome":{"type":"string","const":"ok"},"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]},"scope":{"type":"object","properties":{"location":{"type":"object","properties":{"mode":{"type":"string","enum":["inherited","explicit"]},"repository":{"type":"boolean"},"directories":{"type":"array","items":{"type":"string"}},"globs":{"type":"array","items":{"type":"string"}},"branches":{"type":"array","items":{"type":"string"}}},"required":["repository","directories","globs","branches"],"additionalProperties":{}},"time":{"type":"object","properties":{"effectiveFrom":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991},"effectiveUntil":{"type":"integer","minimum":-9007199254740991,"maximum":9007199254740991}},"additionalProperties":{}},"users":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"user"},"userId":{"type":"string","minLength":1}},"required":["kind","userId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"role"},"role":{"type":"string","enum":["owner","admin","member"]}},"required":["kind","role"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"agent"},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]}},"required":["kind","agent"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"credential"},"credential":{"type":"string","enum":["workos_jwt","workos_api_key","service_token"]}},"required":["kind","credential"],"additionalProperties":false}]}}},"required":["location","time","users"],"additionalProperties":{}},"scopeWarnings":{"type":"array","items":{"type":"string"}}},"required":["outcome","decisionId","stage","scope"],"additionalProperties":{}}]};
 
 function validate35(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionRescopeResponse" */;
@@ -8469,14 +8684,26 @@ vErrors.push(err61);
 }
 errors++;
 }
-}
 else {
-const err62 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern4.test(data28)){
+const err62 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err62];
 }
 else {
 vErrors.push(err62);
+}
+errors++;
+}
+}
+}
+else {
+const err63 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err63];
+}
+else {
+vErrors.push(err63);
 }
 errors++;
 }
@@ -8488,16 +8715,31 @@ var valid16 = true;
 }
 if(valid16){
 if(data.shortId !== undefined){
+let data29 = data.shortId;
 const _errs81 = errors;
-if(typeof data.shortId !== "string"){
-const err63 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs81){
+if(typeof data29 === "string"){
+if(!pattern5.test(data29)){
+const err64 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
-vErrors = [err63];
+vErrors = [err64];
 }
 else {
-vErrors.push(err63);
+vErrors.push(err64);
 }
 errors++;
+}
+}
+else {
+const err65 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err65];
+}
+else {
+vErrors.push(err65);
+}
+errors++;
+}
 }
 var valid16 = _errs81 === errors;
 }
@@ -8509,22 +8751,22 @@ if(data.stage !== undefined){
 let data30 = data.stage;
 const _errs83 = errors;
 if(typeof data30 !== "string"){
-const err64 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/stage/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err66 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/stage/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err64];
+vErrors = [err66];
 }
 else {
-vErrors.push(err64);
+vErrors.push(err66);
 }
 errors++;
 }
 if(!(((((data30 === "draft") || (data30 === "provisional")) || (data30 === "adopted")) || (data30 === "superseded")) || (data30 === "abandoned"))){
-const err65 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/stage/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.stage.enum},message:"must be equal to one of the allowed values"};
+const err67 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/stage/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.stage.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err65];
+vErrors = [err67];
 }
 else {
-vErrors.push(err65);
+vErrors.push(err67);
 }
 errors++;
 }
@@ -8541,12 +8783,12 @@ if(errors === _errs85){
 if(data31 && typeof data31 == "object" && !Array.isArray(data31)){
 let missing8;
 if((((data31.location === undefined) && (missing8 = "location")) || ((data31.time === undefined) && (missing8 = "time"))) || ((data31.users === undefined) && (missing8 = "users"))){
-const err66 = {instancePath:instancePath+"/scope",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
+const err68 = {instancePath:instancePath+"/scope",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/required",keyword:"required",params:{missingProperty: missing8},message:"must have required property '"+missing8+"'"};
 if(vErrors === null){
-vErrors = [err66];
+vErrors = [err68];
 }
 else {
-vErrors.push(err66);
+vErrors.push(err68);
 }
 errors++;
 }
@@ -8558,12 +8800,12 @@ if(errors === _errs88){
 if(data32 && typeof data32 == "object" && !Array.isArray(data32)){
 let missing9;
 if(((((data32.repository === undefined) && (missing9 = "repository")) || ((data32.directories === undefined) && (missing9 = "directories"))) || ((data32.globs === undefined) && (missing9 = "globs"))) || ((data32.branches === undefined) && (missing9 = "branches"))){
-const err67 = {instancePath:instancePath+"/scope/location",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
+const err69 = {instancePath:instancePath+"/scope/location",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/required",keyword:"required",params:{missingProperty: missing9},message:"must have required property '"+missing9+"'"};
 if(vErrors === null){
-vErrors = [err67];
+vErrors = [err69];
 }
 else {
-vErrors.push(err67);
+vErrors.push(err69);
 }
 errors++;
 }
@@ -8572,22 +8814,22 @@ if(data32.mode !== undefined){
 let data33 = data32.mode;
 const _errs91 = errors;
 if(typeof data33 !== "string"){
-const err68 = {instancePath:instancePath+"/scope/location/mode",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/mode/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err70 = {instancePath:instancePath+"/scope/location/mode",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/mode/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err68];
+vErrors = [err70];
 }
 else {
-vErrors.push(err68);
+vErrors.push(err70);
 }
 errors++;
 }
 if(!((data33 === "inherited") || (data33 === "explicit"))){
-const err69 = {instancePath:instancePath+"/scope/location/mode",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/mode/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.location.properties.mode.enum},message:"must be equal to one of the allowed values"};
+const err71 = {instancePath:instancePath+"/scope/location/mode",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/mode/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.location.properties.mode.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err69];
+vErrors = [err71];
 }
 else {
-vErrors.push(err69);
+vErrors.push(err71);
 }
 errors++;
 }
@@ -8600,12 +8842,12 @@ if(valid18){
 if(data32.repository !== undefined){
 const _errs93 = errors;
 if(typeof data32.repository !== "boolean"){
-const err70 = {instancePath:instancePath+"/scope/location/repository",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/repository/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+const err72 = {instancePath:instancePath+"/scope/location/repository",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/repository/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
-vErrors = [err70];
+vErrors = [err72];
 }
 else {
-vErrors.push(err70);
+vErrors.push(err72);
 }
 errors++;
 }
@@ -8625,12 +8867,12 @@ const len5 = data35.length;
 for(let i5=0; i5<len5; i5++){
 const _errs97 = errors;
 if(typeof data35[i5] !== "string"){
-const err71 = {instancePath:instancePath+"/scope/location/directories/" + i5,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/directories/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err73 = {instancePath:instancePath+"/scope/location/directories/" + i5,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/directories/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err71];
+vErrors = [err73];
 }
 else {
-vErrors.push(err71);
+vErrors.push(err73);
 }
 errors++;
 }
@@ -8641,12 +8883,12 @@ break;
 }
 }
 else {
-const err72 = {instancePath:instancePath+"/scope/location/directories",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/directories/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err74 = {instancePath:instancePath+"/scope/location/directories",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/directories/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err72];
+vErrors = [err74];
 }
 else {
-vErrors.push(err72);
+vErrors.push(err74);
 }
 errors++;
 }
@@ -8667,12 +8909,12 @@ const len6 = data37.length;
 for(let i6=0; i6<len6; i6++){
 const _errs101 = errors;
 if(typeof data37[i6] !== "string"){
-const err73 = {instancePath:instancePath+"/scope/location/globs/" + i6,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/globs/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err75 = {instancePath:instancePath+"/scope/location/globs/" + i6,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/globs/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err73];
+vErrors = [err75];
 }
 else {
-vErrors.push(err73);
+vErrors.push(err75);
 }
 errors++;
 }
@@ -8683,12 +8925,12 @@ break;
 }
 }
 else {
-const err74 = {instancePath:instancePath+"/scope/location/globs",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/globs/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err76 = {instancePath:instancePath+"/scope/location/globs",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/globs/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err74];
+vErrors = [err76];
 }
 else {
-vErrors.push(err74);
+vErrors.push(err76);
 }
 errors++;
 }
@@ -8709,12 +8951,12 @@ const len7 = data39.length;
 for(let i7=0; i7<len7; i7++){
 const _errs105 = errors;
 if(typeof data39[i7] !== "string"){
-const err75 = {instancePath:instancePath+"/scope/location/branches/" + i7,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/branches/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err77 = {instancePath:instancePath+"/scope/location/branches/" + i7,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/branches/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err75];
+vErrors = [err77];
 }
 else {
-vErrors.push(err75);
+vErrors.push(err77);
 }
 errors++;
 }
@@ -8725,12 +8967,12 @@ break;
 }
 }
 else {
-const err76 = {instancePath:instancePath+"/scope/location/branches",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/branches/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err78 = {instancePath:instancePath+"/scope/location/branches",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/properties/branches/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err76];
+vErrors = [err78];
 }
 else {
-vErrors.push(err76);
+vErrors.push(err78);
 }
 errors++;
 }
@@ -8747,12 +8989,12 @@ var valid18 = true;
 }
 }
 else {
-const err77 = {instancePath:instancePath+"/scope/location",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err79 = {instancePath:instancePath+"/scope/location",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/location/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err77];
+vErrors = [err79];
 }
 else {
-vErrors.push(err77);
+vErrors.push(err79);
 }
 errors++;
 }
@@ -8772,35 +9014,35 @@ if(data41.effectiveFrom !== undefined){
 let data42 = data41.effectiveFrom;
 const _errs110 = errors;
 if(!(((typeof data42 == "number") && (!(data42 % 1) && !isNaN(data42))) && (isFinite(data42)))){
-const err78 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err80 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
-vErrors = [err78];
+vErrors = [err80];
 }
 else {
-vErrors.push(err78);
+vErrors.push(err80);
 }
 errors++;
 }
 if(errors === _errs110){
 if((typeof data42 == "number") && (isFinite(data42))){
 if(data42 > 9007199254740991 || isNaN(data42)){
-const err79 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+const err81 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
 if(vErrors === null){
-vErrors = [err79];
+vErrors = [err81];
 }
 else {
-vErrors.push(err79);
+vErrors.push(err81);
 }
 errors++;
 }
 else {
 if(data42 < -9007199254740991 || isNaN(data42)){
-const err80 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/minimum",keyword:"minimum",params:{comparison: ">=", limit: -9007199254740991},message:"must be >= -9007199254740991"};
+const err82 = {instancePath:instancePath+"/scope/time/effectiveFrom",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveFrom/minimum",keyword:"minimum",params:{comparison: ">=", limit: -9007199254740991},message:"must be >= -9007199254740991"};
 if(vErrors === null){
-vErrors = [err80];
+vErrors = [err82];
 }
 else {
-vErrors.push(err80);
+vErrors.push(err82);
 }
 errors++;
 }
@@ -8817,35 +9059,35 @@ if(data41.effectiveUntil !== undefined){
 let data43 = data41.effectiveUntil;
 const _errs112 = errors;
 if(!(((typeof data43 == "number") && (!(data43 % 1) && !isNaN(data43))) && (isFinite(data43)))){
-const err81 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err83 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
-vErrors = [err81];
+vErrors = [err83];
 }
 else {
-vErrors.push(err81);
+vErrors.push(err83);
 }
 errors++;
 }
 if(errors === _errs112){
 if((typeof data43 == "number") && (isFinite(data43))){
 if(data43 > 9007199254740991 || isNaN(data43)){
-const err82 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
+const err84 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"};
 if(vErrors === null){
-vErrors = [err82];
+vErrors = [err84];
 }
 else {
-vErrors.push(err82);
+vErrors.push(err84);
 }
 errors++;
 }
 else {
 if(data43 < -9007199254740991 || isNaN(data43)){
-const err83 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/minimum",keyword:"minimum",params:{comparison: ">=", limit: -9007199254740991},message:"must be >= -9007199254740991"};
+const err85 = {instancePath:instancePath+"/scope/time/effectiveUntil",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/properties/effectiveUntil/minimum",keyword:"minimum",params:{comparison: ">=", limit: -9007199254740991},message:"must be >= -9007199254740991"};
 if(vErrors === null){
-vErrors = [err83];
+vErrors = [err85];
 }
 else {
-vErrors.push(err83);
+vErrors.push(err85);
 }
 errors++;
 }
@@ -8860,12 +9102,12 @@ var valid22 = true;
 }
 }
 else {
-const err84 = {instancePath:instancePath+"/scope/time",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err86 = {instancePath:instancePath+"/scope/time",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/time/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err84];
+vErrors = [err86];
 }
 else {
-vErrors.push(err84);
+vErrors.push(err86);
 }
 errors++;
 }
@@ -8894,12 +9136,12 @@ if(errors === _errs118){
 if(data45 && typeof data45 == "object" && !Array.isArray(data45)){
 let missing10;
 if(((data45.kind === undefined) && (missing10 = "kind")) || ((data45.userId === undefined) && (missing10 = "userId"))){
-const err85 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
+const err87 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/required",keyword:"required",params:{missingProperty: missing10},message:"must have required property '"+missing10+"'"};
 if(vErrors === null){
-vErrors = [err85];
+vErrors = [err87];
 }
 else {
-vErrors.push(err85);
+vErrors.push(err87);
 }
 errors++;
 }
@@ -8907,12 +9149,12 @@ else {
 const _errs120 = errors;
 for(const key4 in data45){
 if(!((key4 === "kind") || (key4 === "userId"))){
-const err86 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+const err88 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err86];
+vErrors = [err88];
 }
 else {
-vErrors.push(err86);
+vErrors.push(err88);
 }
 errors++;
 break;
@@ -8923,22 +9165,22 @@ if(data45.kind !== undefined){
 let data46 = data45.kind;
 const _errs121 = errors;
 if(typeof data46 !== "string"){
-const err87 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err89 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err87];
+vErrors = [err89];
 }
 else {
-vErrors.push(err87);
+vErrors.push(err89);
 }
 errors++;
 }
 if("user" !== data46){
-const err88 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "user"},message:"must be equal to constant"};
+const err90 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/kind/const",keyword:"const",params:{allowedValue: "user"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err88];
+vErrors = [err90];
 }
 else {
-vErrors.push(err88);
+vErrors.push(err90);
 }
 errors++;
 }
@@ -8954,23 +9196,23 @@ const _errs123 = errors;
 if(errors === _errs123){
 if(typeof data47 === "string"){
 if(func1(data47) < 1){
-const err89 = {instancePath:instancePath+"/scope/users/" + i8+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/userId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
+const err91 = {instancePath:instancePath+"/scope/users/" + i8+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/userId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"};
 if(vErrors === null){
-vErrors = [err89];
+vErrors = [err91];
 }
 else {
-vErrors.push(err89);
+vErrors.push(err91);
 }
 errors++;
 }
 }
 else {
-const err90 = {instancePath:instancePath+"/scope/users/" + i8+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/userId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err92 = {instancePath:instancePath+"/scope/users/" + i8+"/userId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/properties/userId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err90];
+vErrors = [err92];
 }
 else {
-vErrors.push(err90);
+vErrors.push(err92);
 }
 errors++;
 }
@@ -8985,12 +9227,12 @@ var valid25 = true;
 }
 }
 else {
-const err91 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err93 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err91];
+vErrors = [err93];
 }
 else {
-vErrors.push(err91);
+vErrors.push(err93);
 }
 errors++;
 }
@@ -9006,12 +9248,12 @@ if(errors === _errs125){
 if(data45 && typeof data45 == "object" && !Array.isArray(data45)){
 let missing11;
 if(((data45.kind === undefined) && (missing11 = "kind")) || ((data45.role === undefined) && (missing11 = "role"))){
-const err92 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/required",keyword:"required",params:{missingProperty: missing11},message:"must have required property '"+missing11+"'"};
+const err94 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/required",keyword:"required",params:{missingProperty: missing11},message:"must have required property '"+missing11+"'"};
 if(vErrors === null){
-vErrors = [err92];
+vErrors = [err94];
 }
 else {
-vErrors.push(err92);
+vErrors.push(err94);
 }
 errors++;
 }
@@ -9019,12 +9261,12 @@ else {
 const _errs127 = errors;
 for(const key5 in data45){
 if(!((key5 === "kind") || (key5 === "role"))){
-const err93 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
+const err95 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key5},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err93];
+vErrors = [err95];
 }
 else {
-vErrors.push(err93);
+vErrors.push(err95);
 }
 errors++;
 break;
@@ -9035,22 +9277,22 @@ if(data45.kind !== undefined){
 let data48 = data45.kind;
 const _errs128 = errors;
 if(typeof data48 !== "string"){
-const err94 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err96 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err94];
+vErrors = [err96];
 }
 else {
-vErrors.push(err94);
+vErrors.push(err96);
 }
 errors++;
 }
 if("role" !== data48){
-const err95 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "role"},message:"must be equal to constant"};
+const err97 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "role"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err95];
+vErrors = [err97];
 }
 else {
-vErrors.push(err95);
+vErrors.push(err97);
 }
 errors++;
 }
@@ -9064,22 +9306,22 @@ if(data45.role !== undefined){
 let data49 = data45.role;
 const _errs130 = errors;
 if(typeof data49 !== "string"){
-const err96 = {instancePath:instancePath+"/scope/users/" + i8+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/role/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err98 = {instancePath:instancePath+"/scope/users/" + i8+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/role/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err96];
+vErrors = [err98];
 }
 else {
-vErrors.push(err96);
+vErrors.push(err98);
 }
 errors++;
 }
 if(!(((data49 === "owner") || (data49 === "admin")) || (data49 === "member"))){
-const err97 = {instancePath:instancePath+"/scope/users/" + i8+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/role/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[1].properties.role.enum},message:"must be equal to one of the allowed values"};
+const err99 = {instancePath:instancePath+"/scope/users/" + i8+"/role",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/properties/role/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[1].properties.role.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err97];
+vErrors = [err99];
 }
 else {
-vErrors.push(err97);
+vErrors.push(err99);
 }
 errors++;
 }
@@ -9093,12 +9335,12 @@ var valid26 = true;
 }
 }
 else {
-const err98 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err100 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err98];
+vErrors = [err100];
 }
 else {
-vErrors.push(err98);
+vErrors.push(err100);
 }
 errors++;
 }
@@ -9121,12 +9363,12 @@ if(errors === _errs132){
 if(data45 && typeof data45 == "object" && !Array.isArray(data45)){
 let missing12;
 if(((data45.kind === undefined) && (missing12 = "kind")) || ((data45.agent === undefined) && (missing12 = "agent"))){
-const err99 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/required",keyword:"required",params:{missingProperty: missing12},message:"must have required property '"+missing12+"'"};
+const err101 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/required",keyword:"required",params:{missingProperty: missing12},message:"must have required property '"+missing12+"'"};
 if(vErrors === null){
-vErrors = [err99];
+vErrors = [err101];
 }
 else {
-vErrors.push(err99);
+vErrors.push(err101);
 }
 errors++;
 }
@@ -9134,12 +9376,12 @@ else {
 const _errs134 = errors;
 for(const key6 in data45){
 if(!((key6 === "kind") || (key6 === "agent"))){
-const err100 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
+const err102 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key6},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err100];
+vErrors = [err102];
 }
 else {
-vErrors.push(err100);
+vErrors.push(err102);
 }
 errors++;
 break;
@@ -9150,22 +9392,22 @@ if(data45.kind !== undefined){
 let data50 = data45.kind;
 const _errs135 = errors;
 if(typeof data50 !== "string"){
-const err101 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err103 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err101];
+vErrors = [err103];
 }
 else {
-vErrors.push(err101);
+vErrors.push(err103);
 }
 errors++;
 }
 if("agent" !== data50){
-const err102 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/kind/const",keyword:"const",params:{allowedValue: "agent"},message:"must be equal to constant"};
+const err104 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/kind/const",keyword:"const",params:{allowedValue: "agent"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err102];
+vErrors = [err104];
 }
 else {
-vErrors.push(err102);
+vErrors.push(err104);
 }
 errors++;
 }
@@ -9179,22 +9421,22 @@ if(data45.agent !== undefined){
 let data51 = data45.agent;
 const _errs137 = errors;
 if(typeof data51 !== "string"){
-const err103 = {instancePath:instancePath+"/scope/users/" + i8+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/agent/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err105 = {instancePath:instancePath+"/scope/users/" + i8+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/agent/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err103];
+vErrors = [err105];
 }
 else {
-vErrors.push(err103);
+vErrors.push(err105);
 }
 errors++;
 }
 if(!((((data51 === "claude_code") || (data51 === "codex")) || (data51 === "cursor")) || (data51 === "hermes"))){
-const err104 = {instancePath:instancePath+"/scope/users/" + i8+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/agent/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[2].properties.agent.enum},message:"must be equal to one of the allowed values"};
+const err106 = {instancePath:instancePath+"/scope/users/" + i8+"/agent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/properties/agent/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[2].properties.agent.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err104];
+vErrors = [err106];
 }
 else {
-vErrors.push(err104);
+vErrors.push(err106);
 }
 errors++;
 }
@@ -9208,12 +9450,12 @@ var valid27 = true;
 }
 }
 else {
-const err105 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err107 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err105];
+vErrors = [err107];
 }
 else {
-vErrors.push(err105);
+vErrors.push(err107);
 }
 errors++;
 }
@@ -9236,12 +9478,12 @@ if(errors === _errs139){
 if(data45 && typeof data45 == "object" && !Array.isArray(data45)){
 let missing13;
 if(((data45.kind === undefined) && (missing13 = "kind")) || ((data45.credential === undefined) && (missing13 = "credential"))){
-const err106 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/required",keyword:"required",params:{missingProperty: missing13},message:"must have required property '"+missing13+"'"};
+const err108 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/required",keyword:"required",params:{missingProperty: missing13},message:"must have required property '"+missing13+"'"};
 if(vErrors === null){
-vErrors = [err106];
+vErrors = [err108];
 }
 else {
-vErrors.push(err106);
+vErrors.push(err108);
 }
 errors++;
 }
@@ -9249,12 +9491,12 @@ else {
 const _errs141 = errors;
 for(const key7 in data45){
 if(!((key7 === "kind") || (key7 === "credential"))){
-const err107 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
+const err109 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key7},message:"must NOT have additional properties"};
 if(vErrors === null){
-vErrors = [err107];
+vErrors = [err109];
 }
 else {
-vErrors.push(err107);
+vErrors.push(err109);
 }
 errors++;
 break;
@@ -9265,22 +9507,22 @@ if(data45.kind !== undefined){
 let data52 = data45.kind;
 const _errs142 = errors;
 if(typeof data52 !== "string"){
-const err108 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err110 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err108];
+vErrors = [err110];
 }
 else {
-vErrors.push(err108);
+vErrors.push(err110);
 }
 errors++;
 }
 if("credential" !== data52){
-const err109 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/kind/const",keyword:"const",params:{allowedValue: "credential"},message:"must be equal to constant"};
+const err111 = {instancePath:instancePath+"/scope/users/" + i8+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/kind/const",keyword:"const",params:{allowedValue: "credential"},message:"must be equal to constant"};
 if(vErrors === null){
-vErrors = [err109];
+vErrors = [err111];
 }
 else {
-vErrors.push(err109);
+vErrors.push(err111);
 }
 errors++;
 }
@@ -9294,22 +9536,22 @@ if(data45.credential !== undefined){
 let data53 = data45.credential;
 const _errs144 = errors;
 if(typeof data53 !== "string"){
-const err110 = {instancePath:instancePath+"/scope/users/" + i8+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/credential/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err112 = {instancePath:instancePath+"/scope/users/" + i8+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/credential/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err110];
+vErrors = [err112];
 }
 else {
-vErrors.push(err110);
+vErrors.push(err112);
 }
 errors++;
 }
 if(!(((data53 === "workos_jwt") || (data53 === "workos_api_key")) || (data53 === "service_token"))){
-const err111 = {instancePath:instancePath+"/scope/users/" + i8+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/credential/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[3].properties.credential.enum},message:"must be equal to one of the allowed values"};
+const err113 = {instancePath:instancePath+"/scope/users/" + i8+"/credential",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/properties/credential/enum",keyword:"enum",params:{allowedValues: schema61.anyOf[1].properties.scope.properties.users.items.oneOf[3].properties.credential.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err111];
+vErrors = [err113];
 }
 else {
-vErrors.push(err111);
+vErrors.push(err113);
 }
 errors++;
 }
@@ -9323,12 +9565,12 @@ var valid28 = true;
 }
 }
 else {
-const err112 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err114 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf/3/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err112];
+vErrors = [err114];
 }
 else {
-vErrors.push(err112);
+vErrors.push(err114);
 }
 errors++;
 }
@@ -9350,12 +9592,12 @@ props2 = true;
 }
 }
 if(!valid24){
-const err113 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
+const err115 = {instancePath:instancePath+"/scope/users/" + i8,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/items/oneOf",keyword:"oneOf",params:{passingSchemas: passing1},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
-vErrors = [err113];
+vErrors = [err115];
 }
 else {
-vErrors.push(err113);
+vErrors.push(err115);
 }
 errors++;
 }
@@ -9377,12 +9619,12 @@ break;
 }
 }
 else {
-const err114 = {instancePath:instancePath+"/scope/users",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err116 = {instancePath:instancePath+"/scope/users",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/properties/users/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err114];
+vErrors = [err116];
 }
 else {
-vErrors.push(err114);
+vErrors.push(err116);
 }
 errors++;
 }
@@ -9397,12 +9639,12 @@ var valid17 = true;
 }
 }
 else {
-const err115 = {instancePath:instancePath+"/scope",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err117 = {instancePath:instancePath+"/scope",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scope/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err115];
+vErrors = [err117];
 }
 else {
-vErrors.push(err115);
+vErrors.push(err117);
 }
 errors++;
 }
@@ -9423,12 +9665,12 @@ const len9 = data54.length;
 for(let i9=0; i9<len9; i9++){
 const _errs148 = errors;
 if(typeof data54[i9] !== "string"){
-const err116 = {instancePath:instancePath+"/scopeWarnings/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scopeWarnings/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err118 = {instancePath:instancePath+"/scopeWarnings/" + i9,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scopeWarnings/items/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err116];
+vErrors = [err118];
 }
 else {
-vErrors.push(err116);
+vErrors.push(err118);
 }
 errors++;
 }
@@ -9439,12 +9681,12 @@ break;
 }
 }
 else {
-const err117 = {instancePath:instancePath+"/scopeWarnings",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scopeWarnings/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err119 = {instancePath:instancePath+"/scopeWarnings",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/properties/scopeWarnings/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err117];
+vErrors = [err119];
 }
 else {
-vErrors.push(err117);
+vErrors.push(err119);
 }
 errors++;
 }
@@ -9462,12 +9704,12 @@ var valid16 = true;
 }
 }
 else {
-const err118 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err120 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err118];
+vErrors = [err120];
 }
 else {
-vErrors.push(err118);
+vErrors.push(err120);
 }
 errors++;
 }
@@ -9480,12 +9722,12 @@ props1 = true;
 }
 }
 if(!valid1){
-const err119 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err121 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionRescopeResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err119];
+vErrors = [err121];
 }
 else {
-vErrors.push(err119);
+vErrors.push(err121);
 }
 errors++;
 validate35.errors = vErrors;
@@ -9510,7 +9752,7 @@ validate35.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
 export const isDecisionStageSuccessResponse = validate36;
 const schema62 = {"$id":"urn:primitive:cli-http-v1:DecisionStageSuccessResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse"};
-const schema63 = {"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","const":"no_op"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["outcome","stage"],"additionalProperties":{}},{"type":"object","properties":{"outcome":{"type":"string","const":"ok"},"decisionId":{"type":"string","minLength":1},"shortId":{"type":"string"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["outcome","decisionId","stage"],"additionalProperties":{}}]};
+const schema63 = {"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","const":"no_op"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["outcome","stage"],"additionalProperties":{}},{"type":"object","properties":{"outcome":{"type":"string","const":"ok"},"decisionId":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["outcome","decisionId","stage"],"additionalProperties":{}}]};
 
 function validate36(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionStageSuccessResponse" */;
@@ -9675,14 +9917,26 @@ vErrors.push(err9);
 }
 errors++;
 }
-}
 else {
-const err10 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern4.test(data3)){
+const err10 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err10];
 }
 else {
 vErrors.push(err10);
+}
+errors++;
+}
+}
+}
+else {
+const err11 = {instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err11];
+}
+else {
+vErrors.push(err11);
 }
 errors++;
 }
@@ -9694,16 +9948,31 @@ var valid3 = true;
 }
 if(valid3){
 if(data.shortId !== undefined){
+let data4 = data.shortId;
 const _errs16 = errors;
-if(typeof data.shortId !== "string"){
-const err11 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs16){
+if(typeof data4 === "string"){
+if(!pattern5.test(data4)){
+const err12 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
-vErrors = [err11];
+vErrors = [err12];
 }
 else {
-vErrors.push(err11);
+vErrors.push(err12);
 }
 errors++;
+}
+}
+else {
+const err13 = {instancePath:instancePath+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err13];
+}
+else {
+vErrors.push(err13);
+}
+errors++;
+}
 }
 var valid3 = _errs16 === errors;
 }
@@ -9715,22 +9984,22 @@ if(data.stage !== undefined){
 let data5 = data.stage;
 const _errs18 = errors;
 if(typeof data5 !== "string"){
-const err12 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/stage/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err14 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/stage/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err12];
+vErrors = [err14];
 }
 else {
-vErrors.push(err12);
+vErrors.push(err14);
 }
 errors++;
 }
 if(!(((((data5 === "draft") || (data5 === "provisional")) || (data5 === "adopted")) || (data5 === "superseded")) || (data5 === "abandoned"))){
-const err13 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/stage/enum",keyword:"enum",params:{allowedValues: schema63.anyOf[1].properties.stage.enum},message:"must be equal to one of the allowed values"};
+const err15 = {instancePath:instancePath+"/stage",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/properties/stage/enum",keyword:"enum",params:{allowedValues: schema63.anyOf[1].properties.stage.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
-vErrors = [err13];
+vErrors = [err15];
 }
 else {
-vErrors.push(err13);
+vErrors.push(err15);
 }
 errors++;
 }
@@ -9745,12 +10014,12 @@ var valid3 = true;
 }
 }
 else {
-const err14 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err16 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err14];
+vErrors = [err16];
 }
 else {
-vErrors.push(err14);
+vErrors.push(err16);
 }
 errors++;
 }
@@ -9763,12 +10032,12 @@ props0 = true;
 }
 }
 if(!valid1){
-const err15 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err17 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionStageSuccessResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err15];
+vErrors = [err17];
 }
 else {
-vErrors.push(err15);
+vErrors.push(err17);
 }
 errors++;
 validate36.errors = vErrors;
@@ -9853,7 +10122,7 @@ validate37.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionsAffectingResponse = validate38;
 const schema66 = {"$id":"urn:primitive:cli-http-v1:DecisionsAffectingResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsAffectingResponse"};
-const schema67 = {"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"intent":{"type":"string"},"rationale":{"type":"string"},"status":{"type":"string","enum":["active","under_review"]},"classifiedAt":{"type":"number"},"matchedFiles":{"type":"array","items":{"type":"string"}}},"required":["id","intent","status","classifiedAt","matchedFiles"],"additionalProperties":{}}},"truncated":{"type":"boolean"},"repoSyncId":{"type":"string"},"unavailable":{"type":"string"}},"required":["decisions","truncated"],"additionalProperties":{}};
+const schema67 = {"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"intent":{"type":"string"},"rationale":{"type":"string"},"status":{"type":"string","enum":["active","under_review"]},"classifiedAt":{"type":"number"},"matchedFiles":{"type":"array","items":{"type":"string"}}},"required":["id","intent","status","classifiedAt","matchedFiles"],"additionalProperties":{}}},"truncated":{"type":"boolean"},"repoSyncId":{"type":"string"},"unavailable":{"type":"string"}},"required":["decisions","truncated"],"additionalProperties":{}};
 
 function validate38(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionsAffectingResponse" */;
@@ -9901,6 +10170,12 @@ if(typeof data2 === "string"){
 if(func1(data2) < 1){
 validate38.errors = [{instancePath:instancePath+"/decisions/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsAffectingResponse/properties/decisions/items/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
+}
+else {
+if(!pattern4.test(data2)){
+validate38.errors = [{instancePath:instancePath+"/decisions/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsAffectingResponse/properties/decisions/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
 }
 }
 else {
@@ -10078,7 +10353,7 @@ validate38.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDecisionsRecentResponseStructure = validate39;
 const schema68 = {"$id":"urn:primitive:cli-http-v1:DecisionsRecentResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse"};
-const schema69 = {"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1},"shortId":{"type":"string"},"intent":{"type":"string"},"rationale":{"type":"string"},"area":{"type":"string"},"producerKind":{"type":"string"},"isDecision":{"type":"boolean"},"userId":{"type":"string"},"authorName":{"type":"string"},"authorIsSelf":{"type":"boolean"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["id","intent","userId","authorName","authorIsSelf","classifiedAt","status","stage"],"additionalProperties":{}}},"viewerHasDecisions":{"type":"boolean"},"author":{"type":"object","properties":{"userId":{"type":"string"},"name":{"type":"string"}},"required":["userId","name"],"additionalProperties":{}},"authorHasDecisions":{"type":"boolean"},"windowTotal":{"type":"integer","minimum":0,"maximum":9007199254740991},"windowTotalCapped":{"type":"boolean"},"continueCursor":{"type":"string","minLength":1,"maxLength":4096},"isDone":{"type":"boolean"},"unavailable":{"type":"string"}},"required":["decisions"],"additionalProperties":{},"x-primitive-runtime-refinements":["recent_response_variant"]};
+const schema69 = {"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"intent":{"type":"string"},"rationale":{"type":"string"},"area":{"type":"string"},"producerKind":{"type":"string"},"isDecision":{"type":"boolean"},"userId":{"type":"string"},"authorName":{"type":"string"},"authorIsSelf":{"type":"boolean"},"classifiedAt":{"type":"number"},"status":{"type":"string","enum":["active","superseded","under_review"]},"stage":{"type":"string","enum":["draft","provisional","adopted","superseded","abandoned"]}},"required":["id","intent","userId","authorName","authorIsSelf","classifiedAt","status","stage"],"additionalProperties":{}}},"viewerHasDecisions":{"type":"boolean"},"author":{"type":"object","properties":{"userId":{"type":"string"},"name":{"type":"string"}},"required":["userId","name"],"additionalProperties":{}},"authorHasDecisions":{"type":"boolean"},"windowTotal":{"type":"integer","minimum":0,"maximum":9007199254740991},"windowTotalCapped":{"type":"boolean"},"continueCursor":{"type":"string","minLength":1,"maxLength":4096},"isDone":{"type":"boolean"},"unavailable":{"type":"string"}},"required":["decisions"],"additionalProperties":{},"x-primitive-runtime-refinements":["recent_response_variant"]};
 
 function validate39(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DecisionsRecentResponse" */;
@@ -10127,6 +10402,12 @@ if(func1(data2) < 1){
 validate39.errors = [{instancePath:instancePath+"/decisions/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse/properties/decisions/items/properties/id/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
+else {
+if(!pattern4.test(data2)){
+validate39.errors = [{instancePath:instancePath+"/decisions/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse/properties/decisions/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
 }
 else {
 validate39.errors = [{instancePath:instancePath+"/decisions/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse/properties/decisions/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
@@ -10140,10 +10421,19 @@ var valid3 = true;
 }
 if(valid3){
 if(data1.shortId !== undefined){
+let data3 = data1.shortId;
 const _errs11 = errors;
-if(typeof data1.shortId !== "string"){
+if(errors === _errs11){
+if(typeof data3 === "string"){
+if(!pattern5.test(data3)){
+validate39.errors = [{instancePath:instancePath+"/decisions/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse/properties/decisions/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate39.errors = [{instancePath:instancePath+"/decisions/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DecisionsRecentResponse/properties/decisions/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs11 === errors;
 }
@@ -10513,8 +10803,8 @@ validate39.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isDemoCompleteRequest = validate40;
 const schema70 = {"$id":"urn:primitive:cli-http-v1:DemoCompleteRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoCompleteRequest"};
 const schema71 = {"type":"object","properties":{"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"appliedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["runId","revision","appliedDigest"],"additionalProperties":false};
-const pattern4 = new RegExp("^[a-zA-Z0-9]{1,64}$", "u");
-const pattern5 = new RegExp("^[a-f0-9]{64}$", "u");
+const pattern34 = new RegExp("^[a-zA-Z0-9]{1,64}$", "u");
+const pattern35 = new RegExp("^[a-f0-9]{64}$", "u");
 
 function validate40(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DemoCompleteRequest" */;
@@ -10550,7 +10840,7 @@ let data0 = data.runId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern4.test(data0)){
+if(!pattern34.test(data0)){
 validate40.errors = [{instancePath:instancePath+"/runId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoCompleteRequest/properties/runId/pattern",keyword:"pattern",params:{pattern: "^[a-zA-Z0-9]{1,64}$"},message:"must match pattern \""+"^[a-zA-Z0-9]{1,64}$"+"\""}];
 return false;
 }
@@ -10598,7 +10888,7 @@ let data2 = data.appliedDigest;
 const _errs7 = errors;
 if(errors === _errs7){
 if(typeof data2 === "string"){
-if(!pattern5.test(data2)){
+if(!pattern35.test(data2)){
 validate40.errors = [{instancePath:instancePath+"/appliedDigest",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoCompleteRequest/properties/appliedDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
@@ -10631,7 +10921,7 @@ validate40.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isDemoResolveRequest = validate41;
 const schema72 = {"$id":"urn:primitive:cli-http-v1:DemoResolveRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoResolveRequest"};
 const schema73 = {"oneOf":[{"type":"object","properties":{"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"choice":{"type":"string","const":"adhere"}},"required":["runId","revision","choice"],"additionalProperties":false},{"type":"object","properties":{"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"choice":{"type":"string","const":"supersede"},"reason":{"type":"string","minLength":1,"maxLength":500,"pattern":"\\S"}},"required":["runId","revision","choice","reason"],"additionalProperties":false}]};
-const pattern8 = new RegExp("\\S", "u");
+const pattern38 = new RegExp("\\S", "u");
 
 function validate41(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DemoResolveRequest" */;
@@ -10682,7 +10972,7 @@ let data0 = data.runId;
 const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data0 === "string"){
-if(!pattern4.test(data0)){
+if(!pattern34.test(data0)){
 const err2 = {instancePath:instancePath+"/runId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoResolveRequest/oneOf/0/properties/runId/pattern",keyword:"pattern",params:{pattern: "^[a-zA-Z0-9]{1,64}$"},message:"must match pattern \""+"^[a-zA-Z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err2];
@@ -10840,7 +11130,7 @@ let data3 = data.runId;
 const _errs14 = errors;
 if(errors === _errs14){
 if(typeof data3 === "string"){
-if(!pattern4.test(data3)){
+if(!pattern34.test(data3)){
 const err12 = {instancePath:instancePath+"/runId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoResolveRequest/oneOf/1/properties/runId/pattern",keyword:"pattern",params:{pattern: "^[a-zA-Z0-9]{1,64}$"},message:"must match pattern \""+"^[a-zA-Z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err12];
@@ -10969,7 +11259,7 @@ vErrors.push(err20);
 errors++;
 }
 else {
-if(!pattern8.test(data6)){
+if(!pattern38.test(data6)){
 const err21 = {instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoResolveRequest/oneOf/1/properties/reason/pattern",keyword:"pattern",params:{pattern: "\\S"},message:"must match pattern \""+"\\S"+"\""};
 if(vErrors === null){
 vErrors = [err21];
@@ -11096,7 +11386,7 @@ let data0 = data.runId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern4.test(data0)){
+if(!pattern34.test(data0)){
 validate42.errors = [{instancePath:instancePath+"/runId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoRunRequest/properties/runId/pattern",keyword:"pattern",params:{pattern: "^[a-zA-Z0-9]{1,64}$"},message:"must match pattern \""+"^[a-zA-Z0-9]{1,64}$"+"\""}];
 return false;
 }
@@ -11155,7 +11445,7 @@ validate42.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isDemoStartRequest = validate43;
 const schema76 = {"$id":"urn:primitive:cli-http-v1:DemoStartRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStartRequest"};
 const schema77 = {"type":"object","properties":{"scenarioVersion":{"type":"number","const":1},"localRunId":{"type":"string","format":"uuid","pattern":"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"}},"required":["scenarioVersion","localRunId"],"additionalProperties":false};
-const pattern10 = new RegExp("^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$", "u");
+const pattern40 = new RegExp("^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$", "u");
 
 function validate43(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DemoStartRequest" */;
@@ -11209,7 +11499,7 @@ const _errs5 = errors;
 if(errors === _errs5){
 if(errors === _errs5){
 if(typeof data1 === "string"){
-if(!pattern10.test(data1)){
+if(!pattern40.test(data1)){
 validate43.errors = [{instancePath:instancePath+"/localRunId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStartRequest/properties/localRunId/pattern",keyword:"pattern",params:{pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"},message:"must match pattern \""+"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"+"\""}];
 return false;
 }
@@ -11243,7 +11533,7 @@ export const isDemoStatusResponse = validate44;
 const schema78 = {"$id":"urn:primitive:cli-http-v1:DemoStatusResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse"};
 const schema79 = {"type":"object","properties":{"scenarioVersion":{"type":"number","const":1},"fictional":{"type":"boolean","const":true},"evaluation":{"type":"string","const":"live"},"runId":{"type":"string","pattern":"^[a-zA-Z0-9]{1,64}$"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991},"stage":{"type":"string","enum":["ready","checking","blocked","approved","completed","skipped","expired"]},"authorName":{"type":"string","maxLength":200},"story":{"type":"object","properties":{"orgName":{"type":"string","maxLength":200},"recipient":{"type":"string","format":"email","pattern":"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"},"decisionDate":{"type":"string","maxLength":100}},"required":["orgName","recipient","decisionDate"],"additionalProperties":false},"email":{"type":"string","enum":["not_queued","queued","accepted","failed","suppressed"]},"verdict":{"type":"string","enum":["block","pass","pending"]},"reasonCode":{"type":"string","maxLength":100},"choice":{"type":"string","enum":["adhere","supersede"]},"reason":{"type":"string","maxLength":500},"approvedDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["scenarioVersion","fictional","evaluation","runId","revision","stage","authorName","story","email"],"additionalProperties":false};
 const func34 = Object.prototype.hasOwnProperty;
-const pattern12 = new RegExp("^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$", "u");
+const pattern42 = new RegExp("^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$", "u");
 
 function validate44(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DemoStatusResponse" */;
@@ -11330,7 +11620,7 @@ let data3 = data.runId;
 const _errs9 = errors;
 if(errors === _errs9){
 if(typeof data3 === "string"){
-if(!pattern4.test(data3)){
+if(!pattern34.test(data3)){
 validate44.errors = [{instancePath:instancePath+"/runId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/runId/pattern",keyword:"pattern",params:{pattern: "^[a-zA-Z0-9]{1,64}$"},message:"must match pattern \""+"^[a-zA-Z0-9]{1,64}$"+"\""}];
 return false;
 }
@@ -11458,7 +11748,7 @@ const _errs22 = errors;
 if(errors === _errs22){
 if(errors === _errs22){
 if(typeof data9 === "string"){
-if(!pattern12.test(data9)){
+if(!pattern42.test(data9)){
 validate44.errors = [{instancePath:instancePath+"/story/recipient",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/story/properties/recipient/pattern",keyword:"pattern",params:{pattern: "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"},message:"must match pattern \""+"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"+"\""}];
 return false;
 }
@@ -11609,7 +11899,7 @@ let data16 = data.approvedDigest;
 const _errs36 = errors;
 if(errors === _errs36){
 if(typeof data16 === "string"){
-if(!pattern5.test(data16)){
+if(!pattern35.test(data16)){
 validate44.errors = [{instancePath:instancePath+"/approvedDigest",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DemoStatusResponse/properties/approvedDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
@@ -11652,7 +11942,7 @@ validate44.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isDurableMoveIngestResponse = validate45;
 const schema80 = {"$id":"urn:primitive:cli-http-v1:DurableMoveIngestResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse"};
-const schema81 = {"type":"object","properties":{"disposition":{"type":"string","const":"persisted"},"acknowledged":{"type":"number"},"accepted":{"type":"number"},"verdictFooter":{"anyOf":[{"type":"object","properties":{"author":{"type":"string"},"intent":{"type":"string"},"decisionsSaved":{"type":"number"},"decisionsSavedTruncated":{"type":"boolean"},"decisionId":{"type":"string"},"decisionShortId":{"type":"string"}},"required":["author","intent","decisionsSaved","decisionsSavedTruncated","decisionId"],"additionalProperties":false},{"type":"null"}]},"collectScopeVersion":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["disposition","acknowledged","accepted","verdictFooter"],"additionalProperties":false};
+const schema81 = {"type":"object","properties":{"disposition":{"type":"string","const":"persisted"},"acknowledged":{"type":"number"},"accepted":{"type":"number"},"verdictFooter":{"anyOf":[{"type":"object","properties":{"author":{"type":"string"},"intent":{"type":"string"},"decisionsSaved":{"type":"number"},"decisionsSavedTruncated":{"type":"boolean"},"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"decisionShortId":{"type":"string","pattern":"^[0-9a-f]{8}$"}},"required":["author","intent","decisionsSaved","decisionsSavedTruncated","decisionId"],"additionalProperties":false},{"type":"null"}]},"collectScopeVersion":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["disposition","acknowledged","accepted","verdictFooter"],"additionalProperties":false};
 
 function validate45(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:DurableMoveIngestResponse" */;
@@ -11835,9 +12125,12 @@ var valid3 = true;
 }
 if(valid3){
 if(data3.decisionId !== undefined){
+let data8 = data3.decisionId;
 const _errs22 = errors;
-if(typeof data3.decisionId !== "string"){
-const err6 = {instancePath:instancePath+"/verdictFooter/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(errors === _errs22){
+if(typeof data8 === "string"){
+if(!pattern4.test(data8)){
+const err6 = {instancePath:instancePath+"/verdictFooter/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err6];
 }
@@ -11846,16 +12139,9 @@ vErrors.push(err6);
 }
 errors++;
 }
-var valid3 = _errs22 === errors;
 }
 else {
-var valid3 = true;
-}
-if(valid3){
-if(data3.decisionShortId !== undefined){
-const _errs24 = errors;
-if(typeof data3.decisionShortId !== "string"){
-const err7 = {instancePath:instancePath+"/verdictFooter/decisionShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionShortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err7 = {instancePath:instancePath+"/verdictFooter/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -11863,6 +12149,40 @@ else {
 vErrors.push(err7);
 }
 errors++;
+}
+}
+var valid3 = _errs22 === errors;
+}
+else {
+var valid3 = true;
+}
+if(valid3){
+if(data3.decisionShortId !== undefined){
+let data9 = data3.decisionShortId;
+const _errs24 = errors;
+if(errors === _errs24){
+if(typeof data9 === "string"){
+if(!pattern5.test(data9)){
+const err8 = {instancePath:instancePath+"/verdictFooter/decisionShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionShortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
+if(vErrors === null){
+vErrors = [err8];
+}
+else {
+vErrors.push(err8);
+}
+errors++;
+}
+}
+else {
+const err9 = {instancePath:instancePath+"/verdictFooter/decisionShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/properties/decisionShortId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err9];
+}
+else {
+vErrors.push(err9);
+}
+errors++;
+}
 }
 var valid3 = _errs24 === errors;
 }
@@ -11878,12 +12198,12 @@ var valid3 = true;
 }
 }
 else {
-const err8 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err10 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err8];
+vErrors = [err10];
 }
 else {
-vErrors.push(err8);
+vErrors.push(err10);
 }
 errors++;
 }
@@ -11892,24 +12212,24 @@ var _valid0 = _errs11 === errors;
 valid2 = valid2 || _valid0;
 const _errs26 = errors;
 if(data3 !== null){
-const err9 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
+const err11 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
-vErrors = [err9];
+vErrors = [err11];
 }
 else {
-vErrors.push(err9);
+vErrors.push(err11);
 }
 errors++;
 }
 var _valid0 = _errs26 === errors;
 valid2 = valid2 || _valid0;
 if(!valid2){
-const err10 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err12 = {instancePath:instancePath+"/verdictFooter",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/DurableMoveIngestResponse/properties/verdictFooter/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err10];
+vErrors = [err12];
 }
 else {
-vErrors.push(err10);
+vErrors.push(err12);
 }
 errors++;
 validate45.errors = vErrors;
@@ -12625,8 +12945,7 @@ validate48.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isFeedbackLeaseResponseStructure = validate49;
 const schema88 = {"$id":"urn:primitive:cli-http-v1:FeedbackLeaseResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse"};
-const schema89 = {"anyOf":[{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"empty"},"hasMore":{"type":"boolean","const":false}},"required":["protocolVersion","status","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"leased"},"events":{"minItems":1,"maxItems":40,"type":"array","items":{"type":"object","properties":{"eventId":{"type":"string","minLength":1,"maxLength":128},"leaseVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"decisionId":{"type":"string","minLength":1,"maxLength":128},"intent":{"type":"string"},"webUrl":{"type":"string"},"kind":{"type":"string","enum":["confirm_prompt","publish_prompt"]}},"required":["eventId","leaseVersion","shortId","intent","webUrl"],"additionalProperties":{}}},"hasMore":{"type":"boolean"}},"required":["protocolVersion","status","events","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"unavailable"},"reason":{"type":"string","const":"organization_unbound"}},"required":["protocolVersion","status","reason"],"additionalProperties":{}}],"x-primitive-runtime-refinements":["feedback_response_version_negotiation","feedback_publish_prompt_decision_id","unique_feedback_event_ids"]};
-const pattern14 = new RegExp("^[0-9a-f]{8}$", "u");
+const schema89 = {"anyOf":[{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"empty"},"hasMore":{"type":"boolean","const":false}},"required":["protocolVersion","status","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"leased"},"events":{"minItems":1,"maxItems":40,"type":"array","items":{"type":"object","properties":{"eventId":{"type":"string","minLength":1,"maxLength":128},"leaseVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"decisionId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"intent":{"type":"string"},"webUrl":{"type":"string"},"kind":{"type":"string","enum":["confirm_prompt","publish_prompt"]}},"required":["eventId","leaseVersion","shortId","intent","webUrl"],"additionalProperties":{}}},"hasMore":{"type":"boolean"}},"required":["protocolVersion","status","events","hasMore"],"additionalProperties":{}},{"type":"object","properties":{"protocolVersion":{"type":"integer","minimum":1,"maximum":2},"status":{"type":"string","const":"unavailable"},"reason":{"type":"string","const":"organization_unbound"}},"required":["protocolVersion","status","reason"],"additionalProperties":{}}],"x-primitive-runtime-refinements":["feedback_response_version_negotiation","feedback_publish_prompt_decision_id","unique_feedback_event_ids"]};
 
 function validate49(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:FeedbackLeaseResponse" */;
@@ -13008,7 +13327,7 @@ let data9 = data6.shortId;
 const _errs27 = errors;
 if(errors === _errs27){
 if(typeof data9 === "string"){
-if(!pattern14.test(data9)){
+if(!pattern5.test(data9)){
 const err24 = {instancePath:instancePath+"/events/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err24];
@@ -13062,15 +13381,27 @@ vErrors.push(err27);
 }
 errors++;
 }
-}
-}
 else {
-const err28 = {instancePath:instancePath+"/events/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(!pattern4.test(data10)){
+const err28 = {instancePath:instancePath+"/events/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""};
 if(vErrors === null){
 vErrors = [err28];
 }
 else {
 vErrors.push(err28);
+}
+errors++;
+}
+}
+}
+}
+else {
+const err29 = {instancePath:instancePath+"/events/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err29];
+}
+else {
+vErrors.push(err29);
 }
 errors++;
 }
@@ -13084,12 +13415,12 @@ if(valid5){
 if(data6.intent !== undefined){
 const _errs31 = errors;
 if(typeof data6.intent !== "string"){
-const err29 = {instancePath:instancePath+"/events/" + i0+"/intent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/intent/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err30 = {instancePath:instancePath+"/events/" + i0+"/intent",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/intent/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err29];
+vErrors = [err30];
 }
 else {
-vErrors.push(err29);
+vErrors.push(err30);
 }
 errors++;
 }
@@ -13102,12 +13433,12 @@ if(valid5){
 if(data6.webUrl !== undefined){
 const _errs33 = errors;
 if(typeof data6.webUrl !== "string"){
-const err30 = {instancePath:instancePath+"/events/" + i0+"/webUrl",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/webUrl/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err31 = {instancePath:instancePath+"/events/" + i0+"/webUrl",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/webUrl/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
-vErrors = [err30];
+vErrors = [err31];
 }
 else {
-vErrors.push(err30);
+vErrors.push(err31);
 }
 errors++;
 }
@@ -13121,22 +13452,22 @@ if(data6.kind !== undefined){
 let data13 = data6.kind;
 const _errs35 = errors;
 if(typeof data13 !== "string"){
-const err31 = {instancePath:instancePath+"/events/" + i0+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err31];
-}
-else {
-vErrors.push(err31);
-}
-errors++;
-}
-if(!((data13 === "confirm_prompt") || (data13 === "publish_prompt"))){
-const err32 = {instancePath:instancePath+"/events/" + i0+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/kind/enum",keyword:"enum",params:{allowedValues: schema89.anyOf[1].properties.events.items.properties.kind.enum},message:"must be equal to one of the allowed values"};
+const err32 = {instancePath:instancePath+"/events/" + i0+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err32];
 }
 else {
 vErrors.push(err32);
+}
+errors++;
+}
+if(!((data13 === "confirm_prompt") || (data13 === "publish_prompt"))){
+const err33 = {instancePath:instancePath+"/events/" + i0+"/kind",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/properties/kind/enum",keyword:"enum",params:{allowedValues: schema89.anyOf[1].properties.events.items.properties.kind.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err33];
+}
+else {
+vErrors.push(err33);
 }
 errors++;
 }
@@ -13154,12 +13485,12 @@ var valid5 = true;
 }
 }
 else {
-const err33 = {instancePath:instancePath+"/events/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err34 = {instancePath:instancePath+"/events/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/items/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err33];
+vErrors = [err34];
 }
 else {
-vErrors.push(err33);
+vErrors.push(err34);
 }
 errors++;
 }
@@ -13173,12 +13504,12 @@ break;
 }
 }
 else {
-const err34 = {instancePath:instancePath+"/events",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/type",keyword:"type",params:{type: "array"},message:"must be array"};
+const err35 = {instancePath:instancePath+"/events",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/events/type",keyword:"type",params:{type: "array"},message:"must be array"};
 if(vErrors === null){
-vErrors = [err34];
+vErrors = [err35];
 }
 else {
-vErrors.push(err34);
+vErrors.push(err35);
 }
 errors++;
 }
@@ -13192,12 +13523,12 @@ if(valid3){
 if(data.hasMore !== undefined){
 const _errs37 = errors;
 if(typeof data.hasMore !== "boolean"){
-const err35 = {instancePath:instancePath+"/hasMore",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/hasMore/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
+const err36 = {instancePath:instancePath+"/hasMore",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/properties/hasMore/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"};
 if(vErrors === null){
-vErrors = [err35];
+vErrors = [err36];
 }
 else {
-vErrors.push(err35);
+vErrors.push(err36);
 }
 errors++;
 }
@@ -13212,12 +13543,12 @@ var valid3 = true;
 }
 }
 else {
-const err36 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err37 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err36];
+vErrors = [err37];
 }
 else {
-vErrors.push(err36);
+vErrors.push(err37);
 }
 errors++;
 }
@@ -13234,21 +13565,7 @@ if(errors === _errs39){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing3;
 if((((data.protocolVersion === undefined) && (missing3 = "protocolVersion")) || ((data.status === undefined) && (missing3 = "status"))) || ((data.reason === undefined) && (missing3 = "reason"))){
-const err37 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
-if(vErrors === null){
-vErrors = [err37];
-}
-else {
-vErrors.push(err37);
-}
-errors++;
-}
-else {
-if(data.protocolVersion !== undefined){
-let data15 = data.protocolVersion;
-const _errs42 = errors;
-if(!(((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15))) && (isFinite(data15)))){
-const err38 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
+const err38 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"};
 if(vErrors === null){
 vErrors = [err38];
 }
@@ -13257,10 +13574,12 @@ vErrors.push(err38);
 }
 errors++;
 }
-if(errors === _errs42){
-if((typeof data15 == "number") && (isFinite(data15))){
-if(data15 > 2 || isNaN(data15)){
-const err39 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2},message:"must be <= 2"};
+else {
+if(data.protocolVersion !== undefined){
+let data15 = data.protocolVersion;
+const _errs42 = errors;
+if(!(((typeof data15 == "number") && (!(data15 % 1) && !isNaN(data15))) && (isFinite(data15)))){
+const err39 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err39];
 }
@@ -13269,14 +13588,26 @@ vErrors.push(err39);
 }
 errors++;
 }
-else {
-if(data15 < 1 || isNaN(data15)){
-const err40 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(errors === _errs42){
+if((typeof data15 == "number") && (isFinite(data15))){
+if(data15 > 2 || isNaN(data15)){
+const err40 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 2},message:"must be <= 2"};
 if(vErrors === null){
 vErrors = [err40];
 }
 else {
 vErrors.push(err40);
+}
+errors++;
+}
+else {
+if(data15 < 1 || isNaN(data15)){
+const err41 = {instancePath:instancePath+"/protocolVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/protocolVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
+if(vErrors === null){
+vErrors = [err41];
+}
+else {
+vErrors.push(err41);
 }
 errors++;
 }
@@ -13293,22 +13624,22 @@ if(data.status !== undefined){
 let data16 = data.status;
 const _errs44 = errors;
 if(typeof data16 !== "string"){
-const err41 = {instancePath:instancePath+"/status",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/status/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err41];
-}
-else {
-vErrors.push(err41);
-}
-errors++;
-}
-if("unavailable" !== data16){
-const err42 = {instancePath:instancePath+"/status",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/status/const",keyword:"const",params:{allowedValue: "unavailable"},message:"must be equal to constant"};
+const err42 = {instancePath:instancePath+"/status",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/status/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err42];
 }
 else {
 vErrors.push(err42);
+}
+errors++;
+}
+if("unavailable" !== data16){
+const err43 = {instancePath:instancePath+"/status",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/status/const",keyword:"const",params:{allowedValue: "unavailable"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err43];
+}
+else {
+vErrors.push(err43);
 }
 errors++;
 }
@@ -13322,22 +13653,22 @@ if(data.reason !== undefined){
 let data17 = data.reason;
 const _errs46 = errors;
 if(typeof data17 !== "string"){
-const err43 = {instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/reason/type",keyword:"type",params:{type: "string"},message:"must be string"};
-if(vErrors === null){
-vErrors = [err43];
-}
-else {
-vErrors.push(err43);
-}
-errors++;
-}
-if("organization_unbound" !== data17){
-const err44 = {instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/reason/const",keyword:"const",params:{allowedValue: "organization_unbound"},message:"must be equal to constant"};
+const err44 = {instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/reason/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err44];
 }
 else {
 vErrors.push(err44);
+}
+errors++;
+}
+if("organization_unbound" !== data17){
+const err45 = {instancePath:instancePath+"/reason",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/properties/reason/const",keyword:"const",params:{allowedValue: "organization_unbound"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err45];
+}
+else {
+vErrors.push(err45);
 }
 errors++;
 }
@@ -13351,12 +13682,12 @@ var valid6 = true;
 }
 }
 else {
-const err45 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err46 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf/2/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err45];
+vErrors = [err46];
 }
 else {
-vErrors.push(err45);
+vErrors.push(err46);
 }
 errors++;
 }
@@ -13369,12 +13700,12 @@ props0 = true;
 }
 }
 if(!valid1){
-const err46 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
+const err47 = {instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/FeedbackLeaseResponse/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
-vErrors = [err46];
+vErrors = [err47];
 }
 else {
-vErrors.push(err46);
+vErrors.push(err47);
 }
 errors++;
 validate49.errors = vErrors;
@@ -14199,8 +14530,8 @@ validate51.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isGitHubInstallIntentStartResponse = validate52;
 const schema94 = {"$id":"urn:primitive:cli-http-v1:GitHubInstallIntentStartResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse"};
 const schema95 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":1},"mode":{"type":"string","const":"install_intent_v1"},"status":{"type":"string","const":"pending"},"intentId":{"type":"string","pattern":"^[A-Za-z0-9]{1,128}$"},"browserUrl":{"type":"string","pattern":"^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"},"expiresAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"pollAfterMs":{"type":"number","const":1000}},"required":["protocolVersion","mode","status","intentId","browserUrl","expiresAt","pollAfterMs"],"additionalProperties":false};
-const pattern15 = new RegExp("^[A-Za-z0-9]{1,128}$", "u");
-const pattern16 = new RegExp("^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$", "u");
+const pattern48 = new RegExp("^[A-Za-z0-9]{1,128}$", "u");
+const pattern49 = new RegExp("^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$", "u");
 
 function validate52(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:GitHubInstallIntentStartResponse" */;
@@ -14287,7 +14618,7 @@ let data3 = data.intentId;
 const _errs9 = errors;
 if(errors === _errs9){
 if(typeof data3 === "string"){
-if(!pattern15.test(data3)){
+if(!pattern48.test(data3)){
 validate52.errors = [{instancePath:instancePath+"/intentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse/properties/intentId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,128}$"+"\""}];
 return false;
 }
@@ -14308,7 +14639,7 @@ let data4 = data.browserUrl;
 const _errs11 = errors;
 if(errors === _errs11){
 if(typeof data4 === "string"){
-if(!pattern16.test(data4)){
+if(!pattern49.test(data4)){
 validate52.errors = [{instancePath:instancePath+"/browserUrl",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStartResponse/properties/browserUrl/pattern",keyword:"pattern",params:{pattern: "^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"},message:"must match pattern \""+"^https:\\/\\/github\\.com\\/apps\\/primitive(?:-staging)?\\/installations\\/new\\?state=[0-9a-f]{64}$"+"\""}];
 return false;
 }
@@ -14764,7 +15095,7 @@ let data0 = data.intentId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern15.test(data0)){
+if(!pattern48.test(data0)){
 validate54.errors = [{instancePath:instancePath+"/intentId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/GitHubInstallIntentStatusRequest/properties/intentId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,128}$"+"\""}];
 return false;
 }
@@ -16523,7 +16854,7 @@ validate55.evaluated = {"dynamicProps":true,"dynamicItems":false};
 export const isMoveIngestRequest = validate56;
 const schema102 = {"$id":"urn:primitive:cli-http-v1:MoveIngestRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest"};
 const schema103 = {"type":"object","properties":{"batch":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","const":4}},"required":["moveId","capturedAt","sessionId","eventType","capturedOrganizationId","captureAuthorityKind","decisionLifecycleProtocolVersion","envelopeVersion"],"additionalProperties":{}},{"type":"object","properties":{"moveId":{"type":"string"},"capturedAt":{"type":"number"},"sessionId":{"type":"string"},"invocationId":{"type":"string"},"eventType":{"type":"string"},"payload":{},"env":{},"repositoryContext":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"repository_bound"},"repoSyncId":{"type":"string","minLength":1,"maxLength":128}},"required":["kind","repoSyncId"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","const":"non_repository"}},"required":["kind"],"additionalProperties":false}]},"capturedOrganizationId":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"captureAuthorityKind":{"type":"string","enum":["workos","service_token"]},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991},"producer":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"toolOutcome":{"type":"string","enum":["succeeded","returned","failed","interrupted","prevented","unknown"]},"envelopeVersion":{"type":"number","exclusiveMaximum":4}},"required":["moveId","capturedAt","sessionId","eventType"],"additionalProperties":{}}]}}},"required":["batch"],"additionalProperties":{}};
-const pattern18 = new RegExp("^[A-Za-z0-9_-]+$", "u");
+const pattern51 = new RegExp("^[A-Za-z0-9_-]+$", "u");
 
 function validate56(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:MoveIngestRequest" */;
@@ -16928,7 +17259,7 @@ vErrors.push(err21);
 errors++;
 }
 else {
-if(!pattern18.test(data11)){
+if(!pattern51.test(data11)){
 const err22 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/0/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err22];
@@ -17518,7 +17849,7 @@ vErrors.push(err57);
 errors++;
 }
 else {
-if(!pattern18.test(data26)){
+if(!pattern51.test(data26)){
 const err58 = {instancePath:instancePath+"/batch/" + i0+"/capturedOrganizationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/MoveIngestRequest/properties/batch/items/anyOf/1/properties/capturedOrganizationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err58];
@@ -17792,7 +18123,7 @@ validate56.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isPreflightDetailsV4 = validate57;
 const schema104 = {"$id":"urn:primitive:cli-http-v1:PreflightDetailsV4","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightDetailsV4"};
-const schema105 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":4},"checkId":{"type":"string"},"page":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"state":{"type":"string","enum":["pending","evaluated","bypassed"]},"conflict":{"type":"boolean"},"evaluatedAt":{"type":"number"}},"required":["decisionId","state","conflict"],"additionalProperties":false}},"cursor":{"type":"string"},"isDone":{"type":"boolean"}},"required":["protocolVersion","checkId","page","cursor","isDone"],"additionalProperties":false};
+const schema105 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":4},"checkId":{"type":"string"},"page":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"state":{"type":"string","enum":["pending","evaluated","bypassed"]},"conflict":{"type":"boolean"},"evaluatedAt":{"type":"number"}},"required":["decisionId","state","conflict"],"additionalProperties":false}},"cursor":{"type":"string"},"isDone":{"type":"boolean"}},"required":["protocolVersion","checkId","page","cursor","isDone"],"additionalProperties":false};
 
 function validate57(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PreflightDetailsV4" */;
@@ -17880,10 +18211,19 @@ break;
 }
 if(_errs11 === errors){
 if(data3.decisionId !== undefined){
+let data4 = data3.decisionId;
 const _errs12 = errors;
-if(typeof data3.decisionId !== "string"){
+if(errors === _errs12){
+if(typeof data4 === "string"){
+if(!pattern4.test(data4)){
+validate57.errors = [{instancePath:instancePath+"/page/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightDetailsV4/properties/page/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate57.errors = [{instancePath:instancePath+"/page/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightDetailsV4/properties/page/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs12 === errors;
 }
@@ -18003,10 +18343,10 @@ validate57.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isPreflightRequestV3Structure = validate58;
 const schema106 = {"$id":"urn:primitive:cli-http-v1:PreflightRequestV3","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3"};
 const schema107 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":3},"agent":{"type":"string","enum":["claude_code","codex","cursor","hermes"]},"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"invocationId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"repoSyncId":{"type":"string","pattern":"^[A-Za-z0-9]{1,64}$"},"paths":{"maxItems":32,"type":"array","items":{"type":"string"}},"coverage":{"type":"string","enum":["complete","unverified"]},"branch":{"type":"string","maxLength":255,"pattern":"^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"},"clientMode":{"type":"string","enum":["block","warn"]},"clientVersion":{"type":"string","maxLength":32,"pattern":"^[A-Za-z0-9][A-Za-z0-9._+-]*$"},"proposal":{"type":"string"}},"required":["protocolVersion","agent","sessionId","invocationId","repoSyncId","paths","coverage","proposal"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_repository_paths","unique_repository_paths","complete_coverage_requires_path","proposal_utf8_max_6144","degrade_invalid_rollout_fields","degrade_invalid_branch"]};
-const pattern20 = new RegExp("^[A-Za-z0-9._:-]{1,128}$", "u");
-const pattern22 = new RegExp("^[A-Za-z0-9]{1,64}$", "u");
-const pattern23 = new RegExp("^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$", "u");
-const pattern24 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._+-]*$", "u");
+const pattern54 = new RegExp("^[A-Za-z0-9._:-]{1,128}$", "u");
+const pattern56 = new RegExp("^[A-Za-z0-9]{1,64}$", "u");
+const pattern57 = new RegExp("^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$", "u");
+const pattern58 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._+-]*$", "u");
 
 function validate58(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PreflightRequestV3" */;
@@ -18076,7 +18416,7 @@ let data2 = data.sessionId;
 const _errs8 = errors;
 if(errors === _errs8){
 if(typeof data2 === "string"){
-if(!pattern20.test(data2)){
+if(!pattern54.test(data2)){
 validate58.errors = [{instancePath:instancePath+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/sessionId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -18097,7 +18437,7 @@ let data3 = data.invocationId;
 const _errs10 = errors;
 if(errors === _errs10){
 if(typeof data3 === "string"){
-if(!pattern20.test(data3)){
+if(!pattern54.test(data3)){
 validate58.errors = [{instancePath:instancePath+"/invocationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/invocationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -18118,7 +18458,7 @@ let data4 = data.repoSyncId;
 const _errs12 = errors;
 if(errors === _errs12){
 if(typeof data4 === "string"){
-if(!pattern22.test(data4)){
+if(!pattern56.test(data4)){
 validate58.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/repoSyncId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""}];
 return false;
 }
@@ -18197,7 +18537,7 @@ validate58.errors = [{instancePath:instancePath+"/branch",schemaPath:"https://ap
 return false;
 }
 else {
-if(!pattern23.test(data8)){
+if(!pattern57.test(data8)){
 validate58.errors = [{instancePath:instancePath+"/branch",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/branch/pattern",keyword:"pattern",params:{pattern: "^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"},message:"must match pattern \""+"^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"+"\""}];
 return false;
 }
@@ -18241,7 +18581,7 @@ validate58.errors = [{instancePath:instancePath+"/clientVersion",schemaPath:"htt
 return false;
 }
 else {
-if(!pattern24.test(data10)){
+if(!pattern58.test(data10)){
 validate58.errors = [{instancePath:instancePath+"/clientVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV3/properties/clientVersion/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]*$"},message:"must match pattern \""+"^[A-Za-z0-9][A-Za-z0-9._+-]*$"+"\""}];
 return false;
 }
@@ -18403,7 +18743,7 @@ let data2 = data.sessionId;
 const _errs10 = errors;
 if(errors === _errs10){
 if(typeof data2 === "string"){
-if(!pattern20.test(data2)){
+if(!pattern54.test(data2)){
 const err6 = {instancePath:instancePath+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/sessionId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""};
 if(vErrors === null){
 vErrors = [err6];
@@ -18436,7 +18776,7 @@ let data3 = data.invocationId;
 const _errs12 = errors;
 if(errors === _errs12){
 if(typeof data3 === "string"){
-if(!pattern20.test(data3)){
+if(!pattern54.test(data3)){
 const err8 = {instancePath:instancePath+"/invocationId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/invocationId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""};
 if(vErrors === null){
 vErrors = [err8];
@@ -18469,7 +18809,7 @@ let data4 = data.repoSyncId;
 const _errs14 = errors;
 if(errors === _errs14){
 if(typeof data4 === "string"){
-if(!pattern22.test(data4)){
+if(!pattern56.test(data4)){
 const err10 = {instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/repoSyncId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err10];
@@ -18596,7 +18936,7 @@ vErrors.push(err17);
 errors++;
 }
 else {
-if(!pattern23.test(data8)){
+if(!pattern57.test(data8)){
 const err18 = {instancePath:instancePath+"/branch",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/branch/pattern",keyword:"pattern",params:{pattern: "^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"},message:"must match pattern \""+"^(?!@?$)(?!\\/)(?!.*\\/$)(?!.*\\/\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*(?:^|\\/)[^/]*\\.lock(?:\\/|$))(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\]).+$"+"\""};
 if(vErrors === null){
 vErrors = [err18];
@@ -18670,7 +19010,7 @@ vErrors.push(err22);
 errors++;
 }
 else {
-if(!pattern24.test(data10)){
+if(!pattern58.test(data10)){
 const err23 = {instancePath:instancePath+"/clientVersion",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/clientVersion/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]*$"},message:"must match pattern \""+"^[A-Za-z0-9][A-Za-z0-9._+-]*$"+"\""};
 if(vErrors === null){
 vErrors = [err23];
@@ -18751,7 +19091,7 @@ let data13 = data.toolInputDigest;
 const _errs32 = errors;
 if(errors === _errs32){
 if(typeof data13 === "string"){
-if(!pattern5.test(data13)){
+if(!pattern35.test(data13)){
 const err28 = {instancePath:instancePath+"/toolInputDigest",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/0/properties/toolInputDigest/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""};
 if(vErrors === null){
 vErrors = [err28];
@@ -18903,7 +19243,7 @@ let data16 = data.checkId;
 const _errs41 = errors;
 if(errors === _errs41){
 if(typeof data16 === "string"){
-if(!pattern22.test(data16)){
+if(!pattern56.test(data16)){
 const err37 = {instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/1/properties/checkId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err37];
@@ -19052,7 +19392,7 @@ let data19 = data.checkId;
 const _errs50 = errors;
 if(errors === _errs50){
 if(typeof data19 === "string"){
-if(!pattern22.test(data19)){
+if(!pattern56.test(data19)){
 const err46 = {instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/2/properties/checkId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err46];
@@ -19201,7 +19541,7 @@ let data22 = data.checkId;
 const _errs59 = errors;
 if(errors === _errs59){
 if(typeof data22 === "string"){
-if(!pattern22.test(data22)){
+if(!pattern56.test(data22)){
 const err55 = {instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightRequestV4/oneOf/3/properties/checkId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9]{1,64}$"},message:"must match pattern \""+"^[A-Za-z0-9]{1,64}$"+"\""};
 if(vErrors === null){
 vErrors = [err55];
@@ -19350,7 +19690,7 @@ validate59.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
 export const isPreflightResponseV3 = validate60;
 const schema110 = {"$id":"urn:primitive:cli-http-v1:PreflightResponseV3","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3"};
-const schema111 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":3},"checkId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"verdict":{"type":"string","enum":["allow","warn","ask","block","unavailable"]},"reasonCode":{"type":"string"},"message":{"type":"string"},"conflicts":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"shortId":{"type":"string"},"title":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"bypassed":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"bypassId":{"type":"string"},"shortId":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"evaluationCoverage":{"type":"object","properties":{"candidateCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"submittedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"evaluatedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"status":{"type":"string","enum":["completed","partial","unavailable","not_run","unknown"]},"semanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"completedSemanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"selectionOmissions":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string","enum":["exact_scope","location_scope","organization_scope","candidate_scan","candidate_limit","bypass_scan"]},"reason":{"type":"string","enum":["scan_limit","candidate_limit","bucket_limit"]},"omittedCountLowerBound":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["source","reason","omittedCountLowerBound"],"additionalProperties":false}},"evidenceOmissions":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"reason":{"type":"string","enum":["prompt_budget","batch_limit","evaluation_failed","evaluation_deadline"]}},"required":["decisionId","reason"],"additionalProperties":false}}},"required":["candidateCount","submittedCount","evaluatedCount","status","semanticBatchCount","completedSemanticBatchCount","selectionOmissions","evidenceOmissions"],"additionalProperties":false},"decisionDisclosures":{"minItems":1,"maxItems":16,"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"shortId":{"type":"string"},"participation":{"type":"string","enum":["candidate","reconcile_bypass"]}},"required":["decisionId","shortId","participation"],"additionalProperties":false}}},"required":["protocolVersion","verdict","reasonCode","message","conflicts","bypassed"],"additionalProperties":{}};
+const schema111 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":3},"checkId":{"type":"string","pattern":"^[A-Za-z0-9._:-]{1,128}$"},"verdict":{"type":"string","enum":["allow","warn","ask","block","unavailable"]},"reasonCode":{"type":"string"},"message":{"type":"string"},"conflicts":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"title":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"bypassed":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"bypassId":{"type":"string"},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"}},"required":["decisionId"],"additionalProperties":{}}},"evaluationCoverage":{"type":"object","properties":{"candidateCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"submittedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"evaluatedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"status":{"type":"string","enum":["completed","partial","unavailable","not_run","unknown"]},"semanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"completedSemanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"selectionOmissions":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string","enum":["exact_scope","location_scope","organization_scope","candidate_scan","candidate_limit","bypass_scan"]},"reason":{"type":"string","enum":["scan_limit","candidate_limit","bucket_limit"]},"omittedCountLowerBound":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["source","reason","omittedCountLowerBound"],"additionalProperties":false}},"evidenceOmissions":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"reason":{"type":"string","enum":["prompt_budget","batch_limit","evaluation_failed","evaluation_deadline"]}},"required":["decisionId","reason"],"additionalProperties":false}}},"required":["candidateCount","submittedCount","evaluatedCount","status","semanticBatchCount","completedSemanticBatchCount","selectionOmissions","evidenceOmissions"],"additionalProperties":false},"decisionDisclosures":{"minItems":1,"maxItems":16,"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"participation":{"type":"string","enum":["candidate","reconcile_bypass"]}},"required":["decisionId","shortId","participation"],"additionalProperties":false}}},"required":["protocolVersion","verdict","reasonCode","message","conflicts","bypassed"],"additionalProperties":{}};
 
 function validate60(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PreflightResponseV3" */;
@@ -19394,7 +19734,7 @@ let data1 = data.checkId;
 const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
-if(!pattern20.test(data1)){
+if(!pattern54.test(data1)){
 validate60.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/checkId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._:-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._:-]{1,128}$"+"\""}];
 return false;
 }
@@ -19470,10 +19810,19 @@ return false;
 }
 else {
 if(data6.decisionId !== undefined){
+let data7 = data6.decisionId;
 const _errs18 = errors;
-if(typeof data6.decisionId !== "string"){
+if(errors === _errs18){
+if(typeof data7 === "string"){
+if(!pattern4.test(data7)){
+validate60.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/conflicts/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/conflicts/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs18 === errors;
 }
@@ -19482,10 +19831,19 @@ var valid3 = true;
 }
 if(valid3){
 if(data6.shortId !== undefined){
+let data8 = data6.shortId;
 const _errs20 = errors;
-if(typeof data6.shortId !== "string"){
+if(errors === _errs20){
+if(typeof data8 === "string"){
+if(!pattern5.test(data8)){
+validate60.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/conflicts/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/conflicts/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs20 === errors;
 }
@@ -19549,10 +19907,19 @@ return false;
 }
 else {
 if(data11.decisionId !== undefined){
+let data12 = data11.decisionId;
 const _errs29 = errors;
-if(typeof data11.decisionId !== "string"){
+if(errors === _errs29){
+if(typeof data12 === "string"){
+if(!pattern4.test(data12)){
+validate60.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/bypassed/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/bypassed/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid5 = _errs29 === errors;
 }
@@ -19573,10 +19940,19 @@ var valid5 = true;
 }
 if(valid5){
 if(data11.shortId !== undefined){
+let data14 = data11.shortId;
 const _errs33 = errors;
-if(typeof data11.shortId !== "string"){
+if(errors === _errs33){
+if(typeof data14 === "string"){
+if(!pattern5.test(data14)){
+validate60.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/bypassed/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/bypassed/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid5 = _errs33 === errors;
 }
@@ -19923,10 +20299,19 @@ break;
 }
 if(_errs65 === errors){
 if(data28.decisionId !== undefined){
+let data29 = data28.decisionId;
 const _errs66 = errors;
-if(typeof data28.decisionId !== "string"){
+if(errors === _errs66){
+if(typeof data29 === "string"){
+if(!pattern4.test(data29)){
+validate60.errors = [{instancePath:instancePath+"/evaluationCoverage/evidenceOmissions/" + i3+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/evaluationCoverage/properties/evidenceOmissions/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/evaluationCoverage/evidenceOmissions/" + i3+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/evaluationCoverage/properties/evidenceOmissions/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid10 = _errs66 === errors;
 }
@@ -20034,10 +20419,19 @@ break;
 }
 if(_errs74 === errors){
 if(data32.decisionId !== undefined){
+let data33 = data32.decisionId;
 const _errs75 = errors;
-if(typeof data32.decisionId !== "string"){
+if(errors === _errs75){
+if(typeof data33 === "string"){
+if(!pattern4.test(data33)){
+validate60.errors = [{instancePath:instancePath+"/decisionDisclosures/" + i4+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/decisionDisclosures/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/decisionDisclosures/" + i4+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/decisionDisclosures/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid12 = _errs75 === errors;
 }
@@ -20046,10 +20440,19 @@ var valid12 = true;
 }
 if(valid12){
 if(data32.shortId !== undefined){
+let data34 = data32.shortId;
 const _errs77 = errors;
-if(typeof data32.shortId !== "string"){
+if(errors === _errs77){
+if(typeof data34 === "string"){
+if(!pattern5.test(data34)){
+validate60.errors = [{instancePath:instancePath+"/decisionDisclosures/" + i4+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/decisionDisclosures/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate60.errors = [{instancePath:instancePath+"/decisionDisclosures/" + i4+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV3/properties/decisionDisclosures/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid12 = _errs77 === errors;
 }
@@ -20123,7 +20526,7 @@ validate60.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
 export const isPreflightResponseV4 = validate61;
 const schema112 = {"$id":"urn:primitive:cli-http-v1:PreflightResponseV4","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4"};
-const schema113 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":4},"state":{"type":"string","enum":["processing","completed","paused","expired"]},"checkId":{"type":"string"},"evaluationId":{"type":"string"},"verdict":{"type":"string","enum":["allow","warn","ask","block","unavailable"]},"reasonCode":{"type":"string"},"message":{"type":"string"},"conflicts":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"shortId":{"type":"string"},"title":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"bypassed":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string"},"bypassId":{"type":"string"},"shortId":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"evaluationCoverage":{"type":"object","properties":{"candidateCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"submittedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"evaluatedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"bypassedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"discoveryComplete":{"type":"boolean"},"status":{"type":"string","enum":["completed","partial","unavailable","not_run","unknown"]},"semanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"completedSemanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["candidateCount","submittedCount","evaluatedCount","bypassedCount","discoveryComplete","status","semanticBatchCount","completedSemanticBatchCount"],"additionalProperties":false},"retryAfterMs":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["protocolVersion","state","verdict","reasonCode","message","conflicts","bypassed","evaluationCoverage"],"additionalProperties":false};
+const schema113 = {"type":"object","properties":{"protocolVersion":{"type":"number","const":4},"state":{"type":"string","enum":["processing","completed","paused","expired"]},"checkId":{"type":"string"},"evaluationId":{"type":"string"},"verdict":{"type":"string","enum":["allow","warn","ask","block","unavailable"]},"reasonCode":{"type":"string"},"message":{"type":"string"},"conflicts":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"},"title":{"type":"string"}},"required":["decisionId"],"additionalProperties":{}}},"bypassed":{"type":"array","items":{"type":"object","properties":{"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"bypassId":{"type":"string"},"shortId":{"type":"string","pattern":"^[0-9a-f]{8}$"}},"required":["decisionId"],"additionalProperties":{}}},"evaluationCoverage":{"type":"object","properties":{"candidateCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"submittedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"evaluatedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"bypassedCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"discoveryComplete":{"type":"boolean"},"status":{"type":"string","enum":["completed","partial","unavailable","not_run","unknown"]},"semanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991},"completedSemanticBatchCount":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["candidateCount","submittedCount","evaluatedCount","bypassedCount","discoveryComplete","status","semanticBatchCount","completedSemanticBatchCount"],"additionalProperties":false},"retryAfterMs":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["protocolVersion","state","verdict","reasonCode","message","conflicts","bypassed","evaluationCoverage"],"additionalProperties":false};
 
 function validate61(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PreflightResponseV4" */;
@@ -20272,10 +20675,19 @@ return false;
 }
 else {
 if(data8.decisionId !== undefined){
+let data9 = data8.decisionId;
 const _errs22 = errors;
-if(typeof data8.decisionId !== "string"){
+if(errors === _errs22){
+if(typeof data9 === "string"){
+if(!pattern4.test(data9)){
+validate61.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/conflicts/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate61.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/conflicts/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs22 === errors;
 }
@@ -20284,10 +20696,19 @@ var valid3 = true;
 }
 if(valid3){
 if(data8.shortId !== undefined){
+let data10 = data8.shortId;
 const _errs24 = errors;
-if(typeof data8.shortId !== "string"){
+if(errors === _errs24){
+if(typeof data10 === "string"){
+if(!pattern5.test(data10)){
+validate61.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/conflicts/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate61.errors = [{instancePath:instancePath+"/conflicts/" + i0+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/conflicts/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid3 = _errs24 === errors;
 }
@@ -20351,10 +20772,19 @@ return false;
 }
 else {
 if(data13.decisionId !== undefined){
+let data14 = data13.decisionId;
 const _errs33 = errors;
-if(typeof data13.decisionId !== "string"){
+if(errors === _errs33){
+if(typeof data14 === "string"){
+if(!pattern4.test(data14)){
+validate61.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/bypassed/items/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate61.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/bypassed/items/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid5 = _errs33 === errors;
 }
@@ -20375,10 +20805,19 @@ var valid5 = true;
 }
 if(valid5){
 if(data13.shortId !== undefined){
+let data16 = data13.shortId;
 const _errs37 = errors;
-if(typeof data13.shortId !== "string"){
+if(errors === _errs37){
+if(typeof data16 === "string"){
+if(!pattern5.test(data16)){
+validate61.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/bypassed/items/properties/shortId/pattern",keyword:"pattern",params:{pattern: "^[0-9a-f]{8}$"},message:"must match pattern \""+"^[0-9a-f]{8}$"+"\""}];
+return false;
+}
+}
+else {
 validate61.errors = [{instancePath:instancePath+"/bypassed/" + i1+"/shortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PreflightResponseV4/properties/bypassed/items/properties/shortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
+}
 }
 var valid5 = _errs37 === errors;
 }
@@ -20694,8 +21133,8 @@ validate61.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 export const isPresenceHeartbeatRequest = validate62;
 const schema114 = {"$id":"urn:primitive:cli-http-v1:PresenceHeartbeatRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest"};
 const schema115 = {"type":"object","properties":{"sessionId":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,128}$"},"clientInstanceId":{"type":"string","pattern":"^pci_[A-Za-z0-9_-]{43}$"},"decisionLifecycleProtocolVersion":{"type":"integer","minimum":1,"maximum":9007199254740991}},"required":["sessionId"],"additionalProperties":{}};
-const pattern35 = new RegExp("^[A-Za-z0-9._-]{1,128}$", "u");
-const pattern36 = new RegExp("^pci_[A-Za-z0-9_-]{43}$", "u");
+const pattern80 = new RegExp("^[A-Za-z0-9._-]{1,128}$", "u");
+const pattern81 = new RegExp("^pci_[A-Za-z0-9_-]{43}$", "u");
 
 function validate62(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:PresenceHeartbeatRequest" */;
@@ -20722,7 +21161,7 @@ let data0 = data.sessionId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern35.test(data0)){
+if(!pattern80.test(data0)){
 validate62.errors = [{instancePath:instancePath+"/sessionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/sessionId/pattern",keyword:"pattern",params:{pattern: "^[A-Za-z0-9._-]{1,128}$"},message:"must match pattern \""+"^[A-Za-z0-9._-]{1,128}$"+"\""}];
 return false;
 }
@@ -20743,7 +21182,7 @@ let data1 = data.clientInstanceId;
 const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
-if(!pattern36.test(data1)){
+if(!pattern81.test(data1)){
 validate62.errors = [{instancePath:instancePath+"/clientInstanceId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/PresenceHeartbeatRequest/properties/clientInstanceId/pattern",keyword:"pattern",params:{pattern: "^pci_[A-Za-z0-9_-]{43}$"},message:"must match pattern \""+"^pci_[A-Za-z0-9_-]{43}$"+"\""}];
 return false;
 }
@@ -21236,12 +21675,12 @@ return errors === 0;
 }
 validate63.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
-export const isReconcileResolutionRequest = validate64;
-const schema118 = {"$id":"urn:primitive:cli-http-v1:ReconcileResolutionRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest"};
-const schema119 = {"type":"object","properties":{"idOrShortId":{"type":"string","minLength":1,"maxLength":128},"checkId":{"type":"string","minLength":1,"maxLength":128},"outcome":{"type":"string","enum":["followed","superseded"]}},"required":["idOrShortId","checkId","outcome"],"additionalProperties":false};
+export const isReconcileBypassRejection = validate64;
+const schema118 = {"$id":"urn:primitive:cli-http-v1:ReconcileBypassRejection","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection"};
+const schema119 = {"type":"object","properties":{"error":{"type":"string","const":"human_approval_required"},"message":{"type":"string"}},"required":["error","message"],"additionalProperties":false};
 
 function validate64(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:ReconcileResolutionRequest" */;
+/*# sourceURL="urn:primitive:cli-http-v1:ReconcileBypassRejection" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate64.evaluated;
@@ -21255,15 +21694,90 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
+if(((data.error === undefined) && (missing0 = "error")) || ((data.message === undefined) && (missing0 = "message"))){
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs2 = errors;
+for(const key0 in data){
+if(!((key0 === "error") || (key0 === "message"))){
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs2 === errors){
+if(data.error !== undefined){
+let data0 = data.error;
+const _errs3 = errors;
+if(typeof data0 !== "string"){
+validate64.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if("human_approval_required" !== data0){
+validate64.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/properties/error/const",keyword:"const",params:{allowedValue: "human_approval_required"},message:"must be equal to constant"}];
+return false;
+}
+var valid1 = _errs3 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.message !== undefined){
+const _errs5 = errors;
+if(typeof data.message !== "string"){
+validate64.errors = [{instancePath:instancePath+"/message",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/properties/message/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid1 = _errs5 === errors;
+}
+else {
+var valid1 = true;
+}
+}
+}
+}
+}
+else {
+validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileBypassRejection/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate64.errors = vErrors;
+return errors === 0;
+}
+validate64.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isReconcileResolutionRequest = validate65;
+const schema120 = {"$id":"urn:primitive:cli-http-v1:ReconcileResolutionRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest"};
+const schema121 = {"type":"object","properties":{"idOrShortId":{"type":"string","minLength":1,"maxLength":128},"checkId":{"type":"string","minLength":1,"maxLength":128},"outcome":{"type":"string","enum":["followed","superseded"]}},"required":["idOrShortId","checkId","outcome"],"additionalProperties":false};
+
+function validate65(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:ReconcileResolutionRequest" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate65.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
 if((((data.idOrShortId === undefined) && (missing0 = "idOrShortId")) || ((data.checkId === undefined) && (missing0 = "checkId"))) || ((data.outcome === undefined) && (missing0 = "outcome"))){
-validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!(((key0 === "idOrShortId") || (key0 === "checkId")) || (key0 === "outcome"))){
-validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -21275,18 +21789,18 @@ const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
 if(func1(data0) > 128){
-validate64.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate65.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data0) < 1){
-validate64.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate65.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 }
 }
 else {
-validate64.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate65.errors = [{instancePath:instancePath+"/idOrShortId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/idOrShortId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21302,18 +21816,18 @@ const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
 if(func1(data1) > 128){
-validate64.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate65.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data1) < 1){
-validate64.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate65.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 }
 }
 else {
-validate64.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate65.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/checkId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21327,11 +21841,11 @@ if(data.outcome !== undefined){
 let data2 = data.outcome;
 const _errs7 = errors;
 if(typeof data2 !== "string"){
-validate64.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate65.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 if(!((data2 === "followed") || (data2 === "superseded"))){
-validate64.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema119.properties.outcome.enum},message:"must be equal to one of the allowed values"}];
+validate65.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema121.properties.outcome.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid1 = _errs7 === errors;
@@ -21345,24 +21859,24 @@ var valid1 = true;
 }
 }
 else {
-validate64.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate64.errors = vErrors;
+validate65.errors = vErrors;
 return errors === 0;
 }
-validate64.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate65.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isReconcileResolutionResponse = validate65;
-const schema120 = {"$id":"urn:primitive:cli-http-v1:ReconcileResolutionResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse"};
-const schema121 = {"type":"object","properties":{"ok":{"type":"boolean","const":true},"checkId":{"type":"string"},"decisionId":{"type":"string"},"outcome":{"type":"string","enum":["followed","superseded"]},"recordedAt":{"type":"number"},"duplicate":{"type":"boolean"}},"required":["ok","checkId","decisionId","outcome","recordedAt","duplicate"],"additionalProperties":false};
+export const isReconcileResolutionResponse = validate66;
+const schema122 = {"$id":"urn:primitive:cli-http-v1:ReconcileResolutionResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse"};
+const schema123 = {"type":"object","properties":{"ok":{"type":"boolean","const":true},"checkId":{"type":"string"},"decisionId":{"type":"string","pattern":"^dec_[0-9a-f]{8}$","description":"Canonical public Decision ID; internal Convex IDs are accepted only as legacy inputs."},"outcome":{"type":"string","enum":["followed","superseded"]},"recordedAt":{"type":"number"},"duplicate":{"type":"boolean"}},"required":["ok","checkId","decisionId","outcome","recordedAt","duplicate"],"additionalProperties":false};
 
-function validate65(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate66(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:ReconcileResolutionResponse" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate65.evaluated;
+const evaluated0 = validate66.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -21374,14 +21888,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((((((data.ok === undefined) && (missing0 = "ok")) || ((data.checkId === undefined) && (missing0 = "checkId"))) || ((data.decisionId === undefined) && (missing0 = "decisionId"))) || ((data.outcome === undefined) && (missing0 = "outcome"))) || ((data.recordedAt === undefined) && (missing0 = "recordedAt"))) || ((data.duplicate === undefined) && (missing0 = "duplicate"))){
-validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!((((((key0 === "ok") || (key0 === "checkId")) || (key0 === "decisionId")) || (key0 === "outcome")) || (key0 === "recordedAt")) || (key0 === "duplicate"))){
-validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -21391,11 +21905,11 @@ if(data.ok !== undefined){
 let data0 = data.ok;
 const _errs3 = errors;
 if(typeof data0 !== "boolean"){
-validate65.errors = [{instancePath:instancePath+"/ok",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/ok/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
+validate66.errors = [{instancePath:instancePath+"/ok",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/ok/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
 return false;
 }
 if(true !== data0){
-validate65.errors = [{instancePath:instancePath+"/ok",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/ok/const",keyword:"const",params:{allowedValue: true},message:"must be equal to constant"}];
+validate66.errors = [{instancePath:instancePath+"/ok",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/ok/const",keyword:"const",params:{allowedValue: true},message:"must be equal to constant"}];
 return false;
 }
 var valid1 = _errs3 === errors;
@@ -21407,7 +21921,7 @@ if(valid1){
 if(data.checkId !== undefined){
 const _errs5 = errors;
 if(typeof data.checkId !== "string"){
-validate65.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/checkId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate66.errors = [{instancePath:instancePath+"/checkId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/checkId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 var valid1 = _errs5 === errors;
@@ -21417,10 +21931,19 @@ var valid1 = true;
 }
 if(valid1){
 if(data.decisionId !== undefined){
+let data2 = data.decisionId;
 const _errs7 = errors;
-if(typeof data.decisionId !== "string"){
-validate65.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if(errors === _errs7){
+if(typeof data2 === "string"){
+if(!pattern4.test(data2)){
+validate66.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/decisionId/pattern",keyword:"pattern",params:{pattern: "^dec_[0-9a-f]{8}$"},message:"must match pattern \""+"^dec_[0-9a-f]{8}$"+"\""}];
 return false;
+}
+}
+else {
+validate66.errors = [{instancePath:instancePath+"/decisionId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/decisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
 }
 var valid1 = _errs7 === errors;
 }
@@ -21432,11 +21955,11 @@ if(data.outcome !== undefined){
 let data3 = data.outcome;
 const _errs9 = errors;
 if(typeof data3 !== "string"){
-validate65.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate66.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/outcome/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 if(!((data3 === "followed") || (data3 === "superseded"))){
-validate65.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema121.properties.outcome.enum},message:"must be equal to one of the allowed values"}];
+validate66.errors = [{instancePath:instancePath+"/outcome",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/outcome/enum",keyword:"enum",params:{allowedValues: schema123.properties.outcome.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid1 = _errs9 === errors;
@@ -21449,7 +21972,7 @@ if(data.recordedAt !== undefined){
 let data4 = data.recordedAt;
 const _errs11 = errors;
 if(!((typeof data4 == "number") && (isFinite(data4)))){
-validate65.errors = [{instancePath:instancePath+"/recordedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/recordedAt/type",keyword:"type",params:{type: "number"},message:"must be number"}];
+validate66.errors = [{instancePath:instancePath+"/recordedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/recordedAt/type",keyword:"type",params:{type: "number"},message:"must be number"}];
 return false;
 }
 var valid1 = _errs11 === errors;
@@ -21461,7 +21984,7 @@ if(valid1){
 if(data.duplicate !== undefined){
 const _errs13 = errors;
 if(typeof data.duplicate !== "boolean"){
-validate65.errors = [{instancePath:instancePath+"/duplicate",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/duplicate/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
+validate66.errors = [{instancePath:instancePath+"/duplicate",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/properties/duplicate/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
 return false;
 }
 var valid1 = _errs13 === errors;
@@ -21478,70 +22001,7 @@ var valid1 = true;
 }
 }
 else {
-validate65.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
-return false;
-}
-}
-validate65.errors = vErrors;
-return errors === 0;
-}
-validate65.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
-
-export const isRepositoryBindRequest = validate66;
-const schema122 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest"};
-const schema123 = {"type":"object","properties":{"repositoryFullName":{"type":"string","pattern":"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"}},"required":["repositoryFullName"],"additionalProperties":false};
-const pattern37 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
-
-function validate66(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindRequest" */;
-let vErrors = null;
-let errors = 0;
-const evaluated0 = validate66.evaluated;
-if(evaluated0.dynamicProps){
-evaluated0.props = undefined;
-}
-if(evaluated0.dynamicItems){
-evaluated0.items = undefined;
-}
-const _errs0 = errors;
-if(errors === _errs0){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing0;
-if((data.repositoryFullName === undefined) && (missing0 = "repositoryFullName")){
-validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
-return false;
-}
-else {
-const _errs2 = errors;
-for(const key0 in data){
-if(!(key0 === "repositoryFullName")){
-validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
-return false;
-break;
-}
-}
-if(_errs2 === errors){
-if(data.repositoryFullName !== undefined){
-let data0 = data.repositoryFullName;
-const _errs3 = errors;
-if(errors === _errs3){
-if(typeof data0 === "string"){
-if(!pattern37.test(data0)){
-validate66.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/pattern",keyword:"pattern",params:{pattern: "^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"},message:"must match pattern \""+"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"+"\""}];
-return false;
-}
-}
-else {
-validate66.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-}
-}
-}
-}
-}
-else {
-validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate66.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/ReconcileResolutionResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -21550,12 +22010,13 @@ return errors === 0;
 }
 validate66.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isRepositoryBindResponse = validate67;
-const schema124 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse"};
-const schema125 = {"type":"object","properties":{"repoSyncId":{"type":"string","minLength":1}},"required":["repoSyncId"],"additionalProperties":{}};
+export const isRepositoryBindRequest = validate67;
+const schema124 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest"};
+const schema125 = {"type":"object","properties":{"repositoryFullName":{"type":"string","pattern":"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"}},"required":["repositoryFullName"],"additionalProperties":false};
+const pattern83 = new RegExp("^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$", "u");
 
 function validate67(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindResponse" */;
+/*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindRequest" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate67.evaluated;
@@ -21569,31 +22030,41 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if((data.repoSyncId === undefined) && (missing0 = "repoSyncId")){
-validate67.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+if((data.repositoryFullName === undefined) && (missing0 = "repositoryFullName")){
+validate67.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
-if(data.repoSyncId !== undefined){
-let data0 = data.repoSyncId;
+const _errs2 = errors;
+for(const key0 in data){
+if(!(key0 === "repositoryFullName")){
+validate67.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs2 === errors){
+if(data.repositoryFullName !== undefined){
+let data0 = data.repositoryFullName;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(func1(data0) < 1){
-validate67.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/properties/repoSyncId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+if(!pattern83.test(data0)){
+validate67.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/pattern",keyword:"pattern",params:{pattern: "^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"},message:"must match pattern \""+"^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\\/[A-Za-z0-9._-]{1,100}$"+"\""}];
 return false;
 }
 }
 else {
-validate67.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/properties/repoSyncId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate67.errors = [{instancePath:instancePath+"/repositoryFullName",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/properties/repositoryFullName/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
 }
 }
 }
+}
 else {
-validate67.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate67.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -21602,13 +22073,12 @@ return errors === 0;
 }
 validate67.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyListRequest = validate68;
-const schema126 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest"};
-const schema127 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"},"limit":{"type":"integer","minimum":1,"maximum":100},"after":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"}},"required":["requestId","limit"],"additionalProperties":false};
-const pattern39 = new RegExp("^api_key_[A-Za-z0-9_-]+$", "u");
+export const isRepositoryBindResponse = validate68;
+const schema126 = {"$id":"urn:primitive:cli-http-v1:RepositoryBindResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse"};
+const schema127 = {"type":"object","properties":{"repoSyncId":{"type":"string","minLength":1}},"required":["repoSyncId"],"additionalProperties":{}};
 
 function validate68(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyListRequest" */;
+/*# sourceURL="urn:primitive:cli-http-v1:RepositoryBindResponse" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate68.evaluated;
@@ -21622,15 +22092,68 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
+if((data.repoSyncId === undefined) && (missing0 = "repoSyncId")){
+validate68.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+if(data.repoSyncId !== undefined){
+let data0 = data.repoSyncId;
+const _errs3 = errors;
+if(errors === _errs3){
+if(typeof data0 === "string"){
+if(func1(data0) < 1){
+validate68.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/properties/repoSyncId/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+return false;
+}
+}
+else {
+validate68.errors = [{instancePath:instancePath+"/repoSyncId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/properties/repoSyncId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+}
+}
+}
+else {
+validate68.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/RepositoryBindResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate68.errors = vErrors;
+return errors === 0;
+}
+validate68.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isUserApiKeyListRequest = validate69;
+const schema128 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest"};
+const schema129 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"},"limit":{"type":"integer","minimum":1,"maximum":100},"after":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"}},"required":["requestId","limit"],"additionalProperties":false};
+const pattern85 = new RegExp("^api_key_[A-Za-z0-9_-]+$", "u");
+
+function validate69(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyListRequest" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate69.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
 if(((data.requestId === undefined) && (missing0 = "requestId")) || ((data.limit === undefined) && (missing0 = "limit"))){
-validate68.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!(((key0 === "requestId") || (key0 === "limit")) || (key0 === "after"))){
-validate68.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -21641,13 +22164,13 @@ let data0 = data.requestId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern5.test(data0)){
-validate68.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
+if(!pattern35.test(data0)){
+validate69.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
 }
 else {
-validate68.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate69.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21661,18 +22184,18 @@ if(data.limit !== undefined){
 let data1 = data.limit;
 const _errs5 = errors;
 if(!(((typeof data1 == "number") && (!(data1 % 1) && !isNaN(data1))) && (isFinite(data1)))){
-validate68.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate69.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs5){
 if((typeof data1 == "number") && (isFinite(data1))){
 if(data1 > 100 || isNaN(data1)){
-validate68.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/maximum",keyword:"maximum",params:{comparison: "<=", limit: 100},message:"must be <= 100"}];
+validate69.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/maximum",keyword:"maximum",params:{comparison: "<=", limit: 100},message:"must be <= 100"}];
 return false;
 }
 else {
 if(data1 < 1 || isNaN(data1)){
-validate68.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
+validate69.errors = [{instancePath:instancePath+"/limit",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/limit/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"}];
 return false;
 }
 }
@@ -21690,24 +22213,24 @@ const _errs7 = errors;
 if(errors === _errs7){
 if(typeof data2 === "string"){
 if(func1(data2) > 256){
-validate68.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate69.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data2) < 9){
-validate68.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
+validate69.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
 return false;
 }
 else {
-if(!pattern39.test(data2)){
-validate68.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
+if(!pattern85.test(data2)){
+validate69.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate68.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate69.errors = [{instancePath:instancePath+"/after",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/properties/after/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21722,27 +22245,27 @@ var valid1 = true;
 }
 }
 else {
-validate68.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate68.errors = vErrors;
+validate69.errors = vErrors;
 return errors === 0;
 }
-validate68.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate69.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyListResponse = validate69;
-const schema128 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse"};
-const schema129 = {"type":"object","properties":{"apiKeys":{"maxItems":100,"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false}},"nextCursor":{"anyOf":[{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},{"type":"null"}]}},"required":["apiKeys","nextCursor"],"additionalProperties":false};
-const pattern41 = new RegExp("^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$", "u");
-const pattern42 = new RegExp("^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "u");
-const pattern43 = new RegExp("^[\\x21-\\x7e]+$", "u");
+export const isUserApiKeyListResponse = validate70;
+const schema130 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyListResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse"};
+const schema131 = {"type":"object","properties":{"apiKeys":{"maxItems":100,"type":"array","items":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false}},"nextCursor":{"anyOf":[{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},{"type":"null"}]}},"required":["apiKeys","nextCursor"],"additionalProperties":false};
+const pattern87 = new RegExp("^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$", "u");
+const pattern88 = new RegExp("^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "u");
+const pattern89 = new RegExp("^[\\x21-\\x7e]+$", "u");
 
-function validate69(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate70(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyListResponse" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate69.evaluated;
+const evaluated0 = validate70.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -21754,14 +22277,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((data.apiKeys === undefined) && (missing0 = "apiKeys")) || ((data.nextCursor === undefined) && (missing0 = "nextCursor"))){
-validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!((key0 === "apiKeys") || (key0 === "nextCursor"))){
-validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -21773,7 +22296,7 @@ const _errs3 = errors;
 if(errors === _errs3){
 if(Array.isArray(data0)){
 if(data0.length > 100){
-validate69.errors = [{instancePath:instancePath+"/apiKeys",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
 return false;
 }
 else {
@@ -21786,14 +22309,14 @@ if(errors === _errs5){
 if(data1 && typeof data1 == "object" && !Array.isArray(data1)){
 let missing1;
 if(((((((((data1.id === undefined) && (missing1 = "id")) || ((data1.name === undefined) && (missing1 = "name"))) || ((data1.obfuscatedValue === undefined) && (missing1 = "obfuscatedValue"))) || ((data1.permissions === undefined) && (missing1 = "permissions"))) || ((data1.lastUsedAt === undefined) && (missing1 = "lastUsedAt"))) || ((data1.expiresAt === undefined) && (missing1 = "expiresAt"))) || ((data1.createdAt === undefined) && (missing1 = "createdAt"))) || ((data1.updatedAt === undefined) && (missing1 = "updatedAt"))){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
 return false;
 }
 else {
 const _errs7 = errors;
 for(const key1 in data1){
 if(!((((((((key1 === "id") || (key1 === "name")) || (key1 === "obfuscatedValue")) || (key1 === "permissions")) || (key1 === "lastUsedAt")) || (key1 === "expiresAt")) || (key1 === "createdAt")) || (key1 === "updatedAt"))){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -21805,24 +22328,24 @@ const _errs8 = errors;
 if(errors === _errs8){
 if(typeof data2 === "string"){
 if(func1(data2) > 256){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data2) < 9){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
 return false;
 }
 else {
-if(!pattern39.test(data2)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
+if(!pattern85.test(data2)){
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21838,24 +22361,24 @@ const _errs10 = errors;
 if(errors === _errs10){
 if(typeof data3 === "string"){
 if(func1(data3) > 128){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data3) < 1){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern41.test(data3)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
+if(!pattern87.test(data3)){
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21871,24 +22394,24 @@ const _errs12 = errors;
 if(errors === _errs12){
 if(typeof data4 === "string"){
 if(func1(data4) > 256){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data4) < 1){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern42.test(data4)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
+if(!pattern88.test(data4)){
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21904,7 +22427,7 @@ const _errs14 = errors;
 if(errors === _errs14){
 if(Array.isArray(data5)){
 if(data5.length > 100){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
 return false;
 }
 else {
@@ -21916,24 +22439,24 @@ const _errs16 = errors;
 if(errors === _errs16){
 if(typeof data6 === "string"){
 if(func1(data6) > 128){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data6) < 1){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern43.test(data6)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
+if(!pattern89.test(data6)){
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions/" + i1,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -21945,7 +22468,7 @@ break;
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
 return false;
 }
 }
@@ -22021,7 +22544,7 @@ else {
 vErrors.push(err4);
 }
 errors++;
-validate69.errors = vErrors;
+validate70.errors = vErrors;
 return false;
 }
 else {
@@ -22107,7 +22630,7 @@ else {
 vErrors.push(err9);
 }
 errors++;
-validate69.errors = vErrors;
+validate70.errors = vErrors;
 return false;
 }
 else {
@@ -22131,18 +22654,18 @@ if(data1.createdAt !== undefined){
 let data9 = data1.createdAt;
 const _errs30 = errors;
 if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs30){
 if((typeof data9 == "number") && (isFinite(data9))){
 if(data9 > 9007199254740991 || isNaN(data9)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data9 < 0 || isNaN(data9)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -22158,18 +22681,18 @@ if(data1.updatedAt !== undefined){
 let data10 = data1.updatedAt;
 const _errs32 = errors;
 if(!(((typeof data10 == "number") && (!(data10 % 1) && !isNaN(data10))) && (isFinite(data10)))){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs32){
 if((typeof data10 == "number") && (isFinite(data10))){
 if(data10 > 9007199254740991 || isNaN(data10)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data10 < 0 || isNaN(data10)){
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -22191,7 +22714,7 @@ var valid3 = true;
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/items/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -22203,7 +22726,7 @@ break;
 }
 }
 else {
-validate69.errors = [{instancePath:instancePath+"/apiKeys",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+validate70.errors = [{instancePath:instancePath+"/apiKeys",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/apiKeys/type",keyword:"type",params:{type: "array"},message:"must be array"}];
 return false;
 }
 }
@@ -22243,7 +22766,7 @@ vErrors.push(err11);
 errors++;
 }
 else {
-if(!pattern39.test(data11)){
+if(!pattern85.test(data11)){
 const err12 = {instancePath:instancePath+"/nextCursor",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/properties/nextCursor/anyOf/0/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""};
 if(vErrors === null){
 vErrors = [err12];
@@ -22291,7 +22814,7 @@ else {
 vErrors.push(err15);
 }
 errors++;
-validate69.errors = vErrors;
+validate70.errors = vErrors;
 return false;
 }
 else {
@@ -22315,24 +22838,24 @@ var valid1 = true;
 }
 }
 else {
-validate69.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyListResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate69.errors = vErrors;
+validate70.errors = vErrors;
 return errors === 0;
 }
-validate69.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate70.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyMetadata = validate70;
-const schema130 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMetadata","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata"};
-const schema131 = {"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false};
+export const isUserApiKeyMetadata = validate71;
+const schema132 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMetadata","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata"};
+const schema133 = {"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false};
 
-function validate70(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate71(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyMetadata" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate70.evaluated;
+const evaluated0 = validate71.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -22344,14 +22867,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((((((((data.id === undefined) && (missing0 = "id")) || ((data.name === undefined) && (missing0 = "name"))) || ((data.obfuscatedValue === undefined) && (missing0 = "obfuscatedValue"))) || ((data.permissions === undefined) && (missing0 = "permissions"))) || ((data.lastUsedAt === undefined) && (missing0 = "lastUsedAt"))) || ((data.expiresAt === undefined) && (missing0 = "expiresAt"))) || ((data.createdAt === undefined) && (missing0 = "createdAt"))) || ((data.updatedAt === undefined) && (missing0 = "updatedAt"))){
-validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!((((((((key0 === "id") || (key0 === "name")) || (key0 === "obfuscatedValue")) || (key0 === "permissions")) || (key0 === "lastUsedAt")) || (key0 === "expiresAt")) || (key0 === "createdAt")) || (key0 === "updatedAt"))){
-validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -22363,24 +22886,24 @@ const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
 if(func1(data0) > 256){
-validate70.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate71.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data0) < 9){
-validate70.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
+validate71.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
 return false;
 }
 else {
-if(!pattern39.test(data0)){
-validate70.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
+if(!pattern85.test(data0)){
+validate71.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate70.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate71.errors = [{instancePath:instancePath+"/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22396,24 +22919,24 @@ const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
 if(func1(data1) > 128){
-validate70.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data1) < 1){
-validate70.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern41.test(data1)){
-validate70.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
+if(!pattern87.test(data1)){
+validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate70.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22429,24 +22952,24 @@ const _errs7 = errors;
 if(errors === _errs7){
 if(typeof data2 === "string"){
 if(func1(data2) > 256){
-validate70.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate71.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data2) < 1){
-validate70.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate71.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern42.test(data2)){
-validate70.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
+if(!pattern88.test(data2)){
+validate71.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate70.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate71.errors = [{instancePath:instancePath+"/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22462,7 +22985,7 @@ const _errs9 = errors;
 if(errors === _errs9){
 if(Array.isArray(data3)){
 if(data3.length > 100){
-validate70.errors = [{instancePath:instancePath+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
+validate71.errors = [{instancePath:instancePath+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
 return false;
 }
 else {
@@ -22474,24 +22997,24 @@ const _errs11 = errors;
 if(errors === _errs11){
 if(typeof data4 === "string"){
 if(func1(data4) > 128){
-validate70.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate71.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data4) < 1){
-validate70.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate71.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern43.test(data4)){
-validate70.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
+if(!pattern89.test(data4)){
+validate71.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate70.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate71.errors = [{instancePath:instancePath+"/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22503,7 +23026,7 @@ break;
 }
 }
 else {
-validate70.errors = [{instancePath:instancePath+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+validate71.errors = [{instancePath:instancePath+"/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
 return false;
 }
 }
@@ -22579,7 +23102,7 @@ else {
 vErrors.push(err4);
 }
 errors++;
-validate70.errors = vErrors;
+validate71.errors = vErrors;
 return false;
 }
 else {
@@ -22665,7 +23188,7 @@ else {
 vErrors.push(err9);
 }
 errors++;
-validate70.errors = vErrors;
+validate71.errors = vErrors;
 return false;
 }
 else {
@@ -22689,18 +23212,18 @@ if(data.createdAt !== undefined){
 let data7 = data.createdAt;
 const _errs25 = errors;
 if(!(((typeof data7 == "number") && (!(data7 % 1) && !isNaN(data7))) && (isFinite(data7)))){
-validate70.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate71.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs25){
 if((typeof data7 == "number") && (isFinite(data7))){
 if(data7 > 9007199254740991 || isNaN(data7)){
-validate70.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate71.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data7 < 0 || isNaN(data7)){
-validate70.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate71.errors = [{instancePath:instancePath+"/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -22716,18 +23239,18 @@ if(data.updatedAt !== undefined){
 let data8 = data.updatedAt;
 const _errs27 = errors;
 if(!(((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8))) && (isFinite(data8)))){
-validate70.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate71.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs27){
 if((typeof data8 == "number") && (isFinite(data8))){
 if(data8 > 9007199254740991 || isNaN(data8)){
-validate70.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate71.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data8 < 0 || isNaN(data8)){
-validate70.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate71.errors = [{instancePath:instancePath+"/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -22749,24 +23272,24 @@ var valid1 = true;
 }
 }
 else {
-validate70.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMetadata/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate70.errors = vErrors;
+validate71.errors = vErrors;
 return errors === 0;
 }
-validate70.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate71.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyMintRequest = validate71;
-const schema132 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMintRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest"};
-const schema133 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"expiresAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["requestId","name"],"additionalProperties":false};
+export const isUserApiKeyMintRequest = validate72;
+const schema134 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMintRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest"};
+const schema135 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"expiresAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["requestId","name"],"additionalProperties":false};
 
-function validate71(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate72(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyMintRequest" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate71.evaluated;
+const evaluated0 = validate72.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -22778,14 +23301,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((data.requestId === undefined) && (missing0 = "requestId")) || ((data.name === undefined) && (missing0 = "name"))){
-validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!(((key0 === "requestId") || (key0 === "name")) || (key0 === "expiresAt"))){
-validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -22796,13 +23319,13 @@ let data0 = data.requestId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(!pattern5.test(data0)){
-validate71.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
+if(!pattern35.test(data0)){
+validate72.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
 }
 }
 else {
-validate71.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate72.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22818,24 +23341,24 @@ const _errs5 = errors;
 if(errors === _errs5){
 if(typeof data1 === "string"){
 if(func1(data1) > 128){
-validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate72.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data1) < 1){
-validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate72.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern41.test(data1)){
-validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
+if(!pattern87.test(data1)){
+validate72.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate71.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate72.errors = [{instancePath:instancePath+"/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22849,18 +23372,18 @@ if(data.expiresAt !== undefined){
 let data2 = data.expiresAt;
 const _errs7 = errors;
 if(!(((typeof data2 == "number") && (!(data2 % 1) && !isNaN(data2))) && (isFinite(data2)))){
-validate71.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate72.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs7){
 if((typeof data2 == "number") && (isFinite(data2))){
 if(data2 > 9007199254740991 || isNaN(data2)){
-validate71.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate72.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data2 < 0 || isNaN(data2)){
-validate71.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate72.errors = [{instancePath:instancePath+"/expiresAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/properties/expiresAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -22877,25 +23400,25 @@ var valid1 = true;
 }
 }
 else {
-validate71.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate71.errors = vErrors;
+validate72.errors = vErrors;
 return errors === 0;
 }
-validate71.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate72.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyMintResponse = validate72;
-const schema134 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMintResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse"};
-const schema135 = {"type":"object","properties":{"apiKey":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false},"secret":{"type":"string","minLength":4,"maxLength":4096,"pattern":"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"}},"required":["apiKey","secret"],"additionalProperties":false};
-const pattern55 = new RegExp("^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$", "u");
+export const isUserApiKeyMintResponse = validate73;
+const schema136 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyMintResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse"};
+const schema137 = {"type":"object","properties":{"apiKey":{"type":"object","properties":{"id":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},"obfuscatedValue":{"type":"string","minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},"permissions":{"maxItems":100,"type":"array","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[\\x21-\\x7e]+$"}},"lastUsedAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"expiresAt":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"null"}]},"createdAt":{"type":"integer","minimum":0,"maximum":9007199254740991},"updatedAt":{"type":"integer","minimum":0,"maximum":9007199254740991}},"required":["id","name","obfuscatedValue","permissions","lastUsedAt","expiresAt","createdAt","updatedAt"],"additionalProperties":false},"secret":{"type":"string","minLength":4,"maxLength":4096,"pattern":"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"}},"required":["apiKey","secret"],"additionalProperties":false};
+const pattern101 = new RegExp("^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$", "u");
 
-function validate72(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate73(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyMintResponse" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate72.evaluated;
+const evaluated0 = validate73.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -22907,14 +23430,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((data.apiKey === undefined) && (missing0 = "apiKey")) || ((data.secret === undefined) && (missing0 = "secret"))){
-validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!((key0 === "apiKey") || (key0 === "secret"))){
-validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -22927,14 +23450,14 @@ if(errors === _errs3){
 if(data0 && typeof data0 == "object" && !Array.isArray(data0)){
 let missing1;
 if(((((((((data0.id === undefined) && (missing1 = "id")) || ((data0.name === undefined) && (missing1 = "name"))) || ((data0.obfuscatedValue === undefined) && (missing1 = "obfuscatedValue"))) || ((data0.permissions === undefined) && (missing1 = "permissions"))) || ((data0.lastUsedAt === undefined) && (missing1 = "lastUsedAt"))) || ((data0.expiresAt === undefined) && (missing1 = "expiresAt"))) || ((data0.createdAt === undefined) && (missing1 = "createdAt"))) || ((data0.updatedAt === undefined) && (missing1 = "updatedAt"))){
-validate72.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
 return false;
 }
 else {
 const _errs5 = errors;
 for(const key1 in data0){
 if(!((((((((key1 === "id") || (key1 === "name")) || (key1 === "obfuscatedValue")) || (key1 === "permissions")) || (key1 === "lastUsedAt")) || (key1 === "expiresAt")) || (key1 === "createdAt")) || (key1 === "updatedAt"))){
-validate72.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -22946,24 +23469,24 @@ const _errs6 = errors;
 if(errors === _errs6){
 if(typeof data1 === "string"){
 if(func1(data1) > 256){
-validate72.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data1) < 9){
-validate72.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
 return false;
 }
 else {
-if(!pattern39.test(data1)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
+if(!pattern85.test(data1)){
+validate73.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -22979,24 +23502,24 @@ const _errs8 = errors;
 if(errors === _errs8){
 if(typeof data2 === "string"){
 if(func1(data2) > 128){
-validate72.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data2) < 1){
-validate72.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern41.test(data2)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
+if(!pattern87.test(data2)){
+validate73.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"},message:"must match pattern \""+"^[\\x21-\\x7e](?:[\\x20-\\x7e]{0,126}[\\x21-\\x7e])?$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/name",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/name/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23012,24 +23535,24 @@ const _errs10 = errors;
 if(errors === _errs10){
 if(typeof data3 === "string"){
 if(func1(data3) > 256){
-validate72.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
 if(func1(data3) < 1){
-validate72.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern42.test(data3)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
+if(!pattern88.test(data3)){
+validate73.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/pattern",keyword:"pattern",params:{pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"},message:"must match pattern \""+"^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/obfuscatedValue",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/obfuscatedValue/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23045,7 +23568,7 @@ const _errs12 = errors;
 if(errors === _errs12){
 if(Array.isArray(data4)){
 if(data4.length > 100){
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/maxItems",keyword:"maxItems",params:{limit: 100},message:"must NOT have more than 100 items"}];
 return false;
 }
 else {
@@ -23057,24 +23580,24 @@ const _errs14 = errors;
 if(errors === _errs14){
 if(typeof data5 === "string"){
 if(func1(data5) > 128){
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/maxLength",keyword:"maxLength",params:{limit: 128},message:"must NOT have more than 128 characters"}];
 return false;
 }
 else {
 if(func1(data5) < 1){
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/minLength",keyword:"minLength",params:{limit: 1},message:"must NOT have fewer than 1 characters"}];
 return false;
 }
 else {
-if(!pattern43.test(data5)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
+if(!pattern89.test(data5)){
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/pattern",keyword:"pattern",params:{pattern: "^[\\x21-\\x7e]+$"},message:"must match pattern \""+"^[\\x21-\\x7e]+$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23086,7 +23609,7 @@ break;
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/permissions",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/permissions/type",keyword:"type",params:{type: "array"},message:"must be array"}];
 return false;
 }
 }
@@ -23162,7 +23685,7 @@ else {
 vErrors.push(err4);
 }
 errors++;
-validate72.errors = vErrors;
+validate73.errors = vErrors;
 return false;
 }
 else {
@@ -23248,7 +23771,7 @@ else {
 vErrors.push(err9);
 }
 errors++;
-validate72.errors = vErrors;
+validate73.errors = vErrors;
 return false;
 }
 else {
@@ -23272,18 +23795,18 @@ if(data0.createdAt !== undefined){
 let data8 = data0.createdAt;
 const _errs28 = errors;
 if(!(((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8))) && (isFinite(data8)))){
-validate72.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs28){
 if((typeof data8 == "number") && (isFinite(data8))){
 if(data8 > 9007199254740991 || isNaN(data8)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data8 < 0 || isNaN(data8)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/createdAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/createdAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -23299,18 +23822,18 @@ if(data0.updatedAt !== undefined){
 let data9 = data0.updatedAt;
 const _errs30 = errors;
 if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
-validate72.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/type",keyword:"type",params:{type: "integer"},message:"must be integer"}];
 return false;
 }
 if(errors === _errs30){
 if((typeof data9 == "number") && (isFinite(data9))){
 if(data9 > 9007199254740991 || isNaN(data9)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991},message:"must be <= 9007199254740991"}];
 return false;
 }
 else {
 if(data9 < 0 || isNaN(data9)){
-validate72.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey/updatedAt",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/properties/updatedAt/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
 return false;
 }
 }
@@ -23332,7 +23855,7 @@ var valid2 = true;
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate73.errors = [{instancePath:instancePath+"/apiKey",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/apiKey/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -23348,24 +23871,24 @@ const _errs32 = errors;
 if(errors === _errs32){
 if(typeof data10 === "string"){
 if(func1(data10) > 4096){
-validate72.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/maxLength",keyword:"maxLength",params:{limit: 4096},message:"must NOT have more than 4096 characters"}];
+validate73.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/maxLength",keyword:"maxLength",params:{limit: 4096},message:"must NOT have more than 4096 characters"}];
 return false;
 }
 else {
 if(func1(data10) < 4){
-validate72.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/minLength",keyword:"minLength",params:{limit: 4},message:"must NOT have fewer than 4 characters"}];
+validate73.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/minLength",keyword:"minLength",params:{limit: 4},message:"must NOT have fewer than 4 characters"}];
 return false;
 }
 else {
-if(!pattern55.test(data10)){
-validate72.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/pattern",keyword:"pattern",params:{pattern: "^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"},message:"must match pattern \""+"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"+"\""}];
+if(!pattern101.test(data10)){
+validate73.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/pattern",keyword:"pattern",params:{pattern: "^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"},message:"must match pattern \""+"^sk_[\\x21-\\x7e]+(?: [\\x21-\\x7e]+)*$"+"\""}];
 return false;
 }
 }
 }
 }
 else {
-validate72.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate73.errors = [{instancePath:instancePath+"/secret",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/properties/secret/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23379,69 +23902,7 @@ var valid1 = true;
 }
 }
 else {
-validate72.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
-return false;
-}
-}
-validate72.errors = vErrors;
-return errors === 0;
-}
-validate72.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
-
-export const isUserApiKeyRevokeRequest = validate73;
-const schema136 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyRevokeRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest"};
-const schema137 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["requestId"],"additionalProperties":false};
-
-function validate73(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyRevokeRequest" */;
-let vErrors = null;
-let errors = 0;
-const evaluated0 = validate73.evaluated;
-if(evaluated0.dynamicProps){
-evaluated0.props = undefined;
-}
-if(evaluated0.dynamicItems){
-evaluated0.items = undefined;
-}
-const _errs0 = errors;
-if(errors === _errs0){
-if(data && typeof data == "object" && !Array.isArray(data)){
-let missing0;
-if((data.requestId === undefined) && (missing0 = "requestId")){
-validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
-return false;
-}
-else {
-const _errs2 = errors;
-for(const key0 in data){
-if(!(key0 === "requestId")){
-validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
-return false;
-break;
-}
-}
-if(_errs2 === errors){
-if(data.requestId !== undefined){
-let data0 = data.requestId;
-const _errs3 = errors;
-if(errors === _errs3){
-if(typeof data0 === "string"){
-if(!pattern5.test(data0)){
-validate73.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
-return false;
-}
-}
-else {
-validate73.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-}
-}
-}
-}
-}
-else {
-validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate73.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyMintResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -23450,12 +23911,12 @@ return errors === 0;
 }
 validate73.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isUserApiKeyRevokeResponse = validate74;
-const schema138 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyRevokeResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse"};
-const schema139 = {"type":"object","properties":{"apiKeyId":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"revoked":{"type":"boolean","const":true}},"required":["apiKeyId","revoked"],"additionalProperties":false};
+export const isUserApiKeyRevokeRequest = validate74;
+const schema138 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyRevokeRequest","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest"};
+const schema139 = {"type":"object","properties":{"requestId":{"type":"string","pattern":"^[a-f0-9]{64}$"}},"required":["requestId"],"additionalProperties":false};
 
 function validate74(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyRevokeResponse" */;
+/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyRevokeRequest" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate74.evaluated;
@@ -23469,75 +23930,41 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if(((data.apiKeyId === undefined) && (missing0 = "apiKeyId")) || ((data.revoked === undefined) && (missing0 = "revoked"))){
-validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+if((data.requestId === undefined) && (missing0 = "requestId")){
+validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
-if(!((key0 === "apiKeyId") || (key0 === "revoked"))){
-validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+if(!(key0 === "requestId")){
+validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
 if(_errs2 === errors){
-if(data.apiKeyId !== undefined){
-let data0 = data.apiKeyId;
+if(data.requestId !== undefined){
+let data0 = data.requestId;
 const _errs3 = errors;
 if(errors === _errs3){
 if(typeof data0 === "string"){
-if(func1(data0) > 256){
-validate74.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+if(!pattern35.test(data0)){
+validate74.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/properties/requestId/pattern",keyword:"pattern",params:{pattern: "^[a-f0-9]{64}$"},message:"must match pattern \""+"^[a-f0-9]{64}$"+"\""}];
 return false;
-}
-else {
-if(func1(data0) < 9){
-validate74.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
-return false;
-}
-else {
-if(!pattern39.test(data0)){
-validate74.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
-return false;
-}
-}
 }
 }
 else {
-validate74.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate74.errors = [{instancePath:instancePath+"/requestId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/properties/requestId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-}
-var valid1 = _errs3 === errors;
-}
-else {
-var valid1 = true;
-}
-if(valid1){
-if(data.revoked !== undefined){
-let data1 = data.revoked;
-const _errs5 = errors;
-if(typeof data1 !== "boolean"){
-validate74.errors = [{instancePath:instancePath+"/revoked",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/revoked/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
-return false;
-}
-if(true !== data1){
-validate74.errors = [{instancePath:instancePath+"/revoked",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/revoked/const",keyword:"const",params:{allowedValue: true},message:"must be equal to constant"}];
-return false;
-}
-var valid1 = _errs5 === errors;
-}
-else {
-var valid1 = true;
 }
 }
 }
 }
 }
 else {
-validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate74.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeRequest/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -23546,12 +23973,12 @@ return errors === 0;
 }
 validate74.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isWorkosConnectDeviceConfigurationDisabled = validate75;
-const schema140 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled"};
-const schema141 = {"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false};
+export const isUserApiKeyRevokeResponse = validate75;
+const schema140 = {"$id":"urn:primitive:cli-http-v1:UserApiKeyRevokeResponse","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse"};
+const schema141 = {"type":"object","properties":{"apiKeyId":{"type":"string","minLength":9,"maxLength":256,"pattern":"^api_key_[A-Za-z0-9_-]+$"},"revoked":{"type":"boolean","const":true}},"required":["apiKeyId","revoked"],"additionalProperties":false};
 
 function validate75(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled" */;
+/*# sourceURL="urn:primitive:cli-http-v1:UserApiKeyRevokeResponse" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate75.evaluated;
@@ -23565,36 +23992,75 @@ const _errs0 = errors;
 if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if((data.error === undefined) && (missing0 = "error")){
-validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+if(((data.apiKeyId === undefined) && (missing0 = "apiKeyId")) || ((data.revoked === undefined) && (missing0 = "revoked"))){
+validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
-if(!(key0 === "error")){
-validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+if(!((key0 === "apiKeyId") || (key0 === "revoked"))){
+validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
 if(_errs2 === errors){
-if(data.error !== undefined){
-let data0 = data.error;
-if(typeof data0 !== "string"){
-validate75.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if(data.apiKeyId !== undefined){
+let data0 = data.apiKeyId;
+const _errs3 = errors;
+if(errors === _errs3){
+if(typeof data0 === "string"){
+if(func1(data0) > 256){
+validate75.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
-if("Not found" !== data0){
-validate75.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/const",keyword:"const",params:{allowedValue: "Not found"},message:"must be equal to constant"}];
+else {
+if(func1(data0) < 9){
+validate75.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/minLength",keyword:"minLength",params:{limit: 9},message:"must NOT have fewer than 9 characters"}];
 return false;
+}
+else {
+if(!pattern85.test(data0)){
+validate75.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/pattern",keyword:"pattern",params:{pattern: "^api_key_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^api_key_[A-Za-z0-9_-]+$"+"\""}];
+return false;
+}
+}
+}
+}
+else {
+validate75.errors = [{instancePath:instancePath+"/apiKeyId",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/apiKeyId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+}
+var valid1 = _errs3 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.revoked !== undefined){
+let data1 = data.revoked;
+const _errs5 = errors;
+if(typeof data1 !== "boolean"){
+validate75.errors = [{instancePath:instancePath+"/revoked",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/revoked/type",keyword:"type",params:{type: "boolean"},message:"must be boolean"}];
+return false;
+}
+if(true !== data1){
+validate75.errors = [{instancePath:instancePath+"/revoked",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/properties/revoked/const",keyword:"const",params:{allowedValue: true},message:"must be equal to constant"}];
+return false;
+}
+var valid1 = _errs5 === errors;
+}
+else {
+var valid1 = true;
 }
 }
 }
 }
 }
 else {
-validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate75.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/UserApiKeyRevokeResponse/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
@@ -23603,15 +24069,72 @@ return errors === 0;
 }
 validate75.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isWorkosConnectDeviceConfigurationError = validate76;
-const schema142 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError"};
-const schema143 = {"anyOf":[{"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false}]};
+export const isWorkosConnectDeviceConfigurationDisabled = validate76;
+const schema142 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled"};
+const schema143 = {"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false};
 
 function validate76(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
-/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError" */;
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationDisabled" */;
 let vErrors = null;
 let errors = 0;
 const evaluated0 = validate76.evaluated;
+if(evaluated0.dynamicProps){
+evaluated0.props = undefined;
+}
+if(evaluated0.dynamicItems){
+evaluated0.items = undefined;
+}
+const _errs0 = errors;
+if(errors === _errs0){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing0;
+if((data.error === undefined) && (missing0 = "error")){
+validate76.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+return false;
+}
+else {
+const _errs2 = errors;
+for(const key0 in data){
+if(!(key0 === "error")){
+validate76.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+return false;
+break;
+}
+}
+if(_errs2 === errors){
+if(data.error !== undefined){
+let data0 = data.error;
+if(typeof data0 !== "string"){
+validate76.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if("Not found" !== data0){
+validate76.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/properties/error/const",keyword:"const",params:{allowedValue: "Not found"},message:"must be equal to constant"}];
+return false;
+}
+}
+}
+}
+}
+else {
+validate76.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationDisabled/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+return false;
+}
+}
+validate76.errors = vErrors;
+return errors === 0;
+}
+validate76.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+
+export const isWorkosConnectDeviceConfigurationError = validate77;
+const schema144 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationError"};
+const schema145 = {"anyOf":[{"type":"object","properties":{"error":{"type":"string","const":"Not found"}},"required":["error"],"additionalProperties":false},{"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false}]};
+
+function validate77(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+/*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationError" */;
+let vErrors = null;
+let errors = 0;
+const evaluated0 = validate77.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -23775,7 +24298,7 @@ else {
 vErrors.push(err10);
 }
 errors++;
-validate76.errors = vErrors;
+validate77.errors = vErrors;
 return false;
 }
 else {
@@ -23789,22 +24312,22 @@ vErrors = null;
 }
 }
 }
-validate76.errors = vErrors;
+validate77.errors = vErrors;
 evaluated0.props = props0;
 return errors === 0;
 }
-validate76.evaluated = {"dynamicProps":true,"dynamicItems":false};
+validate77.evaluated = {"dynamicProps":true,"dynamicItems":false};
 
-export const isWorkosConnectDeviceConfigurationSuccessStructure = validate77;
-const schema144 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess"};
-const schema145 = {"type":"object","properties":{"protocol_version":{"type":"number","const":1},"issuer":{"type":"string","format":"uri"},"client_id":{"type":"string","maxLength":256,"pattern":"^client_[A-Za-z0-9_-]+$"},"default_scopes":{"minItems":4,"maxItems":4,"type":"array","items":{"type":"string","enum":["openid","profile","email","offline_access"]}}},"required":["protocol_version","issuer","client_id","default_scopes"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_https_origin","exact_workos_connect_device_scopes"]};
-const pattern58 = new RegExp("^client_[A-Za-z0-9_-]+$", "u");
+export const isWorkosConnectDeviceConfigurationSuccessStructure = validate78;
+const schema146 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess"};
+const schema147 = {"type":"object","properties":{"protocol_version":{"type":"number","const":1},"issuer":{"type":"string","format":"uri"},"client_id":{"type":"string","maxLength":256,"pattern":"^client_[A-Za-z0-9_-]+$"},"default_scopes":{"minItems":4,"maxItems":4,"type":"array","items":{"type":"string","enum":["openid","profile","email","offline_access"]}}},"required":["protocol_version","issuer","client_id","default_scopes"],"additionalProperties":false,"x-primitive-runtime-refinements":["canonical_https_origin","exact_workos_connect_device_scopes"]};
+const pattern104 = new RegExp("^client_[A-Za-z0-9_-]+$", "u");
 
-function validate77(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate78(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationSuccess" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate77.evaluated;
+const evaluated0 = validate78.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -23816,14 +24339,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if(((((data.protocol_version === undefined) && (missing0 = "protocol_version")) || ((data.issuer === undefined) && (missing0 = "issuer"))) || ((data.client_id === undefined) && (missing0 = "client_id"))) || ((data.default_scopes === undefined) && (missing0 = "default_scopes"))){
-validate77.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs3 = errors;
 for(const key0 in data){
 if(!((((key0 === "protocol_version") || (key0 === "issuer")) || (key0 === "client_id")) || (key0 === "default_scopes"))){
-validate77.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -23833,11 +24356,11 @@ if(data.protocol_version !== undefined){
 let data0 = data.protocol_version;
 const _errs4 = errors;
 if(!((typeof data0 == "number") && (isFinite(data0)))){
-validate77.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/type",keyword:"type",params:{type: "number"},message:"must be number"}];
+validate78.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/type",keyword:"type",params:{type: "number"},message:"must be number"}];
 return false;
 }
 if(1 !== data0){
-validate77.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/const",keyword:"const",params:{allowedValue: 1},message:"must be equal to constant"}];
+validate78.errors = [{instancePath:instancePath+"/protocol_version",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/protocol_version/const",keyword:"const",params:{allowedValue: 1},message:"must be equal to constant"}];
 return false;
 }
 var valid1 = _errs4 === errors;
@@ -23851,7 +24374,7 @@ const _errs6 = errors;
 if(errors === _errs6){
 if(errors === _errs6){
 if(!(typeof data.issuer === "string")){
-validate77.errors = [{instancePath:instancePath+"/issuer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/issuer/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate78.errors = [{instancePath:instancePath+"/issuer",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/issuer/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23868,18 +24391,18 @@ const _errs8 = errors;
 if(errors === _errs8){
 if(typeof data2 === "string"){
 if(func1(data2) > 256){
-validate77.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
+validate78.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/maxLength",keyword:"maxLength",params:{limit: 256},message:"must NOT have more than 256 characters"}];
 return false;
 }
 else {
-if(!pattern58.test(data2)){
-validate77.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/pattern",keyword:"pattern",params:{pattern: "^client_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^client_[A-Za-z0-9_-]+$"+"\""}];
+if(!pattern104.test(data2)){
+validate78.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/pattern",keyword:"pattern",params:{pattern: "^client_[A-Za-z0-9_-]+$"},message:"must match pattern \""+"^client_[A-Za-z0-9_-]+$"+"\""}];
 return false;
 }
 }
 }
 else {
-validate77.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate78.errors = [{instancePath:instancePath+"/client_id",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/client_id/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 }
@@ -23895,12 +24418,12 @@ const _errs10 = errors;
 if(errors === _errs10){
 if(Array.isArray(data3)){
 if(data3.length > 4){
-validate77.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/maxItems",keyword:"maxItems",params:{limit: 4},message:"must NOT have more than 4 items"}];
+validate78.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/maxItems",keyword:"maxItems",params:{limit: 4},message:"must NOT have more than 4 items"}];
 return false;
 }
 else {
 if(data3.length < 4){
-validate77.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/minItems",keyword:"minItems",params:{limit: 4},message:"must NOT have fewer than 4 items"}];
+validate78.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/minItems",keyword:"minItems",params:{limit: 4},message:"must NOT have fewer than 4 items"}];
 return false;
 }
 else {
@@ -23910,11 +24433,11 @@ for(let i0=0; i0<len0; i0++){
 let data4 = data3[i0];
 const _errs12 = errors;
 if(typeof data4 !== "string"){
-validate77.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate78.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 if(!((((data4 === "openid") || (data4 === "profile")) || (data4 === "email")) || (data4 === "offline_access"))){
-validate77.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/enum",keyword:"enum",params:{allowedValues: schema145.properties.default_scopes.items.enum},message:"must be equal to one of the allowed values"}];
+validate78.errors = [{instancePath:instancePath+"/default_scopes/" + i0,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/items/enum",keyword:"enum",params:{allowedValues: schema147.properties.default_scopes.items.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid2 = _errs12 === errors;
@@ -23926,7 +24449,7 @@ break;
 }
 }
 else {
-validate77.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+validate78.errors = [{instancePath:instancePath+"/default_scopes",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/properties/default_scopes/type",keyword:"type",params:{type: "array"},message:"must be array"}];
 return false;
 }
 }
@@ -23942,24 +24465,24 @@ var valid1 = true;
 }
 }
 else {
-validate77.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationSuccess/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate77.errors = vErrors;
+validate78.errors = vErrors;
 return errors === 0;
 }
-validate77.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate78.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-export const isWorkosConnectDeviceConfigurationUnavailable = validate78;
-const schema146 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationUnavailable","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable"};
-const schema147 = {"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false};
+export const isWorkosConnectDeviceConfigurationUnavailable = validate79;
+const schema148 = {"$id":"urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationUnavailable","$ref":"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable"};
+const schema149 = {"type":"object","properties":{"error":{"type":"string","const":"connect_device_auth_unavailable"}},"required":["error"],"additionalProperties":false};
 
-function validate78(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
+function validate79(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 /*# sourceURL="urn:primitive:cli-http-v1:WorkosConnectDeviceConfigurationUnavailable" */;
 let vErrors = null;
 let errors = 0;
-const evaluated0 = validate78.evaluated;
+const evaluated0 = validate79.evaluated;
 if(evaluated0.dynamicProps){
 evaluated0.props = undefined;
 }
@@ -23971,14 +24494,14 @@ if(errors === _errs0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
 if((data.error === undefined) && (missing0 = "error")){
-validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
+validate79.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs2 = errors;
 for(const key0 in data){
 if(!(key0 === "error")){
-validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
+validate79.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
 }
@@ -23987,11 +24510,11 @@ if(_errs2 === errors){
 if(data.error !== undefined){
 let data0 = data.error;
 if(typeof data0 !== "string"){
-validate78.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+validate79.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
 if("connect_device_auth_unavailable" !== data0){
-validate78.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/const",keyword:"const",params:{allowedValue: "connect_device_auth_unavailable"},message:"must be equal to constant"}];
+validate79.errors = [{instancePath:instancePath+"/error",schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/properties/error/const",keyword:"const",params:{allowedValue: "connect_device_auth_unavailable"},message:"must be equal to constant"}];
 return false;
 }
 }
@@ -23999,11 +24522,11 @@ return false;
 }
 }
 else {
-validate78.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate79.errors = [{instancePath,schemaPath:"https://api.getprimitive.ai/contracts/cli-http-v1.schema.json#/$defs/WorkosConnectDeviceConfigurationUnavailable/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-validate78.errors = vErrors;
+validate79.errors = vErrors;
 return errors === 0;
 }
-validate78.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
+validate79.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};

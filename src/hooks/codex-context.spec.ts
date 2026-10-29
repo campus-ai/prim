@@ -204,7 +204,7 @@ describe("renderDecisionDigest", () => {
 describe("renderDecisionDraftDigest", () => {
   it("renders a command-safe private draft with its full publish identifier", () => {
     const rendered = renderDecisionDraftDigest([
-      row("draft-one", {
+      row("dec_00000001", {
         intent: "Use `stable` “API”\nwithout controls",
         authorIsSelf: true,
         intentKind: "change",
@@ -214,9 +214,9 @@ describe("renderDecisionDraftDigest", () => {
 
     expect(rendered).toEqual({
       message:
-        "[prim] private Decision draft-one · stage: draft · “Use `stable` 'API'without controls”\n" +
-        "[prim] Run `prim decisions publish draft-one` to share it with your team.",
-      deliveredIds: ["draft-one"],
+        "[prim] private Decision dec_00000001 · stage: draft · “Use `stable` 'API'without controls”\n" +
+        "[prim] Run `prim decisions publish dec_00000001` to share it with your team.",
+      deliveredIds: ["dec_00000001"],
     });
   });
 
@@ -226,7 +226,7 @@ describe("renderDecisionDraftDigest", () => {
         row("team", { authorIsSelf: false, stage: "draft" }),
         row("published", { authorIsSelf: true, stage: "provisional" }),
         row("hidden", { authorIsSelf: true, intentKind: "exploration", stage: "draft" }),
-        row("draft-safe` ; prim auth logout", {
+        row("dec_0000000a` ; prim auth logout", {
           authorIsSelf: true,
           intentKind: "change",
           stage: "draft",
@@ -236,14 +236,14 @@ describe("renderDecisionDraftDigest", () => {
   });
 
   it("renders only visible commands and leaves the page overflow pending", () => {
-    const rows = ["draft-1", "draft-2", "draft-3", "draft-4"].map((id) =>
+    const rows = ["dec_00000001", "dec_00000002", "dec_00000003", "dec_00000004"].map((id) =>
       row(id, { authorIsSelf: true, intentKind: "change", stage: "draft" }),
     );
 
     const rendered = renderDecisionDraftDigest(rows, { pageTruncated: true });
     expect(rendered?.message).toContain("+1+ private Decision drafts remain");
-    expect(rendered?.message).not.toContain("prim decisions publish draft-4");
-    expect(rendered?.deliveredIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+    expect(rendered?.message).not.toContain("prim decisions publish dec_00000004");
+    expect(rendered?.deliveredIds).toEqual(["dec_00000001", "dec_00000002", "dec_00000003"]);
   });
 });
 
@@ -350,7 +350,7 @@ describe("Codex hook context", () => {
 
   it("pins a private page until each visibly handed-off command is persisted", async () => {
     const drafts = Array.from({ length: 100 }, (_, index) =>
-      row(`draft-${String(index + 1)}`, {
+      row(`dec_${(index + 1).toString(16).padStart(8, "0")}`, {
         authorIsSelf: true,
         intentKind: "change",
         stage: "draft",
@@ -368,7 +368,7 @@ describe("Codex hook context", () => {
       sessionId: "session-private-page",
       startup: true,
     });
-    expect(first.context).toContain("prim decisions publish draft-1");
+    expect(first.context).toContain("prim decisions publish dec_00000001");
     expect(first.context).toContain("+97+ private Decision drafts remain");
     await first.acknowledge(false);
     expect(existsSync(draftStateDirectory())).toBe(false);
@@ -386,14 +386,14 @@ describe("Codex hook context", () => {
     const firstState = JSON.parse(
       readFileSync(join(draftStateDirectory(), firstStateFile as string), "utf8"),
     ) as { seenDraftIds: string[] };
-    expect(firstState.seenDraftIds).toEqual(["draft-1", "draft-2", "draft-3"]);
+    expect(firstState.seenDraftIds).toEqual(["dec_00000001", "dec_00000002", "dec_00000003"]);
 
     const second = await prepareCodexContext({
       cwd: "/repo",
       sessionId: "session-private-page",
     });
-    expect(second.context).toContain("prim decisions publish draft-4");
-    expect(second.context).not.toContain("prim decisions publish draft-1");
+    expect(second.context).toContain("prim decisions publish dec_00000004");
+    expect(second.context).not.toContain("prim decisions publish dec_00000001");
     await second.acknowledge(true);
 
     const acknowledgements = mocks.daemonRequest.mock.calls.filter(
@@ -403,17 +403,24 @@ describe("Codex hook context", () => {
     expect(acknowledgements[0]?.[1]).toEqual({
       callerEnv: "https://app.getprimitive.ai",
       pageToken,
-      deliveredIds: ["draft-1", "draft-2", "draft-3"],
+      deliveredIds: ["dec_00000001", "dec_00000002", "dec_00000003"],
     });
     expect(acknowledgements[1]?.[1]).toEqual({
       callerEnv: "https://app.getprimitive.ai",
       pageToken,
-      deliveredIds: ["draft-1", "draft-2", "draft-3", "draft-4", "draft-5", "draft-6"],
+      deliveredIds: [
+        "dec_00000001",
+        "dec_00000002",
+        "dec_00000003",
+        "dec_00000004",
+        "dec_00000005",
+        "dec_00000006",
+      ],
     });
   });
 
   it("isolates private delivery state across principal and credential rotation", async () => {
-    const privateDraft = row("draft-rotate", {
+    const privateDraft = row("dec_0000000b", {
       authorIsSelf: true,
       intentKind: "change",
       stage: "draft",
@@ -440,7 +447,7 @@ describe("Codex hook context", () => {
       cwd: "/repo",
       sessionId: "session-private-rotation",
     });
-    expect(rotated.context).toContain("prim decisions publish draft-rotate");
+    expect(rotated.context).toContain("prim decisions publish dec_0000000b");
     await rotated.acknowledge(true);
     expect(
       readdirSync(draftStateDirectory()).filter((name) => name.endsWith(".json")),
@@ -451,7 +458,7 @@ describe("Codex hook context", () => {
     mocks.resolveDaemonPrincipal.mockReturnValue(undefined);
     mocks.decisionDraftDigestSnapshot.mockResolvedValue({
       decisions: [
-        row("draft-opaque", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+        row("dec_0000000c", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
       ],
       pageDone: true,
       pageToken: "e".repeat(32),
@@ -481,7 +488,9 @@ describe("Codex hook context", () => {
     mocks.resolveDaemonPrincipal.mockReturnValueOnce(principalA).mockReturnValue(principalB);
     mocks.daemonPrincipalsMatch.mockReturnValue(false);
     mocks.decisionDraftDigestSnapshot.mockResolvedValue({
-      decisions: [row("draft-drift", { authorIsSelf: true, intentKind: "change", stage: "draft" })],
+      decisions: [
+        row("dec_0000000d", { authorIsSelf: true, intentKind: "change", stage: "draft" }),
+      ],
       pageDone: true,
       pageToken: "f".repeat(32),
     });

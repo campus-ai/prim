@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 7,
+  "contractVersion": 8,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -589,7 +589,7 @@
         "checkId": "check123",
         "page": [
           {
-            "decisionId": "decision100",
+            "decisionId": "dec_0123abcd",
             "state": "evaluated",
             "conflict": true,
             "evaluatedAt": 1787078400000
@@ -597,6 +597,24 @@
         ],
         "cursor": "participation-cursor",
         "isDone": false
+      }
+    },
+    {
+      "name": "V4 participation rejects internal Decision IDs",
+      "definition": "PreflightDetailsV4",
+      "valid": false,
+      "value": {
+        "protocolVersion": 4,
+        "checkId": "check123",
+        "page": [
+          {
+            "decisionId": "jd70dyly0xv5k0sttfwv6vcvzs80z23g",
+            "state": "evaluated",
+            "conflict": false
+          }
+        ],
+        "cursor": "participation-cursor",
+        "isDone": true
       }
     },
     {
@@ -613,7 +631,7 @@
         "message": "100 Decisions evaluated",
         "conflicts": [
           {
-            "decisionId": "decision100",
+            "decisionId": "dec_0123abcd",
             "title": "Keep retries durable across worker restarts"
           }
         ],
@@ -627,6 +645,36 @@
           "status": "completed",
           "semanticBatchCount": 13,
           "completedSemanticBatchCount": 13
+        }
+      }
+    },
+    {
+      "name": "V4 conflicts reject internal Decision IDs",
+      "definition": "PreflightResponseV4",
+      "valid": false,
+      "value": {
+        "protocolVersion": 4,
+        "state": "completed",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "block",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "One Decision evaluated",
+        "conflicts": [
+          {
+            "decisionId": "jd70dyly0xv5k0sttfwv6vcvzs80z23g"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 1,
+          "submittedCount": 1,
+          "evaluatedCount": 1,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "completed",
+          "semanticBatchCount": 1,
+          "completedSemanticBatchCount": 1
         }
       }
     },
@@ -753,7 +801,7 @@
         "message": "A governing decision conflicts. Some selected evidence was not evaluated.",
         "conflicts": [
           {
-            "decisionId": "decision-conflict",
+            "decisionId": "dec_0123abcd",
             "title": "Keep retries durable across worker restarts"
           }
         ],
@@ -774,11 +822,11 @@
           ],
           "evidenceOmissions": [
             {
-              "decisionId": "decision-failed",
+              "decisionId": "dec_89abcdef",
               "reason": "evaluation_failed"
             },
             {
-              "decisionId": "decision-large",
+              "decisionId": "dec_fedcba98",
               "reason": "prompt_budget"
             }
           ]
@@ -799,7 +847,7 @@
         "bypassed": [],
         "decisionDisclosures": [
           {
-            "decisionId": "decision-hidden-1",
+            "decisionId": "dec_0123abcd",
             "shortId": "0123abcd",
             "participation": "candidate"
           }
@@ -833,91 +881,100 @@
         "bypassed": [],
         "decisionDisclosures": [
           {
-            "decisionId": "decision-hidden-0",
+            "decisionId": "dec_00000000",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-1",
+            "decisionId": "dec_00000001",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-2",
+            "decisionId": "dec_00000002",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-3",
+            "decisionId": "dec_00000003",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-4",
+            "decisionId": "dec_00000004",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-5",
+            "decisionId": "dec_00000005",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-6",
+            "decisionId": "dec_00000006",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-7",
+            "decisionId": "dec_00000007",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-8",
+            "decisionId": "dec_00000008",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-9",
+            "decisionId": "dec_00000009",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-10",
+            "decisionId": "dec_00000010",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-11",
+            "decisionId": "dec_00000011",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-12",
+            "decisionId": "dec_00000012",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-13",
+            "decisionId": "dec_00000013",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-14",
+            "decisionId": "dec_00000014",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-15",
+            "decisionId": "dec_00000015",
             "shortId": "00000000",
             "participation": "candidate"
           },
           {
-            "decisionId": "decision-hidden-16",
+            "decisionId": "dec_00000016",
             "shortId": "00000000",
             "participation": "candidate"
           }
         ]
+      }
+    },
+    {
+      "name": "reconcile bypass requires verified human approval",
+      "definition": "ReconcileBypassRejection",
+      "valid": true,
+      "value": {
+        "error": "human_approval_required",
+        "message": "Overriding a governing Decision requires explicit human approval. This host cannot provide verifiable human approval, so reconcile bypasses are disabled. Keep the edit blocked and choose a compatible change."
       }
     },
     {
@@ -955,7 +1012,7 @@
       "valid": true,
       "value": {
         "ok": true,
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "checkId": "check-1",
         "outcome": "followed",
         "recordedAt": 1700000000000,
@@ -1378,7 +1435,7 @@
             "leaseVersion": 1,
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
-            "webUrl": "https://app.getprimitive.ai/decisions/decision-1"
+            "webUrl": "https://app.getprimitive.ai/decisions/dec_0123abcd"
           }
         ],
         "hasMore": false
@@ -1397,7 +1454,7 @@
             "leaseVersion": 1,
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
-            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
+            "webUrl": "https://app.getprimitive.ai/decisions/dec_0123abcd",
             "kind": "publish_prompt"
           }
         ],
@@ -1417,8 +1474,8 @@
             "leaseVersion": 1,
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
-            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
-            "decisionId": "decision-1",
+            "webUrl": "https://app.getprimitive.ai/decisions/dec_0123abcd",
+            "decisionId": "dec_0123abcd",
             "kind": "publish_prompt"
           }
         ],
@@ -1438,7 +1495,7 @@
             "leaseVersion": 1,
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
-            "webUrl": "https://app.getprimitive.ai/decisions/decision-1",
+            "webUrl": "https://app.getprimitive.ai/decisions/dec_0123abcd",
             "kind": "publish_prompt"
           }
         ],
@@ -1458,7 +1515,7 @@
             "leaseVersion": 1,
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
-            "webUrl": "https://app.getprimitive.ai/decisions/decision-1"
+            "webUrl": "https://app.getprimitive.ai/decisions/dec_0123abcd"
           }
         ],
         "hasMore": false
@@ -1531,7 +1588,7 @@
         "repoSyncId": "repo-sync-1",
         "decisions": [
           {
-            "id": "decision-1",
+            "id": "dec_0123abcd",
             "intent": "Publish the generated contract",
             "status": "under_review",
             "classifiedAt": 100,
@@ -1548,7 +1605,7 @@
       "value": {
         "decisions": [
           {
-            "id": "decision-1",
+            "id": "dec_0123abcd",
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
             "area": "platform",
@@ -1594,7 +1651,7 @@
       "valid": true,
       "value": {
         "decision": {
-          "id": "decision-1",
+          "id": "dec_0123abcd",
           "shortId": "0123abcd",
           "intent": "Publish the generated contract",
           "area": "platform",
@@ -1616,7 +1673,7 @@
         "dependsOn": [],
         "dependents": [
           {
-            "id": "decision-1",
+            "id": "dec_0123abcd",
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
             "area": "platform",
@@ -1653,7 +1710,7 @@
       "valid": true,
       "value": {
         "decision": {
-          "id": "decision-1",
+          "id": "dec_0123abcd",
           "shortId": "0123abcd",
           "intent": "Publish the generated contract",
           "area": "platform",
@@ -1669,7 +1726,7 @@
         },
         "downstream": [
           {
-            "id": "decision-1",
+            "id": "dec_0123abcd",
             "shortId": "0123abcd",
             "intent": "Publish the generated contract",
             "area": "platform",
@@ -1720,7 +1777,7 @@
       "definition": "DecisionCreateResponse",
       "valid": true,
       "value": {
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "createdAt": 100,
         "scope": {
@@ -1744,11 +1801,31 @@
       }
     },
     {
+      "name": "decision response rejects noncanonical ID j57b04m7f2z3xv647yxxkcdzy17h6k2z",
+      "definition": "DecisionCreateResponse",
+      "valid": false,
+      "value": {
+        "decisionId": "j57b04m7f2z3xv647yxxkcdzy17h6k2z",
+        "shortId": "0123abcd",
+        "createdAt": 100
+      }
+    },
+    {
+      "name": "decision response rejects noncanonical ID 0123abcd",
+      "definition": "DecisionCreateResponse",
+      "valid": false,
+      "value": {
+        "decisionId": "0123abcd",
+        "shortId": "0123abcd",
+        "createdAt": 100
+      }
+    },
+    {
       "name": "decision stage request",
       "definition": "DecisionIdRequest",
       "valid": true,
       "value": {
-        "id": "decision-1"
+        "id": "dec_0123abcd"
       }
     },
     {
@@ -1756,8 +1833,8 @@
       "definition": "DecisionSupersedeRequest",
       "valid": true,
       "value": {
-        "id": "decision-1",
-        "by": "decision-2"
+        "id": "dec_0123abcd",
+        "by": "dec_89abcdef"
       }
     },
     {
@@ -1765,7 +1842,7 @@
       "definition": "DecisionEditRequest",
       "valid": true,
       "value": {
-        "id": "decision-1",
+        "id": "dec_0123abcd",
         "rationale": "Keep the generated contract current",
         "alternatives": ["Retain handwritten mirrors"]
       }
@@ -1775,7 +1852,7 @@
       "definition": "DecisionRescopeRequest",
       "valid": true,
       "value": {
-        "id": "decision-1",
+        "id": "dec_0123abcd",
         "location": {
           "repository": false,
           "directories": ["packages/api"],
@@ -1794,7 +1871,7 @@
       "valid": true,
       "value": {
         "outcome": "ok",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "stage": "adopted",
         "scope": {
@@ -1823,7 +1900,7 @@
       "valid": true,
       "value": {
         "outcome": "ok",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "stage": "provisional"
       }
@@ -1834,7 +1911,7 @@
       "valid": true,
       "value": {
         "outcome": "ok",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "stage": "draft"
       }
@@ -1845,7 +1922,7 @@
       "valid": true,
       "value": {
         "outcome": "ok",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "stage": "provisional"
       }
@@ -1856,7 +1933,7 @@
       "valid": true,
       "value": {
         "outcome": "ok",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "stage": "abandoned"
       }
@@ -1875,7 +1952,7 @@
       "definition": "DecisionConfirmRequest",
       "valid": true,
       "value": {
-        "id": "decision-1",
+        "id": "dec_0123abcd",
         "confirmed": false,
         "correction": "Use v2"
       }
@@ -1886,7 +1963,7 @@
       "valid": true,
       "value": {
         "outcome": "confirmed",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd"
       }
     },
@@ -1896,7 +1973,7 @@
       "valid": true,
       "value": {
         "outcome": "already_responded",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd",
         "confirmed": false,
         "respondedAt": 100
@@ -1908,7 +1985,7 @@
       "valid": true,
       "value": {
         "outcome": "no_pending_prompt",
-        "decisionId": "decision-1",
+        "decisionId": "dec_0123abcd",
         "shortId": "0123abcd"
       }
     },
@@ -1917,8 +1994,8 @@
       "definition": "DecisionRelateRequest",
       "valid": true,
       "value": {
-        "child": "decision-2",
-        "parent": "decision-1"
+        "child": "dec_89abcdef",
+        "parent": "dec_0123abcd"
       }
     },
     {
@@ -1927,9 +2004,9 @@
       "valid": true,
       "value": {
         "outcome": "linked",
-        "childId": "decision-2",
+        "childId": "dec_89abcdef",
         "childShortId": "89abcdef",
-        "parentId": "decision-1",
+        "parentId": "dec_0123abcd",
         "parentShortId": "0123abcd"
       }
     },
@@ -1939,9 +2016,9 @@
       "valid": true,
       "value": {
         "outcome": "not_linked",
-        "childId": "decision-2",
+        "childId": "dec_89abcdef",
         "childShortId": "89abcdef",
-        "parentId": "decision-1",
+        "parentId": "dec_0123abcd",
         "parentShortId": "0123abcd"
       }
     },

@@ -559,7 +559,9 @@ describe("renderIdentifier", () => {
     expect(renderIdentifier({ shortId: "8c2f1a07", id: "x" })).toBe("dec_8c2f1a07");
   });
 
-  it("falls back to the raw id when shortId is undefined", () => {
-    expect(renderIdentifier({ shortId: undefined, id: "qx7fpmyc" })).toBe("qx7fpmyc");
+  it("withholds the raw id when shortId is undefined", () => {
+    expect(renderIdentifier({ shortId: undefined, id: "qx7fpmyc" })).toBe(
+      "Decision identity unavailable",
+    );
   });
 });
