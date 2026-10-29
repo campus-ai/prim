@@ -87,7 +87,7 @@ const defaultDeps: ConfirmDeps = { getClient };
 // 404 → not_found; the only outcome that maps to a non-zero exit.
 const NOT_FOUND_RE = /not found/i;
 // 409 → ambiguous shortId.
-const AMBIGUOUS_RE = /ambiguous/i;
+const AMBIGUOUS_RE = /ambiguous|Decision identity unavailable; retry after identity repair/i;
 // 403 → not_author. The org-unbound 403 ("not bound to an organization")
 // is deliberately NOT matched here so it falls through as a generic auth
 // failure rather than masquerading as an authorship rejection.

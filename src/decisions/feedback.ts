@@ -32,7 +32,7 @@ export type FeedbackKind = "confirm_prompt" | "publish_prompt";
 
 export type FeedbackEvent = FeedbackDeliveryToken & {
   shortId: string;
-  /** Full unambiguous identifier supplied only for a v2 publish prompt. */
+  /** Canonical public identifier supplied only for a v2 publish prompt. */
   decisionId?: string;
   intent: string;
   webUrl?: string;

@@ -55,7 +55,7 @@ const defaultDeps: RelateDeps = { getClient };
 // 404 → not_found (the only non-zero-exit-by-throw case).
 const NOT_FOUND_RE = /not found/i;
 // 409 → ambiguous shortId.
-const AMBIGUOUS_RE = /ambiguous/i;
+const AMBIGUOUS_RE = /ambiguous|Decision identity unavailable; retry after identity repair/i;
 // 422 → a link that would close a cycle. Both server messages — the proven path
 // and the fail-closed walk_cap precaution ("…would not create a cycle…") — carry
 // the word "cycle", so this single fold covers both. NOT_FOUND_RE above is
