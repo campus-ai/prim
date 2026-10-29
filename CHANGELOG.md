@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.112](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.111...v0.1.0-alpha.112) (2026-10-29)
+
+
+### Bug Fixes
+
+* **decisions:** use public short IDs across CLI output ([#402](https://github.com/campus-ai/prim/issues/402)) ([5267456](https://github.com/campus-ai/prim/commit/5267456e9f34a134267feaa96c1fd214ea902e8e))
+
 ## [0.1.0-alpha.111](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-10-28)
 
 
