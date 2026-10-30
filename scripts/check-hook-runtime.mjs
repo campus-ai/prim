@@ -61,7 +61,10 @@ try {
     [join(config, "prim-hook-launcher-v1"), ["prim-pre-tool-use"]],
   ];
   const cases = [
-    ["python3 edit.py", "shell command write targets could not be determined"],
+    ["python3 edit.py", undefined],
+    ["S=schema.ts; sed -n '1,10p' $S", undefined],
+    ['for f in a.ts b.ts; do cat "$f"; done', undefined],
+    ["cd . && git status --short", undefined],
     ['python3 -c \'open("a.ts", "w").write("hi")\'', "GitHub repo connection is required"],
     ['node -e \'require("fs").writeFileSync("a.ts", "hi")\'', "GitHub repo connection is required"],
     ["git status --short", undefined],
@@ -82,7 +85,12 @@ try {
       if (message) {
         if (!result.hookSpecificOutput.permissionDecisionReason?.includes(message))
           throw new Error(`Missing explicit pause for ${command}`);
-      } else if (result.systemMessage) throw new Error("Read-only command warned");
+      } else if (
+        result.systemMessage !== undefined ||
+        result.hookSpecificOutput?.additionalContext !== undefined
+      ) {
+        throw new Error(`Expected silent allow for ${command}`);
+      }
     }
   }
   process.stdout.write(
