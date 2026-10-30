@@ -225,9 +225,7 @@ async function main(): Promise<void> {
   }
   activeMutation = true;
   if (targets.paths.length === 0 && !targets.definite) {
-    await emitUnverified(
-      "shell command write targets could not be determined; change was not verified",
-    );
+    await emit(failOpen());
     return;
   }
   if (agent === "cursor" && targets.coverage === "unverified") {

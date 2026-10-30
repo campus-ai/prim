@@ -384,7 +384,7 @@ try {
     assert.match(result.stderr, /The enforcement service is temporarily unavailable/u);
     assert.doesNotMatch(result.stderr, /different check identity|changed evaluation identity/u);
   });
-  await scenario("unresolved script writes pause before requesting a verdict", async () => {
+  await scenario("unresolved script writes silently allow without a verdict", async () => {
     respond = () => completed();
     const input = {
       ...envelope("claude_code"),
@@ -394,8 +394,10 @@ try {
       },
     };
     const result = await hook("claude_code", { input, env: { PRIM_HOOK_MODE: "warn" } });
-    assert.ok(denied("claude_code", result.output));
-    assert.match(result.stdout, /write targets could not be determined/u);
+    assert.deepEqual(result.output, {
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+    });
+    assert.equal(result.stderr, "");
     assert.equal(requests.length, 0);
   });
   await scenario(
