@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.117](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.116...v0.1.0-alpha.117) (2026-10-30)
+
+
+### Bug Fixes
+
+* **hooks:** silence unresolved shell-target feedback ([#416](https://github.com/campus-ai/prim/issues/416)) ([62ecf00](https://github.com/campus-ai/prim/commit/62ecf006debc3d3dd165ef1e465b30513f149a53))
+
 ## [0.1.0-alpha.116](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.115...v0.1.0-alpha.116) (2026-10-29)
 
 
