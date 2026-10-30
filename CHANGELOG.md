@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-alpha.116](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.115...v0.1.0-alpha.116) (2026-10-29)
+
+
+### Bug Fixes
+
+* **contracts:** expose the bypass rejection validator ([de4ee42](https://github.com/campus-ai/prim/commit/de4ee421e057d82048f5064594d55e4b386ef083))
+* **hooks:** enforce host preflight failure safeguards ([60d7181](https://github.com/campus-ai/prim/commit/60d7181552b684fc4900a5952e89025bf3407a87))
+* **preflight:** preserve current shell and approval safeguards ([8f59b98](https://github.com/campus-ai/prim/commit/8f59b98db382baa9a86c8d2afa314d9532a20f0a))
+* **preflight:** wait for complete Decision coverage ([c4d8fa9](https://github.com/campus-ai/prim/commit/c4d8fa9b2da382f1837d068353209c66cafc9490))
+
 ## [0.1.0-alpha.115](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.114...v0.1.0-alpha.115) (2026-10-29)
 
 
