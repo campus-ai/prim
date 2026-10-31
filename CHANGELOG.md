@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.118](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.117...v0.1.0-alpha.118) (2026-10-31)
+
+
+### Bug Fixes
+
+* **preflight:** bound automatic hooks to two seconds ([4209a88](https://github.com/campus-ai/prim/commit/4209a88f3730aeb1e794a9523633fdf7e62cebd7))
+
 ## [0.1.0-alpha.117](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.116...v0.1.0-alpha.117) (2026-10-30)
 
 
