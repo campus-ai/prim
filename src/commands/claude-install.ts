@@ -120,9 +120,7 @@ export function makeRegistration(
     matcher,
     bin,
     command: stableHookCommand(bin, args),
-    ...(bin === GATE_BIN
-      ? { timeout: 300, ...(args.includes("--agent codex") ? {} : { onFailure: "block" as const }) }
-      : {}),
+    ...(bin === GATE_BIN ? { timeout: 2 } : {}),
   };
 }
 

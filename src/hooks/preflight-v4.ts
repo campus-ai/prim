@@ -177,6 +177,29 @@ export function hasCompleteCoverage(response: PreflightResponse): boolean {
   );
 }
 
+/** A validated, evaluated conflict can be surfaced before exhaustive completion. */
+export function hasConfirmedConflict(response: PreflightResponse): boolean {
+  const coverage = response.evaluationCoverage;
+  return (
+    (response.state === "completed" ||
+      response.state === "processing" ||
+      response.state === "paused") &&
+    response.conflicts.length > 0 &&
+    coverage.discoveryComplete &&
+    (response.state !== "completed" || hasCompleteCoverage(response)) &&
+    coverage.evaluatedCount <= coverage.candidateCount &&
+    coverage.evaluatedCount > 0 &&
+    coverage.completedSemanticBatchCount > 0 &&
+    (coverage.status === "partial" || coverage.status === "completed") &&
+    ["ask", "block", "warn"].includes(response.verdict) &&
+    [
+      "high_confidence_contradiction",
+      "aged_high_confidence_contradiction",
+      "provisional_or_uncertain_contradiction",
+    ].includes(response.reasonCode)
+  );
+}
+
 function isNoTargetsSkip(response: PreflightResponse): boolean {
   const coverage = response.evaluationCoverage;
   return (
@@ -223,7 +246,7 @@ export function resultForPreflight(
   invocation?: Pick<PreflightRequest, "paths" | "proposal">,
   proposalTruncated = false,
 ): ConflictCheckResult {
-  if (!hasCompleteCoverage(response))
+  if (!hasCompleteCoverage(response) && !hasConfirmedConflict(response))
     return pausedResult(response.message || response.reasonCode, response.checkId);
   return renderCompleted(
     {
@@ -304,7 +327,11 @@ export async function requestPreflight(
 /** The deadline bounds the whole wait, including all requests and polling delays. */
 export async function waitForPreflight(
   operation: PreflightOperation,
-  options: { deadline?: number; onProgress?: (response: PreflightResponse) => void } = {},
+  options: {
+    deadline?: number;
+    onProgress?: (response: PreflightResponse) => void;
+    stopOnConflict?: boolean;
+  } = {},
 ): Promise<PreflightResponse> {
   const deadline = options.deadline ?? performance.now() + PREFLIGHT_WAIT_MS;
   let next = operation;
@@ -342,7 +369,11 @@ export async function waitForPreflight(
       );
     checkId = response.checkId;
     evaluationId = response.evaluationId;
-    if (response.state !== "processing") return response;
+    if (
+      response.state !== "processing" ||
+      (options.stopOnConflict && hasConfirmedConflict(response))
+    )
+      return response;
     const progress = JSON.stringify(response.evaluationCoverage);
     if (progress !== lastProgress) options.onProgress?.(response);
     lastProgress = progress;

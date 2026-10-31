@@ -1183,7 +1183,7 @@ function checkPreflightHosts(): Check[] {
   return hosts.map((host) => {
     const protection = inspectFailureProtection(host);
     return {
-      name: `${host} gate failure protection`,
+      name: `${host} gate timeout and failure behavior`,
       status:
         protection.status === "supported"
           ? "ok"

@@ -49,8 +49,8 @@ describe("Cursor native hook configuration", () => {
         "--agent cursor --event preToolUse --scope project",
       ),
       matcher: "Write|Delete|Shell",
-      timeout: 300,
-      failClosed: true,
+      timeout: 2,
+      failClosed: false,
     });
     expect(
       hasExactCursorHandler(output, "postToolUseFailure", "prim-post-tool-use", "project"),

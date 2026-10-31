@@ -13,24 +13,26 @@ presence — from the command line and via session + git hooks.
 > organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
-When Enforcement is enabled, the V4 gate waits for complete Decision coverage.
-It polls for up to 240 seconds, limits individual requests to 10 seconds, and
-pauses the tool on incomplete evaluation or service failure, including in warn
-mode. A paused response includes a check ID:
+When Enforcement is enabled, automatic V4 checks wait at most **two seconds**.
+Confirmed conflicts found in that window retain the existing review/warning
+behavior. Otherwise work proceeds silently, including on timeout, incomplete
+coverage, authentication problems, or service failure. Admitted evaluations
+continue in the backend for internal review; later results cannot stop or undo
+an edit and do not send a user notification.
+
+Explicit inspection and recovery retain their longer wait:
 
 ```bash
 prim decisions preflight status <checkId>
-prim decisions preflight resume <checkId>  # Finish evaluation, then retry the tool
+prim decisions preflight resume <checkId>
 ```
 
-The backend must support V4 before this CLI is rolled out. There is no V3 fallback.
-Re-run `prim <agent> install` and `prim doctor` to repair the 300-second hook timeout
-and check host failure protection. Claude needs 2.1.295+ (`onFailure: "block"`),
-Cursor uses the verified 3.24.9+ baseline (`failClosed: true`), and Hermes needs
-`fail_closed` shell-hook support. Codex supports explicit deny but does not
-provide a documented fail-closed policy for a hook crash, kill, or host timeout;
-Primitive cannot guarantee that host failure boundary. Reload/restart and trust
-the updated hooks as directed by the installer.
+There is no V3 fallback. Re-run `prim <agent> install` and `prim doctor` to repair
+the two-second hook timeout and fail-open settings. Claude uses its default
+failure behavior, Cursor uses `failClosed: false`, and Hermes uses
+`fail_closed: false`. Codex also permits the action if the hook fails. Reload or
+restart the host as directed by the installer. Older installations retain their
+blocking behavior until upgraded and repaired.
 
 ## Installation
 
@@ -583,18 +585,16 @@ They never install or upgrade the host or change your host settings.
 
 ```bash
 pnpm test:preflight-host          # Installed Codex
-pnpm test:preflight-host:claude   # Claude 2.1.295+ on PATH
+pnpm test:preflight-host:claude   # Claude 2.1.284+ on PATH
 pnpm test:preflight-host:claude --binary /path/to/compatible/claude
 # CLI_CLAUDE_BIN also selects the Claude binary.
 ```
 
-Each check covers completed allow, paused evaluation in warn mode, malformed
-backend JSON, CLI deadline expiry, hook crash, and host watchdog expiry. Deadline
-expiry uses an accelerated remaining 240-second budget; the watchdog uses a
-one-second timeout. These checks do not wait 240/300 seconds. Claude's
-`onFailure: "block"` blocks the crash and watchdog cases. The Codex check records
-its current limitation by expecting execution in those two cases; explicit CLI
-denials still block. Unsupported Claude versions fail before the fixture runs.
+Each check covers completed allow, confirmed conflict, paused evaluation, malformed
+backend JSON, CLI deadline expiry, hook crash, and host watchdog expiry. Only the
+confirmed conflict prevents the sentinel write. The hook budget and watchdog are
+two seconds; no fixture waits minutes. Unsupported Claude versions fail before
+the fixture runs.
 The separate `pnpm test:preflight-v4 --schema /path/to/cli-http-v1.schema.json`
 check validates the built CLI against a supplied authoritative backend contract.
 
