@@ -96,9 +96,9 @@ describe("applyInstall", () => {
     ).toBe(true);
   });
 
-  it("registers the conflict gate with the V4 timeout: 300 (and no timeout on ingest)", () => {
+  it("registers the conflict gate with the V4 timeout: 2 (and no timeout on ingest)", () => {
     const hooks = applyInstall({}, false);
-    expect(hooks.pre_tool_call.find((e) => e.matcher === "write_file|patch")?.timeout).toBe(300);
+    expect(hooks.pre_tool_call.find((e) => e.matcher === "write_file|patch")?.timeout).toBe(2);
     expect(
       hooks.post_tool_call.find((e) => e.matcher === "write_file|patch")?.timeout,
     ).toBeUndefined();

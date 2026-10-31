@@ -70,7 +70,7 @@ try {
     ["git status --short", undefined],
   ];
   for (const [file, args] of entries) {
-    for (const [command, message] of cases) {
+    for (const [command] of cases) {
       const envelope = {
         hook_event_name: "PreToolUse",
         session_id: "shell-golden",
@@ -80,12 +80,9 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
-      if (result.hookSpecificOutput?.permissionDecision !== (message ? "deny" : "allow"))
+      if (result.hookSpecificOutput?.permissionDecision !== "allow")
         throw new Error("Unexpected hook disposition");
-      if (message) {
-        if (!result.hookSpecificOutput.permissionDecisionReason?.includes(message))
-          throw new Error(`Missing explicit pause for ${command}`);
-      } else if (
+      if (
         result.systemMessage !== undefined ||
         result.hookSpecificOutput?.additionalContext !== undefined
       ) {

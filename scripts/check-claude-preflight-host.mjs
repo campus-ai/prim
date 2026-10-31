@@ -23,14 +23,14 @@ const supportedVersion =
   version &&
   (Number(version[1]) > 2 ||
     (Number(version[1]) === 2 &&
-      (Number(version[2]) > 1 || (Number(version[2]) === 1 && Number(version[3]) >= 295))));
+      (Number(version[2]) > 1 || (Number(version[2]) === 1 && Number(version[3]) >= 284))));
 if (!supportedVersion)
   throw new Error(
-    `Claude 2.1.295+ is required for onFailure: block; found ${versionOutput}. Select a compatible binary with --binary or CLI_CLAUDE_BIN. This check never upgrades the host.`,
+    `Claude 2.1.284+ is required for this host fixture; found ${versionOutput}. Select a compatible binary with --binary or CLI_CLAUDE_BIN. This check never upgrades the host.`,
   );
 const hostVersion = version.slice(1).join(".");
 const root = mkdtempSync(join(tmpdir(), "prim-claude-host-"));
-const cases = ["allow", "paused", "malformed", "deadline", "crash", "timeout"];
+const cases = ["allow", "conflict", "paused", "malformed", "deadline", "crash", "timeout"];
 let current;
 let calls = 0;
 let preflightRequests = 0;
@@ -61,10 +61,15 @@ const server = createServer(async (request, response) => {
         state: current === "deadline" ? "processing" : paused ? "paused" : "completed",
         checkId: "hostcheck",
         evaluationId: "hosteval",
-        verdict: paused ? "unavailable" : "allow",
-        reasonCode: paused ? "semantic_unavailable" : "no_conflicts",
+        verdict: current === "conflict" ? "block" : paused ? "unavailable" : "allow",
+        reasonCode:
+          current === "conflict"
+            ? "high_confidence_contradiction"
+            : paused
+              ? "semantic_unavailable"
+              : "no_conflicts",
         message: paused ? "Fixture evaluation paused" : "Fixture complete",
-        conflicts: [],
+        conflicts: current === "conflict" ? [{ decisionId: "dec_0123abcd" }] : [],
         bypassed: [],
         evaluationCoverage: {
           candidateCount: 1,
@@ -170,7 +175,7 @@ try {
       PRIM_CONFIG_DIR: join(home, "prim"),
       PRIM_API_URL: url,
       PRIM_TOKEN: "fixture-no-real-credential",
-      PRIM_HOOK_MODE: "warn",
+      PRIM_HOOK_MODE: name === "conflict" ? "block" : "warn",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: join(home, "gitconfig"),
       ANTHROPIC_BASE_URL: url,
@@ -196,7 +201,7 @@ try {
     const observed = join(cwd, "hook-observed.json");
     const wrapper = join(cwd, "hook.mjs");
     const clock = join(cwd, "clock.mjs");
-    writeFileSync(clock, "process.uptime = () => 238;\n");
+    writeFileSync(clock, "process.uptime = () => 0.5;\n");
     writeFileSync(
       wrapper,
       `import { readFileSync, writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst raw=readFileSync(0,'utf8'); writeFileSync(${JSON.stringify(observed)},raw);\n${name === "crash" ? "process.exit(1);" : name === "timeout" ? "await new Promise(resolve=>setTimeout(resolve,5000));" : `const result=spawnSync(${JSON.stringify(process.execPath)},[${name === "deadline" ? `'--import',${JSON.stringify(clock)},` : ""}${JSON.stringify(join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"))},'--agent','claude'],{input:raw,encoding:'utf8',env:process.env}); process.stdout.write(result.stdout);process.stderr.write(result.stderr);process.exit(result.status??1);`}\n`,
@@ -213,8 +218,7 @@ try {
                 {
                   type: "command",
                   command: `'${process.execPath}' '${wrapper}'`,
-                  timeout: name === "timeout" ? 1 : 300,
-                  onFailure: "block",
+                  timeout: 2,
                 },
               ],
             },
@@ -287,12 +291,12 @@ try {
     assert.equal(result.code, 0, result.stderr);
     assert.equal(
       row.sentinelWritten,
-      name === "allow",
+      name !== "conflict",
       `${JSON.stringify(row)}\n${result.stdout}\n${result.stderr}`,
     );
     assert.equal(
       preflightRequests > 0,
-      ["allow", "paused", "malformed", "deadline"].includes(name),
+      ["allow", "conflict", "paused", "malformed", "deadline"].includes(name),
       JSON.stringify(row),
     );
     results.push(row);
@@ -304,7 +308,7 @@ try {
     suite: "claude-preflight-host",
     hostVersion,
     deadlineTiming: "accelerated remaining budget",
-    watchdogTimeoutSeconds: 1,
+    watchdogTimeoutSeconds: 2,
     results,
   };
   console.log(JSON.stringify(summary));

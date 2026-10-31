@@ -179,12 +179,25 @@ async function serveStory(f: ReturnType<typeof fixture>) {
         ? { decisions: [], viewerHasDecisions: false }
         : path.includes("conflict-check")
           ? {
-              protocolVersion: 3,
+              protocolVersion: 4,
+              state: "completed",
+              checkId: "democheck",
+              evaluationId: "demoevaluation",
               verdict: "block",
               reasonCode: "high_confidence_contradiction",
               message: "real policy",
-              conflicts: [],
+              conflicts: [{ decisionId: "dec_1234abcd" }],
               bypassed: [],
+              evaluationCoverage: {
+                candidateCount: 1,
+                submittedCount: 1,
+                evaluatedCount: 1,
+                bypassedCount: 0,
+                discoveryComplete: true,
+                status: "completed",
+                semanticBatchCount: 1,
+                completedSemanticBatchCount: 1,
+              },
             }
           : { decisionId: "dec_1234abcd", shortId: "1234abcd", createdAt: 1 };
       res.end(JSON.stringify(result));

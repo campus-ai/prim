@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 // from the user's account, settings, and work. No model/API billing occurs.
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = mkdtempSync(join(tmpdir(), "prim-codex-host-"));
-const cases = ["allow", "paused", "malformed", "deadline", "crash", "timeout"];
+const cases = ["allow", "conflict", "paused", "malformed", "deadline", "crash", "timeout"];
 let current;
 let calls = 0;
 let preflightRequests = 0;
@@ -35,10 +35,15 @@ const server = createServer(async (request, response) => {
         state: current === "deadline" ? "processing" : paused ? "paused" : "completed",
         checkId: "hostcheck",
         evaluationId: "hosteval",
-        verdict: paused ? "unavailable" : "allow",
-        reasonCode: paused ? "semantic_unavailable" : "no_conflicts",
+        verdict: current === "conflict" ? "block" : paused ? "unavailable" : "allow",
+        reasonCode:
+          current === "conflict"
+            ? "high_confidence_contradiction"
+            : paused
+              ? "semantic_unavailable"
+              : "no_conflicts",
         message: paused ? "Fixture evaluation paused" : "Fixture complete",
-        conflicts: [],
+        conflicts: current === "conflict" ? [{ decisionId: "dec_0123abcd" }] : [],
         bypassed: [],
         evaluationCoverage: {
           candidateCount: 1,
@@ -119,7 +124,7 @@ try {
       PRIM_CONFIG_DIR: join(home, "prim"),
       PRIM_API_URL: url,
       PRIM_TOKEN: "fixture-no-real-credential",
-      PRIM_HOOK_MODE: "warn",
+      PRIM_HOOK_MODE: name === "conflict" ? "block" : "warn",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: join(home, "gitconfig"),
     };
@@ -134,7 +139,7 @@ try {
     const observed = join(cwd, "hook-observed.json");
     const wrapper = join(cwd, "hook.mjs");
     const clock = join(cwd, "clock.mjs");
-    writeFileSync(clock, "process.uptime = () => 238;\n");
+    writeFileSync(clock, "process.uptime = () => 0.5;\n");
     writeFileSync(
       wrapper,
       `import { readFileSync, writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst raw = readFileSync(0, 'utf8');\nwriteFileSync(${JSON.stringify(observed)}, raw);\n${name === "crash" ? "process.exit(1);" : name === "timeout" ? "await new Promise(resolve => setTimeout(resolve, 5000));" : `const result = spawnSync(${JSON.stringify(process.execPath)}, [${name === "deadline" ? `'--import', ${JSON.stringify(clock)}, ` : ""}${JSON.stringify(join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"))}, '--agent', 'codex'], { input: raw, encoding: 'utf8', env: process.env }); process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exit(result.status ?? 1);`}\n`,
@@ -147,7 +152,7 @@ try {
           PreToolUse: [
             {
               matcher: "Bash",
-              hooks: [{ type: "command", command, timeout: name === "timeout" ? 1 : 300 }],
+              hooks: [{ type: "command", command, timeout: 2 }],
             },
           ],
         },
@@ -208,12 +213,13 @@ try {
     assert.equal(result.code, 0, result.stderr);
     assert.equal(
       sentinelWritten,
-      name !== "paused" && name !== "malformed" && name !== "deadline",
+      name !== "conflict",
       `${JSON.stringify(row)}\n${result.stdout}\n${result.stderr}`,
     );
     assert.equal(
       preflightRequests > 0,
-      name === "allow" || name === "paused" || name === "malformed" || name === "deadline",
+      ["allow", "conflict", "paused", "malformed", "deadline"].includes(name),
+      JSON.stringify(row),
     );
     results.push(row);
     console.error(`PASS actual Codex ${name}: sentinel ${sentinelWritten ? "written" : "blocked"}`);
@@ -222,7 +228,7 @@ try {
     JSON.stringify({
       suite: "codex-preflight-host",
       deadlineTiming: "accelerated remaining budget",
-      watchdogTimeoutSeconds: 1,
+      watchdogTimeoutSeconds: 2,
       results,
     }),
   );

@@ -55,7 +55,7 @@ type CursorRegistration = {
 
 const REGISTRATIONS: readonly CursorRegistration[] = [
   ...CURSOR_EVENTS.map((event) => ({ event, bin: CAPTURE_BIN })),
-  { event: "preToolUse", bin: GATE_BIN, matcher: "Write|Delete|Shell", timeout: 300 },
+  { event: "preToolUse", bin: GATE_BIN, matcher: "Write|Delete|Shell", timeout: 2 },
   { event: "postToolUse", bin: POST_TOOL_BIN },
   { event: "postToolUseFailure", bin: POST_TOOL_BIN },
   { event: "sessionStart", bin: SESSION_START_BIN },
@@ -168,7 +168,7 @@ function hookFor(registration: CursorRegistration, scope: Scope): CursorHook {
     command: commandFor(registration, scope),
     ...(registration.matcher ? { matcher: registration.matcher } : {}),
     ...(registration.timeout ? { timeout: registration.timeout } : {}),
-    ...(registration.bin === GATE_BIN ? { failClosed: true } : {}),
+    ...(registration.bin === GATE_BIN ? { failClosed: false } : {}),
   };
 }
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 // This drives the built hook and installers with real process, HTTP, Git, and
 // filesystem boundaries. It does not invoke an agent or touch the user's home.
@@ -175,6 +175,7 @@ function envelope(agent, content = "new", invocationId = "tool-1") {
 }
 async function run(args, input, overrides = {}, nodeArgs = [], rawInput = null) {
   return await new Promise((resolve, reject) => {
+    const started = performance.now();
     const child = spawn(process.execPath, [...nodeArgs, ...args], {
       cwd,
       env: { ...env, ...overrides },
@@ -199,7 +200,7 @@ async function run(args, input, overrides = {}, nodeArgs = [], rawInput = null) 
     });
     child.once("close", (code) => {
       clearTimeout(timeout);
-      resolve({ code, stdout, stderr });
+      resolve({ code, stdout, stderr, elapsedMs: performance.now() - started });
     });
     child.stdin.end(rawInput ?? (input === undefined ? "" : JSON.stringify(input)));
   });
@@ -214,15 +215,34 @@ async function hook(agent = "claude_code", options = {}) {
     options.rawInput,
   );
   assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    result.elapsedMs < 2_250,
+    `Hook exceeded two seconds + 250ms scheduling tolerance: ${result.elapsedMs}`,
+  );
   return { ...result, output: JSON.parse(result.stdout) };
+}
+function silent(agent, result) {
+  assert.deepEqual(
+    result.output,
+    agent === "cursor"
+      ? { permission: "allow" }
+      : agent === "claude_code"
+        ? {
+            hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+          }
+        : {},
+  );
+  assert.equal(result.stderr, "");
 }
 function denied(agent, output) {
   if (agent === "cursor") return output.permission === "deny";
   if (agent === "hermes") return output.action === "block";
-  return output.hookSpecificOutput?.permissionDecision === "deny";
+  return ["deny", "ask"].includes(output.hookSpecificOutput?.permissionDecision);
 }
 let passed = 0;
 async function scenario(name, action) {
+  const filter = process.env.PREFLIGHT_E2E_FILTER;
+  if (filter && !name.includes(filter)) return;
   await action();
   passed += 1;
   console.error(`PASS ${name}`);
@@ -230,7 +250,7 @@ async function scenario(name, action) {
 try {
   for (const path of [home, cwd, bin]) mkdirSync(path, { recursive: true });
   writeFileSync(join(root, "empty-git-config"), "");
-  writeFileSync(nearDeadline, "process.uptime = () => 239.5;\n");
+  writeFileSync(nearDeadline, "process.uptime = () => 1.5;\n");
   execFileSync("git", ["init", "-q", cwd], { env });
   for (const [key, value] of [
     ["prim.active", "true"],
@@ -253,11 +273,11 @@ try {
       ["missing event identity", { input: { ...envelope(agent), hook_event_name: undefined } }],
       ["missing tool identity", { input: { ...envelope(agent), tool_name: undefined } }],
     ]) {
-      await scenario(`${agent}: ${name} pauses without a request`, async () => {
+      await scenario(`${agent}: ${name} silently releases without a request`, async () => {
         respond = () => completed();
         const result = await hook(agent, { ...options, env: { PRIM_HOOK_MODE: "warn" } });
-        assert.ok(denied(agent, result.output), result.stdout);
-        assert.match(result.stdout, /Operation paused/u);
+        silent(agent, result);
+
         assert.equal(requests.length, 0);
       });
       for (const optOut of [{ PRIM_HOOK_MODE: "off" }, { PRIM_BYPASS: "1" }])
@@ -267,21 +287,18 @@ try {
           assert.equal(requests.length, 0);
         });
     }
-    await scenario(
-      `${agent}: ID-less pre-admission pause preserves the service reason`,
-      async () => {
-        respond = () =>
-          unidentifiedPause({
-            reasonCode: "repository_unavailable",
-            message: "The repository connection is unavailable",
-          });
-        const result = await hook(agent, { env: { PRIM_HOOK_MODE: "warn" } });
-        assert.ok(denied(agent, result.output), result.stdout);
-        assert.match(result.stdout, /The repository connection is unavailable/u);
-        assert.doesNotMatch(result.stdout, /incompatible V4|resume/u);
-        assert.equal(requests.length, 1);
-      },
-    );
+    await scenario(`${agent}: ID-less pre-admission pause silently releases`, async () => {
+      respond = () =>
+        unidentifiedPause({
+          reasonCode: "repository_unavailable",
+          message: "The repository connection is unavailable",
+        });
+      const result = await hook(agent, { env: { PRIM_HOOK_MODE: "warn" } });
+      silent(agent, result);
+
+      assert.doesNotMatch(result.stdout, /incompatible V4|resume/u);
+      assert.equal(requests.length, 1);
+    });
     await scenario(`${agent}: pending waits for all 104 eligible Decisions`, async () => {
       respond = (body) => (body.operation === "start" ? processing() : completed());
       const result = await hook(agent);
@@ -297,10 +314,10 @@ try {
       );
       assert.match(requests[0].body.toolInputDigest, /^[a-f0-9]{64}$/u);
       assert.equal(requests[0].body.protocolVersion, 4);
-      assert.match(result.stderr, /Checking Decisions/u);
+      assert.equal(result.stderr, "");
     });
     for (const state of ["processing", "paused", "expired"]) {
-      await scenario(`${agent}: ${state} cannot allow in warn mode`, async () => {
+      await scenario(`${agent}: ${state} silently releases in warn mode`, async () => {
         respond = () => processing({ state, verdict: "allow" });
         const result = await hook(agent, {
           env: { PRIM_HOOK_MODE: "warn" },
@@ -308,8 +325,7 @@ try {
             ? { nodeArgs: ["--import", pathToFileURL(nearDeadline).href] }
             : {}),
         });
-        assert.ok(denied(agent, result.output), result.stdout);
-        assert.match(result.stdout, /Operation paused/u);
+        silent(agent, result);
       });
     }
   }
@@ -319,9 +335,9 @@ try {
     ["multiple repositories", { ...envelope("cursor"), workspace_roots: [cwd, otherRepository] }],
     ["missing conversation identity", { ...envelope("cursor"), conversation_id: undefined }],
   ]) {
-    await scenario(`cursor: normalization failure from ${name} pauses`, async () => {
+    await scenario(`cursor: normalization failure from ${name} silently releases`, async () => {
       const result = await hook("cursor", { input });
-      assert.ok(denied("cursor", result.output), result.stdout);
+      silent("cursor", result);
       assert.equal(requests.length, 0);
     });
     for (const optOut of [{ PRIM_HOOK_MODE: "off" }, { PRIM_BYPASS: "1" }])
@@ -331,24 +347,20 @@ try {
         assert.equal(requests.length, 0);
       });
   }
-  await scenario(
-    "ID-less pause during polling preserves the known check and service reason",
-    async () => {
-      respond = (body) =>
-        body.operation === "start"
-          ? processing()
-          : unidentifiedPause({
-              verdict: "unavailable",
-              reasonCode: "authority_changed",
-              message: "The credential authority changed",
-            });
-      const result = await hook();
-      assert.ok(denied("claude_code", result.output), result.stdout);
-      assert.match(result.stdout, /The credential authority changed/u);
-      assert.match(result.stdout, /preflight resume check1/u);
-      assert.doesNotMatch(result.stdout, /different check identity|changed evaluation identity/u);
-    },
-  );
+  await scenario("ID-less pause during polling silently releases", async () => {
+    respond = (body) =>
+      body.operation === "start"
+        ? processing()
+        : unidentifiedPause({
+            verdict: "unavailable",
+            reasonCode: "authority_changed",
+            message: "The credential authority changed",
+          });
+    const result = await hook();
+    silent("claude_code", result);
+
+    assert.doesNotMatch(result.stdout, /different check identity|changed evaluation identity/u);
+  });
   await scenario("status preserves a legitimate ID-less paused response on stdout", async () => {
     respond = () =>
       unidentifiedPause({
@@ -406,7 +418,7 @@ try {
       respond = () =>
         completed({
           verdict: "block",
-          reasonCode: "semantic_conflict",
+          reasonCode: "high_confidence_contradiction",
           conflicts: [
             { decisionId: "dec_0123abcd", shortId: "0123abcd", title: "Keep durable retries" },
           ],
@@ -433,20 +445,29 @@ try {
         assert.ok(result.stdout.includes(expected), expected);
     },
   );
-  await scenario("V4 preserves disclosure when a shell proposal is truncated", async () => {
-    respond = () => completed();
-    const input = {
-      ...envelope("claude_code"),
-      tool_name: "Bash",
-      tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
-    };
-    const result = await hook("claude_code", { input });
-    assert.equal(denied("claude_code", result.output), false);
-    assert.deepEqual(requests[0].body.paths, ["target.txt"]);
-    assert.match(result.stdout, /shell proposal was truncated/u);
-  });
+  await scenario(
+    "V4 stays silent without a confirmed conflict even when proposal is truncated",
+    async () => {
+      respond = () => completed();
+      const input = {
+        ...envelope("claude_code"),
+        tool_name: "Bash",
+        tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
+      };
+      const result = await hook("claude_code", { input });
+      assert.equal(denied("claude_code", result.output), false);
+      assert.deepEqual(requests[0].body.paths, ["target.txt"]);
+      silent("claude_code", result);
+    },
+  );
   await scenario("complete semantic block still demotes in warn mode", async () => {
-    respond = () => completed({ verdict: "block", reasonCode: "conflict", message: "Conflict" });
+    respond = () =>
+      completed({
+        verdict: "block",
+        reasonCode: "high_confidence_contradiction",
+        message: "Conflict",
+        conflicts: [{ decisionId: "dec_0123abcd" }],
+      });
     assert.equal(
       denied(
         "claude_code",
@@ -492,38 +513,28 @@ try {
     ],
     ["unavailable verdict", completed({ verdict: "unavailable" })],
   ])
-    await scenario(`${name} pauses without fallback`, async () => {
+    await scenario(`${name} silently releases without fallback`, async () => {
       respond = () => value;
-      assert.ok(denied("claude_code", (await hook()).output));
+      silent("claude_code", await hook());
       assert.equal(requests.length, 1);
     });
-  await scenario("wrong poll identity pauses", async () => {
+  await scenario("wrong poll identity silently releases", async () => {
     respond = (body) =>
       body.operation === "start" ? processing() : completed({ checkId: "othercheck" });
-    assert.ok(denied("claude_code", (await hook()).output));
+    silent("claude_code", await hook());
   });
-  await scenario("network failure pauses even in warn mode", async () => {
+  await scenario("network failure silently releases even in warn mode", async () => {
     respond = (_, response) => {
       response.destroy();
     };
-    assert.ok(
-      denied(
-        "claude_code",
-        (await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } })).output,
-      ),
-    );
+    silent("claude_code", await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } }));
   });
-  await scenario("malformed conflict records pause even in warn mode", async () => {
+  await scenario("malformed conflict records silently release even in warn mode", async () => {
     respond = (_, response) => {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(completed({ conflicts: [null] })));
     };
-    assert.ok(
-      denied(
-        "claude_code",
-        (await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } })).output,
-      ),
-    );
+    silent("claude_code", await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } }));
     assert.equal(requests.length, 1);
   });
   await scenario("enforcement-disabled no-ID response preserves explicit exemption", async () => {
@@ -586,7 +597,7 @@ try {
             completedSemanticBatchCount: 0,
           },
         });
-      assert.ok(denied("claude_code", (await hook()).output));
+      silent("claude_code", await hook());
       const input = {
         ...envelope("claude_code"),
         tool_input: { file_path: join(root, "outside.txt"), content: "fixture" },
@@ -620,24 +631,23 @@ try {
       assert.notEqual(first.invocationId, requests[0].body.invocationId);
     },
   );
-  await scenario("240-second budget expires with explicit deny before host timeout", async () => {
-    // Begin near the end of the process's real 240s budget; no production env
+  await scenario("two-second budget expires silently before host timeout", async () => {
+    // Begin near the end of the process's real two-second budget; no production env
     // variable weakens the limit, and the built gate remains unchanged.
     const clock = join(root, "near-deadline.mjs");
-    writeFileSync(clock, "process.uptime = () => 239.5;\n");
+    writeFileSync(clock, "process.uptime = () => 1.5;\n");
     respond = () => processing();
     const started = Date.now();
     const result = await hook("claude_code", { nodeArgs: ["--import", pathToFileURL(clock).href] });
-    assert.ok(denied("claude_code", result.output));
-    assert.match(result.stdout, /240-second/u);
+    silent("claude_code", result);
     assert.ok(Date.now() - started < 3_000);
   });
-  await scenario("single HTTP request has a 10-second deadline", async () => {
+  await scenario("single HTTP request shares the two-second hook budget", async () => {
     respond = () => undefined;
     const started = Date.now();
-    assert.ok(denied("claude_code", (await hook()).output));
-    assert.ok(Date.now() - started >= 9_500);
-    assert.ok(Date.now() - started < 13_000);
+    silent("claude_code", await hook());
+    assert.ok(Date.now() - started >= 1_000);
+    assert.ok(Date.now() - started < 2_250);
   });
   await scenario("explicit status/resume use V4 and resume polls to completion", async () => {
     requests.length = 0;
@@ -666,6 +676,158 @@ try {
     assert.equal(result.code, 1, result.stderr);
     assert.equal(JSON.parse(result.stdout).state, "paused");
   });
+  await scenario(
+    "two parallel edits release silently while 127 Decisions continue evaluating",
+    async () => {
+      let completedInBackground = false;
+      const work = setTimeout(() => {
+        completedInBackground = true;
+      }, 2_400);
+      respond = () =>
+        processing({
+          evaluationCoverage: { ...processing().evaluationCoverage, candidateCount: 127 },
+        });
+      const results = await Promise.all([hook(), hook("codex")]);
+      silent("claude_code", results[0]);
+      silent("codex", results[1]);
+      assert.equal(completedInBackground, false);
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      assert.equal(completedInBackground, true);
+      clearTimeout(work);
+    },
+  );
+  for (const agent of ["claude_code", "codex", "cursor", "hermes"]) {
+    for (const state of ["processing", "paused", "completed"]) {
+      await scenario(`${agent}: confirmed conflict in ${state} retains review`, async () => {
+        respond = () =>
+          (state === "completed" ? completed : processing)({
+            state,
+            verdict: agent === "claude_code" ? "ask" : "block",
+            reasonCode: "high_confidence_contradiction",
+            conflicts: [{ decisionId: "dec_0123abcd", title: "Keep retries durable" }],
+          });
+        const result = await hook(agent);
+        assert.ok(
+          agent === "claude_code"
+            ? result.output.hookSpecificOutput.permissionDecision === "ask"
+            : denied(agent, result.output),
+        );
+        assert.match(result.stdout, /dec_0123abcd/u);
+        assert.equal(requests.length, 1);
+        const warn = await hook(agent, { env: { PRIM_HOOK_MODE: "warn" } });
+        assert.equal(denied(agent, warn.output), false);
+        assert.match(warn.stdout + warn.stderr, /dec_0123abcd/u);
+      });
+    }
+    for (const reasonCode of ["evaluation_failed", "authority_changed", "check_expired"]) {
+      await scenario(`${agent}: ${reasonCode} never reports a conflict`, async () => {
+        respond = () => processing({ state: "paused", verdict: "block", reasonCode });
+        silent(agent, await hook(agent));
+      });
+    }
+  }
+  await scenario("a late confirmed conflict cannot add output or block the edit", async () => {
+    respond = (_, response) => {
+      const timer = setTimeout(
+        () =>
+          response.end(
+            JSON.stringify(
+              completed({
+                verdict: "block",
+                reasonCode: "high_confidence_contradiction",
+                conflicts: [{ decisionId: "dec_0123abcd" }],
+              }),
+            ),
+          ),
+        2_500,
+      );
+      timer.unref();
+    };
+    silent("claude_code", await hook());
+  });
+  await scenario("stalled synchronous Git is killed within the hook deadline", async () => {
+    const git = join(bin, "git");
+    writeFileSync(git, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+    try {
+      silent("claude_code", await hook());
+    } finally {
+      rmSync(git);
+    }
+  });
+  await scenario("worker crash silently releases exactly once", async () => {
+    const crash = join(root, "crash-worker.mjs");
+    writeFileSync(
+      crash,
+      'if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) process.exit(23);\n',
+    );
+    silent(
+      "claude_code",
+      await hook("claude_code", { env: { NODE_OPTIONS: `--import=${pathToFileURL(crash).href}` } }),
+    );
+  });
+  await scenario("credential refresh shares the supervisor deadline", async () => {
+    const hang = join(root, "hang-refresh.mjs");
+    const marker = join(root, "refresh-observed");
+    writeFileSync(
+      hang,
+      `import { writeFileSync } from "node:fs";
+if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) globalThis.fetch = (url) => {
+  writeFileSync(${JSON.stringify(marker)}, String(url));
+  return new Promise(() => {});
+};\n`,
+    );
+    const config = join(root, "refresh-config");
+    mkdirSync(config);
+    writeFileSync(join(config, "token"), "synthetic-access-token");
+    writeFileSync(join(config, "refresh_token"), "synthetic-refresh-token");
+    writeFileSync(join(config, "token_expires_at"), "1");
+    silent(
+      "claude_code",
+      await hook("claude_code", {
+        env: {
+          PRIM_TOKEN: "",
+          PRIM_CONFIG_DIR: config,
+          NODE_OPTIONS: `--import=${pathToFileURL(hang).href}`,
+        },
+      }),
+    );
+    assert.match(readFileSync(marker, "utf8"), /refresh/u);
+  });
+  await scenario("installed launcher can run preflight status and resume", async () => {
+    const installed = await run([
+      join(packageRoot, "dist/index.js"),
+      "claude",
+      "install",
+      "--scope",
+      "user",
+    ]);
+    assert.equal(installed.code, 0, installed.stderr);
+    const launcher = join(env.PRIM_CONFIG_DIR, "prim-hook-launcher-v1");
+    for (const operation of ["status", "resume"]) {
+      respond = () => completed();
+      // Run the actual shell launcher asynchronously so this HTTP server can reply.
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(launcher, ["prim", "decisions", "preflight", operation, "check1"], {
+          cwd,
+          env,
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (data) => {
+          stdout += data;
+        });
+        child.stderr.on("data", (data) => {
+          stderr += data;
+        });
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ code, stdout, stderr }));
+        child.stdin.end();
+      });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).state, "completed");
+      assert.doesNotMatch(result.stderr, /Dynamic require/u);
+    }
+  });
   for (const fixture of backendFixtures.filter(
     ({ definition, valid }) => definition === "PreflightResponseV4" && valid,
   ))
@@ -676,65 +838,74 @@ try {
           : fixture.value;
       const result = await hook();
       const expectedDeny =
-        fixture.value.state === "paused" ||
-        fixture.value.state === "expired" ||
-        (["block", "ask", "unavailable"].includes(fixture.value.verdict) &&
-          fixture.value.state !== "processing");
+        fixture.value.state !== "expired" &&
+        fixture.value.conflicts.length > 0 &&
+        ["block", "ask"].includes(fixture.value.verdict);
       assert.equal(denied("claude_code", result.output), expectedDeny);
     });
   for (const host of ["claude", "codex", "cursor", "hermes"])
-    await scenario(`${host}: installer writes and repairs 300s failure policy`, async () => {
-      const args = [join(packageRoot, "dist/index.js"), host, "install", "--scope", "user"];
-      let result = await run(args);
-      assert.equal(result.code, 0, result.stderr);
-      const location = JSON.parse(result.stdout).path;
-      const raw = readFileSync(location, "utf8");
-      const settings = host === "hermes" ? parseYaml(raw) : JSON.parse(raw);
-      const event =
-        host === "hermes" ? "pre_tool_call" : host === "cursor" ? "preToolUse" : "PreToolUse";
-      const entries = settings.hooks[event];
-      const gate =
-        host === "claude" || host === "codex"
-          ? entries
-              .flatMap(({ hooks }) => hooks)
-              .find(({ command }) => command.includes("prim-pre-tool-use"))
-          : entries.find(({ command }) => command.includes("prim-pre-tool-use"));
-      assert.equal(gate.timeout, 300);
-      if (host === "claude") assert.equal(gate.onFailure, "block");
-      if (host === "cursor") assert.equal(gate.failClosed, true);
-      if (host === "hermes") assert.equal(gate.fail_closed, true);
-      if (host === "codex") assert.match(result.stderr, /not guaranteed/u);
-      if (host === "claude" || host === "codex") {
-        gate.async = true;
-        writeFileSync(location, JSON.stringify(settings));
+    await scenario(
+      `${host}: installer writes and repairs two-second fail-open policy`,
+      async () => {
+        const args = [join(packageRoot, "dist/index.js"), host, "install", "--scope", "user"];
+        let result = await run(args);
+        assert.equal(result.code, 0, result.stderr);
+        const location = JSON.parse(result.stdout).path;
+        const raw = readFileSync(location, "utf8");
+        const settings = host === "hermes" ? parseYaml(raw) : JSON.parse(raw);
+        const event =
+          host === "hermes" ? "pre_tool_call" : host === "cursor" ? "preToolUse" : "PreToolUse";
+        const entries = settings.hooks[event];
+        const gate =
+          host === "claude" || host === "codex"
+            ? entries
+                .flatMap(({ hooks }) => hooks)
+                .find(({ command }) => command.includes("prim-pre-tool-use"))
+            : entries.find(({ command }) => command.includes("prim-pre-tool-use"));
+        assert.equal(gate.timeout, 2);
+        if (host === "claude") assert.equal(gate.onFailure, undefined);
+        if (host === "cursor") assert.equal(gate.failClosed, false);
+        if (host === "hermes") assert.equal(gate.fail_closed, false);
+        if (host === "codex") assert.match(result.stderr, /two seconds/u);
+        if (host === "claude" || host === "codex") {
+          gate.async = true;
+          writeFileSync(location, JSON.stringify(settings));
+          result = await run(args);
+          assert.equal(result.code, 0, result.stderr);
+          assert.equal(JSON.parse(result.stdout).changed, true);
+        }
+        // Repair an actual legacy gate, including its failure policy, and
+        // retain all unrelated lifecycle registrations.
+        gate.timeout = 300;
+        gate.async = undefined;
+        if (host === "claude") gate.onFailure = "block";
+        if (host === "cursor") gate.failClosed = true;
+        if (host === "hermes") gate.fail_closed = true;
+        writeFileSync(
+          location,
+          host === "hermes" ? stringifyYaml(settings) : JSON.stringify(settings),
+        );
         result = await run(args);
         assert.equal(result.code, 0, result.stderr);
         assert.equal(JSON.parse(result.stdout).changed, true);
-      }
-      writeFileSync(
-        location,
-        raw.replace(
-          host === "hermes" ? "timeout: 300" : '"timeout": 300',
-          host === "hermes" ? "timeout: 10" : '"timeout": 10',
-        ),
-      );
-      result = await run(args);
-      assert.equal(result.code, 0, result.stderr);
-      assert.equal(JSON.parse(result.stdout).changed, true);
-      result = await run(args);
-      assert.equal(result.code, 0, result.stderr);
-      assert.equal(JSON.parse(result.stdout).changed, false);
-    });
+        const repaired = readFileSync(location, "utf8");
+        assert.doesNotMatch(repaired, /"onFailure": "block"|"failClosed": true|fail_closed: true/u);
+        result = await run(args);
+        assert.equal(result.code, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).changed, false);
+      },
+    );
   await scenario(
     "unsupported host capability is machine-readable without claiming readiness",
     async () => {
-      writeFileSync(join(bin, "claude"), "#!/bin/sh\nprintf '%s\\n' '2.1.284'\n", { mode: 0o755 });
+      writeFileSync(join(bin, "claude"), "#!/bin/sh\nprintf '%s\\n' '2.1.283'\n", { mode: 0o755 });
       const result = await run([join(packageRoot, "dist/index.js"), "claude", "status"]);
       assert.equal(result.code, 0, result.stderr);
       assert.equal(JSON.parse(result.stdout).failureProtection.status, "unsupported");
-      assert.match(result.stderr, /not ready/u);
+      assert.match(result.stderr, /not verified/u);
     },
   );
+  assert.ok(passed > 0, "No preflight scenarios matched");
   console.log(
     JSON.stringify({
       suite: "preflight-v4-e2e",

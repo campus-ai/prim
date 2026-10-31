@@ -93,7 +93,7 @@ const CAPTURE_EVENTS = [
 // The conflict gate is synchronous — Hermes waits on its block/allow — so it
 // carries an explicit timeout ceiling; the shim's npx cold-start fallback can
 // otherwise precede the binary's own internal timeouts.
-const GATE_TIMEOUT_SECONDS = 300;
+const GATE_TIMEOUT_SECONDS = 2;
 
 type HermesReg = { event: string; matcher?: string; bin: string; timeout?: number };
 
@@ -147,7 +147,7 @@ function entryFor(reg: HermesReg): HookEntry {
   if (reg.timeout !== undefined) {
     entry.timeout = reg.timeout;
   }
-  if (reg.bin === GATE_BIN) entry.fail_closed = true;
+  if (reg.bin === GATE_BIN) entry.fail_closed = false;
   return entry;
 }
 

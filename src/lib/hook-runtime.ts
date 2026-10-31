@@ -45,6 +45,7 @@ export const HOOK_RUNTIME_ENTRIES = {
   "prim-pre-commit": "dist/hooks/pre-commit.js",
   "prim-post-commit": "dist/hooks/post-commit.js",
   "prim-post-rewrite": "dist/hooks/post-rewrite.js",
+  "prim-pre-tool-use-worker": "dist/hooks/pre-tool-use-worker.js",
   "prim-pre-tool-use": "dist/hooks/pre-tool-use.js",
   "prim-post-tool-use": "dist/hooks/post-tool-use.js",
   "prim-session-start": "dist/hooks/session-start.js",

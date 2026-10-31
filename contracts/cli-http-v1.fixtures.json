@@ -679,6 +679,68 @@
       }
     },
     {
+      "name": "processing preflight surfaces a confirmed conflict before full coverage",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "processing",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "ask",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "8 of 127 governing Decisions evaluated; conflicts found.",
+        "conflicts": [
+          {
+            "decisionId": "dec_0123abcd",
+            "title": "Keep retries durable"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 127,
+          "submittedCount": 32,
+          "evaluatedCount": 8,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "partial",
+          "semanticBatchCount": 16,
+          "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
+      "name": "paused preflight surfaces a confirmed conflict before full coverage",
+      "definition": "PreflightResponseV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "state": "paused",
+        "checkId": "check123",
+        "evaluationId": "evaluation123",
+        "verdict": "ask",
+        "reasonCode": "high_confidence_contradiction",
+        "message": "8 of 127 governing Decisions evaluated; conflicts found.",
+        "conflicts": [
+          {
+            "decisionId": "dec_0123abcd",
+            "title": "Keep retries durable"
+          }
+        ],
+        "bypassed": [],
+        "evaluationCoverage": {
+          "candidateCount": 127,
+          "submittedCount": 32,
+          "evaluatedCount": 8,
+          "bypassedCount": 0,
+          "discoveryComplete": true,
+          "status": "partial",
+          "semanticBatchCount": 16,
+          "completedSemanticBatchCount": 1
+        }
+      }
+    },
+    {
       "name": "paused coverage is not a Decision conflict",
       "definition": "PreflightResponseV4",
       "valid": true,
@@ -687,7 +749,7 @@
         "state": "paused",
         "checkId": "check123",
         "evaluationId": "evaluation123",
-        "verdict": "block",
+        "verdict": "unavailable",
         "reasonCode": "evaluation_failed",
         "message": "Resume unfinished work",
         "conflicts": [],

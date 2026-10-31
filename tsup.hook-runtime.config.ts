@@ -15,6 +15,7 @@ export default defineConfig({
     "hooks/post-commit": "src/hooks/post-commit.ts",
     "hooks/post-rewrite": "src/hooks/post-rewrite.ts",
     "hooks/prim-hook": "src/hooks/prim-hook.ts",
+    "hooks/pre-tool-use-worker": "src/hooks/pre-tool-use-worker.ts",
     "hooks/pre-tool-use": "src/hooks/pre-tool-use.ts",
     "hooks/post-tool-use": "src/hooks/post-tool-use.ts",
     "hooks/session-start": "src/hooks/session-start.ts",
@@ -25,6 +26,9 @@ export default defineConfig({
   outDir: "dist/hook-runtime",
   format: ["esm"],
   splitting: false,
+  banner: {
+    js: 'import { createRequire as __primCreateRequire } from "node:module"; const require = __primCreateRequire(import.meta.url);',
+  },
   noExternal: [/.*/],
   esbuildOptions(options) {
     options.alias = { ...options.alias, yaml: yamlBrowserEntry };
