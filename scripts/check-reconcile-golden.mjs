@@ -51,7 +51,10 @@ const server = createServer(async (request, response) => {
           completedSemanticBatchCount: 1,
         },
         verdict: effectiveVerdict,
-        reasonCode: effectiveVerdict === "allow" ? "semantically_compatible" : "semantic_conflict",
+        reasonCode:
+          effectiveVerdict === "allow"
+            ? "semantically_compatible"
+            : "high_confidence_contradiction",
         message:
           effectiveVerdict === "allow"
             ? "Compatible change."
