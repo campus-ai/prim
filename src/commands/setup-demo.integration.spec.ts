@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { detectAgent, registerSetupCommand, resolveAgent } from "./setup.js";
+import {
+  detectAgent,
+  planSetupSteps,
+  primCommand,
+  registerSetupCommand,
+  resolveAgent,
+} from "./setup.js";
 
 const cli = resolve("dist/index.js");
 const originalCwd = process.cwd();
@@ -35,15 +41,17 @@ function harness() {
   vi.spyOn(console, "log").mockImplementation((value) => summaries.push(JSON.parse(String(value))));
   let failedStep = "";
   let health = "{}";
-  const setup = async (options: string[] = []) => {
+  const timeouts: Record<string, number | undefined> = {};
+  const setup = async (options: string[] = [], agentArgs = ["--agent", "codex"]) => {
     calls.length = 0;
     const exit = vi.fn();
     const program = new Command().option("--non-interactive");
     registerSetupCommand(program, {
       exit,
       note: (message) => notes.push(message),
-      run: (args) => {
+      run: (args, _capture, timeoutMs) => {
         calls.push(args);
+        timeouts[args[0]] = timeoutMs;
         if (args[0] === failedStep) return { code: 1, stdout: "" };
         if (args[0] === "doctor") return { code: 0, stdout: health };
         if (args[0] === "auth") return { code: 0, stdout: '{"status":"valid"}' };
@@ -58,10 +66,11 @@ function harness() {
         return { code: 0, stdout: "{}" };
       },
     });
-    await program.parseAsync(["setup", "--agent", "codex", ...options], { from: "user" });
+    await program.parseAsync(["setup", ...agentArgs, ...options], { from: "user" });
     return exit;
   };
   return {
+    timeouts,
     root,
     calls,
     outputs,
@@ -177,5 +186,103 @@ describe("setup's optional demo handoff", () => {
     expect(JSON.parse(readFileSync(join(demo, "onboarding.json"), "utf8"))).toEqual({
       outcome: "skipped",
     });
+  });
+});
+
+describe("setup's Claude hand-off to the prim-welcome skill", () => {
+  it("activates and checks health for Claude like every other agent", () => {
+    const keys = (agent: "claude" | "codex") =>
+      planSetupSteps({ agent, daemon: true, scope: "user" }).map((step) => step.key);
+    expect(keys("claude")).toEqual(keys("codex"));
+    expect(keys("claude")).toEqual(["session", "daemon", "skill", "enable", "health"]);
+  });
+
+  it("connects GitHub just before activation, and returns the skill path without prose", async () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("PRIM_NON_INTERACTIVE", "");
+    const h = harness();
+    h.health({ ok: true, status: "ok", checks: [] });
+    expect(await h.setup(["--agent", "claude"])).toHaveBeenCalledWith(0);
+    const commands = h.calls.map((args) => args[0]);
+    expect(commands.indexOf("github")).toBe(commands.indexOf("enable") - 1);
+    expect(commands.indexOf("skill")).toBeLessThan(commands.indexOf("github"));
+    expect(h.timeouts.github).toBe(90_000);
+    for (const command of ["welcome", "demo"]) expect(commands).not.toContain(command);
+    const welcomeSkill = join(h.root, "home", ".claude", "skills", "prim-welcome", "SKILL.md");
+    expect(h.summaries).toEqual([
+      {
+        setup: true,
+        status: "complete",
+        steps: {
+          auth: "ok",
+          preauth: "ok",
+          session: "ok",
+          daemon: "ok",
+          skill: "ok",
+          github: "ok",
+          enable: "ok",
+          health: "ok",
+        },
+        health: { ok: true, status: "ok", checks: [] },
+        readiness: { installation: "installed", health: "ok", passiveCapture: "not-verified" },
+        welcomeSkill,
+        prim: primCommand(),
+        demo: "due",
+        instructions: "Read the file at welcomeSkill and follow it.",
+      },
+    ]);
+    expect(h.notes.at(-1)).toBe(`setup complete · ${welcomeSkill}`);
+  });
+
+  it("skips the GitHub connection when non-interactive", async () => {
+    vi.stubEnv("CI", "1");
+    const h = harness();
+    expect(await h.setup(["--agent", "claude"])).toHaveBeenCalledWith(0);
+    expect(h.calls.map((args) => args[0])).not.toContain("github");
+  });
+
+  it("hands off only when Claude Code is detected, keeping the welcome for people", async () => {
+    vi.stubEnv("CLAUDECODE", "");
+    const person = harness();
+    expect(await person.setup([], [])).toHaveBeenCalledWith(0);
+    expect(person.calls.map((args) => args[0])).toContain("welcome");
+    expect(person.summaries.at(-1)).not.toHaveProperty("welcomeSkill");
+
+    vi.stubEnv("CLAUDECODE", "1");
+    const agent = harness();
+    expect(await agent.setup([], [])).toHaveBeenCalledWith(0);
+    expect(agent.summaries.at(-1)).toHaveProperty("welcomeSkill");
+    expect(await agent.setup(["--scope", "project"], [])).toHaveBeenCalledWith(0);
+    expect(agent.summaries.at(-1)).not.toHaveProperty("welcomeSkill");
+  });
+
+  it("pins an installed package through npx and runs a checkout by path", () => {
+    expect(
+      primCommand(["node", "/x/_npx/1/node_modules/@primitive.ai/prim/dist/index.js"], "1.2.3"),
+    ).toBe("npx --yes @primitive.ai/prim@1.2.3");
+    expect(primCommand(["node", "/opt/it's/dist/index.js"], "1.2.3")).toBe(
+      `'${process.execPath}' '/opt/it'\\''s/dist/index.js'`,
+    );
+    const version = execFileSync("/bin/sh", ["-c", `${primCommand(["node", cli])} --version`], {
+      encoding: "utf8",
+    });
+    expect(version.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+  });
+
+  it("reports the demo as done once skipped", async () => {
+    const h = harness();
+    expect(await h.setup(["--agent", "claude", "--skip-demo"])).toHaveBeenCalledWith(0);
+    expect(h.calls).toContainEqual(["demo", "skip"]);
+    expect(h.summaries.at(-1)).toMatchObject({ demo: "done" });
+    expect(await h.setup(["--agent", "claude"])).toHaveBeenCalledWith(0);
+    expect(h.summaries.at(-1)).toMatchObject({ demo: "done" });
+  });
+
+  it("reports a failed activation without pointing at the skill", async () => {
+    const h = harness();
+    h.fail("enable");
+    expect(await h.setup(["--agent", "claude"])).toHaveBeenCalledWith(1);
+    expect(h.summaries.at(-1)).toMatchObject({ status: "incomplete", steps: { enable: "failed" } });
+    expect(h.summaries.at(-1)).not.toHaveProperty("welcomeSkill");
   });
 });

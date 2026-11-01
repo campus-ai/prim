@@ -89,7 +89,9 @@ Use `prim setup --skip-demo` to remember a skip, or
 `prim demo --agent <claude|codex|cursor|hermes>` to replay. Direct terminal `prim demo`
 uses the same prompts. Setup defaults to compact diagnostics; `prim setup --details`
 shows full child output. Default agent setup returns one JSON result with `welcome`,
-`onboarding`, and its `nextAction`. Existing completed tours do not replay automatically.
+`onboarding`, and its `nextAction`. In Claude Code, setup instead returns `welcomeSkill`,
+the path of the prim-welcome skill that runs the welcome and demo (see below).
+Existing completed tours do not replay automatically.
 
 Agent hooks must acknowledge isolation before any sample is shown. Passive capture
 then stays excluded for this session, including resumes; start a new session to
@@ -123,9 +125,15 @@ classifier treats prim as trusted tooling rather than untrusted downloaded code.
 
 ### Set up with your coding agent
 
-Paste this into Claude Code (or any coding agent). The command is in **your** message,
-so the agent runs it directly — instead of fetching a doc and executing a command from
-it, which an auto-mode safety classifier blocks as untrusted-origin code:
+In Claude Code, paste this. The command is in **your** message, so the agent runs it
+directly — instead of fetching a doc and executing a command from it, which an
+auto-mode safety classifier blocks as untrusted-origin code:
+
+```text
+Set up Primitive for this repo: run `npx --yes @primitive.ai/prim@latest setup`, then read the file at its `welcomeSkill` path and follow it. If setup fails, show me its actual error.
+```
+
+In any other coding agent, paste this:
 
 ```text
 Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and show concise progress plus actionable warnings. Drive setup and its onboarding nextAction yourself; I'll handle browser authorization and any hook-trust review the agent requires. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.

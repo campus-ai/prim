@@ -10,6 +10,22 @@
 > Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and show concise progress plus actionable warnings. Drive setup and its onboarding nextAction yourself; I'll handle browser authorization and any hook-trust review the agent requires. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
 > ```
 >
+> **In Claude Code**, paste this instead:
+>
+> ```text
+> Set up Primitive for this repo: run `npx --yes @primitive.ai/prim@latest setup`, then read the file at its `welcomeSkill` path and follow it. If setup fails, show me its actual error.
+> ```
+>
+> For Claude Code, `setup` connects the repository to GitHub right after
+> sign-in, activates it, and returns `welcomeSkill` (the path to the installed
+> prim-welcome skill), `prim` (the exact command the skill runs prim with), and
+> `demo` (`due` or `done`) instead of the tour hand-off. The skill explains
+> Primitive, offers the demo (which pauses capture for this repository while it
+> runs), checks capture, hands off, and offers to seed first decisions. Reading
+> the file at `welcomeSkill` works whether or not the skill has loaded in the
+> session. The tour and welcome sections below apply to Codex, Cursor, and
+> Hermes.
+>
 > The rest of this file is the detailed guide the agent follows once `setup` is
 > running, plus the manual step-by-step fallback.
 
@@ -175,7 +191,7 @@ Enter the feature task → Your Decision stops it → Choose → Outcome email
 ```
 
 The participant plays a new engineer in this chat and a disposable project. They
-are also the fictional prior author of the Decision that excludes customer email
+are also the fictional prior author of the Decision that excludes user email
 addresses from exports. No adoption approval is needed for this fictional history.
 
 1. Show `awaitUserPrompt` and wait for the participant to enter the CSV-export task.
