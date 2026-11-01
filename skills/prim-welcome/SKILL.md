@@ -24,7 +24,7 @@ Say:
 
 "**Welcome to Primitive.** Primitive turns your team's decisions into guardrails for your agents.
 
-As you work with me, Primitive picks out the decisions behind the work, what was decided and why, and adds them to a record your whole team shares. When your org turns on Enforcement, Primitive also checks my changes against those decisions before I make them, and flags or stops one that conflicts.
+As you work, Primitive picks out the decisions behind the work, what was decided and why, and adds them to a record your whole team shares. When your org turns on Enforcement, Primitive also checks the changes against those decisions as we make them, and flags or stops one that conflicts.
 
 Setup signed you in, connected this repository to GitHub, and turned Primitive on here.
 
@@ -128,7 +128,7 @@ If the demo didn't finish: "The demo couldn't finish ({cause}), so we skipped it
 
 **b. Capture.** If capture is on:
 
-"**Primitive is on for this repository.** From your next message on, it works in the background as you work with me."
+"**Primitive is on for this repository.** From your next message on, it works in the background as you work."
 
 If capture needs attention: "**Primitive is installed, but capture needs attention:**" followed by one line per check whose `status` is `fail`, giving its `detail`.
 
