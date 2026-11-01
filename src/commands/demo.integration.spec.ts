@@ -795,3 +795,150 @@ describe("packaged author story", () => {
     ]);
   });
 });
+
+describe("welcome skill tour", () => {
+  async function welcome(f: ReturnType<typeof fixture>, args: string[]) {
+    try {
+      return { code: 0, ...(await f.run(["demo", ...args])) };
+    } catch (error) {
+      const failed = error as { code: number; stdout: string };
+      return { code: failed.code, json: JSON.parse(failed.stdout) };
+    }
+  }
+  const config = (f: ReturnType<typeof fixture>, key: string) => {
+    try {
+      return execFileSync("git", ["config", "--local", "--get", key], {
+        cwd: f.repo,
+        env: f.env,
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const event = (f: ReturnType<typeof fixture>, session: string, name: string, extra = {}) =>
+    f.hook("prim-hook", "claude_code", {
+      ...f.envelope("claude_code", "echo work", session, name),
+      ...extra,
+    });
+  const captured = (f: ReturnType<typeof fixture>) => existsSync(join(f.config, "moves"));
+
+  it("keeps the whole story out of capture, then captures the same session's next prompt", async () => {
+    const f = fixture();
+    const { queues } = await serveStory(f);
+    const session = "welcome-session";
+
+    const started = await welcome(f, ["start"]);
+    expect(started.json).toEqual({
+      stage: "prompt",
+      story: { org: "Example Team", task: expect.stringContaining("including name and email") },
+    });
+    expect(config(f, "prim.active")).toBe("false");
+    await event(f, session, "UserPromptSubmit", { prompt: started.json.story.task });
+    const blocked = await welcome(f, ["attempt"]);
+    expect(blocked.json).toEqual({
+      stage: "conflict",
+      conflict: {
+        author: "Avery",
+        date: "October, 8 2026",
+        intent: expect.stringContaining("Exclude user contact information"),
+        rationale: expect.stringContaining("data-minimization"),
+        file: "customers.ts",
+        code: DEMO_INITIAL.trimEnd(),
+      },
+    });
+    expect((await welcome(f, ["resolve", "--choice", "supersede"])).json).toMatchObject({
+      stage: "error",
+      reason: "invalid",
+    });
+    await event(f, session, "UserPromptSubmit", { prompt: "Support needs it" });
+    const done = await welcome(f, [
+      "resolve",
+      "--choice",
+      "supersede",
+      "--reason",
+      "Support needs it",
+    ]);
+    expect(done.json).toEqual({
+      stage: "completed",
+      outcome: {
+        choice: "supersede",
+        reason: "Support needs it",
+        author: "Avery",
+        recipient: "avery@example.invalid",
+        email: "queued",
+      },
+      diff: expect.stringContaining('+ export const customerCsv = "name,email'),
+    });
+    expect(queues()).toBe(1);
+    for (const output of [started, blocked, done])
+      expect(Object.keys(output.json)).not.toContain("presentation");
+
+    // The resolve call's own hook and the reply reporting it stay uncaptured.
+    await event(f, session, "PostToolUse", { tool_response: JSON.stringify(done.json) });
+    await event(f, session, "Stop", { last_assistant_message: "Resolved. Support needs it" });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+    expect(existsSync(join(f.config, "demo", "excluded-sessions"))).toBe(false);
+
+    // The user's next prompt lifts the pause and is captured in this session.
+    await event(f, session, "UserPromptSubmit", { prompt: "real work" });
+    expect(config(f, "prim.active")).toBe("true");
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    expect(captured(f)).toBe(true);
+  });
+
+  it("ends the pause on skip, stops the story if capture comes back, and types errors", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    expect((await welcome(f, ["attempt"])).json).toEqual({
+      stage: "error",
+      reason: "not-started",
+    });
+
+    await welcome(f, ["start"]);
+    expect((await welcome(f, ["skip"])).json.stage).toBe("skipped");
+    expect(config(f, "prim.demoPause")).toMatch(/ ending$/u);
+    await event(f, "s", "UserPromptSubmit", { prompt: "next" });
+    expect(config(f, "prim.active")).toBe("true");
+    expect(JSON.parse(readFileSync(join(f.config, "demo", "onboarding.json"), "utf8"))).toEqual({
+      outcome: "skipped",
+    });
+
+    await welcome(f, ["start"]);
+    expect(await welcome(f, ["resolve", "--choice", "adhere"])).toMatchObject({
+      code: 1,
+      json: { stage: "error", reason: "invalid", detail: expect.any(String) },
+    });
+    execFileSync("git", ["config", "prim.active", "true"], { cwd: f.repo, env: f.env });
+    expect(await welcome(f, ["attempt"])).toMatchObject({
+      code: 1,
+      json: { stage: "error", reason: "repo-active" },
+    });
+    expect(requests).not.toContain("/api/cli/demo/check");
+  });
+
+  it("tolerates corrupt runs and replaces an abandoned tour", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    mkdirSync(join(f.config, "demo", "runs"), { recursive: true });
+    writeFileSync(
+      join(f.config, "demo", "runs", "00000000-0000-4000-8000-000000000000.json"),
+      "corrupt",
+    );
+    expect((await welcome(f, ["skip"])).json.stage).toBe("skipped");
+    execFileSync("git", ["config", "--unset", "prim.active"], { cwd: f.repo, env: f.env });
+    await welcome(f, ["start"]);
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    await welcome(f, ["start"]);
+    expect(requests.filter((path) => path === "/api/cli/demo/skip")).toHaveLength(1);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+    const done = await welcome(f, ["resolve", "--choice", "adhere"]);
+    expect(done.json).toMatchObject({
+      stage: "completed",
+      outcome: { choice: "adhere" },
+      diff: expect.stringContaining('+ export const customerCsv = "name\\nAvery"'),
+    });
+    expect(config(f, "prim.active")).toBeUndefined();
+  });
+});

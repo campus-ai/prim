@@ -34,6 +34,9 @@ export type DemoRun = {
   needsStatus?: boolean;
   receipt?: { revision: number; appliedDigest: string };
   sandbox?: { path: string; device: number; inode: number };
+  /** The repository whose capture a welcome-skill tour pauses. Capture being
+   * off there, not a hook acknowledgment, keeps the story out of capture. */
+  welcomeRepo?: string;
 };
 
 export const demoDirectory = () => join(primConfigDirectory(), "demo");
@@ -78,7 +81,10 @@ export function readRun(id: string): DemoRun {
     !Array.isArray(run.launcher) ||
     run.launcher.length !== 2 ||
     run.launcher.some((value) => typeof value !== "string" || !value.startsWith("/")) ||
-    (run.agent !== undefined && !["claude_code", "codex", "cursor", "hermes"].includes(run.agent))
+    (run.agent !== undefined &&
+      !["claude_code", "codex", "cursor", "hermes"].includes(run.agent)) ||
+    (run.welcomeRepo !== undefined &&
+      (typeof run.welcomeRepo !== "string" || !run.welcomeRepo.startsWith("/")))
   ) {
     throw new Error("invalid demo run state");
   }
@@ -89,7 +95,7 @@ export const saveRun = (run: DemoRun) => saveDemoJson(runPath(run.id), run);
 export const lockRun = <T>(id: string, action: (run: DemoRun) => T): T =>
   withFileLockSync(`${runPath(id)}.lock`, () => action(readRun(id)), { timeoutMs: 500 });
 
-export function prepareRun(agent?: Agent, terminal = false): DemoRun {
+export function prepareRun(agent?: Agent, terminal = false, welcomeRepo?: string): DemoRun {
   const run: DemoRun = {
     version: 2,
     id: randomUUID(),
@@ -98,6 +104,7 @@ export function prepareRun(agent?: Agent, terminal = false): DemoRun {
     agent,
     preparationKey: preparationKey(agent),
     launcher: [process.execPath, resolve(process.argv[1])],
+    ...(welcomeRepo ? { welcomeRepo } : {}),
   };
   saveRun(run);
   return run;
@@ -170,13 +177,16 @@ export function finishOnboarding(outcome: "completed" | "skipped"): void {
   saveDemoJson(join(demoDirectory(), "onboarding.json"), { outcome });
 }
 
-export function pendingRuns(): string[] {
+export function runIds(): string[] {
   const path = join(demoDirectory(), "runs");
   if (!existsSync(path)) return [];
   return readdirSync(path)
     .filter((name) => name.endsWith(".json") && RUN_ID.test(name.slice(0, -5)))
-    .map((name) => name.slice(0, -5))
-    .filter((id) => !["completed", "skipped"].includes(readRun(id).stage));
+    .map((name) => name.slice(0, -5));
+}
+
+export function pendingRuns(): string[] {
+  return runIds().filter((id) => !["completed", "skipped"].includes(readRun(id).stage));
 }
 
 export function sessionKey(agent: Agent, session: string): string {
