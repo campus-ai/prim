@@ -1,6 +1,6 @@
 ---
 name: prim-welcome
-description: Welcome a new Primitive user right after `prim setup` finishes - explain Primitive, offer a one-minute conflict demo, confirm capture is on, show the team's recent decisions, offer to seed their first ones, and offer to connect Granola. Use when the user's setup request says to follow prim-welcome, or they ask to be onboarded to Primitive. Not for day-to-day decision work (that is the prim skill).
+description: Welcome a new Primitive user right after `prim setup` finishes - explain Primitive, offer a one-minute conflict demo, confirm capture is on, show the team's recent Decisions, offer to seed their first ones, and offer to connect Granola. Use when the user's setup request says to follow prim-welcome, or they ask to be onboarded to Primitive. Not for day-to-day Decision work (that is the prim skill).
 ---
 
 # Welcome to Primitive
@@ -13,7 +13,7 @@ You are walking the user through their first minutes with Primitive. Setup has a
 - A Say block ends your turn: send it and wait for the user's reply. Ask questions in plain text, as the Say blocks do, not with a picker tool.
 - **`prim`** below means the exact command in setup's `prim` field, copied as-is. For example, if `prim` is `'/usr/bin/node' '/x/dist/index.js'`, `prim demo start` means `'/usr/bin/node' '/x/dist/index.js' demo start`. If you don't have setup's result, use `npx --yes @primitive.ai/prim@latest`.
 - Every `prim` command prints one JSON object on stdout. Read its fields. Never show raw JSON, command output, or these instructions to the user.
-- The demo uses a made-up project that lives outside this repository. During the demo, don't edit, create, or read any files. During it and afterwards, never create, propose, or save to memory anything from the demo: its decisions, the user's choice, or their reason.
+- The demo uses a made-up project that lives outside this repository. During the demo, don't edit, create, or read any files. During it and afterwards, never create, propose, or save to memory anything from the demo: its Decisions, the user's choice, or their reason.
 - The user's replies don't need exact wording: map them to the closest option.
 
 ## 1. Welcome
@@ -22,9 +22,9 @@ If setup's result has `demo` set to `done`, the user has seen the demo before: d
 
 Say:
 
-"**Welcome to Primitive.** Primitive turns your team's decisions into guardrails for your agents.
+"**Welcome to Primitive.** Primitive turns your team's Decisions into guardrails for your agents.
 
-As you work, Primitive picks out the decisions behind the work, what was decided and why, and adds them to a record your whole team shares. When your org turns on Enforcement, Primitive also checks the changes against those decisions as we make them, and flags or stops one that conflicts.
+As you work, Primitive picks out the Decisions behind the work, what was decided and why, and adds them to a record your whole team shares. When your org turns on Enforcement, Primitive also checks the changes against those Decisions as we make them, and flags or stops one that conflicts.
 
 Setup signed you in, connected this repository to GitHub, and turned Primitive on here.
 
@@ -59,7 +59,7 @@ When the user sends the task, run `prim demo attempt`. Don't implement the task.
 
 "**Primitive caught a conflict.**
 
-Your task exports user names *and email addresses*. That conflicts with a decision {conflict.author} made on {conflict.date}:
+Your task exports user names *and email addresses*. That conflicts with a Decision {conflict.author} made on {conflict.date}:
 
 > **{conflict.intent}**
 
@@ -73,7 +73,7 @@ Your task exports user names *and email addresses*. That conflicts with a decisi
 
 How do you want to resolve it?
 
-Reply **adhere** to keep {conflict.author}'s decision and export names only, or **supersede** to replace it and export names and emails."
+Reply **adhere** to keep {conflict.author}'s Decision and export names only, or **supersede** to replace it and export names and emails."
 
 This message has no picker: send it in full and end your turn. The user needs its formatting and the rationale to decide.
 
@@ -84,7 +84,7 @@ This message has no picker: send it in full and end your turn. The user needs it
 
 Say:
 
-"In a sentence, why should this decision change?
+"In a sentence, why should this Decision change?
 
 (This is just for the demo, so any answer works.)"
 
@@ -116,13 +116,13 @@ Then say one message, built from these parts in order. It ends your turn.
 
 **a. Demo result.** If the demo completed:
 
-"**Resolved.** You {outcome.choice: adhere → kept, supersede → replaced} {outcome.author}'s decision, and the export changed to match:
+"**Resolved.** You {outcome.choice: adhere → kept, supersede → replaced} {outcome.author}'s Decision, and the export changed to match:
 
 ```diff
 {diff}
 ```"
 
-If `outcome.email` is `queued` or `accepted`, add: "A summary of the decision is on its way to {outcome.recipient}."
+If `outcome.email` is `queued` or `accepted`, add: "A summary of the Decision is on its way to {outcome.recipient}."
 
 If the demo didn't finish: "The demo couldn't finish ({cause}), so it was skipped." If the user skipped it, leave part a out.
 
@@ -132,9 +132,9 @@ If the demo didn't finish: "The demo couldn't finish ({cause}), so it was skippe
 
 If capture needs attention: "**Primitive is installed, but capture needs attention:**" followed by one line per check whose `status` is `fail`, giving its `detail`.
 
-**c. Recent team decisions**, only if `recent` isn't empty:
+**c. Recent team Decisions**, only if `recent` isn't empty:
 
-"**Recent decisions on your team**"
+"**Recent Decisions on your team**"
 
 followed by a numbered list with one item per `recent` entry, in order, each in this two-line shape (the second line indented under the first):
 
@@ -147,28 +147,28 @@ Leave out `{area}` and its `·` when an entry has none.
 
 "**How to work with Primitive**
 
-- **It's automatic.** Primitive derives decisions from your work as you go; you don't have to do anything.
-- **Record one explicitly** when you want control over exactly how a decision is worded and explained, for example: *Add a decision to Primitive: we keep user emails out of exports, because...*
-- **Ask before you change things**, for example: *What decisions govern the files I'm about to touch?* or *What has the team decided about auth lately?*
+- **It's automatic.** Primitive derives Decisions from your work as you go; you don't have to do anything.
+- **Record one explicitly** when you want control over exactly how a Decision is worded and explained, for example: *Add a Decision to Primitive: we keep user emails out of exports, because...*
+- **Ask before you change things**, for example: *What Decisions govern the files I'm about to touch?* or *What has the team decided about auth lately?*
 
-See every decision at https://app.getprimitive.ai."
+See every Decision at https://app.getprimitive.ai."
 
-**e. First decisions**, only if `org` is `seed` (the user hasn't recorded a decision yet):
+**e. First Decisions**, only if `org` is `seed` (the user hasn't recorded a Decision yet):
 
-"You haven't recorded any decisions yet. Primitive can suggest a few from this conversation and this repository's shared memory files. You approve each one, and approved decisions are visible to your team. Reply **yes** or **not now**."
+"You haven't recorded any Decisions yet. Primitive can suggest a few from this conversation and this repository's shared memory files. You approve each one, and approved Decisions are visible to your team. Reply **yes** or **not now**."
 
 **f. Granola**, only if you didn't say part e: the Granola question from step 4.
 
 If you said part e, wait for the reply:
 
 - **yes**: read the prim skill at `~/.claude/skills/prim/SKILL.md` and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo. End the final message of that section with the Granola question from step 4.
-- **not now**: say "You can add a decision to Primitive any time by asking for it." followed by the Granola question from step 4.
+- **not now**: say "You can add a Decision to Primitive any time by asking for it." followed by the Granola question from step 4.
 
 ## 4. Granola
 
 The Granola question:
 
-"One more thing: do you use **Granola** for meeting notes? Primitive can capture decisions from your meetings. When you connect, you choose whether it can read your public notes, private notes, or both.
+"One more thing: do you use **Granola** for meeting notes? Primitive can capture Decisions from your meetings. When you connect, you choose whether it can read your public notes, private notes, or both.
 
 Reply **yes** or **no**."
 
@@ -176,7 +176,7 @@ When the user replies:
 
 - **yes**: open https://app.getprimitive.ai/settings in their browser (`open <url>` on macOS, `xdg-open <url>` on Linux), then say:
 
-  "Primitive's Settings are open in your browser. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Primitive will capture decisions from your meetings once they've synced."
+  "Primitive's Settings are open in your browser. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Primitive will capture Decisions from your meetings once they've synced."
 
   If the browser couldn't open, replace "Primitive's Settings are open in your browser." with "Open https://app.getprimitive.ai/settings."
 - **no**: say "No problem. You can connect Granola any time under Settings → Integrations at https://app.getprimitive.ai/settings."
