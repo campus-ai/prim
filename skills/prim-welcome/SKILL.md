@@ -47,7 +47,7 @@ Run `prim demo start`. When `stage` is `prompt`, say:
 
 "**Primitive Demo · fictional project**
 
-For the sake of demonstration, imagine you've just joined {story.org}'s team, and your first task is adding CSV export for user records. Send me this as your next message:
+For the sake of demonstration, imagine you've just joined {story.org}'s team, and your first task is adding CSV export for user records. Send this as your next message:
 
 > {story.task}
 
@@ -124,7 +124,7 @@ Then say one message, built from these parts in order. It ends your turn.
 
 If `outcome.email` is `queued` or `accepted`, add: "A summary of the decision is on its way to {outcome.recipient}."
 
-If the demo didn't finish: "The demo couldn't finish ({cause}), so we skipped it." If the user skipped it, leave part a out.
+If the demo didn't finish: "The demo couldn't finish ({cause}), so it was skipped." If the user skipped it, leave part a out.
 
 **b. Capture.** If capture is on:
 
@@ -155,14 +155,14 @@ See every decision at https://app.getprimitive.ai."
 
 **e. First decisions**, only if `org` is `seed` (the user hasn't recorded a decision yet):
 
-"You haven't recorded any decisions yet. Want me to suggest a few from what you've told me and this repository's shared memory files? You approve each one, and approved decisions are visible to your team. Reply **yes** or **not now**."
+"You haven't recorded any decisions yet. Primitive can suggest a few from this conversation and this repository's shared memory files. You approve each one, and approved decisions are visible to your team. Reply **yes** or **not now**."
 
 **f. Granola**, only if you didn't say part e: the Granola question from step 4.
 
 If you said part e, wait for the reply:
 
 - **yes**: read the prim skill at `~/.claude/skills/prim/SKILL.md` and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo. End the final message of that section with the Granola question from step 4.
-- **not now**: say "Any time, just ask me to add a decision to Primitive." followed by the Granola question from step 4.
+- **not now**: say "You can add a decision to Primitive any time by asking for it." followed by the Granola question from step 4.
 
 ## 4. Granola
 
@@ -176,9 +176,9 @@ When the user replies:
 
 - **yes**: open https://app.getprimitive.ai/settings in their browser (`open <url>` on macOS, `xdg-open <url>` on Linux), then say:
 
-  "I've opened Primitive's Settings. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Primitive will capture decisions from your meetings once they've synced."
+  "Primitive's Settings are open in your browser. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Primitive will capture decisions from your meetings once they've synced."
 
-  If the browser couldn't open, replace "I've opened Primitive's Settings." with "Open https://app.getprimitive.ai/settings."
+  If the browser couldn't open, replace "Primitive's Settings are open in your browser." with "Open https://app.getprimitive.ai/settings."
 - **no**: say "No problem. You can connect Granola any time under Settings → Integrations at https://app.getprimitive.ai/settings."
 
 Then stop. Don't offer further options.
