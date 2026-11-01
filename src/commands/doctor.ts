@@ -65,6 +65,7 @@ import {
   deliveryBacklogSummary,
   formatPendingBacklog,
 } from "../lib/delivery-backlog.js";
+import { healDemoPause, readDemoPause } from "../lib/demo-pause.js";
 import {
   type ManagedGitHookName,
   type ManagedHookInspection,
@@ -1195,12 +1196,30 @@ function checkPreflightHosts(): Check[] {
   });
 }
 
+/** A live onboarding-demo pause is expected, not broken: say so. An expired
+ * one is lifted here rather than reported. */
+export function checkDemoPause(root: string | null, now = Date.now()): Check[] {
+  const pause = root ? readDemoPause(root) : undefined;
+  if (!root || !pause || healDemoPause(root, pause, { now })) return [];
+  const minutes = String(Math.ceil((pause.until - now) / 60_000));
+  return [
+    {
+      name: "demo-pause",
+      status: "warn",
+      detail: pause.ending
+        ? `capture resumes with your next prompt (onboarding demo finished), or in ${minutes}m`
+        : `capture paused for the onboarding demo; it resumes when the demo ends, or in ${minutes}m`,
+    },
+  ];
+}
+
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
   const backend = await checkBackend();
   const firing = inspectFiringHere();
   return {
     before: [checkAuth()],
     after: [
+      ...checkDemoPause(gitToplevel()),
       await checkJournalOrganization(),
       checkFeedbackHooks(),
       ...(await checkAgentHooks()),
