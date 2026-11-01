@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { posix, resolve } from "node:path";
 import { type Command, type Redirect, type Statement, type Word, parse } from "unbash";
 import { parseApplyPatchTargets } from "./pre-tool-use-scoring.js";
 import { scriptWriteTargets } from "./script-targets.js";
@@ -11,6 +13,7 @@ type State = {
   mutation: boolean;
   definiteEdit: boolean;
   cwdUncertain: boolean;
+  cwdPrefix?: string;
 };
 type OptionSpec = {
   shortFlags?: string;
@@ -207,7 +210,7 @@ function staticPart(part: NonNullable<Word["parts"]>[number]): boolean {
   );
 }
 function staticWord(word: Word | undefined): string | undefined {
-  if (!word || !word.value || word.value.includes("\0") || word.value.includes("\n")) return;
+  if (!word || word.value.includes("\0") || word.value.includes("\n")) return;
   if (
     word.parts
       ? !word.parts.every(staticPart)
@@ -512,11 +515,80 @@ function unknown(state: State): void {
   state.complete = false;
   state.mutation = true;
 }
+function addTarget(path: string, state: State): void {
+  if (state.cwdUncertain) {
+    state.complete = false;
+    return;
+  }
+  state.paths.add(
+    state.cwdPrefix && !posix.isAbsolute(path) ? posix.join(state.cwdPrefix, path) : path,
+  );
+}
+
+// Only literal, non-executing sed programs can claim a complete target set.
+function sedWriteTargets(words: Word[]): string[] | undefined {
+  const args = staticArgs(words);
+  if (!args) return;
+  let suffix: string | undefined;
+  let gnuInPlace = false;
+  const programs: string[] = [];
+  const files: string[] = [];
+  let positionalProgram = true;
+  let options = true;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (options && arg === "--") {
+      options = false;
+      continue;
+    }
+    if (options && (arg === "-i" || arg === "--in-place")) {
+      if (suffix !== undefined) return;
+      suffix = "";
+      gnuInPlace = arg === "--in-place";
+      if (arg === "-i" && (args[i + 1] === "" || args[i + 1]?.startsWith("."))) suffix = args[++i];
+    } else if (options && (arg.startsWith("-i") || arg.startsWith("--in-place="))) {
+      if (suffix !== undefined) return;
+      gnuInPlace = arg.startsWith("--in-place=");
+      suffix = arg.startsWith("-i") ? arg.slice(2) : arg.slice("--in-place=".length);
+    } else if (options && (arg === "-e" || arg === "--expression")) {
+      const program = args[++i];
+      if (!program) return;
+      programs.push(program);
+      positionalProgram = false;
+    } else if (options && (arg.startsWith("-e") || arg.startsWith("--expression="))) {
+      programs.push(arg.startsWith("-e") ? arg.slice(2) : arg.slice("--expression=".length));
+      positionalProgram = false;
+    } else if (
+      options &&
+      ["-E", "-r", "-n", "--regexp-extended", "--quiet", "--silent"].includes(arg)
+    ) {
+      // These switches do not introduce more write destinations.
+    } else if (options && arg.startsWith("-")) return;
+    else if (positionalProgram) {
+      programs.push(arg);
+      positionalProgram = false;
+    } else files.push(arg);
+  }
+  if (
+    suffix === undefined ||
+    !programs.length ||
+    !programs.every(safeSedProgram) ||
+    !files.length ||
+    files.some((file) => !file || file === "-")
+  )
+    return;
+  // GNU expands stars in backup suffixes; BSD treats them literally.
+  if (suffix.includes("*") && !gnuInPlace) return;
+  return files.flatMap((file) =>
+    suffix ? [file, suffix.includes("*") ? suffix.replaceAll("*", file) : file + suffix] : [file],
+  );
+}
+
 function recordTarget(word: Word | undefined, state: State): void {
   const path = staticWord(word);
   if (path === "-" || (path && (SINKS.has(path) || path.startsWith("/dev/fd/")))) return;
   state.mutation = true;
-  if (path) state.paths.add(path);
+  if (path) addTarget(path, state);
   else state.complete = false;
 }
 function visitRedirect(redirect: Redirect, state: State): void {
@@ -546,7 +618,7 @@ function visitApplyPatch(command: Command, state: State): void {
       continue;
     }
     const targets = parseApplyPatchTargets(redirect.content);
-    for (const path of targets.paths) state.paths.add(path);
+    for (const path of targets.paths) addTarget(path, state);
     if (!targets.complete) state.complete = false;
   }
   if (!hasBody) state.complete = false;
@@ -592,7 +664,7 @@ function embeddedScript(command: Command, name: string, state: State): void {
       source = heredoc.content;
   }
   if (source !== undefined)
-    for (const path of scriptWriteTargets(source, language)) state.paths.add(path);
+    for (const path of scriptWriteTargets(source, language)) addTarget(path, state);
 }
 
 function changesDirectory(value: unknown): boolean {
@@ -611,6 +683,7 @@ function changesDirectory(value: unknown): boolean {
 
 function visitCommand(command: Command, state: State): void {
   const name = staticWord(command.name);
+  if (command.prefix.length) unknown(state);
   // unbash preserves tabs in `<<-` bodies, so leave those on the conservative
   // generic path rather than treating their apparent patch headers as exact.
   const literalApplyPatch =
@@ -625,7 +698,7 @@ function visitCommand(command: Command, state: State): void {
   } else if (
     !name ||
     name.includes("/") ||
-    (!literalApplyPatch && command.suffix.some((word) => !staticWord(word)))
+    (!literalApplyPatch && command.suffix.some((word) => staticWord(word) === undefined))
   ) {
     unknown(state);
   } else if (literalApplyPatch) {
@@ -637,7 +710,9 @@ function visitCommand(command: Command, state: State): void {
   ) {
     state.mutation = true;
     let targets: string[] | undefined;
-    if (name === "tee") {
+    if (name === "sed") {
+      targets = sedWriteTargets(command.suffix);
+    } else if (name === "tee") {
       targets = operands(command.suffix, "ai", new Set(["--append", "--ignore-interrupts"]));
     } else if (name === "touch") {
       targets = operands(command.suffix);
@@ -652,7 +727,7 @@ function visitCommand(command: Command, state: State): void {
       if (pair?.length === 2) targets = name === "cp" ? [pair[1]] : pair;
     }
     if (!targets?.length) state.complete = false;
-    else for (const target of targets) state.paths.add(target);
+    else for (const target of targets) addTarget(target, state);
   }
   visitNested([command.name, command.prefix, command.suffix, command.redirects], state);
 }
@@ -681,7 +756,59 @@ function visitStatement(statement: Statement, state: State): void {
   for (const redirect of statement.redirects) visitRedirect(redirect, state);
   visitNested([statement.redirects, statement.command], state);
 }
-export function analyzeShellTargets(source: string) {
+function visitStaticDirectoryChain(
+  script: ReturnType<typeof parse>,
+  state: State,
+  cwd?: string,
+): boolean {
+  if (script.errors?.length || script.commands.length !== 1) return false;
+  const statement = script.commands[0];
+  const chain = statement.command;
+  if (
+    statement.background ||
+    statement.redirects.length ||
+    chain.type !== "AndOr" ||
+    chain.operators.some((operator) => operator !== "&&") ||
+    chain.commands.some((command) => command.type !== "Command")
+  )
+    return false;
+  const commands = chain.commands as Command[];
+  if (!commands.some((command) => staticWord(command.name) === "cd")) return false;
+  let prefix = "";
+  const visits: { command: Command; prefix: string }[] = [];
+  for (const command of commands) {
+    if (staticWord(command.name) !== "cd") {
+      if (changesDirectory(command)) return false;
+      visits.push({ command, prefix });
+      continue;
+    }
+    const args = staticArgs(command.suffix);
+    if (!args || command.prefix.length || command.redirects.length) return false;
+    if (args[0] === "--") args.shift();
+    if (args.length !== 1 || !args[0] || args[0].startsWith("-")) return false;
+    // Bare names consult CDPATH; only resolve them when it is unset.
+    if (process.env.CDPATH && !args[0].startsWith(".") && !posix.isAbsolute(args[0])) return false;
+    prefix = posix.isAbsolute(args[0]) ? args[0] : posix.join(prefix, args[0]);
+    if (cwd) {
+      // A symlinked directory changes the meaning of later relative writes.
+      // Do not collapse it lexically and claim a complete target set.
+      try {
+        const absolute = resolve(realpathSync(cwd), prefix);
+        if (realpathSync(absolute) !== absolute) return false;
+      } catch {
+        return false;
+      }
+    }
+  }
+  state.cwdUncertain = false;
+  for (const visit of visits) {
+    state.cwdPrefix = visit.prefix;
+    visitCommand(visit.command, state);
+  }
+  return true;
+}
+
+export function analyzeShellTargets(source: string, cwd?: string) {
   if (!source.trim())
     return { paths: [], coverage: "complete" as const, mutation: "none" as const };
   try {
@@ -693,7 +820,9 @@ export function analyzeShellTargets(source: string) {
       definiteEdit: false,
       cwdUncertain: changesDirectory(script),
     };
-    for (const statement of script.commands) visitStatement(statement, state);
+    if (!visitStaticDirectoryChain(script, state, cwd)) {
+      for (const statement of script.commands) visitStatement(statement, state);
+    }
     if (script.errors?.length) state.mutation = true;
     return {
       paths: [...state.paths],

@@ -80,11 +80,13 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
-      if (result.hookSpecificOutput?.permissionDecision !== "allow")
-        throw new Error("Unexpected hook disposition");
+      const readOnly = command === "git status --short" || command === "cd . && git status --short";
+      if (result.hookSpecificOutput?.permissionDecision !== (readOnly ? "allow" : "deny"))
+        throw new Error(`Unexpected hook disposition for ${command}: ${JSON.stringify(result)}`);
       if (
-        result.systemMessage !== undefined ||
-        result.hookSpecificOutput?.additionalContext !== undefined
+        readOnly &&
+        (result.systemMessage !== undefined ||
+          result.hookSpecificOutput?.additionalContext !== undefined)
       ) {
         throw new Error(`Expected silent allow for ${command}`);
       }

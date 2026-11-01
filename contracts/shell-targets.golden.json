@@ -266,7 +266,9 @@
   {
     "name": "shell-chdir",
     "command": "cd sub && python3 -c 'open(\"a.ts\", \"w\")'",
-    "paths": [],
+    "paths": [
+      "sub/a.ts"
+    ],
     "coverage": "unverified",
     "mutation": "present"
   },
@@ -427,6 +429,154 @@
   {
     "name": "node-lexical-require-shadow",
     "command": "node - <<'SCRIPT'\nconst fs = require('fs'); fs.writeFileSync('a.ts','hi'); const require = other;\nSCRIPT",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "reported-bsd-sed",
+    "command": "sed -i '' 's/View decision/Open in Primitive/g' convex/slack/triggers.ts",
+    "paths": [
+      "convex/slack/triggers.ts"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "gnu-sed",
+    "command": "sed -i 's/old/new/g' a.ts",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "bsd-backup",
+    "command": "sed -i '.bak' 's/old/new/g' 'some file.ts' b.ts",
+    "paths": [
+      "some file.ts",
+      "some file.ts.bak",
+      "b.ts",
+      "b.ts.bak"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "gnu-backup",
+    "command": "sed -i.bak 's/old/new/g' a.ts",
+    "paths": [
+      "a.ts",
+      "a.ts.bak"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "gnu-long-backup",
+    "command": "sed --in-place=.bak -e 's/old/new/g' a.ts",
+    "paths": [
+      "a.ts",
+      "a.ts.bak"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "gnu-prefix-backup",
+    "command": "sed --in-place='old-*' 's/old/new/g' a.ts",
+    "paths": [
+      "a.ts",
+      "old-a.ts"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "bsd-cd",
+    "command": "cd sub && sed -i '' 's/old/new/g' 'some file.ts'",
+    "paths": [
+      "sub/some file.ts"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "cd-multiple",
+    "command": "cd sub && sed -i 's/a/b/g' a.ts && cd ../other && sed -i.bak 's/a/b/g' b.ts",
+    "paths": [
+      "sub/a.ts",
+      "other/b.ts",
+      "other/b.ts.bak"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "cd-dynamic",
+    "command": "cd \"$DIR\" && sed -i '' 's/a/b/g' a.ts",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "cd-or",
+    "command": "cd sub || sed -i 's/a/b/g' a.ts",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "sed-dynamic",
+    "command": "sed -i '' 's/a/b/g' \"$FILE\"",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "sed-write-side-effect",
+    "command": "sed -i 's/a/b/w extra.ts' a.ts",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "sed-exec",
+    "command": "sed -i 's/a/b/e' a.ts",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "sed-external-script",
+    "command": "sed -i -f edits.sed a.ts",
+    "paths": [],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "sed-assignment",
+    "command": "ENV=x sed -i 's/a/b/g' a.ts",
+    "paths": [
+      "a.ts"
+    ],
+    "coverage": "unverified",
+    "mutation": "present"
+  },
+  {
+    "name": "bsd-backup-expression",
+    "command": "sed -i '.bak' -e 's/old/new/g' a.ts",
+    "paths": [
+      "a.ts",
+      "a.ts.bak"
+    ],
+    "coverage": "complete",
+    "mutation": "present"
+  },
+  {
+    "name": "ambiguous-short-star-backup",
+    "command": "sed -i'old-*' 's/a/b/g' a.ts",
     "paths": [],
     "coverage": "unverified",
     "mutation": "present"

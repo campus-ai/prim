@@ -75,6 +75,7 @@ class DecisionRescopeResponseError extends Error {
 
 function projectScope(scope: DecisionRescopeResponse["scope"]): DecisionRescopeResponse["scope"] {
   return {
+    ...(scope.scopeResolution === "unresolved" ? { scopeResolution: "unresolved" as const } : {}),
     location: {
       repository: scope.location.repository,
       directories: scope.location.directories,

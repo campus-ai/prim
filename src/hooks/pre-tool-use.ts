@@ -3,6 +3,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseAgent } from "./agent.js";
+import { readHookMode } from "./pre-tool-use-scoring.js";
 
 const BUDGET_MS = 2_000;
 const OUTPUT_RESERVE_MS = 150;
@@ -21,6 +22,29 @@ let child: ChildProcess | undefined;
 let finished = false;
 let stdout = "";
 let stderr = "";
+let input = "";
+const pauseReason =
+  "[primitive] Operation paused: shell evaluation did not finish within two seconds. Retry the tool call to validate the current invocation.";
+function fallback(): unknown {
+  if (readHookMode(process.env) === "off" || (agent !== "claude_code" && agent !== "codex"))
+    return silent;
+  try {
+    const envelope = JSON.parse(input);
+    if (envelope?.hook_event_name !== "PreToolUse" || envelope?.tool_name !== "Bash") return silent;
+  } catch {
+    return silent;
+  }
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: pauseReason,
+    },
+  };
+}
+process.stdin.setEncoding("utf8").on("data", (chunk: string) => {
+  input += chunk;
+});
 
 function stopWorker(): void {
   if (!child?.pid) return;
@@ -33,7 +57,7 @@ function stopWorker(): void {
   }
 }
 
-function finish(output: unknown = silent, diagnostics = ""): void {
+function finish(output: unknown = fallback(), diagnostics = ""): void {
   if (finished) return;
   finished = true;
   clearTimeout(timer);
