@@ -97,6 +97,19 @@ function renderClaudePlugin(): { manifest: string; skill: string; version: strin
   return { manifest: pluginManifest(version), skill: loadSkill(), version };
 }
 
+/** The onboarding skill, a plain sibling of the prim plugin: setup tells the
+ * agent to follow it, so it needs no manifest. */
+const WELCOME_SKILL_SOURCE = join("skills", "prim-welcome", "SKILL.md");
+
+export function welcomeSkillPath(pluginDir: string): string {
+  return join(dirname(pluginDir), "prim-welcome", "SKILL.md");
+}
+
+/** Where `prim skill install --agent claude` puts the onboarding skill. */
+export function welcomeSkillPathFor(cwd: string, scope: "user" | "project"): string {
+  return welcomeSkillPath(pluginDirFor(cwd, scope));
+}
+
 /** Remove `dir` only if it exists and is empty — prunes our scaffolding without
  * touching a dir that still holds unrelated user files. */
 function removeDirIfEmpty(dir: string): void {
@@ -327,15 +340,22 @@ export function installClaudePlugin(
 
   const { manifestPath, skillPath } = pluginPaths(dir);
   const { manifest, skill } = renderClaudePlugin();
+  // The onboarding skill is personal: never written into a repository, where
+  // it could be committed for every teammate.
+  const welcomePath = opts.scope === "user" ? welcomeSkillPath(dir) : null;
+  const welcome = welcomePath ? loadSkill(WELCOME_SKILL_SOURCE) : null;
 
   const manifestCurrent = existsSync(manifestPath) ? readFileSync(manifestPath, "utf-8") : null;
   const skillCurrent = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : null;
-  if (manifestCurrent === manifest && skillCurrent === skill) {
+  const welcomeCurrent =
+    welcomePath && existsSync(welcomePath) ? readFileSync(welcomePath, "utf-8") : null;
+  if (manifestCurrent === manifest && skillCurrent === skill && welcomeCurrent === welcome) {
     console.log("No changes — prim skill plugin already up to date.");
     return 0;
   }
   if (opts.dryRun) {
     console.log(`Would write plugin to ${dir} (.claude-plugin/plugin.json + SKILL.md)`);
+    if (welcomePath) console.log(`Would write welcome skill to ${welcomePath}`);
     return 0;
   }
 
@@ -344,8 +364,13 @@ export function installClaudePlugin(
   mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
   atomicWrite(manifestPath, manifest);
   atomicWrite(skillPath, skill);
+  if (welcomePath && welcome !== null && welcomeCurrent !== welcome) {
+    mkdirSync(dirname(welcomePath), { recursive: true });
+    atomicWrite(welcomePath, welcome);
+  }
 
   console.log(`Installed prim skill plugin at ${dir}`);
+  if (welcomePath) console.log(`Installed prim-welcome skill at ${welcomePath}`);
   console.log("Restart Claude Code or run /reload-plugins to load it.");
   if (opts.scope !== "user") {
     console.log("Project-scope plugins load only when Claude Code launches from this directory.");
@@ -358,6 +383,16 @@ export function uninstallClaudePlugin(cwd: string, opts: { scope?: string }): nu
   if (dir === null) return 1;
 
   const { manifestPath, skillPath } = pluginPaths(dir);
+  // Remove the onboarding skill only when it is ours.
+  const welcomePath = welcomeSkillPath(dir);
+  if (
+    existsSync(welcomePath) &&
+    lstatSync(welcomePath).isFile() &&
+    /^---\r?\nname: prim-welcome\r?\n/u.test(readFileSync(welcomePath, "utf-8"))
+  ) {
+    rmSync(welcomePath, { force: true });
+    removeDirIfEmpty(dirname(welcomePath));
+  }
   // Only act on a dir that actually holds OUR plugin — a stray skills/prim a
   // user made by hand (no manifest + no SKILL.md) is left untouched.
   if (!existsSync(manifestPath) && !existsSync(skillPath)) {

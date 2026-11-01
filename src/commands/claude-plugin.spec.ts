@@ -23,6 +23,7 @@ import {
   resolvePluginDir,
   statusClaudePlugin,
   uninstallClaudePlugin,
+  welcomeSkillPath,
 } from "./claude-plugin.js";
 import { atomicWrite, loadSkill } from "./skill.js";
 
@@ -544,5 +545,49 @@ describe("statusClaudePlugin", () => {
       installed: true,
       target: userDir(),
     });
+  });
+});
+
+describe("prim-welcome skill", () => {
+  const welcome = () => welcomeSkillPath(userDir());
+  const packaged = () => loadSkill(join("skills", "prim-welcome", "SKILL.md"));
+
+  it("installs beside the prim plugin as a plain skill", () => {
+    expect(installClaudePlugin(work, { scope: "user" })).toBe(0);
+    expect(welcome()).toBe(join(work, ".claude", "skills", "prim-welcome", "SKILL.md"));
+    expect(readFileSync(welcome(), "utf-8")).toBe(packaged());
+    expect(packaged()).toMatch(/^---\nname: prim-welcome\n/u);
+  });
+
+  it("restores a missing welcome skill on re-install", () => {
+    installClaudePlugin(work, { scope: "user" });
+    rmSync(welcome());
+    expect(installClaudePlugin(work, { scope: "user" })).toBe(0);
+    expect(readFileSync(welcome(), "utf-8")).toBe(packaged());
+  });
+
+  it("is never written into a repository at project scope", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-root-"));
+    mockedGitToplevel.mockReturnValue(root);
+    try {
+      expect(installClaudePlugin(root, {})).toBe(0);
+      expect(existsSync(join(root, ".claude", "skills", "prim", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(root, ".claude", "skills", "prim-welcome"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a skill of the same name that isn't ours on uninstall", () => {
+    installClaudePlugin(work, { scope: "user" });
+    writeFileSync(welcome(), "---\nname: someone-elses\n---\n");
+    expect(uninstallClaudePlugin(work, { scope: "user" })).toBe(0);
+    expect(existsSync(welcome())).toBe(true);
+  });
+
+  it("is removed on uninstall", () => {
+    installClaudePlugin(work, { scope: "user" });
+    expect(uninstallClaudePlugin(work, { scope: "user" })).toBe(0);
+    expect(existsSync(join(work, ".claude", "skills", "prim-welcome"))).toBe(false);
   });
 });

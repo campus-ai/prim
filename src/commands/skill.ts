@@ -311,16 +311,16 @@ export function userTargetFor(agent: string): string | null {
   return null;
 }
 
-export function loadSkill(): string {
-  // Walk up from this module looking for SKILL.md so dev (src/commands/) and
-  // prod (bundled dist/) both resolve to the package's SKILL.md.
+export function loadSkill(file = "SKILL.md"): string {
+  // Walk up from this module looking for the file so dev (src/commands/) and
+  // prod (bundled dist/) both resolve to the package's copy.
   let dir = __dirname;
   while (dir !== dirname(dir)) {
-    const p = resolve(dir, "SKILL.md");
+    const p = resolve(dir, file);
     if (existsSync(p)) return readFileSync(p, "utf-8");
     dir = dirname(dir);
   }
-  throw new Error("SKILL.md not found in package");
+  throw new Error(`${file} not found in package`);
 }
 
 export function detectTargets(cwd: string): string[] {

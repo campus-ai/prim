@@ -152,6 +152,11 @@ Apply the same attention during non-code deliberation: planning or “grill me�
 
 ### Onboarding: experience your Decision protecting a teammate
 
+**Claude Code:** `prim setup` returns `welcomeSkill` (a file path) instead of
+`nextAction`. Read that file and follow it; it replaces the rest of this
+section, which applies to Codex, Cursor and Hermes. It hands seeding to the
+next section.
+
 After successful `prim setup`, follow its `nextAction` automatically; the `onboarding`
 object contains the preparation instructions.
 Pass your agent explicitly: Claude, Codex, Cursor and Hermes use the same sequence.
@@ -211,7 +216,7 @@ adopt the prior Decision, or implement the feature yourself.
 
 At the actual block, show the returned unchanged file and **Accept / Supercede** choices.
 Accept uses `choices.adhere`; Supercede uses `choices.supersede`. Supercede approves the replacement,
-**Allow customer names and email addresses in CSV exports**, and requires a short
+**Allow user names and email addresses in CSV exports**, and requires a short
 reason in the user's own words. If missing, ask `choices.supersede.prompt` exactly;
 if already supplied, do not ask again. The exploration prompts in the success message
 are suggestions for the participant, not actions to execute automatically.
@@ -248,7 +253,7 @@ remains successful. Surface the returned remedy or offer its skip action.
 
 When onboarding or `prim welcome` reports `"org": "seed"`, seed the viewer's graph by proposing decisions mined from memory. There is no open goals question: the proposals are the whole seeding pass. Propose **one decision per message**, wait for the user's verdict, and only then present the next — never present the candidates as a batch.
 
-1. Gather candidates from the repo's Git-tracked shared memory and agent-instruction files (`git ls-files -- 'MEMORY.md' ':(glob)**/MEMORY.md' 'AGENTS.md' ':(glob)**/AGENTS.md' 'CLAUDE.md' ':(glob)**/CLAUDE.md'` from the repository root; read every path returned) and from your own memory and conversation context — positions the user has already *stated*; the setup guide names each agent's memory surface. Never automatically read an untracked, gitignored, or un-shared memory source; use one only when the user explicitly asks to promote it. Only their words count: never infer a position from the repo's code or history, and never invent one they didn't state.
+1. Gather candidates from the repo's Git-tracked shared memory and agent-instruction files (`git ls-files -- 'MEMORY.md' ':(glob)**/MEMORY.md' 'AGENTS.md' ':(glob)**/AGENTS.md' 'CLAUDE.md' ':(glob)**/CLAUDE.md'` from the repository root; read every path returned) and from your own memory and conversation context — positions the user has already *stated*; the setup guide names each agent's memory surface. Never automatically read an untracked, gitignored, or un-shared memory source; use one only when the user explicitly asks to promote it. Only their words count: never infer a position from the repo's code or history, and never invent one they didn't state. Never use anything from the onboarding demo's fictional story, including the user's adhere/supersede choice and reason.
 2. A candidate must state an explicit, durable position that appears to remain in force — a genuine fork in the road such as a goal, priority, principle, invariant, constraint, default, commitment, tradeoff, or exception. Do not infer decisions from code, repository structure, or unstated implications, and do not bulk-import the documents. The personal-environment exclusion above applies: never propose a position that binds no teammate.
 3. Run `npx --yes @primitive.ai/prim decisions recent --limit 20` and drop candidates equivalent to existing decisions. If the result is unavailable or too incomplete to rule out a duplicate confidently, drop the uncertain candidate; explain the limitation.
 4. Propose the strongest candidates one at a time — **at most six in total**, fewer when the material runs out (never invent a proposal to fill the quota), stopping early if the user declines to continue. Each proposal carries the proposed decision, its source (file path or the stated context), and only rationale or alternatives explicitly supported by that source; when the source yields no rationale, fold the single rationale question into the same prompt. In this and any user-facing presentation, label the position **Decision**, never "Intent" — intent is `--intent` flag vocabulary, not user copy — and label the rejected options **Alternatives rejected**, never "alternatives considered". Make clear, at least on the first proposal, that approved decisions join the team's shared decision graph, visible to any teammates — not a private list. Ask the user to approve, revise, or reject it — do not silently attribute a historical repository position to the onboarding user — and create each approved decision (per the wording and flag rules below) before presenting the next.
