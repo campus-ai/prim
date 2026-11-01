@@ -73,7 +73,19 @@ describe("demo capture pause", () => {
 
   it("expires unless a step extends it, and heals from any worktree", () => {
     git(repo, "config", "--local", "prim.active", "true");
-    git(repo, "commit", "-q", "--allow-empty", "-m", "init");
+    // CI runners have no git identity; a worktree needs a commit.
+    git(
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.invalid",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
     const tree = join(work, "tree");
     git(repo, "worktree", "add", "-q", tree);
     const now = Date.now();
