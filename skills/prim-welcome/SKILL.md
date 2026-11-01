@@ -168,7 +168,7 @@ If you said part e, wait for the reply:
 
 The Granola question:
 
-"One more thing: do you use **Granola** for meeting notes? Primitive can read them and suggest decisions from your meetings. Imported notes stay private to you, and suggested decisions start as provisional.
+"One more thing: do you use **Granola** for meeting notes? Primitive can capture decisions from your meetings. When you connect, you choose whether it can read your public notes, private notes, or both.
 
 Reply **yes** or **no**."
 
@@ -176,7 +176,7 @@ When the user replies:
 
 - **yes**: open https://app.getprimitive.ai/settings in their browser (`open <url>` on macOS, `xdg-open <url>` on Linux), then say:
 
-  "I've opened Primitive's Settings. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Your meetings will show up as suggested decisions once they've been analyzed."
+  "I've opened Primitive's Settings. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Primitive will capture decisions from your meetings once they've synced."
 
   If the browser couldn't open, replace "I've opened Primitive's Settings." with "Open https://app.getprimitive.ai/settings."
 - **no**: say "No problem. You can connect Granola any time under Settings → Integrations at https://app.getprimitive.ai/settings."
