@@ -1,6 +1,6 @@
 ---
 name: prim-welcome
-description: Welcome a new Primitive user right after `prim setup` finishes - explain Primitive, offer a one-minute conflict demo, confirm capture is on, show the team's recent decisions, and offer to seed their first ones. Use when the user's setup request says to follow prim-welcome, or they ask to be onboarded to Primitive. Not for day-to-day decision work (that is the prim skill).
+description: Welcome a new Primitive user right after `prim setup` finishes - explain Primitive, offer a one-minute conflict demo, confirm capture is on, show the team's recent decisions, offer to seed their first ones, and offer to connect Granola. Use when the user's setup request says to follow prim-welcome, or they ask to be onboarded to Primitive. Not for day-to-day decision work (that is the prim skill).
 ---
 
 # Welcome to Primitive
@@ -157,9 +157,28 @@ See every decision at https://app.getprimitive.ai."
 
 "You haven't recorded any decisions yet. Want me to suggest a few from what you've told me and this repository's shared memory files? You approve each one, and approved decisions are visible to your team. Reply **yes** or **not now**."
 
+**f. Granola**, only if you didn't say part e: the Granola question from step 4.
+
 If you said part e, wait for the reply:
 
-- **yes**: read the prim skill at `~/.claude/skills/prim/SKILL.md` and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo.
-- **not now**: say "Any time, just ask me to add a decision to Primitive."
+- **yes**: read the prim skill at `~/.claude/skills/prim/SKILL.md` and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo. End the final message of that section with the Granola question from step 4.
+- **not now**: say "Any time, just ask me to add a decision to Primitive." followed by the Granola question from step 4.
+
+## 4. Granola
+
+The Granola question:
+
+"One more thing: do you use **Granola** for meeting notes? Primitive can read them and suggest decisions from your meetings. Imported notes stay private to you, and suggested decisions start as provisional.
+
+Reply **yes** or **no**."
+
+When the user replies:
+
+- **yes**: open https://app.getprimitive.ai/settings in their browser (`open <url>` on macOS, `xdg-open <url>` on Linux), then say:
+
+  "I've opened Primitive's Settings. Under **Integrations → Granola**, connect your account and paste your Granola API key (the **Set up your API key** link there opens it in Granola), then click **Sync now**. Your meetings will show up as suggested decisions once they've been analyzed."
+
+  If the browser couldn't open, replace "I've opened Primitive's Settings." with "Open https://app.getprimitive.ai/settings."
+- **no**: say "No problem. You can connect Granola any time under Settings → Integrations at https://app.getprimitive.ai/settings."
 
 Then stop. Don't offer further options.
