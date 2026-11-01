@@ -24,7 +24,7 @@ Say:
 
 "**Welcome to Primitive.** Primitive turns your team's Decisions into guardrails for your agents.
 
-As you work, Primitive picks out the Decisions behind the work, what was decided and why, and adds them to a record your whole team shares. When your org turns on Enforcement, Primitive also checks the changes against those Decisions as we make them, and flags or stops one that conflicts.
+As you work, Primitive picks out the Decisions behind the work, what was decided and why, and adds them to a record your whole team shares. If your org has Enforcement on, Primitive also checks the changes against those Decisions as we make them, and flags or stops one that conflicts.
 
 Setup signed you in, connected this repository to GitHub, and turned Primitive on here.
 
