@@ -38,6 +38,7 @@
 
 import type { Command } from "commander";
 import { getClient } from "../client.js";
+import { decisionIdentifier } from "../decisions/identity.js";
 import {
   type DecisionFeedRow,
   type DecisionsRecentResult,
@@ -185,6 +186,47 @@ export function welcomeStateFromRecent(result: DecisionsRecentResult): WelcomeSt
   return { org: "active", recent };
 }
 
+const SAMPLE_WINDOW = 50;
+const escapeLinkText = (text: string) => text.replace(/\s+/gu, " ").replace(/[[\]\\]/gu, "\\$&");
+
+/**
+ * Up to RECENT_LIMIT current team decisions, newest first, spread across
+ * authors: each author's newest decision first, then each author's next.
+ * Typed rows the welcome skill can render without further judgment.
+ */
+export function sampleTeamDecisions(rows: DecisionFeedRow[]) {
+  const byAuthor = new Map<string, DecisionFeedRow[]>();
+  for (const row of rows) {
+    if (row.status === "superseded") continue;
+    byAuthor.set(row.authorName, [...(byAuthor.get(row.authorName) ?? []), row]);
+  }
+  const picked: DecisionFeedRow[] = [];
+  for (let round = 0; picked.length < RECENT_LIMIT; round++) {
+    const next = [...byAuthor.values()].map((authored) => authored[round]).filter(Boolean);
+    if (next.length === 0) break;
+    picked.push(...next.slice(0, RECENT_LIMIT - picked.length));
+  }
+  return picked
+    .sort((a, b) => b.classifiedAt - a.classifiedAt)
+    .flatMap((row) => {
+      const id = decisionIdentifier(row.id, row.shortId);
+      return id
+        ? [
+            {
+              intent: escapeLinkText(row.intent),
+              author: escapeLinkText(row.authorName),
+              ...(row.area ? { area: escapeLinkText(row.area) } : {}),
+              date: new Date(row.classifiedAt).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              }),
+              url: `https://app.getprimitive.ai/decisions/${id}`,
+            },
+          ]
+        : [];
+    });
+}
+
 export function formatWelcome(
   state: WelcomeState,
   agent?: WelcomeAgent,
@@ -294,12 +336,14 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
     .option("--defer-seeding", "let setup's author story finish before proposing real Decisions")
     .option("--after-demo", "return a short transition after the author story")
     .option("--capture-excluded", "explain the demo session's passive capture exclusion")
+    .option("--team-sample", "with --after-demo, add recent decisions spread across authors")
     .action(
       async (options: {
         agent?: string;
         deferSeeding?: boolean;
         captureExcluded?: boolean;
         afterDemo?: boolean;
+        teamSample?: boolean;
       }) => {
         const agent = resolveWelcomeAgent(options.agent, process.env);
         if (options.deferSeeding) {
@@ -309,7 +353,11 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
           printJson({ welcomed: true, onboarding: "demo", seedingDeferred: true });
           return;
         }
-        const result = await fetchRecent({ limit: RECENT_LIMIT }, deps);
+        // A wider window lets the sample span the team.
+        const result = await fetchRecent(
+          { limit: options.teamSample ? SAMPLE_WINDOW : RECENT_LIMIT },
+          deps,
+        );
         const state = welcomeStateFromRecent(result);
         if (options.afterDemo) {
           printJson({
@@ -325,6 +373,12 @@ export function registerWelcomeCommand(program: Command, deps: RecentDeps = { ge
               ? { seedGuidance: seedGuidanceFor(agent, options.captureExcluded) }
               : {}),
             captureExcluded: options.captureExcluded === true,
+            ...(options.teamSample
+              ? {
+                  recent:
+                    result.unavailable === undefined ? sampleTeamDecisions(result.decisions) : [],
+                }
+              : {}),
           });
           return;
         }
