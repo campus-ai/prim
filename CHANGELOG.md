@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.119](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.118...v0.1.0-alpha.119) (2026-11-02)
+
+
+### Bug Fixes
+
+* **hooks:** check shell edits before execution ([#421](https://github.com/campus-ai/prim/issues/421)) ([4dd134f](https://github.com/campus-ai/prim/commit/4dd134f96bb9fa5f9740dea0b379e9f2ba47c7f4))
+
 ## [0.1.0-alpha.118](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.117...v0.1.0-alpha.118) (2026-10-31)
 
 
