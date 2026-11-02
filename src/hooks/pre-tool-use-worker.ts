@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Evaluation worker. Protected shell commands also pause when evaluation cannot finish. */
+/** Evaluation worker. Only confirmed conflicts affect the automatic hook result. */
 
 import { realpathSync } from "node:fs";
 import { relative } from "node:path";
@@ -41,11 +41,8 @@ import {
 
 import {
   PREFLIGHT_PROTOCOL_VERSION,
-  PreflightPausedError,
   type PreflightRequest,
-  hasCompleteCoverage,
   hasConfirmedConflict,
-  pausedResult,
   resultForPreflight,
   toolInputDigest,
   waitForPreflight,
@@ -110,14 +107,6 @@ function hermesAdvisory(result: ConflictCheckResult, aggregate: ConflictVerdict)
   return message.startsWith("[primitive]") ? message : message ? `[primitive] ${message}` : "";
 }
 
-let protectedShell = false;
-async function pause(message: string, checkId?: string): Promise<void> {
-  const result = pausedResult(message, checkId);
-  await emit(
-    agent === "codex" ? buildCodexOutput("deny", [result]) : buildHookOutput("deny", [result]),
-    true,
-  );
-}
 async function main(): Promise<void> {
   const mode = readHookMode(process.env as HookEnv);
   if (mode === "off") {
@@ -167,7 +156,7 @@ async function main(): Promise<void> {
     return;
   }
   const toolName = envelope.tool_name;
-  protectedShell = (agent === "claude_code" || agent === "codex") && toolName === "Bash";
+  const protectedShell = (agent === "claude_code" || agent === "codex") && toolName === "Bash";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
   const targets = resolvePreflightTargets({
@@ -197,10 +186,6 @@ async function main(): Promise<void> {
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
-    if (protectedShell) {
-      await pause("Repository or invocation identity is unavailable");
-      return;
-    }
     await emit(failOpen());
     return;
   }
@@ -249,17 +234,8 @@ async function main(): Promise<void> {
   try {
     const response = await waitForPreflight(request, {
       deadline,
-      stopOnConflict: !protectedShell,
+      stopOnConflict: true,
     });
-    if (
-      protectedShell &&
-      (!hasCompleteCoverage(response) ||
-        (!hasConfirmedConflict(response) && response.verdict !== "allow") ||
-        (response.evaluationCoverage.candidateCount > 0 && proposalIsTruncated(proposalInput)))
-    ) {
-      await pause(response.message || "Shell evaluation is incomplete", response.checkId);
-      return;
-    }
     if (!hasConfirmedConflict(response)) {
       await emit(failOpen(), true);
       return;
@@ -272,13 +248,8 @@ async function main(): Promise<void> {
         (toolName === "Bash" || toolName === "Shell") &&
         proposalIsTruncated(proposalInput),
     );
-  } catch (error) {
-    if (protectedShell)
-      await pause(
-        "Shell evaluation is unavailable or exceeded the two-second deadline",
-        error instanceof PreflightPausedError ? error.checkId : undefined,
-      );
-    else await emit(failOpen());
+  } catch {
+    await emit(failOpen());
     return;
   }
   const aggregate = demoteForMode(result.verdict === "unavailable" ? "deny" : result.verdict, mode);
@@ -299,6 +270,5 @@ async function main(): Promise<void> {
 }
 
 main().catch(async () => {
-  if (protectedShell) await pause("Shell evaluation is unavailable");
-  else await emit(failOpen());
+  await emit(failOpen());
 });

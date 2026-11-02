@@ -405,15 +405,10 @@ try {
   for (const agent of ["claude_code", "codex"]) {
     for (const [name, response] of [
       ["old backend", () => completed()],
+      ["malformed response", () => ({ invalid: true })],
       [
-        "partial conflict",
-        () =>
-          processing({
-            shellCheck: { targetMode: "repository" },
-            verdict: "block",
-            reasonCode: "high_confidence_contradiction",
-            conflicts: [{ decisionId: "dec_0123abcd" }],
-          }),
+        "paused evaluation",
+        () => processing({ state: "paused", shellCheck: { targetMode: "repository" } }),
       ],
       ["unfinished discovery", () => processing({ shellCheck: { targetMode: "repository" } })],
       [
@@ -433,18 +428,73 @@ try {
       ],
       ["timeout", () => undefined],
     ])
-      await scenario(`${agent} pauses protected shell on ${name} even in warn mode`, async () => {
+      await scenario(`${agent} silently allows shell on ${name}`, async () => {
         respond = response;
         const result = await hook(agent, {
           input: shellInput(agent),
-          env: { PRIM_HOOK_MODE: "warn" },
         });
-        assert.ok(denied(agent, result.output));
+        silent(agent, result);
         assert.equal(requests[0].body.shellCheck.targetMode, "repository");
         assert.equal(requests[0].body.coverage, "unverified");
         assert.deepEqual(requests[0].body.paths, []);
-        assert.match(result.stdout, /paused/i);
       });
+    for (const state of ["processing", "paused", "completed"]) {
+      await scenario(`${agent} shell confirmed conflict in ${state} retains review`, async () => {
+        respond = () =>
+          (state === "completed" ? completed : processing)({
+            state,
+            shellCheck: { targetMode: "repository" },
+            verdict: "block",
+            reasonCode: "high_confidence_contradiction",
+            conflicts: [{ decisionId: "dec_0123abcd" }],
+          });
+        const result = await hook(agent, { input: shellInput(agent) });
+        assert.ok(denied(agent, result.output));
+        assert.match(result.stdout, /dec_0123abcd/u);
+        assert.equal(requests.length, 1);
+        const warn = await hook(agent, {
+          input: shellInput(agent),
+          env: { PRIM_HOOK_MODE: "warn" },
+        });
+        assert.equal(denied(agent, warn.output), false);
+        assert.match(warn.stdout, /dec_0123abcd/u);
+      });
+    }
+    for (const command of [
+      "ls src/*.ts",
+      "grep -r x src --include=*.ts",
+      'f=target.txt; grep x "$f"',
+      "git fetch",
+      "curl -X PUT https://example.invalid",
+      "npx @primitive.ai/prim decisions preflight resume check1",
+    ]) {
+      await scenario(`${agent} releases reported command on timeout: ${command}`, async () => {
+        respond = () => processing({ shellCheck: { targetMode: "repository" } });
+        silent(agent, await hook(agent, { input: shellInput(agent, command) }));
+        assert.equal(requests[0].body.operation, "start");
+        assert.equal(requests[0].body.shellCheck.targetMode, "repository");
+      });
+    }
+    await scenario(`${agent} shell supervisor deadline allows silently`, async () => {
+      writeFileSync(nearDeadline, "process.uptime = () => 2;\n");
+      silent(
+        agent,
+        await hook(agent, {
+          input: shellInput(agent),
+          nodeArgs: ["--import", pathToFileURL(nearDeadline).href],
+        }),
+      );
+      assert.equal(requests.length, 0);
+    });
+    await scenario(`${agent} shell missing invocation identity allows silently`, async () => {
+      silent(
+        agent,
+        await hook(agent, {
+          input: { ...shellInput(agent), session_id: undefined, tool_use_id: undefined },
+        }),
+      );
+      assert.equal(requests.length, 0);
+    });
     await scenario(
       `${agent} allows completed repository discovery with no eligible decisions`,
       async () => {
@@ -530,17 +580,20 @@ try {
         assert.ok(result.stdout.includes(expected), expected);
     },
   );
-  await scenario("shell pauses when proposal evidence is truncated", async () => {
-    respond = () => completed({ shellCheck: { targetMode: "files" } });
-    const input = {
-      ...envelope("claude_code"),
-      tool_name: "Bash",
-      tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
-    };
-    const result = await hook("claude_code", { input });
-    assert.equal(denied("claude_code", result.output), true);
-    assert.deepEqual(requests[0].body.paths, ["target.txt"]);
-  });
+  await scenario(
+    "shell silently allows truncated evidence without a confirmed conflict",
+    async () => {
+      respond = () => completed({ shellCheck: { targetMode: "files" } });
+      const input = {
+        ...envelope("claude_code"),
+        tool_name: "Bash",
+        tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
+      };
+      const result = await hook("claude_code", { input });
+      silent("claude_code", result);
+      assert.deepEqual(requests[0].body.paths, ["target.txt"]);
+    },
+  );
   await scenario("complete semantic block still demotes in warn mode", async () => {
     respond = () =>
       completed({
@@ -758,7 +811,7 @@ try {
     assert.equal(JSON.parse(result.stdout).state, "paused");
   });
   await scenario(
-    "two parallel edits release silently while 127 Decisions continue evaluating",
+    "two parallel shell calls release silently while 127 Decisions continue evaluating",
     async () => {
       let completedInBackground = false;
       const work = setTimeout(() => {
@@ -767,8 +820,12 @@ try {
       respond = () =>
         processing({
           evaluationCoverage: { ...processing().evaluationCoverage, candidateCount: 127 },
+          shellCheck: { targetMode: "repository" },
         });
-      const results = await Promise.all([hook(), hook("codex")]);
+      const results = await Promise.all([
+        hook("claude_code", { input: shellInput("claude_code") }),
+        hook("codex", { input: shellInput("codex") }),
+      ]);
       silent("claude_code", results[0]);
       silent("codex", results[1]);
       assert.equal(completedInBackground, false);
@@ -831,6 +888,8 @@ try {
     writeFileSync(git, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
     try {
       silent("claude_code", await hook());
+      for (const agent of ["claude_code", "codex"])
+        silent(agent, await hook(agent, { input: shellInput(agent) }));
     } finally {
       rmSync(git);
     }

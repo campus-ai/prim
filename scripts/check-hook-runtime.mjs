@@ -80,13 +80,12 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
-      const readOnly = command === "git status --short" || command === "cd . && git status --short";
-      if (result.hookSpecificOutput?.permissionDecision !== (readOnly ? "allow" : "deny"))
+      // An unavailable binding/service must silently allow every shell command.
+      if (result.hookSpecificOutput?.permissionDecision !== "allow")
         throw new Error(`Unexpected hook disposition for ${command}: ${JSON.stringify(result)}`);
       if (
-        readOnly &&
-        (result.systemMessage !== undefined ||
-          result.hookSpecificOutput?.additionalContext !== undefined)
+        result.systemMessage !== undefined ||
+        result.hookSpecificOutput?.additionalContext !== undefined
       ) {
         throw new Error(`Expected silent allow for ${command}`);
       }
