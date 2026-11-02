@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "tsup";
@@ -12,6 +12,8 @@ try {
   await build({
     entry: [
       "src/hooks/shell-targets.ts",
+      "src/hooks/file-refs.ts",
+      "src/lib/git.ts",
       "src/hooks/preflight-v3.ts",
       "src/hooks/pre-tool-use-scoring.ts",
     ],
@@ -20,12 +22,14 @@ try {
     splitting: false,
     silent: true,
   });
-  const { analyzeShellTargets } = await import(pathToFileURL(join(root, "shell-targets.js")));
+  const { analyzeShellTargets } = await import(pathToFileURL(join(root, "hooks/shell-targets.js")));
   const { resolvePreflightTargets, proposalFor, proposalIsTruncated, resultForPreflight } =
-    await import(pathToFileURL(join(root, "preflight-v3.js")));
+    await import(pathToFileURL(join(root, "hooks/preflight-v3.js")));
   const { buildHookOutput, buildCodexOutput } = await import(
-    pathToFileURL(join(root, "pre-tool-use-scoring.js"))
+    pathToFileURL(join(root, "hooks/pre-tool-use-scoring.js"))
   );
+  const { resolveHookFileRefs } = await import(pathToFileURL(join(root, "hooks/file-refs.js")));
+  const { resolveRepositoryContext } = await import(pathToFileURL(join(root, "lib/git.js")));
   const fixtures = JSON.parse(readFileSync("contracts/shell-targets.golden.json", "utf8"));
   for (const { name, command, ...expected } of fixtures) {
     assert.deepEqual(analyzeShellTargets(command), expected, name);
@@ -40,6 +44,27 @@ try {
   mkdirSync(repo);
   execFileSync("git", ["init", "--quiet", repo]);
   symlinkSync(root, join(repo, "outside"));
+  mkdirSync(join(repo, "convex/slack"), { recursive: true });
+  writeFileSync(join(repo, "convex/slack/triggers.ts"), "View decision");
+  writeFileSync(join(repo, "unrelated.ts"), "simultaneous unrelated write");
+  const repository = resolveRepositoryContext(repo);
+  assert.ok(repository);
+  const capture = (command) =>
+    resolveHookFileRefs({
+      toolName: "Bash",
+      toolInput: { command },
+      agent: "claude_code",
+      cwd: repo,
+      repository,
+    });
+  const reported = capture(
+    "sed -i '' 's/View decision/Open in Primitive/g' convex/slack/triggers.ts",
+  );
+  assert.deepEqual(reported.fileRefs, ["convex/slack/triggers.ts"]);
+  assert.equal(reported.shellMutation, "resolved");
+  const uncertain = capture('python3 -c \'open("partial.ts", "w").write(value)\'');
+  assert.deepEqual(uncertain.fileRefs, []);
+  assert.equal(uncertain.shellMutation, "unresolved");
   const targets = (command) =>
     resolvePreflightTargets({
       toolName: "Bash",
@@ -47,6 +72,9 @@ try {
       agent: "claude_code",
       cwd: repo,
     });
+  assert.equal(targets("cd outside && sed -i '' 's/a/b/g' a.ts").coverage, "unverified");
+  assert.deepEqual(targets("cd outside && sed -i '' 's/a/b/g' a.ts").paths, []);
+  assert.equal(capture("cd outside && sed -i '' 's/a/b/g' a.ts").shellMutation, "unresolved");
   for (const path of ["../escape.ts", "/tmp/escape.ts", "outside/escape.ts"]) {
     assert.equal(targets(`python3 -c 'open("${path}", "w")'`).paths.length, 0, path);
   }

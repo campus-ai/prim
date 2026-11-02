@@ -250,7 +250,12 @@ export function isPreflightRequestV3(value: unknown): value is PreflightRequestV
 export function isPreflightRequestV4(value: unknown): value is PreflightRequestV4 {
   if (!isPreflightRequestV4Structure(value)) return false;
   if (value.operation !== "start") return true;
-  const { operation: _operation, toolInputDigest: _digest, ...request } = value;
+  const { operation: _operation, toolInputDigest: _digest, shellCheck, ...request } = value;
+  if (
+    shellCheck &&
+    request.coverage !== (shellCheck.targetMode === "files" ? "complete" : "unverified")
+  )
+    return false;
   return isPreflightRequestV3({ ...request, protocolVersion: 3 });
 }
 

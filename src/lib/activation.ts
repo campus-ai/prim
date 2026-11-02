@@ -45,7 +45,7 @@ const PRIM_HOOK_BINS = ["prim-hook", "prim-pre-tool-use", "prim-post-tool-use"];
  * undefined when unset. Distinguishing "false" from unset lets `prim disable`
  * be authoritative while an unset flag can still self-heal (see below).
  */
-export function repoActiveFlag(cwd: string): "true" | "false" | undefined {
+export function repoActiveFlag(cwd: string, strict = false): "true" | "false" | undefined {
   try {
     const value = execFileSync("git", ["config", "--get", PRIM_ACTIVE_KEY], {
       cwd,
@@ -55,9 +55,15 @@ export function repoActiveFlag(cwd: string): "true" | "false" | undefined {
     }).trim();
     if (value === "true") return "true";
     if (value === "false") return "false";
+    if (strict) throw new Error("Repository activation is invalid");
     return undefined;
-  } catch {
-    // Unset (exit 1) or not a git repo.
+  } catch (error) {
+    // A verified unset flag is inactive; a failed lookup is not an opt-out.
+    if (
+      strict &&
+      !(typeof error === "object" && error !== null && "status" in error && error.status === 1)
+    )
+      throw error;
     return undefined;
   }
 }

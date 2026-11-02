@@ -116,6 +116,7 @@ export interface DecisionShowResult {
   dependsOn: DecisionNode[];
   dependents: DecisionNode[];
   scope?: {
+    scopeResolution?: "unresolved";
     location: DecisionLocationScope;
     time: DecisionTimeScope;
     /** Optional only for compatibility with server versions before audience reads. */
@@ -301,7 +302,9 @@ export function formatShowHuman(result: DecisionShowResult): string {
     lines.push(`  area: ${color(area, colorForArea(area))}`);
   }
   if (result.scope) {
-    lines.push(`  scope: ${describeScope(result.scope.location)}`);
+    lines.push(
+      `  scope: ${result.scope.scopeResolution === "unresolved" ? "Scope unknown — not enforced" : describeScope(result.scope.location)}`,
+    );
     const effectiveWindow = describeEffectiveWindow(result.scope.time);
     if (effectiveWindow) {
       lines.push(`  effective: ${effectiveWindow}`);

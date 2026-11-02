@@ -396,27 +396,112 @@ try {
     assert.match(result.stderr, /The enforcement service is temporarily unavailable/u);
     assert.doesNotMatch(result.stderr, /different check identity|changed evaluation identity/u);
   });
-  await scenario("unresolved script writes silently allow without a verdict", async () => {
-    respond = () => completed();
-    const input = {
-      ...envelope("claude_code"),
-      tool_name: "Bash",
-      tool_input: {
-        command: `node -e 'require("node:fs").writeFileSync(process.argv[1], "new")' target.txt`,
-      },
-    };
-    const result = await hook("claude_code", { input, env: { PRIM_HOOK_MODE: "warn" } });
-    assert.deepEqual(result.output, {
-      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
-    });
-    assert.equal(result.stderr, "");
-    assert.equal(requests.length, 0);
+  mkdirSync(join(cwd, "convex/slack"), { recursive: true });
+  const shellInput = (agent, command = "./opaque-edit.sh") => ({
+    ...envelope(agent),
+    tool_name: "Bash",
+    tool_input: { command },
   });
+  for (const agent of ["claude_code", "codex"]) {
+    for (const [name, response] of [
+      ["old backend", () => completed()],
+      [
+        "partial conflict",
+        () =>
+          processing({
+            shellCheck: { targetMode: "repository" },
+            verdict: "block",
+            reasonCode: "high_confidence_contradiction",
+            conflicts: [{ decisionId: "dec_0123abcd" }],
+          }),
+      ],
+      ["unfinished discovery", () => processing({ shellCheck: { targetMode: "repository" } })],
+      [
+        "uncertain behavior",
+        () =>
+          completed({
+            shellCheck: { targetMode: "repository" },
+            verdict: "warn",
+            reasonCode: "semantic_uncertain",
+          }),
+      ],
+      [
+        "service failure",
+        (_, response) => {
+          response.destroy();
+        },
+      ],
+      ["timeout", () => undefined],
+    ])
+      await scenario(`${agent} pauses protected shell on ${name} even in warn mode`, async () => {
+        respond = response;
+        const result = await hook(agent, {
+          input: shellInput(agent),
+          env: { PRIM_HOOK_MODE: "warn" },
+        });
+        assert.ok(denied(agent, result.output));
+        assert.equal(requests[0].body.shellCheck.targetMode, "repository");
+        assert.equal(requests[0].body.coverage, "unverified");
+        assert.deepEqual(requests[0].body.paths, []);
+        assert.match(result.stdout, /paused/i);
+      });
+    await scenario(
+      `${agent} allows completed repository discovery with no eligible decisions`,
+      async () => {
+        respond = () =>
+          completed({
+            shellCheck: { targetMode: "repository" },
+            evaluationCoverage: {
+              candidateCount: 0,
+              submittedCount: 0,
+              evaluatedCount: 0,
+              bypassedCount: 0,
+              discoveryComplete: true,
+              status: "completed",
+              semanticBatchCount: 0,
+              completedSemanticBatchCount: 0,
+            },
+          });
+        silent(agent, await hook(agent, { input: shellInput(agent) }));
+      },
+    );
+    await scenario(`${agent} checks the reported BSD sed edit by file`, async () => {
+      respond = () =>
+        completed({
+          shellCheck: { targetMode: "files" },
+          verdict: "block",
+          reasonCode: "high_confidence_contradiction",
+          conflicts: [{ decisionId: "dec_0123abcd" }],
+        });
+      const input = shellInput(
+        agent,
+        "sed -i '' 's/View decision/Open in Primitive/g' convex/slack/triggers.ts",
+      );
+      assert.ok(denied(agent, (await hook(agent, { input })).output));
+      assert.equal(requests[0].body.shellCheck.targetMode, "files");
+      assert.equal(requests[0].body.coverage, "complete");
+      assert.deepEqual(requests[0].body.paths, ["convex/slack/triggers.ts"]);
+      assert.equal(
+        denied(agent, (await hook(agent, { input, env: { PRIM_HOOK_MODE: "warn" } })).output),
+        false,
+      );
+    });
+    for (const bypass of [{ PRIM_BYPASS: "1" }, { PRIM_HOOK_MODE: "off" }]) {
+      await scenario(
+        `${agent} keeps explicit shell opt-outs ${JSON.stringify(bypass)}`,
+        async () => {
+          silent(agent, await hook(agent, { input: shellInput(agent), env: bypass }));
+          assert.equal(requests.length, 0);
+        },
+      );
+    }
+  }
   await scenario(
     "literal script writes retain V4 verification and explicit approval context",
     async () => {
       respond = () =>
         completed({
+          shellCheck: { targetMode: "repository" },
           verdict: "block",
           reasonCode: "high_confidence_contradiction",
           conflicts: [
@@ -445,21 +530,17 @@ try {
         assert.ok(result.stdout.includes(expected), expected);
     },
   );
-  await scenario(
-    "V4 stays silent without a confirmed conflict even when proposal is truncated",
-    async () => {
-      respond = () => completed();
-      const input = {
-        ...envelope("claude_code"),
-        tool_name: "Bash",
-        tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
-      };
-      const result = await hook("claude_code", { input });
-      assert.equal(denied("claude_code", result.output), false);
-      assert.deepEqual(requests[0].body.paths, ["target.txt"]);
-      silent("claude_code", result);
-    },
-  );
+  await scenario("shell pauses when proposal evidence is truncated", async () => {
+    respond = () => completed({ shellCheck: { targetMode: "files" } });
+    const input = {
+      ...envelope("claude_code"),
+      tool_name: "Bash",
+      tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
+    };
+    const result = await hook("claude_code", { input });
+    assert.equal(denied("claude_code", result.output), true);
+    assert.deepEqual(requests[0].body.paths, ["target.txt"]);
+  });
   await scenario("complete semantic block still demotes in warn mode", async () => {
     respond = () =>
       completed({

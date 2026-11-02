@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-/** Evaluation worker. Only confirmed conflicts produce visible hook output. */
+/** Evaluation worker. Protected shell commands also pause when evaluation cannot finish. */
 
+import { realpathSync } from "node:fs";
+import { relative } from "node:path";
 import { observeDemoInvocation } from "../demo/isolation.js";
-import { isRepoActive, repoSyncId } from "../lib/activation.js";
+import { repoActiveFlag, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
-import { currentBranch, githubRepositoryFullName } from "../lib/git.js";
+import { canonicalGitRoot, currentBranch, githubRepositoryFullName } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
 import { editPreview } from "./approval-copy.js";
 import { shouldSuppressImportedCursorHandler } from "./cursor-coexistence.js";
@@ -39,8 +41,11 @@ import {
 
 import {
   PREFLIGHT_PROTOCOL_VERSION,
+  PreflightPausedError,
   type PreflightRequest,
+  hasCompleteCoverage,
   hasConfirmedConflict,
+  pausedResult,
   resultForPreflight,
   toolInputDigest,
   waitForPreflight,
@@ -105,10 +110,18 @@ function hermesAdvisory(result: ConflictCheckResult, aggregate: ConflictVerdict)
   return message.startsWith("[primitive]") ? message : message ? `[primitive] ${message}` : "";
 }
 
+let protectedShell = false;
+async function pause(message: string, checkId?: string): Promise<void> {
+  const result = pausedResult(message, checkId);
+  await emit(
+    agent === "codex" ? buildCodexOutput("deny", [result]) : buildHookOutput("deny", [result]),
+    true,
+  );
+}
 async function main(): Promise<void> {
   const mode = readHookMode(process.env as HookEnv);
   if (mode === "off") {
-    await emit(failOpen());
+    await emit(failOpen(), true);
     return;
   }
   let raw: string;
@@ -126,7 +139,7 @@ async function main(): Promise<void> {
     }
     const fields = incoming as Record<string, unknown>;
     if (agent !== "cursor" && shouldSuppressImportedCursorHandler(fields, "prim-pre-tool-use")) {
-      await emit(failOpenCursor());
+      await emit(failOpenCursor(), true);
       return;
     }
     envelope = normalizeEnvelope(fields, agent) as PreToolUseInput;
@@ -139,14 +152,14 @@ async function main(): Promise<void> {
   }
   try {
     if (observeDemoInvocation(envelope as Record<string, unknown>, agent, false).invocation) {
-      await emit(failOpen());
+      await emit(failOpen(), true);
       return;
     }
   } catch {
     // An invalid tour acknowledgment grants no exemption from real enforcement.
   }
   if (envelope.hook_event_name !== "PreToolUse") {
-    await emit(failOpen());
+    await emit(failOpen(), true);
     return;
   }
   if (typeof envelope.tool_name !== "string" || !envelope.tool_name) {
@@ -154,6 +167,7 @@ async function main(): Promise<void> {
     return;
   }
   const toolName = envelope.tool_name;
+  protectedShell = (agent === "claude_code" || agent === "codex") && toolName === "Bash";
   const cwd =
     typeof envelope.cwd === "string" && envelope.cwd.length > 0 ? envelope.cwd : process.cwd();
   const targets = resolvePreflightTargets({
@@ -163,14 +177,14 @@ async function main(): Promise<void> {
     cwd,
   });
   if (targets.mutation === "none") {
-    await emit(failOpen());
+    await emit(failOpen(), true);
     return;
   }
-  if (!isRepoActive(cwd)) {
-    await emit(failOpen());
+  if (repoActiveFlag(cwd, protectedShell) !== "true") {
+    await emit(failOpen(), true);
     return;
   }
-  if (targets.paths.length === 0 && !targets.definite) {
+  if (!protectedShell && targets.paths.length === 0 && !targets.definite) {
     await emit(failOpen());
     return;
   }
@@ -183,6 +197,10 @@ async function main(): Promise<void> {
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
+    if (protectedShell) {
+      await pause("Repository or invocation identity is unavailable");
+      return;
+    }
     await emit(failOpen());
     return;
   }
@@ -193,6 +211,17 @@ async function main(): Promise<void> {
     paths: targets.paths,
     pathsComplete: targets.coverage === "complete",
   });
+  const root = protectedShell ? canonicalGitRoot(cwd) : null;
+  const proposalInput = protectedShell
+    ? {
+        ...(typeof envelope.tool_input === "string"
+          ? { command: envelope.tool_input }
+          : (envelope.tool_input as Record<string, unknown>)),
+        repositoryCwd: root ? relative(root, realpathSync(cwd)).replaceAll("\\", "/") || "." : null,
+        knownWritePaths: targets.paths,
+        targetCoverage: targets.coverage,
+      }
+    : envelope.tool_input;
   const request: PreflightRequest = {
     protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
     operation: "start",
@@ -205,17 +234,34 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
+    ...(protectedShell
+      ? {
+          shellCheck: {
+            targetMode:
+              targets.coverage === "complete" ? ("files" as const) : ("repository" as const),
+          },
+        }
+      : {}),
     ...(branch === undefined ? {} : { branch }),
-    proposal: collectScopeAdmits ? proposalFor(envelope.tool_input) : "",
+    proposal: collectScopeAdmits ? proposalFor(proposalInput) : "",
   };
   let result: ConflictCheckResult;
   try {
     const response = await waitForPreflight(request, {
       deadline,
-      stopOnConflict: true,
+      stopOnConflict: !protectedShell,
     });
+    if (
+      protectedShell &&
+      (!hasCompleteCoverage(response) ||
+        (!hasConfirmedConflict(response) && response.verdict !== "allow") ||
+        (response.evaluationCoverage.candidateCount > 0 && proposalIsTruncated(proposalInput)))
+    ) {
+      await pause(response.message || "Shell evaluation is incomplete", response.checkId);
+      return;
+    }
     if (!hasConfirmedConflict(response)) {
-      await emit(failOpen());
+      await emit(failOpen(), true);
       return;
     }
     result = resultForPreflight(
@@ -224,10 +270,15 @@ async function main(): Promise<void> {
       request,
       collectScopeAdmits &&
         (toolName === "Bash" || toolName === "Shell") &&
-        proposalIsTruncated(envelope.tool_input),
+        proposalIsTruncated(proposalInput),
     );
-  } catch {
-    await emit(failOpen());
+  } catch (error) {
+    if (protectedShell)
+      await pause(
+        "Shell evaluation is unavailable or exceeded the two-second deadline",
+        error instanceof PreflightPausedError ? error.checkId : undefined,
+      );
+    else await emit(failOpen());
     return;
   }
   const aggregate = demoteForMode(result.verdict === "unavailable" ? "deny" : result.verdict, mode);
@@ -248,5 +299,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(async () => {
-  await emit(failOpen());
+  if (protectedShell) await pause("Shell evaluation is unavailable");
+  else await emit(failOpen());
 });
