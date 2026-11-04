@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
@@ -145,47 +146,63 @@ try {
   assert.equal(formatDecidedAt(live), "2026-11-03T23:30:00.000Z");
   assert.equal(decisionMakerName(live), "Ada");
 
-  // Keep the committed contract lock honest. A local candidate server contract
-  // can prove rollout compatibility before it has a publishable source commit.
+  // This immutable baseline survives contracts:update. Always exercise it in CI,
+  // with either the current vendored server contract or an explicitly supplied one.
+  const baselineDir = join(root, "contracts/compatibility/pre-seed-metadata");
+  const provenance = readJson(join(baselineDir, "provenance.json"));
+  assert.equal(provenance.sourceCommit, "2438a817a4da09eaaa991ece0cf70b67e90cba73");
+  for (const [name, artifact] of Object.entries(provenance.artifacts)) {
+    const bytes = readFileSync(join(baselineDir, name));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), artifact.sha256, name);
+  }
+  const old = await import(pathToFileURL(join(baselineDir, "validators.mjs")).href);
+  const olderValidators = {
+    DecisionsRecentResponse: old.isDecisionsRecentResponseStructure,
+    DecisionDetailResponse: old.isDecisionDetailResponse,
+    DecisionCascadeResponse: old.isDecisionCascadeResponse,
+  };
+  const contractDir = values["server-dir"]
+    ? resolve(values["server-dir"], "contracts")
+    : join(root, "contracts");
   if (values["server-dir"]) {
-    const contractDir = resolve(values["server-dir"], "contracts");
     assert.equal(
       readFileSync(sharedFixturePath, "utf8"),
       readFileSync(join(contractDir, "seed-metadata-v1.fixtures.json"), "utf8"),
       "shared seed metadata fixtures must match the server bytes",
     );
-    const schema = readJson(join(contractDir, "cli-http-v1.schema.json"));
-    const serverFixtures = readJson(join(contractDir, "cli-http-v1.fixtures.json"));
-    const previousFixtures = readJson(join(root, "contracts/cli-http-v1.fixtures.json"));
-    const definitions = new Set([
-      "DecisionsRecentResponse",
-      "DecisionDetailResponse",
-      "DecisionCascadeResponse",
-    ]);
-    const ajv = new Ajv2020({ strict: false });
-    ajv.addSchema(schema);
-    for (const fixture of serverFixtures.cases) {
-      if (fixture.valid && definitions.has(fixture.definition)) {
-        assert.equal(
-          cliHttpV1Validators[fixture.definition](fixture.value),
-          true,
-          `old CLI accepts new server: ${fixture.name}`,
-        );
-        serverCompatibilityCases += 1;
-      }
-    }
-    for (const fixture of previousFixtures.cases) {
-      if (fixture.valid && definitions.has(fixture.definition)) {
-        const validate = ajv.getSchema(`${schema.$id}#/$defs/${fixture.definition}`);
-        assert.equal(
-          validate(fixture.value),
-          true,
-          `new server accepts old response: ${fixture.name}`,
-        );
-        serverCompatibilityCases += 1;
-      }
+  }
+  const schema = readJson(join(contractDir, "cli-http-v1.schema.json"));
+  const serverFixtures = readJson(join(contractDir, "cli-http-v1.fixtures.json"));
+  const previousFixtures = readJson(join(baselineDir, "fixtures.json"));
+  const ajv = new Ajv2020({ strict: false });
+  ajv.addSchema(schema);
+  for (const fixture of serverFixtures.cases) {
+    if (fixture.valid && olderValidators[fixture.definition]) {
+      assert.equal(
+        olderValidators[fixture.definition](fixture.value),
+        true,
+        `pinned old CLI accepts new server: ${fixture.name}`,
+      );
+      serverCompatibilityCases += 1;
     }
   }
+  for (const fixture of previousFixtures.cases) {
+    if (fixture.valid && olderValidators[fixture.definition]) {
+      const validate = ajv.getSchema(`${schema.$id}#/$defs/${fixture.definition}`);
+      assert.equal(
+        validate(fixture.value),
+        true,
+        `new server accepts old response: ${fixture.name}`,
+      );
+      assert.equal(
+        cliHttpV1Validators[fixture.definition](fixture.value),
+        true,
+        `new CLI accepts old server: ${fixture.name}`,
+      );
+      serverCompatibilityCases += 1;
+    }
+  }
+  assert.ok(serverCompatibilityCases > 0, "compatibility cases must run without --server-dir");
 
   if (values.cli) {
     let response;
