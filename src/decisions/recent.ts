@@ -28,8 +28,9 @@ import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
+import { type DecisionMetadata, decisionMakerName, formatRecentDecisionDate } from "./metadata.js";
 
-export interface DecisionFeedRow {
+export interface DecisionFeedRow extends DecisionMetadata {
   id: string;
   shortId: string | undefined;
   intent: string;
@@ -209,18 +210,10 @@ export async function fetchRecent(
   }
 }
 
-const ZERO_PAD_TWO = 2;
-
-function pad2(n: number): string {
-  return n.toString().padStart(ZERO_PAD_TWO, "0");
-}
-
-function formatClock(ms: number): string {
-  const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
 function authorLabel(row: DecisionFeedRow): string {
+  if (row.producerKind === "seed") {
+    return decisionMakerName(row);
+  }
   if (!row.authorIsSelf) {
     return terminalSafeLine(row.authorName);
   }
@@ -254,20 +247,21 @@ function padRight(s: string, width: number): string {
 }
 
 /**
- * Render one feed row: `  HH:MM  author<pad>• area<pad>intent`. Extracted from
+ * Render one feed row: `  date/time  author<pad>• area<pad>intent`. Extracted from
  * the human formatter so `prim welcome` can inline the latest few decisions with
  * byte-identical formatting. Pad the plain (uncolored) form to maintain
  * alignment, then color the bullet alone — the visible width stays the same
  * regardless of color, so columns line up under both TTY and piped output.
  */
 export function formatRecentRow(row: DecisionFeedRow): string {
-  const clock = formatClock(row.classifiedAt);
-  const author = padRight(authorLabel(row), AUTHOR_WIDTH);
+  const date = formatRecentDecisionDate(row, Date.now()).padEnd(10, " ");
+  // Maker names and the explicit unknown label must remain fully readable.
+  const author = authorLabel(row).padEnd(AUTHOR_WIDTH, " ");
   const area = terminalSafeLine(row.area ?? "");
   const areaText = area ? `• ${area}` : "•";
   const areaPlain = padRight(areaText, AREA_WIDTH);
   const areaCol = area ? areaPlain.replace("•", color("•", colorForArea(area))) : areaPlain;
-  return `  ${clock}  ${author}${areaCol}${terminalSafeLine(row.intent)}`;
+  return `  ${date}  ${author}  ${areaCol}${terminalSafeLine(row.intent)}`;
 }
 
 // Mirrors the server's RECENT_LIMIT_CEILING: the largest page a single

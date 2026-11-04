@@ -22,6 +22,7 @@ import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { color, colorForArea } from "../lib/ansi.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
+import { type DecisionMetadata, decisionMakerName, formatDecidedAt } from "./metadata.js";
 import { renderIdentifier } from "./recent.js";
 
 const NOT_FOUND_RE = /not found/i;
@@ -43,7 +44,7 @@ function colorStatus(status: DecisionDisplayStatus): string {
 }
 
 /** Lean projection of a related decision (dependency edge endpoint). */
-export interface DecisionNode {
+export interface DecisionNode extends DecisionMetadata {
   id: string;
   shortId?: string;
   intent: string;
@@ -84,7 +85,7 @@ export type DecisionUserScopeReadMember =
     };
 
 export interface DecisionShowResult {
-  decision: {
+  decision: DecisionMetadata & {
     id: string;
     shortId?: string;
     intent: string;
@@ -184,7 +185,7 @@ function describeNode(node: DecisionNode): string {
   const id = renderIdentifier({ shortId: node.shortId, id: node.id });
   const safeArea = terminalSafeLine(node.area ?? "");
   const area = safeArea ? ` • ${safeArea}` : "";
-  return `${id}${area}  ${terminalSafeLine(node.intent)}  (${terminalSafeLine(node.authorName)})`;
+  return `${id}${area}  ${terminalSafeLine(node.intent)}  (${decisionMakerName(node)})`;
 }
 
 function pushFiles(lines: string[], files: string[]): void {
@@ -293,7 +294,13 @@ export function formatShowHuman(result: DecisionShowResult): string {
   const lines = [
     `[prim] ${id} — ${terminalSafeLine(d.intent)}`,
     `  status: ${colorStatus(displayedStatus)}${d.confirmed ? " (confirmed)" : ""}  ·  confidence: ${terminalSafeLine(confidence)}  ·  reversibility: ${terminalSafeLine(d.reversibility ?? "(unset)")}`,
+    `  maker: ${decisionMakerName(d)}`,
+    `  decided: ${formatDecidedAt(d)}`,
   ];
+  if (d.producerKind === "seed" && d.importedAt !== undefined) {
+    const importer = d.importedByName ? ` by ${terminalSafeLine(d.importedByName)}` : "";
+    lines.push(`  imported: ${effectiveTimestamp(d.importedAt)}${importer}`);
+  }
   if (d.supersededBy) {
     lines.push(`  superseded by: ${terminalSafeLine(d.supersededBy)}`);
   }

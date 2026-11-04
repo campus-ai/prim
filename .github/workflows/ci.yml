@@ -66,6 +66,8 @@ jobs:
 
       - run: pnpm check:decision-identity-golden
 
+      - run: pnpm check:seed-metadata-golden --cli dist/index.js
+
       - run: pnpm test
 
       - name: Exercise launchd convergence

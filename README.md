@@ -373,6 +373,14 @@ prim decisions unlink <child> --on <parent>  # Remove that dependency
 `<id>` uses the canonical `dec_<8 hex>` Decision ID; bare short IDs and legacy full IDs remain accepted as inputs. STDOUT is machine-readable
 JSON; human-readable status goes to STDERR.
 
+`decisions show` prints the maker and decided date. Imported seeds retain the
+historical date's qualification (`on or about` or `no later than`) and precision;
+day-only evidence stays on its original calendar day in every timezone. Missing
+metadata, including seeds from older servers, reads `Decision maker unknown` or
+`date unknown`. When available, the import timestamp and operational importer
+appear separately. `decisions recent` uses calendar dates for older rows and
+keeps the server's existing ordering and recency-window behavior.
+
 `decisions check` uses the checkout's current Primitive repository binding and
 Git branch. Paths are relative to the repository root, including from a
 subdirectory; paths for files that do not exist yet are supported. Discovery
@@ -575,6 +583,24 @@ pnpm test         # Run tests
 pnpm typecheck    # Type-check
 pnpm lint         # Lint
 ```
+
+Validate seed metadata presentation and real CLI output against a local fixture
+server after building:
+
+```bash
+pnpm check:seed-metadata-golden --cli dist/index.js
+pnpm check:seed-metadata-golden --cli dist/index.js --server-dir /path/to/client
+```
+
+The second form also checks the candidate server's response fixtures against
+the currently locked CLI validators, and old response fixtures against the
+candidate server schema. It does not change contract provenance. The lock pins
+the published backend commit containing the additive seed metadata contract.
+For future contract changes, refresh the locked artifacts with
+`pnpm contracts:update --revision <full-client-commit>`, then run
+`pnpm contracts:generate`, `pnpm contracts:check`, and
+`pnpm contracts:provenance`. Do not point the lock at a revision that lacks the
+vendored bytes.
 
 ### Actual host validation
 
