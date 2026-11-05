@@ -21,7 +21,27 @@ export interface DecisionCascadeResponse {
     shortId?: string;
     intent: string;
     area?: string;
+    producerKind?: string;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     classifiedAt: number;
     status: "active" | "superseded" | "under_review";
     [k: string]: unknown | undefined;
@@ -41,7 +61,27 @@ export interface DecisionCascadeResponse {
     shortId?: string;
     intent: string;
     area?: string;
+    producerKind?: string;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     classifiedAt: number;
     status: "active" | "superseded" | "under_review";
     [k: string]: unknown | undefined;
@@ -255,6 +295,25 @@ export interface DecisionDetailResponse {
     fanOut?: number;
     classifiedAt: number;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     [k: string]: unknown | undefined;
   };
   files: string[];
@@ -275,7 +334,27 @@ export interface DecisionDetailResponse {
     shortId?: string;
     intent: string;
     area?: string;
+    producerKind?: string;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     classifiedAt: number;
     status: "active" | "superseded" | "under_review";
     [k: string]: unknown | undefined;
@@ -288,7 +367,27 @@ export interface DecisionDetailResponse {
     shortId?: string;
     intent: string;
     area?: string;
+    producerKind?: string;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     classifiedAt: number;
     status: "active" | "superseded" | "under_review";
     [k: string]: unknown | undefined;
@@ -552,6 +651,25 @@ export interface DecisionsRecentResponse {
     isDecision?: boolean;
     userId: string;
     authorName: string;
+    decisionMaker?:
+      | {
+          kind: "unknown";
+          [k: string]: unknown | undefined;
+        }
+      | {
+          kind: "external";
+          sourcePrincipalId: string;
+          displayName: string;
+          [k: string]: unknown | undefined;
+        };
+    adoption?: {
+      at: number;
+      qualifier: "exact" | "on_or_about" | "no_later_than";
+      precision: "day" | "minute" | "second";
+      [k: string]: unknown | undefined;
+    };
+    importedAt?: number;
+    importedByName?: string;
     authorIsSelf: boolean;
     classifiedAt: number;
     status: "active" | "superseded" | "under_review";

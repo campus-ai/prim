@@ -55,6 +55,7 @@
     "contracts:check": "node scripts/generate-cli-contract.mjs --check",
     "contracts:provenance": "node scripts/update-cli-contract.mjs --check",
     "check:decision-identity-golden": "node scripts/check-decision-identity-golden.mjs",
+    "check:seed-metadata-golden": "node scripts/check-seed-metadata-golden.mjs",
     "check:gameplan-companion": "node scripts/check-gameplan-companion.mjs",
     "check:gameplan-e2e": "node scripts/check-gameplan-e2e.mjs",
     "check:gameplan-package": "node scripts/check-gameplan-package.mjs",

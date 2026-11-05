@@ -23,10 +23,11 @@
 
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
+import type { DecisionMetadata } from "./metadata.js";
 
 const NOT_FOUND_RE = /not found/i;
 
-export interface CascadeNode {
+export interface CascadeNode extends DecisionMetadata {
   id: string;
   shortId: string | undefined;
   intent: string;

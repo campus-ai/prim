@@ -1726,6 +1726,110 @@
       }
     },
     {
+      "name": "seed metadata recent feed",
+      "definition": "DecisionsRecentResponse",
+      "valid": true,
+      "value": {
+        "decisions": [
+          {
+            "id": "dec_0123abcd",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active",
+            "rationale": "Prevent cross-repository drift",
+            "producerKind": "seed",
+            "isDecision": true,
+            "userId": "user-1",
+            "authorIsSelf": false,
+            "stage": "provisional",
+            "decisionMaker": {
+              "kind": "external",
+              "sourcePrincipalId": "github:ada",
+              "displayName": "Ada"
+            },
+            "adoption": {
+              "at": 1704153600000,
+              "qualifier": "on_or_about",
+              "precision": "day"
+            },
+            "importedAt": 1793793600000,
+            "importedByName": "Operator"
+          }
+        ],
+        "viewerHasDecisions": true
+      }
+    },
+    {
+      "name": "unknown seed metadata recent feed",
+      "definition": "DecisionsRecentResponse",
+      "valid": true,
+      "value": {
+        "decisions": [
+          {
+            "id": "dec_0123abcd",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Decision maker unknown",
+            "classifiedAt": 100,
+            "status": "active",
+            "rationale": "Prevent cross-repository drift",
+            "producerKind": "seed",
+            "isDecision": true,
+            "userId": "user-1",
+            "authorIsSelf": false,
+            "stage": "provisional",
+            "decisionMaker": {
+              "kind": "unknown"
+            },
+            "importedAt": 1793793600000,
+            "importedByName": "Operator"
+          }
+        ],
+        "viewerHasDecisions": true
+      }
+    },
+    {
+      "name": "invalid seed date qualifier",
+      "definition": "DecisionsRecentResponse",
+      "valid": false,
+      "value": {
+        "decisions": [
+          {
+            "id": "dec_0123abcd",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active",
+            "rationale": "Prevent cross-repository drift",
+            "producerKind": "seed",
+            "isDecision": true,
+            "userId": "user-1",
+            "authorIsSelf": true,
+            "stage": "provisional",
+            "decisionMaker": {
+              "kind": "external",
+              "sourcePrincipalId": "github:ada",
+              "displayName": "Ada"
+            },
+            "adoption": {
+              "at": 1704153600000,
+              "qualifier": "guessed",
+              "precision": "day"
+            },
+            "importedAt": 1793793600000,
+            "importedByName": "Operator"
+          }
+        ],
+        "viewerHasDecisions": true
+      }
+    },
+    {
       "name": "unavailable recent feed",
       "definition": "DecisionsRecentResponse",
       "valid": true,
@@ -1782,6 +1886,104 @@
             "authorName": "Ada",
             "classifiedAt": 100,
             "status": "active"
+          }
+        ],
+        "scope": {
+          "location": {
+            "repository": false,
+            "directories": ["packages/api"],
+            "globs": [],
+            "branches": ["main"]
+          },
+          "time": {
+            "effectiveFrom": 1787078400000,
+            "effectiveUntil": 1790232000000
+          },
+          "users": [
+            {
+              "kind": "user",
+              "userId": "user-1",
+              "displayName": "Ada"
+            }
+          ]
+        },
+        "truncated": false
+      }
+    },
+    {
+      "name": "seed metadata detail and relationships",
+      "definition": "DecisionDetailResponse",
+      "valid": true,
+      "value": {
+        "decision": {
+          "id": "dec_0123abcd",
+          "shortId": "0123abcd",
+          "intent": "Publish the generated contract",
+          "area": "platform",
+          "authorName": "Ada",
+          "classifiedAt": 100,
+          "status": "active",
+          "intentKind": "change",
+          "rationale": "Prevent cross-repository drift",
+          "decided": ["Generate validators"],
+          "alternatives": [],
+          "producerKind": "seed",
+          "stage": "provisional",
+          "supersededBy": null,
+          "confidence": "high",
+          "reversibility": "high",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "on_or_about",
+            "precision": "day"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator"
+        },
+        "files": ["src/index.ts"],
+        "flags": [],
+        "dependsOn": [
+          {
+            "id": "dec_0123abcd",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Ada",
+            "classifiedAt": 100,
+            "status": "active",
+            "producerKind": "seed",
+            "decisionMaker": {
+              "kind": "external",
+              "sourcePrincipalId": "github:ada",
+              "displayName": "Ada"
+            },
+            "adoption": {
+              "at": 1704153600000,
+              "qualifier": "on_or_about",
+              "precision": "day"
+            },
+            "importedAt": 1793793600000,
+            "importedByName": "Operator"
+          }
+        ],
+        "dependents": [
+          {
+            "id": "dec_0123abcd",
+            "shortId": "0123abcd",
+            "intent": "Publish the generated contract",
+            "area": "platform",
+            "authorName": "Decision maker unknown",
+            "classifiedAt": 100,
+            "status": "active",
+            "producerKind": "seed",
+            "decisionMaker": {
+              "kind": "unknown"
+            }
           }
         ],
         "scope": {

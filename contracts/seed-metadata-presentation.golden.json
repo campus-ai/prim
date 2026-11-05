@@ -1,0 +1,261 @@
+{
+  "now": 1793793600000,
+  "timezones": [
+    "UTC",
+    "America/New_York",
+    "Pacific/Honolulu",
+    "Pacific/Kiritimati"
+  ],
+  "cases": [
+    {
+      "name": "known-exact-day",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "external",
+          "sourcePrincipalId": "github:ada",
+          "displayName": "Ada"
+        },
+        "adoption": {
+          "at": 1522886400000,
+          "qualifier": "exact",
+          "precision": "day"
+        },
+        "importedAt": 1793793600000,
+        "importedByName": "Operational importer"
+      },
+      "expected": {
+        "maker": "Ada",
+        "decided": "2018-04-05",
+        "recent": "  2018-04-05  Ada                 •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Ada\n  decided: 2018-04-05\n  imported: 2026-11-04T12:00:00.000Z by Operational importer\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "known-approximate-day",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "external",
+          "sourcePrincipalId": "github:ada",
+          "displayName": "Ada"
+        },
+        "adoption": {
+          "at": 1522886400000,
+          "qualifier": "on_or_about",
+          "precision": "day"
+        }
+      },
+      "expected": {
+        "maker": "Ada",
+        "decided": "on or about 2018-04-05",
+        "recent": "  on or about 2018-04-05  Ada                 •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Ada\n  decided: on or about 2018-04-05\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "known-no-later-than-day",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "external",
+          "sourcePrincipalId": "github:ada",
+          "displayName": "Ada"
+        },
+        "adoption": {
+          "at": 1522886400000,
+          "qualifier": "no_later_than",
+          "precision": "day"
+        }
+      },
+      "expected": {
+        "maker": "Ada",
+        "decided": "no later than 2018-04-05",
+        "recent": "  no later than 2018-04-05  Ada                 •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Ada\n  decided: no later than 2018-04-05\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "unknown-minute",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "unknown"
+        },
+        "adoption": {
+          "at": 1522931640000,
+          "qualifier": "on_or_about",
+          "precision": "minute"
+        }
+      },
+      "expected": {
+        "maker": "Decision maker unknown",
+        "decided": "on or about 2018-04-05 12:34 UTC",
+        "recent": "  on or about 2018-04-05 12:34 UTC  Decision maker unknown  •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Decision maker unknown\n  decided: on or about 2018-04-05 12:34 UTC\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "unknown-second",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "unknown"
+        },
+        "adoption": {
+          "at": 1522931696000,
+          "qualifier": "no_later_than",
+          "precision": "second"
+        }
+      },
+      "expected": {
+        "maker": "Decision maker unknown",
+        "decided": "no later than 2018-04-05 12:34:56 UTC",
+        "recent": "  no later than 2018-04-05 12:34:56 UTC  Decision maker unknown  •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Decision maker unknown\n  decided: no later than 2018-04-05 12:34:56 UTC\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "known-undated",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "external",
+          "sourcePrincipalId": "github:ada",
+          "displayName": "Ada"
+        }
+      },
+      "expected": {
+        "maker": "Ada",
+        "decided": "date unknown",
+        "recent": "  date unknown  Ada                 •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Ada\n  decided: date unknown\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "unknown-undated",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "unknown"
+        }
+      },
+      "expected": {
+        "maker": "Decision maker unknown",
+        "decided": "date unknown",
+        "recent": "  date unknown  Decision maker unknown  •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Decision maker unknown\n  decided: date unknown\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "legacy-seed",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional"
+      },
+      "expected": {
+        "maker": "Decision maker unknown",
+        "decided": "date unknown",
+        "recent": "  date unknown  Decision maker unknown  •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: Decision maker unknown\n  decided: date unknown\n  scope: no location selectors\n  audience: everyone"
+      }
+    },
+    {
+      "name": "terminal-controls",
+      "row": {
+        "id": "dec_0123abcd",
+        "shortId": "0123abcd",
+        "intent": "Keep the historical record",
+        "producerKind": "seed",
+        "userId": "importer",
+        "authorName": "Operational importer",
+        "authorIsSelf": true,
+        "classifiedAt": 1793707200000,
+        "status": "active",
+        "stage": "provisional",
+        "decisionMaker": {
+          "kind": "external",
+          "sourcePrincipalId": "github:ada",
+          "displayName": "A\u001b[2Jda‮\nLovelace"
+        }
+      },
+      "expected": {
+        "maker": "A[2Jda Lovelace",
+        "decided": "date unknown",
+        "recent": "  date unknown  A[2Jda Lovelace     •           Keep the historical record",
+        "show": "[prim] dec_0123abcd — Keep the historical record\n  status: provisional  ·  confidence: high  ·  reversibility: (unset)\n  maker: A[2Jda Lovelace\n  decided: date unknown\n  scope: no location selectors\n  audience: everyone"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "sourceRepository": "campus-ai/prim",
+  "sourceCommit": "2438a817a4da09eaaa991ece0cf70b67e90cba73",
+  "serverCommit": "e5276d5dd4b25727d6ff8018a969a232f8653168",
+  "artifacts": {
+    "validators.mjs": {
+      "sourcePath": "src/generated/cli-http-v1.validators.js",
+      "sha256": "fb2770336bf4667860babaa92692ed463c3d1a388fe9cd5d65a22e6419a74204"
+    },
+    "fixtures.json": {
+      "sourcePath": "contracts/cli-http-v1.fixtures.json",
+      "sha256": "a3c15ce1f34fe77e7c3afd7e14c0602ad866a42a00d1c5277877cd6936af35c4"
+    }
+  }
+}

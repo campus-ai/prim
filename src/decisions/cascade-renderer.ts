@@ -17,6 +17,7 @@ import { renderIdentifier } from "./recent.js";
 import { color, colorForArea, stripAnsi } from "../lib/ansi.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 import type { CascadeNode, CascadeResult } from "./cascade.js";
+import { decisionMakerName, formatHistoricalAdoption } from "./metadata.js";
 
 const DEPENDENTS_INLINE_LIMIT = 5;
 const KNOWLEDGE_INLINE_LIMIT = 4;
@@ -224,7 +225,9 @@ export function renderCascade(result: CascadeResult): string {
   const decisionLine = `• ${idColored}  ${truncate(d.intent, INTENT_TRUNC)}`;
   const fanOutFragment =
     result.fanOut > 0 ? `  ·  ${String(result.fanOut)} decision(s) depend on this` : "";
-  const meta = `  ${terminalSafeLine(d.authorName)} · ${formatDate(d.classifiedAt)}${fanOutFragment}  ·  ${terminalSafeLine(result.reversibility ?? "(unset)")} reversibility`;
+  const date =
+    d.producerKind === "seed" ? formatHistoricalAdoption(d.adoption) : formatDate(d.classifiedAt);
+  const meta = `  ${decisionMakerName(d)} · ${date}${fanOutFragment}  ·  ${terminalSafeLine(result.reversibility ?? "(unset)")} reversibility`;
   lines.push("", decisionLine, meta);
   lines.push("");
   lines.push("dependents");

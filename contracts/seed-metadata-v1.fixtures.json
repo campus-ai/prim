@@ -1,0 +1,787 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "known-exact-day",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1704153600000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "external",
+        "externalMakerPrincipalId": "principal-1",
+        "seedAdoption": {
+          "at": 1704153600000,
+          "qualifier": "exact",
+          "precision": "day"
+        }
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-1",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          }
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1704153600000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "Jan 2, 2024",
+        "cliDateLabel": "2024-01-02"
+      }
+    },
+    {
+      "name": "repeated-principal",
+      "decision": {
+        "_id": "decision-2",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1704153600000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "external",
+        "externalMakerPrincipalId": "principal-1",
+        "seedAdoption": {
+          "at": 1704153600000,
+          "qualifier": "exact",
+          "precision": "day"
+        }
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-1",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          }
+        },
+        "feed": {
+          "id": "decision-2",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1704153600000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "Jan 2, 2024",
+        "cliDateLabel": "2024-01-02"
+      }
+    },
+    {
+      "name": "unknown-maker-dated",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1704164640000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "unknown",
+        "seedAdoption": {
+          "at": 1704164640000,
+          "qualifier": "no_later_than",
+          "precision": "minute"
+        }
+      },
+      "principal": null,
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704164640000,
+            "qualifier": "no_later_than",
+            "precision": "minute"
+          }
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704164640000,
+            "qualifier": "no_later_than",
+            "precision": "minute"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1704164640000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "no later than Jan 2, 2024",
+        "cliDateLabel": "no later than 2024-01-02 03:04 UTC"
+      }
+    },
+    {
+      "name": "known-about-second",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1704164645000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "external",
+        "externalMakerPrincipalId": "principal-1",
+        "seedAdoption": {
+          "at": 1704164645000,
+          "qualifier": "on_or_about",
+          "precision": "second"
+        }
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-1",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704164645000,
+            "qualifier": "on_or_about",
+            "precision": "second"
+          }
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "Ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704164645000,
+            "qualifier": "on_or_about",
+            "precision": "second"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1704164645000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "on or about Jan 2, 2024",
+        "cliDateLabel": "on or about 2024-01-02 03:04:05 UTC"
+      }
+    },
+    {
+      "name": "explicit-unknown-undated",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1793491200000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "unknown"
+      },
+      "principal": null,
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator"
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "authorIsSelf": false,
+          "classifiedAt": 1793491200000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "date unknown",
+        "cliDateLabel": "date unknown"
+      }
+    },
+    {
+      "name": "legacy-seed",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1793491200000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed"
+      },
+      "principal": null,
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator"
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "authorIsSelf": false,
+          "classifiedAt": 1793491200000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "date unknown",
+        "cliDateLabel": "date unknown"
+      }
+    },
+    {
+      "name": "cross-organization-principal",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1793491200000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "external",
+        "externalMakerPrincipalId": "principal-1"
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-2",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator"
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "authorIsSelf": false,
+          "classifiedAt": 1793491200000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "date unknown",
+        "cliDateLabel": "date unknown"
+      }
+    },
+    {
+      "name": "legacy-reference-without-explicit-maker",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1793491200000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "externalMakerPrincipalId": "principal-1"
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-1",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator"
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "authorIsSelf": false,
+          "classifiedAt": 1793491200000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "date unknown",
+        "cliDateLabel": "date unknown"
+      }
+    },
+    {
+      "name": "day-at-dst-boundary",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1710028800000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "unknown",
+        "seedAdoption": {
+          "at": 1710028800000,
+          "qualifier": "exact",
+          "precision": "day"
+        }
+      },
+      "principal": null,
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1710028800000,
+            "qualifier": "exact",
+            "precision": "day"
+          }
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Decision maker unknown",
+          "decisionMaker": {
+            "kind": "unknown"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1710028800000,
+            "qualifier": "exact",
+            "precision": "day"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1710028800000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "Mar 10, 2024",
+        "cliDateLabel": "2024-03-10"
+      }
+    },
+    {
+      "name": "live-decision-compatibility",
+      "decision": {
+        "_id": "decision-1",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1793491200000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "cli"
+      },
+      "principal": null,
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "Operator"
+        },
+        "feed": {
+          "id": "decision-1",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "cli",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "Operator",
+          "authorIsSelf": true,
+          "classifiedAt": 1793491200000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": null,
+        "cliDateLabel": "2026-11-01T00:00:00.000Z"
+      }
+    },
+    {
+      "name": "same-principal-display-variant",
+      "decision": {
+        "_id": "decision-variant",
+        "_creationTime": 1793793600000,
+        "userId": "importer-1",
+        "orgId": "org-1",
+        "sessionId": "seed:run:one",
+        "intent": "Keep historical metadata distinct from import operations",
+        "intentKind": "change",
+        "isDecision": true,
+        "attribution": "user",
+        "alternatives": [],
+        "confidence": "high",
+        "sourceMoveIds": [],
+        "classifierVersion": "seed-golden",
+        "model": "seed-golden",
+        "classifiedAt": 1704153600000,
+        "status": "adopted",
+        "stageChangedAt": 1793491200000,
+        "producerKind": "seed",
+        "seedDecisionMaker": "external",
+        "externalMakerPrincipalId": "principal-1",
+        "seedAdoption": {
+          "at": 1704153600000,
+          "qualifier": "exact",
+          "precision": "day"
+        },
+        "seedMakerDisplayName": "ada"
+      },
+      "principal": {
+        "_id": "principal-1",
+        "_creationTime": 1793793600000,
+        "orgId": "org-1",
+        "sourceNamespace": "primitive.seedpipe",
+        "sourcePrincipalId": "github:ada",
+        "displayName": "Ada",
+        "normalizedName": "ada",
+        "evidenceDigest": "fixture",
+        "recordedAt": 1793793600000,
+        "recordedByUserId": "importer-1"
+      },
+      "importerName": "Operator",
+      "selfUserId": "importer-1",
+      "expected": {
+        "projection": {
+          "authorName": "ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          }
+        },
+        "feed": {
+          "id": "decision-variant",
+          "intent": "Keep historical metadata distinct from import operations",
+          "producerKind": "seed",
+          "isDecision": true,
+          "userId": "importer-1",
+          "authorName": "ada",
+          "decisionMaker": {
+            "kind": "external",
+            "sourcePrincipalId": "github:ada",
+            "displayName": "ada"
+          },
+          "importedAt": 1793793600000,
+          "importedByName": "Operator",
+          "adoption": {
+            "at": 1704153600000,
+            "qualifier": "exact",
+            "precision": "day"
+          },
+          "authorIsSelf": false,
+          "classifiedAt": 1704153600000,
+          "status": "active",
+          "stage": "adopted"
+        },
+        "dateLabel": "Jan 2, 2024",
+        "cliDateLabel": "2024-01-02"
+      }
+    }
+  ]
+}

@@ -784,7 +784,66 @@
             "area": {
               "type": "string"
             },
+            "producerKind": {
+              "type": "string"
+            },
             "authorName": {
+              "type": "string"
+            },
+            "decisionMaker": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "unknown"
+                    }
+                  },
+                  "required": ["kind"],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external"
+                    },
+                    "sourcePrincipalId": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "sourcePrincipalId", "displayName"],
+                  "additionalProperties": {}
+                }
+              ]
+            },
+            "adoption": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "number"
+                },
+                "qualifier": {
+                  "type": "string",
+                  "enum": ["exact", "on_or_about", "no_later_than"]
+                },
+                "precision": {
+                  "type": "string",
+                  "enum": ["day", "minute", "second"]
+                }
+              },
+              "required": ["at", "qualifier", "precision"],
+              "additionalProperties": {}
+            },
+            "importedAt": {
+              "type": "number"
+            },
+            "importedByName": {
               "type": "string"
             },
             "classifiedAt": {
@@ -842,7 +901,66 @@
               "area": {
                 "type": "string"
               },
+              "producerKind": {
+                "type": "string"
+              },
               "authorName": {
+                "type": "string"
+              },
+              "decisionMaker": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "unknown"
+                      }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external"
+                      },
+                      "sourcePrincipalId": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "sourcePrincipalId", "displayName"],
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "adoption": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "number"
+                  },
+                  "qualifier": {
+                    "type": "string",
+                    "enum": ["exact", "on_or_about", "no_later_than"]
+                  },
+                  "precision": {
+                    "type": "string",
+                    "enum": ["day", "minute", "second"]
+                  }
+                },
+                "required": ["at", "qualifier", "precision"],
+                "additionalProperties": {}
+              },
+              "importedAt": {
+                "type": "number"
+              },
+              "importedByName": {
                 "type": "string"
               },
               "classifiedAt": {
@@ -1587,6 +1705,62 @@
             },
             "authorName": {
               "type": "string"
+            },
+            "decisionMaker": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "unknown"
+                    }
+                  },
+                  "required": ["kind"],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "external"
+                    },
+                    "sourcePrincipalId": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "sourcePrincipalId", "displayName"],
+                  "additionalProperties": {}
+                }
+              ]
+            },
+            "adoption": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "number"
+                },
+                "qualifier": {
+                  "type": "string",
+                  "enum": ["exact", "on_or_about", "no_later_than"]
+                },
+                "precision": {
+                  "type": "string",
+                  "enum": ["day", "minute", "second"]
+                }
+              },
+              "required": ["at", "qualifier", "precision"],
+              "additionalProperties": {}
+            },
+            "importedAt": {
+              "type": "number"
+            },
+            "importedByName": {
+              "type": "string"
             }
           },
           "required": [
@@ -1664,7 +1838,66 @@
               "area": {
                 "type": "string"
               },
+              "producerKind": {
+                "type": "string"
+              },
               "authorName": {
+                "type": "string"
+              },
+              "decisionMaker": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "unknown"
+                      }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external"
+                      },
+                      "sourcePrincipalId": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "sourcePrincipalId", "displayName"],
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "adoption": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "number"
+                  },
+                  "qualifier": {
+                    "type": "string",
+                    "enum": ["exact", "on_or_about", "no_later_than"]
+                  },
+                  "precision": {
+                    "type": "string",
+                    "enum": ["day", "minute", "second"]
+                  }
+                },
+                "required": ["at", "qualifier", "precision"],
+                "additionalProperties": {}
+              },
+              "importedAt": {
+                "type": "number"
+              },
+              "importedByName": {
                 "type": "string"
               },
               "classifiedAt": {
@@ -1706,7 +1939,66 @@
               "area": {
                 "type": "string"
               },
+              "producerKind": {
+                "type": "string"
+              },
               "authorName": {
+                "type": "string"
+              },
+              "decisionMaker": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "unknown"
+                      }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external"
+                      },
+                      "sourcePrincipalId": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "sourcePrincipalId", "displayName"],
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "adoption": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "number"
+                  },
+                  "qualifier": {
+                    "type": "string",
+                    "enum": ["exact", "on_or_about", "no_later_than"]
+                  },
+                  "precision": {
+                    "type": "string",
+                    "enum": ["day", "minute", "second"]
+                  }
+                },
+                "required": ["at", "qualifier", "precision"],
+                "additionalProperties": {}
+              },
+              "importedAt": {
+                "type": "number"
+              },
+              "importedByName": {
                 "type": "string"
               },
               "classifiedAt": {
@@ -2545,6 +2837,62 @@
                 "type": "string"
               },
               "authorName": {
+                "type": "string"
+              },
+              "decisionMaker": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "unknown"
+                      }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "external"
+                      },
+                      "sourcePrincipalId": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["kind", "sourcePrincipalId", "displayName"],
+                    "additionalProperties": {}
+                  }
+                ]
+              },
+              "adoption": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "type": "number"
+                  },
+                  "qualifier": {
+                    "type": "string",
+                    "enum": ["exact", "on_or_about", "no_later_than"]
+                  },
+                  "precision": {
+                    "type": "string",
+                    "enum": ["day", "minute", "second"]
+                  }
+                },
+                "required": ["at", "qualifier", "precision"],
+                "additionalProperties": {}
+              },
+              "importedAt": {
+                "type": "number"
+              },
+              "importedByName": {
                 "type": "string"
               },
               "authorIsSelf": {
