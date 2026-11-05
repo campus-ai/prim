@@ -242,7 +242,7 @@
           "status": "active",
           "stage": "adopted"
         },
-        "dateLabel": "no later than Jan 2, 2024, 3:04 AM UTC",
+        "dateLabel": "no later than Jan 2, 2024",
         "cliDateLabel": "no later than 2024-01-02 03:04 UTC"
       }
     },
@@ -329,7 +329,7 @@
           "status": "active",
           "stage": "adopted"
         },
-        "dateLabel": "on or about Jan 2, 2024, 3:04:05 AM UTC",
+        "dateLabel": "on or about Jan 2, 2024",
         "cliDateLabel": "on or about 2024-01-02 03:04:05 UTC"
       }
     },
