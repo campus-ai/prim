@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   const isCodexContextEvent =
     agent === "codex" &&
     (parsed.hook_event_name === "UserPromptSubmit" || parsed.hook_event_name === "Stop");
-  if (!isRepoActiveForCapture(cwd)) {
+  if (!isRepoActiveForCapture(cwd, { userPrompt: parsed.hook_event_name === "UserPromptSubmit" })) {
     if (isClaudeStop || isCodexContextEvent || agent === "cursor") {
       await emitOutput(cursorPassiveOutput());
     }

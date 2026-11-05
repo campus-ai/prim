@@ -16,6 +16,7 @@ import {
   type WelcomeState,
   formatWelcome,
   resolveWelcomeAgent,
+  sampleTeamDecisions,
   seedGuidanceFor,
   welcomeJson,
   welcomeStateFromRecent,
@@ -253,5 +254,53 @@ describe("welcomeJson", () => {
     );
     expect(seedGuidanceFor(undefined)).toContain("once your agent's prim hooks are active");
     expect(seedGuidanceFor("hermes")).toContain("approve the prim hooks when Hermes prompts");
+  });
+});
+
+describe("sampleTeamDecisions", () => {
+  const row = (
+    author: string,
+    at: number,
+    extra: Partial<DecisionFeedRow> = {},
+  ): DecisionFeedRow => ({
+    id: `id${at}`,
+    shortId: `0000000${at}`.slice(-8),
+    intent: `Decision ${at}`,
+    rationale: undefined,
+    area: undefined,
+    producerKind: undefined,
+    userId: author,
+    authorName: author,
+    authorIsSelf: false,
+    classifiedAt: Date.UTC(2026, 10, at, 12),
+    status: "active",
+    ...extra,
+  });
+
+  it("spreads five picks across authors, newest first, skipping superseded", () => {
+    const rows = [
+      row("Ann", 9),
+      row("Ann", 8),
+      row("Ann", 7),
+      row("Ann", 6),
+      row("Bo", 5, { status: "superseded" }),
+      row("Bo", 4),
+      row("Cy", 3, { area: "auth", intent: "Use [WorkOS](x)\nonly" }),
+      row("Ann", 2),
+    ];
+    const picked = sampleTeamDecisions(rows);
+    expect(picked.map((entry) => entry.intent)).toEqual([
+      "Decision 9",
+      "Decision 8",
+      "Decision 7",
+      "Decision 4",
+      "Use \\[WorkOS\\](x) only",
+    ]);
+    expect(picked[4]).toMatchObject({
+      author: "Cy",
+      area: "auth",
+      date: "Nov 3",
+      url: "https://app.getprimitive.ai/decisions/dec_00000003",
+    });
   });
 });

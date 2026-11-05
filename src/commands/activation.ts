@@ -12,6 +12,7 @@ import { repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
+import { clearDemoPause } from "../lib/demo-pause.js";
 import {
   MANAGED_GIT_HOOK_NAMES,
   type ManagedGitHookName,
@@ -166,6 +167,8 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
       }
     }
     phase = "local activation";
+    // An explicit enable/disable wins over a demo pause's saved value.
+    clearDemoPause(root);
     setRepoActive(root, active);
     // Disabled, commits are not expected to reach prim; the next enable (or
     // SessionStart once re-activated) starts a fresh expectation.

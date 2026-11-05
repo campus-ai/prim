@@ -31,6 +31,13 @@ import { gitToplevel } from "../lib/git.js";
 import { printJson } from "../output.js";
 import { installClaudePlugin, statusClaudePlugin, uninstallClaudePlugin } from "./claude-plugin.js";
 import { cursorConfigDirectory } from "./cursor-install.js";
+import {
+  WELCOME_SKILL_SOURCE,
+  codexWelcomeSkillPath,
+  installWelcomeSkill,
+  uninstallWelcomeSkill,
+  welcomeSkillStatus,
+} from "./welcome-skill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -304,23 +311,28 @@ export function hasUsableCursorSkill(projectRoot: string): boolean {
 // honors HERMES_HOME like `prim hermes install` does.
 export function userTargetFor(agent: string): string | null {
   if (agent === "claude") return join(homedir(), ".claude", "CLAUDE.md");
-  if (agent === "codex") return join(homedir(), ".codex", "AGENTS.md");
+  if (agent === "codex") {
+    const home = process.env.CODEX_HOME?.trim()
+      ? resolve(process.env.CODEX_HOME)
+      : join(homedir(), ".codex");
+    return join(home, "AGENTS.md");
+  }
   if (agent === "hermes") {
     return join(process.env.HERMES_HOME ?? join(homedir(), ".hermes"), ".hermes.md");
   }
   return null;
 }
 
-export function loadSkill(): string {
-  // Walk up from this module looking for SKILL.md so dev (src/commands/) and
-  // prod (bundled dist/) both resolve to the package's SKILL.md.
+export function loadSkill(file = "SKILL.md"): string {
+  // Walk up from this module looking for the file so dev (src/commands/) and
+  // prod (bundled dist/) both resolve to the package's copy.
   let dir = __dirname;
   while (dir !== dirname(dir)) {
-    const p = resolve(dir, "SKILL.md");
+    const p = resolve(dir, file);
     if (existsSync(p)) return readFileSync(p, "utf-8");
     dir = dirname(dir);
   }
-  throw new Error("SKILL.md not found in package");
+  throw new Error(`${file} not found in package`);
 }
 
 export function detectTargets(cwd: string): string[] {
@@ -357,7 +369,7 @@ export function removeBlock(existing: string): string | null {
 }
 
 export function atomicWrite(target: string, content: string): void {
-  atomicWriteFile(target, content);
+  atomicWriteFile(target, content, { ensureParent: true });
 }
 
 function resolveTarget(
@@ -422,15 +434,22 @@ export function runInstall(
   const eol = existing ? detectNewline(existing) : "\n";
   const block = composeBlock(loadSkill(), eol);
   const next = applyBlock(existing, block, eol);
+  const installCodexWelcome = () =>
+    opts.agent === "codex" && opts.scope === "user" && !opts.target
+      ? installWelcomeSkill(codexWelcomeSkillPath(), loadSkill(WELCOME_SKILL_SOURCE), opts.dryRun)
+      : 0;
 
   if (next === existing) {
+    if (installCodexWelcome() !== 0) return 1;
     console.log("No changes — skill block already up to date.");
     return 0;
   }
   if (opts.dryRun) {
+    if (installCodexWelcome() !== 0) return 1;
     process.stdout.write(createPatch(target, existing, next, "current", "proposed"));
     return 0;
   }
+  if (installCodexWelcome() !== 0) return 1;
   atomicWrite(target, next);
   console.log(`Wrote ${Buffer.byteLength(next)} bytes to ${target}`);
   return 0;
@@ -445,6 +464,8 @@ export function runUninstall(
     if (!validCursorSkillScope(opts.scope)) return 1;
     return uninstallCursorSkill(cwd, opts.scope);
   }
+  if (opts.agent === "codex" && opts.scope === "user" && !opts.target)
+    if (uninstallWelcomeSkill(codexWelcomeSkillPath()) !== 0) return 1;
 
   const target = resolveTarget(cwd, opts);
   if (target === null) return 1;
@@ -485,14 +506,23 @@ export function runStatus(
   if (target === null) return 1;
 
   const fileExists = existsSync(target);
-  let installed = false;
+  let mainInstalled = false;
   if (fileExists) {
     const content = readFileSync(target, "utf-8");
-    installed = content.includes(SKILL_BEGIN) && content.includes(SKILL_END);
+    mainInstalled = content.includes(SKILL_BEGIN) && content.includes(SKILL_END);
   }
+  const welcome =
+    opts.agent === "codex" && opts.scope === "user" && !opts.target
+      ? welcomeSkillStatus(codexWelcomeSkillPath())
+      : undefined;
+  const installed = mainInstalled && (!welcome || welcome.installed);
 
   if (opts.json) {
-    printJson({ installed, target });
+    printJson({
+      installed,
+      target,
+      ...(welcome ? { welcomeSkill: welcome.installed } : {}),
+    });
     return installed ? 0 : 1;
   }
 
@@ -503,6 +533,10 @@ export function runStatus(
   if (installed) {
     console.log(`PRIM SKILL v1 installed at ${target}`);
     return 0;
+  }
+  if (mainInstalled && welcome && !welcome.installed) {
+    console.log(`No intact prim-welcome skill at ${welcome.target}`);
+    return 1;
   }
   console.log(`No PRIM SKILL block at ${target}`);
   return 1;

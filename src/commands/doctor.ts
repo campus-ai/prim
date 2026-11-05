@@ -65,6 +65,7 @@ import {
   deliveryBacklogSummary,
   formatPendingBacklog,
 } from "../lib/delivery-backlog.js";
+import { healDemoPause, readDemoPause } from "../lib/demo-pause.js";
 import {
   type ManagedGitHookName,
   type ManagedHookInspection,
@@ -107,6 +108,14 @@ const EXIT_UNHEALTHY = 1;
 
 export type CheckStatus = "ok" | "warn" | "fail";
 export type Check = { name: string; status: CheckStatus; detail: string };
+export type CaptureReadiness = {
+  agent: "claude" | "codex" | "cursor" | "hermes";
+  state: "off" | "paused" | "unverified" | "observed" | "blocked";
+  hooks: "ready" | "unverified" | "blocked";
+  resumeOnNextPrompt?: boolean;
+  observedAt?: number;
+  detail: string;
+};
 
 export type DoctorVerdict = {
   json: { ok: boolean; status: CheckStatus; checks: Check[] };
@@ -815,10 +824,7 @@ export function classifyCodexHooks(
   }
   return {
     name: "codex-hooks",
-    status:
-      capturedAt === undefined || host?.trust === "review-required" || host?.trust === "disabled"
-        ? "warn"
-        : "ok",
+    status: capturedAt === undefined || host?.trust !== "trusted" ? "warn" : "ok",
     detail:
       host && host.trust !== "unknown"
         ? `installed; ${capturedAt === undefined ? "conversation capture unverified" : `conversation capture observed ${new Date(capturedAt).toISOString()}`}; ${host.trust === "trusted" ? "Codex reports hooks enabled and trusted" : codexHostGuidance(host)}`
@@ -1195,12 +1201,77 @@ function checkPreflightHosts(): Check[] {
   });
 }
 
+/** A live onboarding-demo pause is expected, not broken: say so. An expired
+ * one is lifted here rather than reported. */
+export function checkDemoPause(root: string | null, now = Date.now()): Check[] {
+  const pause = root ? readDemoPause(root) : undefined;
+  if (!root || !pause || healDemoPause(root, pause, { now })) return [];
+  const minutes = String(Math.ceil((pause.until - now) / 60_000));
+  return [
+    {
+      name: "demo-pause",
+      status: "warn",
+      detail: pause.ending
+        ? `capture resumes with your next prompt (onboarding demo finished), or in ${minutes}m`
+        : `capture paused for the onboarding demo; it resumes when the demo ends, or in ${minutes}m`,
+    },
+  ];
+}
+
+/** Agent-specific capture evidence for setup and the welcome skill. */
+export function captureReadiness(
+  agent: CaptureReadiness["agent"],
+  checks: Check[],
+  root: string | null,
+  now = Date.now(),
+): CaptureReadiness {
+  const name = agent === "claude" ? "feedback-hooks" : `${agent}-hooks`;
+  const check = checks.find((item) => item.name === name);
+  const hooks: CaptureReadiness["hooks"] =
+    check?.status === "fail"
+      ? "blocked"
+      : check?.status === "ok" && !check.detail.startsWith("not installed")
+        ? "ready"
+        : "unverified";
+  const observedAt = root
+    ? lastConversationCaptured(root, agent === "claude" ? "claude_code" : agent)
+    : undefined;
+  const pause = root ? readDemoPause(root) : undefined;
+  const active = root ? isRepoActiveForCapture(root) : false;
+  const state: CaptureReadiness["state"] =
+    pause && pause.until > now
+      ? "paused"
+      : !active
+        ? "off"
+        : hooks === "blocked"
+          ? "blocked"
+          : hooks === "ready" && observedAt !== undefined
+            ? "observed"
+            : "unverified";
+  return {
+    agent,
+    state,
+    hooks,
+    ...(state === "paused" ? { resumeOnNextPrompt: pause?.ending === true } : {}),
+    ...(observedAt === undefined ? {} : { observedAt }),
+    detail:
+      state === "paused"
+        ? pause?.ending
+          ? "demo finished; capture resumes on the next trusted user-prompt hook"
+          : "capture paused for the fictional demo"
+        : state === "off"
+          ? "capture is disabled for this repository"
+          : (check?.detail ?? "agent hook execution has not been verified"),
+  };
+}
+
 async function independentChecks(): Promise<{ before: Check[]; after: Check[] }> {
   const backend = await checkBackend();
   const firing = inspectFiringHere();
   return {
     before: [checkAuth()],
     after: [
+      ...checkDemoPause(gitToplevel()),
       await checkJournalOrganization(),
       checkFeedbackHooks(),
       ...(await checkAgentHooks()),
@@ -1245,6 +1316,13 @@ function icon(status: CheckStatus): string {
 async function runDoctor(options: DoctorOptions, probes: DoctorProbes): Promise<void> {
   const checks = await collectChecks(options, probes);
   const { json, exitCode } = classifyDoctor(checks);
+  const capture =
+    options.agent === "claude" ||
+    options.agent === "codex" ||
+    options.agent === "cursor" ||
+    options.agent === "hermes"
+      ? captureReadiness(options.agent, checks, gitToplevel())
+      : undefined;
 
   const headline =
     json.status === "ok" ? "✓ healthy" : json.status === "warn" ? "⚠ degraded" : "✗ unhealthy";
@@ -1254,7 +1332,7 @@ async function runDoctor(options: DoctorOptions, probes: DoctorProbes): Promise<
     process.stderr.write(`  ${icon(c.status)} ${c.name.padEnd(13)} ${c.detail}\n`);
   }
 
-  console.log(JSON.stringify(json, null, 2));
+  console.log(JSON.stringify({ ...json, ...(capture ? { capture } : {}) }, null, 2));
   if (exitCode !== 0 && !process.exitCode) {
     process.exitCode = exitCode;
   }

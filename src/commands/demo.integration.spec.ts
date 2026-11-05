@@ -795,3 +795,263 @@ describe("packaged author story", () => {
     ]);
   });
 });
+
+describe("welcome skill tour", () => {
+  async function welcome(f: ReturnType<typeof fixture>, args: string[]) {
+    try {
+      return { code: 0, ...(await f.run(["demo", ...args])) };
+    } catch (error) {
+      const failed = error as { code: number; stdout: string };
+      return { code: failed.code, json: JSON.parse(failed.stdout) };
+    }
+  }
+  const config = (f: ReturnType<typeof fixture>, key: string) => {
+    try {
+      return execFileSync("git", ["config", "--local", "--get", key], {
+        cwd: f.repo,
+        env: f.env,
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const event = (f: ReturnType<typeof fixture>, session: string, name: string, extra = {}) =>
+    f.hook("prim-hook", "claude_code", {
+      ...f.envelope("claude_code", "echo work", session, name),
+      ...extra,
+    });
+  const captured = (f: ReturnType<typeof fixture>) => existsSync(join(f.config, "moves"));
+
+  it("keeps the whole story out of capture, then captures the same session's next prompt", async () => {
+    const f = fixture();
+    const { queues } = await serveStory(f);
+    const session = "welcome-session";
+
+    const started = await welcome(f, ["start"]);
+    expect(started.json).toEqual({
+      stage: "prompt",
+      story: { org: "Example Team", task: expect.stringContaining("including name and email") },
+    });
+    expect(config(f, "prim.active")).toBe("false");
+    await event(f, session, "UserPromptSubmit", { prompt: started.json.story.task });
+    const blocked = await welcome(f, ["attempt"]);
+    expect(blocked.json).toEqual({
+      stage: "conflict",
+      conflict: {
+        author: "Avery",
+        date: "October, 8 2026",
+        intent: expect.stringContaining("Exclude user contact information"),
+        rationale: expect.stringContaining("data-minimization"),
+        file: "customers.ts",
+        code: DEMO_INITIAL.trimEnd(),
+      },
+    });
+    expect((await welcome(f, ["resolve", "--choice", "supersede"])).json).toMatchObject({
+      stage: "error",
+      reason: "invalid",
+    });
+    await event(f, session, "UserPromptSubmit", { prompt: "Support needs it" });
+    const done = await welcome(f, [
+      "resolve",
+      "--choice",
+      "supersede",
+      "--reason",
+      "Support needs it",
+    ]);
+    expect(done.json).toEqual({
+      stage: "completed",
+      outcome: {
+        choice: "supersede",
+        reason: "Support needs it",
+        author: "Avery",
+        recipient: "avery@example.invalid",
+        email: "queued",
+      },
+      diff: expect.stringContaining('+ export const customerCsv = "name,email'),
+    });
+    expect(queues()).toBe(1);
+    for (const output of [started, blocked, done])
+      expect(Object.keys(output.json)).not.toContain("presentation");
+
+    // The resolve call's own hook and the reply reporting it stay uncaptured.
+    await event(f, session, "PostToolUse", { tool_response: JSON.stringify(done.json) });
+    await event(f, session, "Stop", { last_assistant_message: "Resolved. Support needs it" });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+    expect(existsSync(join(f.config, "demo", "excluded-sessions"))).toBe(false);
+
+    // The user's next prompt lifts the pause and is captured in this session.
+    await event(f, session, "UserPromptSubmit", { prompt: "real work" });
+    expect(config(f, "prim.active")).toBe("true");
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    expect(captured(f)).toBe(true);
+  });
+
+  it("retries start without replacing its pause or capturing the fictional task", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    const first = await welcome(f, ["start"]);
+    const pause = config(f, "prim.demoPause");
+    const second = await welcome(f, ["start"]);
+    expect(second.json).toEqual(first.json);
+    expect(config(f, "prim.demoPause")).toBe(pause);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
+    await event(f, "retry-session", "UserPromptSubmit", { prompt: first.json.story.task });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+    expect((await welcome(f, ["resolve", "--choice", "adhere"])).json.stage).toBe("completed");
+    expect(captured(f)).toBe(false);
+    await event(f, "retry-session", "UserPromptSubmit", { prompt: "real task" });
+    expect(captured(f)).toBe(true);
+  });
+
+  it("pauses an existing tour if capture was enabled since its first start", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    execFileSync("git", ["config", "--local", "prim.active", "false"], {
+      cwd: f.repo,
+      env: f.env,
+    });
+    const first = await welcome(f, ["start"]);
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    execFileSync("git", ["config", "--local", "prim.active", "true"], {
+      cwd: f.repo,
+      env: f.env,
+    });
+
+    expect((await welcome(f, ["start"])).json).toEqual(first.json);
+    expect(config(f, "prim.active")).toBe("false");
+    expect(config(f, "prim.demoPause")).toMatch(/ true active$/u);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
+    await event(f, "late-enable-session", "UserPromptSubmit", { prompt: first.json.story.task });
+    expect(captured(f)).toBe(false);
+  });
+
+  it("keeps no-ID attempt and resolve in the repository that started the tour", async () => {
+    const f = fixture();
+    await serveStory(f);
+    await welcome(f, ["start"]);
+    const pause = config(f, "prim.demoPause");
+    const other = join(f.root, "other-repo");
+    mkdirSync(other);
+    execFileSync("git", ["init", "-q", other], { env: f.env });
+
+    await expect(
+      exec(process.execPath, [cli, "demo", "attempt"], { cwd: other, env: f.env }),
+    ).rejects.toMatchObject({ stdout: expect.stringContaining('"reason":"not-started"') });
+    await expect(
+      exec(process.execPath, [cli, "demo", "resolve", "--choice", "adhere"], {
+        cwd: other,
+        env: f.env,
+      }),
+    ).rejects.toMatchObject({ stdout: expect.stringContaining('"reason":"not-started"') });
+    expect(config(f, "prim.demoPause")).toBe(pause);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+  });
+
+  it("rebinds an ending pause when a skipped tour restarts before the next prompt", async () => {
+    const f = fixture();
+    await serveStory(f);
+    await welcome(f, ["start"]);
+    const first = config(f, "prim.demoPause");
+    await welcome(f, ["skip"]);
+    expect(config(f, "prim.demoPause")).toMatch(/ ending$/u);
+    const restarted = await welcome(f, ["start"]);
+    expect(restarted.json.stage).toBe("prompt");
+    expect(config(f, "prim.demoPause")).not.toBe(first);
+    expect(config(f, "prim.demoPause")).toMatch(/ true active$/u);
+    await event(f, "restart-session", "UserPromptSubmit", { prompt: restarted.json.story.task });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+  });
+
+  it.each(["adhere", "supersede"] as const)(
+    "resumes Codex capture on the next prompt after a %s welcome demo",
+    async (choice) => {
+      const f = fixture();
+      await serveStory(f);
+      const session = "codex-welcome-session";
+      const prompt = async (value: string) =>
+        f.hook("prim-hook", "codex", {
+          ...f.envelope("codex", "echo work", session, "UserPromptSubmit"),
+          prompt: value,
+        });
+      const started = await welcome(f, ["start"]);
+      await prompt(started.json.story.task);
+      expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+      if (choice === "supersede") await prompt("Support needs email exports");
+      expect(
+        (
+          await welcome(f, [
+            "resolve",
+            "--choice",
+            choice,
+            ...(choice === "supersede" ? ["--reason", "Support needs email exports"] : []),
+          ])
+        ).json.stage,
+      ).toBe("completed");
+      expect(config(f, "prim.active")).toBe("false");
+      expect(captured(f)).toBe(false);
+      await prompt("real Codex work");
+      expect(config(f, "prim.active")).toBe("true");
+      expect(captured(f)).toBe(true);
+    },
+  );
+
+  it("ends the pause on skip, stops the story if capture comes back, and types errors", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    expect((await welcome(f, ["attempt"])).json).toEqual({
+      stage: "error",
+      reason: "not-started",
+    });
+
+    await welcome(f, ["start"]);
+    expect((await welcome(f, ["skip"])).json.stage).toBe("skipped");
+    expect(config(f, "prim.demoPause")).toMatch(/ ending$/u);
+    await event(f, "s", "UserPromptSubmit", { prompt: "next" });
+    expect(config(f, "prim.active")).toBe("true");
+    expect(JSON.parse(readFileSync(join(f.config, "demo", "onboarding.json"), "utf8"))).toEqual({
+      outcome: "skipped",
+    });
+
+    await welcome(f, ["start"]);
+    expect(await welcome(f, ["resolve", "--choice", "adhere"])).toMatchObject({
+      code: 1,
+      json: { stage: "error", reason: "invalid", detail: expect.any(String) },
+    });
+    execFileSync("git", ["config", "prim.active", "true"], { cwd: f.repo, env: f.env });
+    expect(await welcome(f, ["attempt"])).toMatchObject({
+      code: 1,
+      json: { stage: "error", reason: "repo-active" },
+    });
+    expect(requests).not.toContain("/api/cli/demo/check");
+  });
+
+  it("tolerates corrupt runs and reuses an unfinished tour", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    mkdirSync(join(f.config, "demo", "runs"), { recursive: true });
+    writeFileSync(
+      join(f.config, "demo", "runs", "00000000-0000-4000-8000-000000000000.json"),
+      "corrupt",
+    );
+    expect((await welcome(f, ["skip"])).json.stage).toBe("skipped");
+    execFileSync("git", ["config", "--unset", "prim.active"], { cwd: f.repo, env: f.env });
+    await welcome(f, ["start"]);
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    await welcome(f, ["start"]);
+    expect(requests.filter((path) => path === "/api/cli/demo/skip")).toHaveLength(0);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+    const done = await welcome(f, ["resolve", "--choice", "adhere"]);
+    expect(done.json).toMatchObject({
+      stage: "completed",
+      outcome: { choice: "adhere" },
+      diff: expect.stringContaining('+ export const customerCsv = "name\\nAvery"'),
+    });
+    expect(config(f, "prim.active")).toBeUndefined();
+  });
+});

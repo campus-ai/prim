@@ -47,7 +47,8 @@ const gitMock = (opts: { flag?: string; root?: string }): void => {
   mockedExecFileSync.mockImplementation(((_c: string, args: string[]): string => {
     if (args[0] === "config") {
       if (opts.flag === undefined) throw new Error("unset");
-      return `${opts.flag}\n`;
+      // The capture gate reads every prim key at once: git prints "key value".
+      return args.includes("--get-regexp") ? `prim.active ${opts.flag}\n` : `${opts.flag}\n`;
     }
     if (args[0] === "rev-parse") {
       if (opts.root === undefined) throw new Error("not a git repository");

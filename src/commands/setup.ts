@@ -26,20 +26,27 @@
 
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import type { Command } from "commander";
 import { onboardingFinished } from "../demo/state.js";
+import { packageVersion } from "../lib/bin-path.js";
+import { isNonInteractive } from "../lib/confirmation.js";
 import { gitHooksMode, resolveEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { printJson } from "../output.js";
+import { welcomeSkillPathFor } from "./claude-plugin.js";
 import {
   EXIT_GLOBAL_HOOKS_NOT_INSTALLED,
   type GlobalHooksPlan,
   globalHooksPathIsPrims,
   planGlobalHooks,
 } from "./hooks.js";
+import { userTargetFor } from "./skill.js";
+import { codexWelcomeSkillPath } from "./welcome-skill.js";
 
 const EXIT_INCOMPLETE = 1;
+const GITHUB_CONNECT_TIMEOUT_MS = 90_000;
 const EXIT_USAGE = 2;
 // Marks every one of setup's child steps. Setup starts or stops the daemon
 // itself, so none of its steps starts an implicit daemon upgrade. That is all
@@ -204,7 +211,11 @@ export function planSetupSteps(opts: {
   return steps;
 }
 
-type RunFn = (args: string[], capture?: boolean) => { code: number; stdout: string };
+type RunFn = (
+  args: string[],
+  capture?: boolean,
+  timeoutMs?: number,
+) => { code: number; stdout: string };
 
 export type SetupCommandDependencies = {
   run?: RunFn;
@@ -439,6 +450,7 @@ export function registerSetupCommand(
     .option("--details", "show full human installation diagnostics on STDERR")
     .option("--skip-demo", "skip the optional author story and remember that choice")
     .action((opts: SetupCommandOptions) => {
+      const setupAt = Date.now();
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
       // a bare `prim setup` wires the integration matching the calling agent.
@@ -476,18 +488,21 @@ export function registerSetupCommand(
 
       const run =
         dependencies.run ??
-        ((args: string[], capture = false): { code: number; stdout: string } => {
+        ((
+          args: string[],
+          capture = false,
+          timeoutMs?: number,
+        ): { code: number; stdout: string } => {
           // Keep auth/confirmation prompts live on STDERR. Only consume the
           // installation steps' redundant STDOUT; welcome/demo own their payloads.
           const childArgs = opts.details ? args.filter((arg) => arg !== "--compact") : args;
-          const r = spawnSync(
-            process.execPath,
-            [self, ...childArgs],
-            setupStepSpawnOptions(capture, process.env, {
+          const r = spawnSync(process.execPath, [self, ...childArgs], {
+            ...setupStepSpawnOptions(capture, process.env, {
               startsDaemon: opts.daemon,
               compact: true,
             }),
-          );
+            timeout: timeoutMs,
+          });
           if (!capture && r.status !== 0 && r.stdout) process.stderr.write(r.stdout);
           if (r.error) process.stderr.write(`[prim] ${r.error.message}\n`);
           return {
@@ -606,6 +621,26 @@ export function registerSetupCommand(
         }
       }
 
+      // Claude Code and user-scope Codex sessions hand off to prim-welcome.
+      // A person at a terminal keeps the earlier welcome and tour.
+      const welcomeHandoff =
+        scope === "user" &&
+        ((agent === "claude" && (opts.agent === "claude" || Boolean(process.env.CLAUDECODE))) ||
+          (agent === "codex" && Boolean(process.env.CODEX_THREAD_ID)));
+
+      // Connect this repository to GitHub before activation needs it. The
+      // setup request ("set up Primitive for this repo") is the consent.
+      // Bounded: an install the user can only request (not approve) would
+      // otherwise hold setup for the intent's whole lifetime. A pending
+      // connection fails activation below, with its remedy, as on prod.
+      if (welcomeHandoff && gitToplevel() && !isNonInteractive(globals)) {
+        note("GitHub · connecting this repository (finish in your browser)…");
+        results.github =
+          run(["github", "connect"], false, GITHUB_CONNECT_TIMEOUT_MS).code === 0
+            ? "ok"
+            : "skipped";
+      }
+
       // Activation must observe and repair the actual final hook state, including
       // migration. It is required even when --no-daemon omits doctor.
       const enableStep = setupSteps.find((candidate) => candidate.key === "enable");
@@ -635,6 +670,58 @@ export function registerSetupCommand(
             : health?.status === "warn"
               ? "warn"
               : "ok";
+      }
+
+      // The agent hands off to prim-welcome, which owns everything the
+      // user reads from here: explanation, the demo (which pauses capture while
+      // it runs), and the handoff. `demo` says whether to offer it.
+      if (welcomeHandoff) {
+        const welcomeSkill =
+          agent === "codex" ? codexWelcomeSkillPath() : welcomeSkillPathFor(process.cwd(), scope);
+        const mainSkill =
+          agent === "codex"
+            ? userTargetFor("codex")
+            : join(homedir(), ".claude", "skills", "prim", "SKILL.md");
+        const failed = Object.keys(results).filter((key) => results[key] === "failed");
+        if (failed.length === 0 && opts.skipDemo && run(["demo", "skip"]).code !== 0)
+          note("demo · could not remember skip; installation remains configured");
+        let demoDone = false;
+        try {
+          demoDone = onboardingFinished();
+        } catch {
+          // Unreadable state is not proof the demo was seen.
+        }
+        note(
+          failed.length === 0
+            ? `setup complete · ${welcomeSkill}`
+            : `setup incomplete (failed: ${failed.join(", ")})`,
+        );
+        printJson({
+          setup: true,
+          status: failed.length ? "incomplete" : "complete",
+          steps: results,
+          ...(health ? { health } : {}),
+          readiness: {
+            installation: failed.length ? "incomplete" : "installed",
+            health: results.health ?? "not-checked",
+            passiveCapture: "not-verified",
+          },
+          ...(failed.length
+            ? {}
+            : {
+                welcomeSkill,
+                mainSkill,
+                agent,
+                setupAt,
+                prim: primCommand(),
+                demo: demoDone ? "done" : "due",
+                // For agents following the earlier setup prompt, which expects
+                // setup to say what comes next. Remove with the old fields.
+                instructions: "Read the file at welcomeSkill and follow it.",
+              }),
+        });
+        exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
+        return;
       }
 
       // Final · welcome — its output (orientation + any seeding guidance)
@@ -738,6 +825,22 @@ export function registerSetupCommand(
         });
       exit(failed.length === 0 ? 0 : EXIT_INCOMPLETE);
     });
+}
+
+/**
+ * The exact command the welcome skill runs prim with. An installed package
+ * (npx or npm) pins this version through npx, which setup's allow-rule
+ * covers; a local checkout runs by absolute path, so development builds test
+ * themselves.
+ */
+export function primCommand(
+  argv: string[] = process.argv,
+  version: string | null = packageVersion(),
+): string {
+  const script = resolve(argv[1]);
+  if (version && script.includes(`${sep}node_modules${sep}`))
+    return `npx --yes @primitive.ai/prim@${version}`;
+  return [process.execPath, script].map((part) => `'${part.replaceAll("'", "'\\''")}'`).join(" ");
 }
 
 /** Preserve one machine-readable setup result while children narrate on STDERR. */

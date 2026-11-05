@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 import { diffLines } from "diff";
@@ -13,17 +13,20 @@ import {
   RUN_ID,
   demoCommand,
   demoDiagnosticCommand,
+  demoDirectory,
   demoResumeCommand,
   demoWelcomeCommand,
   exclusionPath,
   finishOnboarding,
   lockRun,
   lockRunAsync,
+  onboardingFinished,
   pendingRuns,
   preparationKey,
   prepareRun,
   readDemoJson,
   readRun,
+  runIds,
   saveRun,
 } from "../demo/state.js";
 import {
@@ -36,9 +39,18 @@ import {
   DEMO_TASK,
 } from "../demo/story.js";
 import type { Agent } from "../hooks/agent.js";
+import { isRepoActiveForCapture } from "../lib/activation.js";
 import { bold, color } from "../lib/ansi.js";
 import { codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import { isNonInteractive } from "../lib/confirmation.js";
+import {
+  endDemoPause,
+  extendDemoPause,
+  pauseCaptureForDemo,
+  readDemoPause,
+} from "../lib/demo-pause.js";
+import { withFileLock } from "../lib/file-lock.js";
+import { gitToplevel } from "../lib/git.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 const printJson = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -76,6 +88,9 @@ function consumeAcknowledgment(
   choice?: DemoChoice,
   reason?: string,
 ): string | undefined {
+  // The tour paused capture, so the story cannot reach it. Recheck on every
+  // step: an expired pause or an explicit enable would capture the rest.
+  if (run.welcomeRepo) return isRepoActiveForCapture(run.welcomeRepo) ? "repo-active" : undefined;
   if (run.terminal)
     return process.stdin.isTTY && process.stderr.isTTY ? undefined : "terminal-required";
   const ack = run.acknowledgment;
@@ -118,7 +133,7 @@ function present(run: DemoRun): string {
     return `[DEMO] How Primitive Catches Conflicts
 
 You're a new engineer on ${safeMarkdown(server.story.orgName)}'s team.
-And you've been tasked with implementing CSV export functionality for customer records.
+And you've been tasked with implementing CSV export functionality for user records.
 Enter this prompt to do so:
 ${DEMO_TASK}`;
   if (run.stage === "conflict")
@@ -246,6 +261,7 @@ async function finishResolution(run: DemoRun, choice: DemoChoice, reason?: strin
     run.stage = "completed";
     saveRun(run);
     finishOnboarding("completed");
+    if (run.welcomeRepo) endDemoPause(run.welcomeRepo, run.id);
   }
 }
 async function pendingIsolation(
@@ -299,7 +315,7 @@ export async function advanceDemo(
   // Read-only diagnostics must work even when the host cannot create a lock.
   if (action === "status") {
     const run = readRun(id);
-    if (!run.terminal && !run.acknowledgment)
+    if (!run.terminal && !run.welcomeRepo && !run.acknowledgment)
       return pendingIsolation(run, "acknowledgment-missing", action);
   }
   return await lockRunAsync(id, async (run) => {
@@ -313,6 +329,7 @@ export async function advanceDemo(
       run.stage = "skipped";
       saveRun(run);
       finishOnboarding("skipped");
+      if (run.welcomeRepo) endDemoPause(run.welcomeRepo, run.id);
       return handoff(run);
     }
     if (run.version === 1)
@@ -320,7 +337,7 @@ export async function advanceDemo(
         `Legacy tour: clean up with ${demoCommand(run, "skip")}, then run prim demo again`,
       );
     const isolation =
-      action === "status" && !run.terminal && !run.acknowledgment
+      action === "status" && !run.terminal && !run.welcomeRepo && !run.acknowledgment
         ? "acknowledgment-missing"
         : consumeAcknowledgment(run, action, choice, reason);
     if (isolation) return pendingIsolation(run, isolation, action, choice, reason);
@@ -379,6 +396,7 @@ export async function advanceDemo(
         return {
           ...resultFor(run),
           stage: "pending",
+          detail: run.server.reasonCode ?? "evaluation in progress",
           nextAction: demoCommand(run, action, choice, reason),
           presentation: `${label}\n\nCheck pending (${run.server.reasonCode ?? "evaluation in progress"}). File unchanged; retry or skip.`,
         };
@@ -389,6 +407,7 @@ export async function advanceDemo(
       return {
         ...resultFor(run),
         stage: "pending",
+        detail: terminalSafeLine(error instanceof Error ? error.message : String(error)),
         nextAction: demoCommand(run, action, choice, reason),
         presentation: `Tour pending: ${terminalSafeLine(error instanceof Error ? error.message : String(error))}`,
         ...(run.stage === "cleanup" ? { outcomePresentation: present(run) } : {}),
@@ -396,6 +415,163 @@ export async function advanceDemo(
     }
   });
 }
+/**
+ * The welcome skill's view of a tour: typed state only. The skill owns every
+ * word the user reads, so nothing here is prose addressed to the agent.
+ */
+export type WelcomeDemoState =
+  | { stage: "prompt"; story: { org: string; task: string } }
+  | {
+      stage: "conflict";
+      conflict: {
+        author: string;
+        date: string;
+        intent: string;
+        rationale: string;
+        file: string;
+        code: string;
+      };
+    }
+  | {
+      stage: "completed";
+      outcome: {
+        choice: DemoChoice;
+        reason?: string;
+        author: string;
+        recipient: string;
+        email: string;
+      };
+      diff: string;
+    }
+  | { stage: "skipped" }
+  | { stage: "pending"; detail?: string }
+  | {
+      stage: "error";
+      reason: "repo-active" | "not-started" | "not-a-repo" | "invalid";
+      detail?: string;
+    };
+
+export function welcomeDemoState(
+  run: DemoRun,
+  result: { stage: string; isolation?: string; detail?: string },
+): WelcomeDemoState {
+  if (result.isolation === "repo-active") return { stage: "error", reason: "repo-active" };
+  const server = run.server;
+  if (result.stage === "pending" || !server)
+    return { stage: "pending", ...(result.detail ? { detail: result.detail } : {}) };
+  if (run.stage === "prompt")
+    return { stage: "prompt", story: { org: safeMarkdown(server.story.orgName), task: DEMO_TASK } };
+  if (run.stage === "conflict")
+    return {
+      stage: "conflict",
+      conflict: {
+        author: safeMarkdown(server.authorName),
+        date: safeMarkdown(server.story.decisionDate),
+        intent: DEMO_ORIGINAL,
+        rationale: DEMO_RATIONALE,
+        file: "customers.ts",
+        code: readSample(run, "customers.ts").trimEnd(),
+      },
+    };
+  if ((run.stage === "completed" || run.stage === "cleanup") && server.choice)
+    return {
+      stage: "completed",
+      outcome: {
+        choice: server.choice,
+        ...(server.reason ? { reason: server.reason } : {}),
+        author: safeMarkdown(server.authorName),
+        recipient: safeMarkdown(server.story.recipient),
+        email: server.email,
+      },
+      diff: compactDiff(DEMO_INITIAL, server.choice === "adhere" ? DEMO_ADHERE : DEMO_SUPERSEDE),
+    };
+  if (run.stage === "skipped") return { stage: "skipped" };
+  return { stage: "pending" };
+}
+
+/** Skip unfinished welcome tours, resuming any capture they paused. */
+async function endWelcomeRuns(): Promise<void> {
+  for (let stale = pendingWelcomeRun(); stale; stale = pendingWelcomeRun()) {
+    await advanceDemo(stale.id, "skip").catch(() => {
+      if (stale.welcomeRepo) endDemoPause(stale.welcomeRepo, stale.id);
+      cleanSandbox(stale);
+      stale.stage = "skipped";
+      saveRun(stale);
+    });
+  }
+}
+
+/** The one unfinished welcome tour, if any. `start` keeps it to one. An
+ * unreadable run belongs to no welcome tour, so it is passed over. */
+function pendingWelcomeRun(repo?: string): DemoRun | undefined {
+  for (const id of runIds()) {
+    try {
+      const run = readRun(id);
+      if (
+        run.welcomeRepo &&
+        (repo === undefined || run.welcomeRepo === repo) &&
+        !["completed", "skipped"].includes(run.stage)
+      )
+        return run;
+    } catch {}
+  }
+}
+
+export async function advanceWelcomeDemo(
+  action: "start" | "attempt" | "resolve",
+  choice?: DemoChoice,
+  reason?: string,
+): Promise<WelcomeDemoState> {
+  if (action === "start") {
+    const root = gitToplevel();
+    if (!root) return { stage: "error", reason: "not-a-repo" };
+    // Serialize starts, so two cannot each replace the other's tour.
+    const run = await withFileLock(join(demoDirectory(), "welcome.lock"), async () => {
+      const existing = pendingWelcomeRun(root);
+      if (existing?.welcomeRepo === root) {
+        // An earlier start may have run while this repo was inactive, or an
+        // explicit enable may have cleared its pause. Re-establish isolation
+        // before exposing the existing fictional prompt again.
+        const active = isRepoActiveForCapture(root);
+        const pause = readDemoPause(root);
+        if (active || (pause && (pause.runId !== existing.id || pause.ending)))
+          pauseCaptureForDemo(root, existing.id);
+        return existing;
+      }
+      await endWelcomeRuns();
+      const run = prepareRun(undefined, false, root);
+      // Rebind an ending pause from a previous completed or skipped tour. A
+      // prompt must not restore capture in the middle of this new tour.
+      if (isRepoActiveForCapture(root) || readDemoPause(root)) pauseCaptureForDemo(root, run.id);
+      return run;
+    });
+    const result = await advanceDemo(
+      run.id,
+      run.stage === "prepared" || run.stage === "prompt" ? "start" : "status",
+    );
+    return welcomeDemoState(readRun(run.id), result);
+  }
+  const root = gitToplevel();
+  if (!root) return { stage: "error", reason: "not-a-repo" };
+  const run = pendingWelcomeRun(root);
+  if (!run?.welcomeRepo) return { stage: "error", reason: "not-started" };
+  // Each step keeps the pause alive, however long the user takes.
+  extendDemoPause(run.welcomeRepo, run.id);
+  if (action === "resolve") {
+    try {
+      requireResolution(choice, reason);
+    } catch (error) {
+      return {
+        stage: "error",
+        reason: "invalid",
+        detail: terminalSafeLine(error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+  const result = await advanceDemo(run.id, action, choice, reason);
+  return welcomeDemoState(readRun(run.id), result);
+}
+
 function parseAgent(value?: string): Agent | undefined {
   if (value === "claude") return "claude_code";
   if (value === undefined || ["claude_code", "codex", "cursor", "hermes"].includes(value))
@@ -557,7 +733,8 @@ export function registerDemoCommands(program: Command): void {
       }
     });
   for (const action of ["start", "attempt", "resolve", "status", "skip"] as const) {
-    const sub = demo.command(`${action} ${action === "skip" ? "[runId]" : "<runId>"}`);
+    // Without a run ID, start/attempt/resolve drive the welcome skill's tour.
+    const sub = demo.command(`${action} ${action === "status" ? "<runId>" : "[runId]"}`);
     if (action === "resolve")
       sub
         .requiredOption("--choice <choice>", "adhere or supersede")
@@ -565,8 +742,29 @@ export function registerDemoCommands(program: Command): void {
     sub.action(
       async (id: string | undefined, options: { choice?: DemoChoice; reason?: string }) => {
         try {
+          if (action !== "skip" && action !== "status" && !id) {
+            const state = await advanceWelcomeDemo(action, options.choice, options.reason).catch(
+              (error): WelcomeDemoState => ({
+                stage: "error",
+                reason: "invalid",
+                detail: terminalSafeLine(error instanceof Error ? error.message : String(error)),
+              }),
+            );
+            printJson(state);
+            if (state.stage === "error") process.exitCode = 1;
+            return;
+          }
           if (action === "skip" && !id) {
-            finishOnboarding("skipped");
+            // Ends the welcome tour too, so the skill's skip and failure paths
+            // resume capture. A completed tour stays recorded as completed.
+            await endWelcomeRuns();
+            let finished = false;
+            try {
+              finished = onboardingFinished();
+            } catch {
+              // An unreadable marker is rewritten below.
+            }
+            if (!finished) finishOnboarding("skipped");
             printJson({
               fictional: true,
               stage: "skipped",
