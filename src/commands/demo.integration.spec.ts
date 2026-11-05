@@ -907,6 +907,50 @@ describe("welcome skill tour", () => {
     expect(captured(f)).toBe(true);
   });
 
+  it("pauses an existing tour if capture was enabled since its first start", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    execFileSync("git", ["config", "--local", "prim.active", "false"], {
+      cwd: f.repo,
+      env: f.env,
+    });
+    const first = await welcome(f, ["start"]);
+    expect(config(f, "prim.demoPause")).toBeUndefined();
+    execFileSync("git", ["config", "--local", "prim.active", "true"], {
+      cwd: f.repo,
+      env: f.env,
+    });
+
+    expect((await welcome(f, ["start"])).json).toEqual(first.json);
+    expect(config(f, "prim.active")).toBe("false");
+    expect(config(f, "prim.demoPause")).toMatch(/ true active$/u);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
+    await event(f, "late-enable-session", "UserPromptSubmit", { prompt: first.json.story.task });
+    expect(captured(f)).toBe(false);
+  });
+
+  it("keeps no-ID attempt and resolve in the repository that started the tour", async () => {
+    const f = fixture();
+    await serveStory(f);
+    await welcome(f, ["start"]);
+    const pause = config(f, "prim.demoPause");
+    const other = join(f.root, "other-repo");
+    mkdirSync(other);
+    execFileSync("git", ["init", "-q", other], { env: f.env });
+
+    await expect(
+      exec(process.execPath, [cli, "demo", "attempt"], { cwd: other, env: f.env }),
+    ).rejects.toMatchObject({ stdout: expect.stringContaining('"reason":"not-started"') });
+    await expect(
+      exec(process.execPath, [cli, "demo", "resolve", "--choice", "adhere"], {
+        cwd: other,
+        env: f.env,
+      }),
+    ).rejects.toMatchObject({ stdout: expect.stringContaining('"reason":"not-started"') });
+    expect(config(f, "prim.demoPause")).toBe(pause);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+  });
+
   it("rebinds an ending pause when a skipped tour restarts before the next prompt", async () => {
     const f = fixture();
     await serveStory(f);

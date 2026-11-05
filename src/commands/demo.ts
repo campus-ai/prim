@@ -528,7 +528,16 @@ export async function advanceWelcomeDemo(
     // Serialize starts, so two cannot each replace the other's tour.
     const run = await withFileLock(join(demoDirectory(), "welcome.lock"), async () => {
       const existing = pendingWelcomeRun(root);
-      if (existing?.welcomeRepo === root) return existing;
+      if (existing?.welcomeRepo === root) {
+        // An earlier start may have run while this repo was inactive, or an
+        // explicit enable may have cleared its pause. Re-establish isolation
+        // before exposing the existing fictional prompt again.
+        const active = isRepoActiveForCapture(root);
+        const pause = readDemoPause(root);
+        if (active || (pause && (pause.runId !== existing.id || pause.ending)))
+          pauseCaptureForDemo(root, existing.id);
+        return existing;
+      }
       await endWelcomeRuns();
       const run = prepareRun(undefined, false, root);
       // Rebind an ending pause from a previous completed or skipped tour. A
@@ -542,7 +551,9 @@ export async function advanceWelcomeDemo(
     );
     return welcomeDemoState(readRun(run.id), result);
   }
-  const run = pendingWelcomeRun();
+  const root = gitToplevel();
+  if (!root) return { stage: "error", reason: "not-a-repo" };
+  const run = pendingWelcomeRun(root);
   if (!run?.welcomeRepo) return { stage: "error", reason: "not-started" };
   // Each step keeps the pause alive, however long the user takes.
   extendDemoPause(run.welcomeRepo, run.id);
