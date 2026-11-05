@@ -39,6 +39,12 @@ import { gitToplevel } from "../lib/git.js";
 import { compareSemver } from "../lib/semver.js";
 import { printJson } from "../output.js";
 import { atomicWrite, loadSkill } from "./skill.js";
+import {
+  WELCOME_SKILL_SOURCE,
+  installWelcomeSkill,
+  uninstallWelcomeSkill,
+  welcomeSkillStatus,
+} from "./welcome-skill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -95,6 +101,17 @@ function pluginManifest(version: string): string {
 function renderClaudePlugin(): { manifest: string; skill: string; version: string } {
   const version = packageVersion();
   return { manifest: pluginManifest(version), skill: loadSkill(), version };
+}
+
+/** The onboarding skill is a plain sibling of the prim plugin. Its ownership
+ * record is for safe upgrades and removal, not Claude plugin discovery. */
+export function welcomeSkillPath(pluginDir: string): string {
+  return join(dirname(pluginDir), "prim-welcome", "SKILL.md");
+}
+
+/** Where `prim skill install --agent claude` puts the onboarding skill. */
+export function welcomeSkillPathFor(cwd: string, scope: "user" | "project"): string {
+  return welcomeSkillPath(pluginDirFor(cwd, scope));
 }
 
 /** Remove `dir` only if it exists and is empty — prunes our scaffolding without
@@ -327,13 +344,28 @@ export function installClaudePlugin(
 
   const { manifestPath, skillPath } = pluginPaths(dir);
   const { manifest, skill } = renderClaudePlugin();
+  // The onboarding skill is personal: never written into a repository, where
+  // it could be committed for every teammate.
+  const welcomePath = opts.scope === "user" ? welcomeSkillPath(dir) : null;
+  const welcome = welcomePath ? loadSkill(WELCOME_SKILL_SOURCE) : null;
 
   const manifestCurrent = existsSync(manifestPath) ? readFileSync(manifestPath, "utf-8") : null;
   const skillCurrent = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : null;
-  if (manifestCurrent === manifest && skillCurrent === skill) {
+  const welcomeStatus = welcomePath ? welcomeSkillStatus(welcomePath) : null;
+  if (
+    manifestCurrent === manifest &&
+    skillCurrent === skill &&
+    (!welcomePath || (welcomeStatus?.installed && welcomeStatus.content === welcome))
+  ) {
     console.log("No changes — prim skill plugin already up to date.");
     return 0;
   }
+  if (
+    welcomePath &&
+    welcome !== null &&
+    installWelcomeSkill(welcomePath, welcome, opts.dryRun) !== 0
+  )
+    return 1;
   if (opts.dryRun) {
     console.log(`Would write plugin to ${dir} (.claude-plugin/plugin.json + SKILL.md)`);
     return 0;
@@ -344,7 +376,6 @@ export function installClaudePlugin(
   mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
   atomicWrite(manifestPath, manifest);
   atomicWrite(skillPath, skill);
-
   console.log(`Installed prim skill plugin at ${dir}`);
   console.log("Restart Claude Code or run /reload-plugins to load it.");
   if (opts.scope !== "user") {
@@ -358,6 +389,7 @@ export function uninstallClaudePlugin(cwd: string, opts: { scope?: string }): nu
   if (dir === null) return 1;
 
   const { manifestPath, skillPath } = pluginPaths(dir);
+  if (opts.scope === "user" && uninstallWelcomeSkill(welcomeSkillPath(dir)) !== 0) return 1;
   // Only act on a dir that actually holds OUR plugin — a stray skills/prim a
   // user made by hand (no manifest + no SKILL.md) is left untouched.
   if (!existsSync(manifestPath) && !existsSync(skillPath)) {
@@ -380,10 +412,11 @@ export function statusClaudePlugin(cwd: string, opts: { scope?: string; json?: b
   if (dir === null) return 1;
 
   const { skillPath } = pluginPaths(dir);
-  const installed = existsSync(skillPath);
+  const welcome = opts.scope === "user" ? welcomeSkillStatus(welcomeSkillPath(dir)) : undefined;
+  const installed = existsSync(skillPath) && (!welcome || welcome.installed);
 
   if (opts.json) {
-    printJson({ installed, target: dir });
+    printJson({ installed, target: dir, ...(welcome ? { welcomeSkill: welcome.installed } : {}) });
     return installed ? 0 : 1;
   }
   if (installed) {

@@ -10,13 +10,30 @@
 > Install the Primitive CLI and activate passive decision capture for this repository: run `npx --yes @primitive.ai/prim@latest setup` and show concise progress plus actionable warnings. Drive setup and its onboarding nextAction yourself; I'll handle browser authorization and any hook-trust review the agent requires. This request authorizes setup's built-in activation of this repository and an idempotent retry of that step, but not activation in another repository or creation of a Decision. If enable or health fails, surface the actual error; do not claim fresh activation approval is required. Then show me the welcome.
 > ```
 >
+> **In Claude Code or Codex**, paste this instead:
+>
+> ```text
+> Set up Primitive for this repo: run `npx --yes @primitive.ai/prim@latest setup`, then read the file at its `welcomeSkill` path and follow it. If setup fails, show me its actual error.
+> ```
+>
+> In a Claude Code or user-scope Codex session, `setup` connects the repository
+> to GitHub right after sign-in, activates it, and returns `welcomeSkill` (the
+> installed skill path), `prim` (its exact CLI command), `demo` (`due` or `done`),
+> `agent`, `mainSkill`, and `setupAt` instead of the tour hand-off. The skill explains
+> Primitive, offers the demo (which pauses capture for this repository while it
+> runs), checks capture, hands off, and offers to seed first decisions. Reading
+> the file at `welcomeSkill` works whether or not the skill has loaded in the
+> session. Codex asks the user to review its hooks in `/hooks`, then verifies
+> capture after a subsequent prompt. The tour and welcome sections below apply
+> to project-scope setup, Cursor, and Hermes.
+>
 > The rest of this file is the detailed guide the agent follows once `setup` is
 > running, plus the manual step-by-step fallback.
 
 You are an AI coding agent setting up the Primitive CLI for the user. Drive the
 whole thing yourself via `npx` and surface the output — never hand a command back
-to the user to run. During installation, the only action a human takes is clicking
-"Authorize" in the browser during auth; everything else is yours. Every command
+to the user to run. During installation, the human authorizes in the browser;
+Codex hook review in `/hooks` follows setup. Every command
 pins `@latest`, so the user never installs or manages a prim version and always
 runs the newest CLI.
 
@@ -102,10 +119,15 @@ Codex's native empty configuration reload: it changes no configuration values,
 hook trust, or approvals. Codex refreshes loaded sessions through that operation;
 Primitive first verifies that this host owns the calling session.
 
-Run the returned tour command first: its real **PreToolUse/Bash** acknowledgment
-is still the isolation check. Installed, trusted hooks are not proof of execution.
-If pending, run `diagnosticAction` once. It reports the installed runtime, the
-latest content-free hook observation, and Codex's native trust inventory.
+At user scope in a Codex session, setup returns `welcomeSkill`. Follow it: review
+the installed hooks in `/hooks`, refresh the calling session, and confirm capture
+through a later user-prompt event. The welcome demo pauses capture without a
+PreToolUse acknowledgment.
+
+At project scope, setup keeps the earlier tour command. Run it first: its real
+**PreToolUse/Bash** acknowledgment is still the isolation check. If pending,
+run `diagnosticAction` once. It reports the installed runtime, the latest
+content-free hook observation, and Codex's native trust inventory.
 
 - `repairAction`: run it once in this agent session, then follow `resumeAction`.
   This reloads already-trusted hooks that the running session has not picked up.
@@ -175,7 +197,7 @@ Enter the feature task → Your Decision stops it → Choose → Outcome email
 ```
 
 The participant plays a new engineer in this chat and a disposable project. They
-are also the fictional prior author of the Decision that excludes customer email
+are also the fictional prior author of the Decision that excludes user email
 addresses from exports. No adoption approval is needed for this fictional history.
 
 1. Show `awaitUserPrompt` and wait for the participant to enter the CSV-export task.
@@ -237,9 +259,9 @@ sees the live post-install state:
 - `npx --yes @primitive.ai/prim@latest auth status`
 - `npx --yes @primitive.ai/prim@latest claude status` — or `cursor status` / `codex status` / `hermes status` to match your agent
 - `npx --yes @primitive.ai/prim@latest daemon status` — must report healthy unless setup used `--no-daemon`; while setup reported a backlog draining, it stays degraded with only `ingestion unhealthy` until the drain catches up
-- `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `cursor`/`codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (for Claude and Cursor, their native skill directories; for Codex and Hermes, the rules-file block)
+- `npx --yes @primitive.ai/prim@latest skill status --agent claude --scope user` — or `cursor`/`codex`/`hermes` to match your agent; `--scope user` matches the default `setup` (drop it if you ran `setup --scope project`), so it checks the skill delivery that agent actually installed (Claude and Cursor native skills, Codex rules and welcome skill, or Hermes rules)
 
-Add one line of setup specifics: where the skill landed (Claude's or Cursor's skill directory, or the agent's rules file), and
+Add one line of setup specifics: where the skill landed (the agent's skill directory or rules file), and
 (Codex only) the `/hooks` trust reminder or (Hermes only) the hook-consent
 reminder. The daemon confirm is expected to vary;
 an unexpected non-zero from auth or skill is worth a note — but never retract the

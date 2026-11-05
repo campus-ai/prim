@@ -20,6 +20,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { healDemoPause, readCaptureConfig } from "./demo-pause.js";
 import { gitToplevel, githubRepositoryFullName } from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
@@ -237,8 +238,14 @@ export function hasProjectPrimInstall(cwd: string): boolean {
  * Checked only on the unset fallback, so an active/disabled repo pays just the
  * flag read.
  */
-export function isRepoActiveForCapture(cwd: string): boolean {
-  const flag = repoActiveFlag(cwd);
+export function isRepoActiveForCapture(
+  cwd: string,
+  options: { userPrompt?: boolean } = {},
+): boolean {
+  let { active: flag, pause } = readCaptureConfig(cwd);
+  // An onboarding demo pause sets the flag to false. Lift it once expired, or
+  // at the user's next prompt after the demo ended.
+  if (pause && healDemoPause(cwd, pause, options)) flag = repoActiveFlag(cwd);
   if (flag === "true") return true;
   if (flag === "false") return false;
   return hasProjectPrimInstall(cwd);
