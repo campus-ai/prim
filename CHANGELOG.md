@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.122](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.121...v0.1.0-alpha.122) (2026-11-05)
+
+
+### Features
+
+* **decisions:** display qualified seed makers and dates ([#425](https://github.com/campus-ai/prim/issues/425)) ([c8f32b9](https://github.com/campus-ai/prim/commit/c8f32b95efeeaf88578e9eef58bd51f1065b7b03))
+
 ## [0.1.0-alpha.121](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.120...v0.1.0-alpha.121) (2026-11-05)
 
 
