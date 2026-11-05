@@ -11,7 +11,17 @@ import { fileURLToPath } from "node:url";
 // from the user's account, settings, and work. No model/API billing occurs.
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = mkdtempSync(join(tmpdir(), "prim-codex-host-"));
-const cases = ["allow", "conflict", "paused", "malformed", "deadline", "crash", "timeout"];
+const cases = [
+  "allow",
+  "conflict",
+  "paused",
+  "malformed",
+  "deadline",
+  "worker-crash",
+  "worker-timeout",
+  "crash",
+  "timeout",
+];
 let current;
 let calls = 0;
 let preflightRequests = 0;
@@ -32,6 +42,7 @@ const server = createServer(async (request, response) => {
     response.end(
       JSON.stringify({
         protocolVersion: 4,
+        shellCheck: { targetMode: "files" },
         state: current === "deadline" ? "processing" : paused ? "paused" : "completed",
         checkId: "hostcheck",
         evaluationId: "hosteval",
@@ -138,6 +149,12 @@ try {
       execFileSync("git", ["config", "--local", key, value], { cwd, env });
     const observed = join(cwd, "hook-observed.json");
     const wrapper = join(cwd, "hook.mjs");
+    const workerFault = join(cwd, "worker-fault.mjs");
+    writeFileSync(
+      workerFault,
+      `if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) { ${name === "worker-crash" ? "process.exit(23);" : "await new Promise(resolve => setTimeout(resolve, 5000));"} }\n`,
+    );
+    if (name.startsWith("worker-")) env.NODE_OPTIONS = `--import=${workerFault}`;
     const clock = join(cwd, "clock.mjs");
     writeFileSync(clock, "process.uptime = () => 0.5;\n");
     writeFileSync(
@@ -213,7 +230,7 @@ try {
     assert.equal(result.code, 0, result.stderr);
     assert.equal(
       sentinelWritten,
-      name !== "conflict",
+      ["allow", "crash", "timeout"].includes(name),
       `${JSON.stringify(row)}\n${result.stdout}\n${result.stderr}`,
     );
     assert.equal(
@@ -235,5 +252,6 @@ try {
 } finally {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
-  rmSync(root, { recursive: true, force: true });
+  // Host background writers may briefly outlive their parent process.
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

@@ -190,6 +190,7 @@ export interface DecisionCreateResponse {
   shortId: string;
   createdAt: number;
   scope?: {
+    scopeResolution?: "unresolved";
     location: {
       mode?: "inherited" | "explicit";
       repository: boolean;
@@ -293,6 +294,7 @@ export interface DecisionDetailResponse {
     [k: string]: unknown | undefined;
   }[];
   scope: {
+    scopeResolution?: "unresolved";
     location: {
       mode?: "inherited" | "explicit";
       repository: boolean;
@@ -410,6 +412,7 @@ export type DecisionRescopeResponse =
       outcome: "no_op";
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
       scope: {
+        scopeResolution?: "unresolved";
         location: {
           mode?: "inherited" | "explicit";
           repository: boolean;
@@ -455,6 +458,7 @@ export type DecisionRescopeResponse =
       shortId?: string;
       stage: "draft" | "provisional" | "adopted" | "superseded" | "abandoned";
       scope: {
+        scopeResolution?: "unresolved";
         location: {
           mode?: "inherited" | "explicit";
           repository: boolean;
@@ -957,6 +961,9 @@ export type PreflightRequestV4 =
       proposal: string;
       operation: "start";
       toolInputDigest: string;
+      shellCheck?: {
+        targetMode: "files" | "repository";
+      };
     }
   | {
       protocolVersion: 4;
@@ -2151,6 +2158,9 @@ export interface PreflightResponseV3 {
 export interface PreflightResponseV4 {
   protocolVersion: 4;
   state: "processing" | "completed" | "paused" | "expired";
+  shellCheck?: {
+    targetMode: "files" | "repository";
+  };
   checkId?: string;
   evaluationId?: string;
   verdict: "allow" | "warn" | "ask" | "block" | "unavailable";

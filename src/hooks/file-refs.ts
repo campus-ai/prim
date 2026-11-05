@@ -92,7 +92,7 @@ export function resolveHookFileRefs(args: {
         ? ((args.toolInput as Record<string, unknown>).command as string)
         : undefined
     : undefined;
-  const shell = command === undefined ? undefined : analyzeShellTargets(command);
+  const shell = command === undefined ? undefined : analyzeShellTargets(command, args.cwd);
   const shellMutation =
     shell?.mutation === "none"
       ? ("none" as const)

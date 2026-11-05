@@ -1,6 +1,6 @@
 {
   "contractId": "https://api.getprimitive.ai/contracts/cli-http-v1.schema.json",
-  "contractVersion": 8,
+  "contractVersion": 9,
   "scopeGlobVectors": [
     {
       "pattern": "src/**/*.test.ts",
@@ -546,6 +546,46 @@
         "paths": ["src/index.ts"],
         "coverage": "complete",
         "proposal": "Preserve retries",
+        "toolInputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "shell preflight files mode",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "start",
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "shell-1",
+        "repoSyncId": "repoSync123",
+        "paths": ["src/index.ts"],
+        "coverage": "complete",
+        "shellCheck": {
+          "targetMode": "files"
+        },
+        "proposal": "opaque shell command",
+        "toolInputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "shell preflight repository mode",
+      "definition": "PreflightRequestV4",
+      "valid": true,
+      "value": {
+        "protocolVersion": 4,
+        "operation": "start",
+        "agent": "codex",
+        "sessionId": "session-1",
+        "invocationId": "shell-1",
+        "repoSyncId": "repoSync123",
+        "paths": [],
+        "coverage": "unverified",
+        "shellCheck": {
+          "targetMode": "repository"
+        },
+        "proposal": "opaque shell command",
         "toolInputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     },

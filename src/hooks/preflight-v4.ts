@@ -23,6 +23,7 @@ export type PreflightRequest = Omit<PreflightRequestV3, "protocolVersion"> & {
   protocolVersion: 4;
   operation: "start";
   toolInputDigest: string;
+  shellCheck?: { targetMode: "files" | "repository" };
 };
 export type PreflightOperation =
   | PreflightRequest
@@ -56,6 +57,7 @@ export type PreflightResponse = Pick<
   evaluationId?: string;
   evaluationCoverage: EvaluationCoverage;
   retryAfterMs?: number;
+  shellCheck?: { targetMode: "files" | "repository" };
 };
 
 /** Identity uses the entire input, before redaction or proposal truncation. */
@@ -279,7 +281,7 @@ export async function requestPreflight(
   const remaining = deadline - performance.now();
   if (remaining <= 0)
     throw new PreflightPausedError(
-      "The 240-second check wait expired",
+      "The check deadline expired",
       operation.operation === "start" ? undefined : operation.checkId,
     );
   const value = await getClient().post(ENDPOINT, operation, {
@@ -288,7 +290,7 @@ export async function requestPreflight(
   });
   if (performance.now() >= deadline)
     throw new PreflightPausedError(
-      "The 240-second check wait expired",
+      "The check deadline expired",
       operation.operation === "start" ? undefined : operation.checkId,
     );
   const response = parsePreflightResponse(value);
@@ -301,6 +303,7 @@ export async function requestPreflight(
     response.reasonCode === "no_targets_skipped" &&
     !(
       operation.operation === "start" &&
+      !operation.shellCheck &&
       operation.paths.length === 0 &&
       operation.coverage === "unverified" &&
       isNoTargetsSkip(response)
@@ -335,6 +338,7 @@ export async function waitForPreflight(
 ): Promise<PreflightResponse> {
   const deadline = options.deadline ?? performance.now() + PREFLIGHT_WAIT_MS;
   let next = operation;
+  const shellCheck = operation.operation === "start" ? operation.shellCheck : undefined;
   let evaluationId: string | undefined;
   let lastProgress: string | undefined;
   let checkId = operation.operation === "start" ? undefined : operation.checkId;
@@ -345,7 +349,7 @@ export async function waitForPreflight(
     } catch (error) {
       if (error instanceof PreflightPausedError) throw error;
       if (performance.now() >= deadline)
-        throw new PreflightPausedError("The 240-second check wait expired", checkId);
+        throw new PreflightPausedError("The check deadline expired", checkId);
       // Retain the attempt identity for actionable recovery after a failed poll.
       if (checkId)
         throw new PreflightPausedError(
@@ -353,6 +357,13 @@ export async function waitForPreflight(
           checkId,
         );
       throw error;
+    }
+    if (
+      shellCheck &&
+      response.shellCheck?.targetMode !== shellCheck.targetMode &&
+      !(response.reasonCode === "enforcement_disabled" && hasCompleteCoverage(response))
+    ) {
+      throw new PreflightPausedError("The backend did not confirm shell-check support", checkId);
     }
     if (isUnidentifiedPause(response)) {
       if (checkId) throw new PreflightPausedError(response.message || response.reasonCode, checkId);
@@ -378,8 +389,7 @@ export async function waitForPreflight(
     if (progress !== lastProgress) options.onProgress?.(response);
     lastProgress = progress;
     const remaining = deadline - performance.now();
-    if (remaining <= 0)
-      throw new PreflightPausedError("The 240-second check wait expired", checkId);
+    if (remaining <= 0) throw new PreflightPausedError("The check deadline expired", checkId);
     await delay(
       Math.min(remaining, Math.max(100, Math.min(5_000, response.retryAfterMs ?? 1_000))),
     );

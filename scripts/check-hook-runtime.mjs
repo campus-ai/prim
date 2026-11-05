@@ -80,8 +80,9 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
+      // An unavailable binding/service must silently allow every shell command.
       if (result.hookSpecificOutput?.permissionDecision !== "allow")
-        throw new Error("Unexpected hook disposition");
+        throw new Error(`Unexpected hook disposition for ${command}: ${JSON.stringify(result)}`);
       if (
         result.systemMessage !== undefined ||
         result.hookSpecificOutput?.additionalContext !== undefined

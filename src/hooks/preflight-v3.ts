@@ -68,7 +68,7 @@ export function resolvePreflightTargets(args: TargetArgs): TargetResolution {
     if (typeof command !== "string") {
       return { paths: [], coverage: "unverified", mutation: "present" };
     }
-    const shell = analyzeShellTargets(command);
+    const shell = analyzeShellTargets(command, args.cwd);
     rawPaths = shell.paths;
     coverage = shell.coverage;
     mutation = shell.mutation;
