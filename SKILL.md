@@ -152,10 +152,10 @@ Apply the same attention during non-code deliberation: planning or â€œgrill meâ€
 
 ### Onboarding: experience your Decision protecting a teammate
 
-**Claude Code:** `prim setup` returns `welcomeSkill` (a file path) instead of
-`nextAction`. Read that file and follow it; it replaces the rest of this
-section, which applies to Codex, Cursor and Hermes. It hands seeding to the
-next section.
+**Claude Code and Codex at user scope:** `prim setup` returns `welcomeSkill`
+(a file path) instead of `nextAction`. Read that file and follow it; it replaces
+the rest of this section, which applies to project-scope setup, Cursor and Hermes.
+It hands seeding to the next section.
 
 After successful `prim setup`, follow its `nextAction` automatically; the `onboarding`
 object contains the preparation instructions.

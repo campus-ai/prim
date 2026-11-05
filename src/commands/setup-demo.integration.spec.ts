@@ -29,6 +29,7 @@ function harness() {
   mkdirSync(repo);
   vi.stubEnv("PRIM_CONFIG_DIR", join(root, "config"));
   vi.stubEnv("HOME", join(root, "home"));
+  vi.stubEnv("CODEX_THREAD_ID", "");
   vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
   vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   vi.stubEnv("GIT_CONFIG_COUNT", "0");
@@ -226,6 +227,9 @@ describe("setup's Claude hand-off to the prim-welcome skill", () => {
         health: { ok: true, status: "ok", checks: [] },
         readiness: { installation: "installed", health: "ok", passiveCapture: "not-verified" },
         welcomeSkill,
+        mainSkill: join(h.root, "home", ".claude", "skills", "prim", "SKILL.md"),
+        agent: "claude",
+        setupAt: expect.any(Number),
         prim: primCommand(),
         demo: "due",
         instructions: "Read the file at welcomeSkill and follow it.",
@@ -284,5 +288,43 @@ describe("setup's Claude hand-off to the prim-welcome skill", () => {
     expect(await h.setup(["--agent", "claude"])).toHaveBeenCalledWith(1);
     expect(h.summaries.at(-1)).toMatchObject({ status: "incomplete", steps: { enable: "failed" } });
     expect(h.summaries.at(-1)).not.toHaveProperty("welcomeSkill");
+  });
+});
+
+describe("setup's Codex hand-off to the prim-welcome skill", () => {
+  it("returns the user skill and agent guidance in a Codex session", async () => {
+    vi.stubEnv("CI", "");
+    const h = harness();
+    vi.stubEnv("CODEX_THREAD_ID", "codex-thread");
+    expect(await h.setup()).toHaveBeenCalledWith(0);
+    expect(h.summaries.at(-1)).toMatchObject({
+      status: "complete",
+      agent: "codex",
+      welcomeSkill: join(h.root, "home", ".agents", "skills", "prim-welcome", "SKILL.md"),
+      mainSkill: join(h.root, "home", ".codex", "AGENTS.md"),
+      setupAt: expect.any(Number),
+      demo: "due",
+    });
+    expect(h.calls.map((args) => args[0])).not.toContain("welcome");
+    expect(h.calls.map((args) => args[0])).not.toContain("demo");
+    expect(h.calls.map((args) => args[0])).toContain("github");
+  });
+
+  it("keeps the existing tour for project-scope Codex setup", async () => {
+    const h = harness();
+    vi.stubEnv("CODEX_THREAD_ID", "codex-thread");
+    expect(await h.setup(["--scope", "project"])).toHaveBeenCalledWith(0);
+    expect(h.summaries.at(-1)).not.toHaveProperty("welcomeSkill");
+    expect(h.calls.map((args) => args[0])).toContain("welcome");
+  });
+
+  it("reports the main guidance under a custom CODEX_HOME", async () => {
+    const h = harness();
+    vi.stubEnv("CODEX_THREAD_ID", "codex-thread");
+    vi.stubEnv("CODEX_HOME", join(h.root, "custom-codex-home"));
+    expect(await h.setup()).toHaveBeenCalledWith(0);
+    expect(h.summaries.at(-1)).toMatchObject({
+      mainSkill: join(h.root, "custom-codex-home", "AGENTS.md"),
+    });
   });
 });

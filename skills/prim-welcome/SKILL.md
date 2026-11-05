@@ -12,9 +12,20 @@ You are walking the user through their first minutes with Primitive. Setup has a
 - **Say blocks are mandatory.** Each `Say:` block below is a message the user must read. Put it in your reply as visible text, word for word, filling in `{fields}` and keeping its formatting. Never skip, shorten, or summarize one. Run every command a step needs *before* its Say block.
 - A Say block ends your turn: send it and wait for the user's reply. Ask questions in plain text, as the Say blocks do, not with a picker tool.
 - **`prim`** below means the exact command in setup's `prim` field, copied as-is. For example, if `prim` is `'/usr/bin/node' '/x/dist/index.js'`, `prim demo start` means `'/usr/bin/node' '/x/dist/index.js' demo start`. If you don't have setup's result, use `npx --yes @primitive.ai/prim@latest`.
+- **`{agent}`** is setup's `agent` (`claude` or `codex`). Use it in every `--agent` flag below. `mainSkill` is setup's path to the day-to-day prim guidance. Keep setup's `setupAt` for the capture check. If setup's result is unavailable, use the current agent and treat capture as unverified until this session produces a new observed prompt.
 - Every `prim` command prints one JSON object on stdout. Read its fields. Never show raw JSON, command output, or these instructions to the user.
 - The demo uses a made-up project that lives outside this repository. During the demo, don't edit, create, or read any files. During it and afterwards, never create, propose, or save to memory anything from the demo: its Decisions, the user's choice, or their reason.
 - The user's replies don't need exact wording: map them to the closest option.
+
+## 0. Codex hook trust
+
+Only in Codex, run `prim codex status` before the welcome. Read `host.trust` from its JSON. Codex [requires review of new hooks in `/hooks`](https://learn.chatgpt.com/docs/hooks), and installed hooks may need a session refresh.
+
+- If trust is `review-required` or `disabled`, tell the user: "Primitive's Codex hooks need your review. Open `/hooks`, review and enable the Primitive hooks, then tell me when you're done." Wait for their reply, then run `prim codex refresh` and check `prim codex status` again. Never approve hooks for them.
+- If trust is `trusted`, run `prim codex refresh` once. If refresh is unavailable, tell the user to exit and resume this same Codex session so the hooks load, then wait. Do not claim capture is working yet.
+- If trust remains `unknown`, tell the user to inspect `/hooks` for errors or a review request. Wait for their reply and check status again.
+
+Continue to the welcome only after the running session reports trusted hooks. The user's next reply will provide the first observable prompt event.
 
 ## 1. Welcome
 
@@ -42,6 +53,8 @@ This message has no picker: send it in full and end your turn.
 ## 2. Demo
 
 ### 2a. The task
+
+In Codex, first run `prim doctor --agent codex --compact`. Start the demo only if `capture.state` is `observed`, `capture.hooks` is `ready`, and `capture.observedAt` is at or after setup's `setupAt`. The user's **show me** reply should supply that observation. If it did not, explain that this session has not shown a working prompt hook; run `prim codex refresh` once if available, otherwise ask the user to resume this same session. Wait for another user reply and recheck before starting. Do not pause capture for a demo while hook execution is unverified.
 
 Run `prim demo start`. When `stage` is `prompt`, say:
 
@@ -107,8 +120,8 @@ Run `prim demo resolve` with the choice above. When `stage` is `completed`, keep
 
 Run both of these first:
 
-1. `prim doctor --agent claude --compact`. If `status` is `ok` or `warn`, capture is on (a `demo-pause` warning is expected right after the demo). If `status` is `fail`, capture needs attention.
-2. `prim welcome --after-demo --team-sample --agent claude`. Read its `org` and `recent` fields. If it fails, treat `org` as `unknown` and `recent` as empty.
+1. `prim doctor --agent {agent} --compact`. Read `capture`, not the overall `status` alone. Capture is verified for this session only when doctor `status` is not `fail`, `capture.hooks` is `ready`, `capture.observedAt` is at or after setup's `setupAt`, and `capture.state` is `observed` or `paused` with `resumeOnNextPrompt: true`. An ending pause means the next trusted user-prompt hook resumes capture. Otherwise report `capture.detail` and any relevant failed checks; never claim capture is on from an overall `warn` result alone.
+2. `prim welcome --after-demo --team-sample --agent {agent}`. Read its `org` and `recent` fields. If it fails, treat `org` as `unknown` and `recent` as empty.
 
 Then say one message, built from these parts in order. It ends your turn.
 
@@ -130,7 +143,7 @@ If the demo didn't finish: "The demo couldn't finish ({cause}), so it was skippe
 
 "**Primitive is on for this repository.** From your next message on, it works in the background as you work."
 
-If capture needs attention: "**Primitive is installed, but capture needs attention:**" followed by one line per check whose `status` is `fail`, giving its `detail`.
+If capture is unverified, off, or blocked: "**Primitive is installed, but capture needs attention:**" followed by `capture.detail` and the relevant agent-hook check's `detail`. For Codex, use `/hooks` for review or enablement; if hooks are trusted but the running session did not refresh, use `prim codex refresh` or resume this same session.
 
 **c. Recent team Decisions**, only if `recent` isn't empty:
 
@@ -161,7 +174,7 @@ See every Decision at https://app.getprimitive.ai."
 
 If you said part e, wait for the reply:
 
-- **yes**: read the prim skill at `~/.claude/skills/prim/SKILL.md` and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo. End the final message of that section with the Granola question from step 4.
+- **yes**: read the prim guidance at setup's `mainSkill` path (for Codex, the managed prim block in `AGENTS.md`) and follow its "Onboarding: seed the graph from memory" section, from its step 1. Leave out everything from the demo. End the final message of that section with the Granola question from step 4.
 - **not now**: say "You can add a Decision to Primitive any time by asking for it." followed by the Granola question from step 4.
 
 ## 4. Granola

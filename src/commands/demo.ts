@@ -43,7 +43,12 @@ import { isRepoActiveForCapture } from "../lib/activation.js";
 import { bold, color } from "../lib/ansi.js";
 import { codexHostGuidance, inspectCodexHost } from "../lib/codex-host.js";
 import { isNonInteractive } from "../lib/confirmation.js";
-import { endDemoPause, extendDemoPause, pauseCaptureForDemo } from "../lib/demo-pause.js";
+import {
+  endDemoPause,
+  extendDemoPause,
+  pauseCaptureForDemo,
+  readDemoPause,
+} from "../lib/demo-pause.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { gitToplevel } from "../lib/git.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
@@ -498,11 +503,16 @@ async function endWelcomeRuns(): Promise<void> {
 
 /** The one unfinished welcome tour, if any. `start` keeps it to one. An
  * unreadable run belongs to no welcome tour, so it is passed over. */
-function pendingWelcomeRun(): DemoRun | undefined {
+function pendingWelcomeRun(repo?: string): DemoRun | undefined {
   for (const id of runIds()) {
     try {
       const run = readRun(id);
-      if (run.welcomeRepo && !["completed", "skipped"].includes(run.stage)) return run;
+      if (
+        run.welcomeRepo &&
+        (repo === undefined || run.welcomeRepo === repo) &&
+        !["completed", "skipped"].includes(run.stage)
+      )
+        return run;
     } catch {}
   }
 }
@@ -517,12 +527,19 @@ export async function advanceWelcomeDemo(
     if (!root) return { stage: "error", reason: "not-a-repo" };
     // Serialize starts, so two cannot each replace the other's tour.
     const run = await withFileLock(join(demoDirectory(), "welcome.lock"), async () => {
+      const existing = pendingWelcomeRun(root);
+      if (existing?.welcomeRepo === root) return existing;
       await endWelcomeRuns();
       const run = prepareRun(undefined, false, root);
-      if (isRepoActiveForCapture(root)) pauseCaptureForDemo(root, run.id);
+      // Rebind an ending pause from a previous completed or skipped tour. A
+      // prompt must not restore capture in the middle of this new tour.
+      if (isRepoActiveForCapture(root) || readDemoPause(root)) pauseCaptureForDemo(root, run.id);
       return run;
     });
-    const result = await advanceDemo(run.id, "start");
+    const result = await advanceDemo(
+      run.id,
+      run.stage === "prepared" || run.stage === "prompt" ? "start" : "status",
+    );
     return welcomeDemoState(readRun(run.id), result);
   }
   const run = pendingWelcomeRun();

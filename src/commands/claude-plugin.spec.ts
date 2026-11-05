@@ -544,6 +544,7 @@ describe("statusClaudePlugin", () => {
     expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
       installed: true,
       target: userDir(),
+      welcomeSkill: true,
     });
   });
 });
@@ -581,7 +582,7 @@ describe("prim-welcome skill", () => {
   it("leaves a skill of the same name that isn't ours on uninstall", () => {
     installClaudePlugin(work, { scope: "user" });
     writeFileSync(welcome(), "---\nname: someone-elses\n---\n");
-    expect(uninstallClaudePlugin(work, { scope: "user" })).toBe(0);
+    expect(uninstallClaudePlugin(work, { scope: "user" })).toBe(1);
     expect(existsSync(welcome())).toBe(true);
   });
 

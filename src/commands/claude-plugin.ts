@@ -39,6 +39,12 @@ import { gitToplevel } from "../lib/git.js";
 import { compareSemver } from "../lib/semver.js";
 import { printJson } from "../output.js";
 import { atomicWrite, loadSkill } from "./skill.js";
+import {
+  WELCOME_SKILL_SOURCE,
+  installWelcomeSkill,
+  uninstallWelcomeSkill,
+  welcomeSkillStatus,
+} from "./welcome-skill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -97,10 +103,8 @@ function renderClaudePlugin(): { manifest: string; skill: string; version: strin
   return { manifest: pluginManifest(version), skill: loadSkill(), version };
 }
 
-/** The onboarding skill, a plain sibling of the prim plugin: setup tells the
- * agent to follow it, so it needs no manifest. */
-const WELCOME_SKILL_SOURCE = join("skills", "prim-welcome", "SKILL.md");
-
+/** The onboarding skill is a plain sibling of the prim plugin. Its ownership
+ * record is for safe upgrades and removal, not Claude plugin discovery. */
 export function welcomeSkillPath(pluginDir: string): string {
   return join(dirname(pluginDir), "prim-welcome", "SKILL.md");
 }
@@ -347,15 +351,23 @@ export function installClaudePlugin(
 
   const manifestCurrent = existsSync(manifestPath) ? readFileSync(manifestPath, "utf-8") : null;
   const skillCurrent = existsSync(skillPath) ? readFileSync(skillPath, "utf-8") : null;
-  const welcomeCurrent =
-    welcomePath && existsSync(welcomePath) ? readFileSync(welcomePath, "utf-8") : null;
-  if (manifestCurrent === manifest && skillCurrent === skill && welcomeCurrent === welcome) {
+  const welcomeStatus = welcomePath ? welcomeSkillStatus(welcomePath) : null;
+  if (
+    manifestCurrent === manifest &&
+    skillCurrent === skill &&
+    (!welcomePath || (welcomeStatus?.installed && welcomeStatus.content === welcome))
+  ) {
     console.log("No changes — prim skill plugin already up to date.");
     return 0;
   }
+  if (
+    welcomePath &&
+    welcome !== null &&
+    installWelcomeSkill(welcomePath, welcome, opts.dryRun) !== 0
+  )
+    return 1;
   if (opts.dryRun) {
     console.log(`Would write plugin to ${dir} (.claude-plugin/plugin.json + SKILL.md)`);
-    if (welcomePath) console.log(`Would write welcome skill to ${welcomePath}`);
     return 0;
   }
 
@@ -364,13 +376,7 @@ export function installClaudePlugin(
   mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
   atomicWrite(manifestPath, manifest);
   atomicWrite(skillPath, skill);
-  if (welcomePath && welcome !== null && welcomeCurrent !== welcome) {
-    mkdirSync(dirname(welcomePath), { recursive: true });
-    atomicWrite(welcomePath, welcome);
-  }
-
   console.log(`Installed prim skill plugin at ${dir}`);
-  if (welcomePath) console.log(`Installed prim-welcome skill at ${welcomePath}`);
   console.log("Restart Claude Code or run /reload-plugins to load it.");
   if (opts.scope !== "user") {
     console.log("Project-scope plugins load only when Claude Code launches from this directory.");
@@ -383,16 +389,7 @@ export function uninstallClaudePlugin(cwd: string, opts: { scope?: string }): nu
   if (dir === null) return 1;
 
   const { manifestPath, skillPath } = pluginPaths(dir);
-  // Remove the onboarding skill only when it is ours.
-  const welcomePath = welcomeSkillPath(dir);
-  if (
-    existsSync(welcomePath) &&
-    lstatSync(welcomePath).isFile() &&
-    /^---\r?\nname: prim-welcome\r?\n/u.test(readFileSync(welcomePath, "utf-8"))
-  ) {
-    rmSync(welcomePath, { force: true });
-    removeDirIfEmpty(dirname(welcomePath));
-  }
+  if (opts.scope === "user" && uninstallWelcomeSkill(welcomeSkillPath(dir)) !== 0) return 1;
   // Only act on a dir that actually holds OUR plugin — a stray skills/prim a
   // user made by hand (no manifest + no SKILL.md) is left untouched.
   if (!existsSync(manifestPath) && !existsSync(skillPath)) {
@@ -415,10 +412,11 @@ export function statusClaudePlugin(cwd: string, opts: { scope?: string; json?: b
   if (dir === null) return 1;
 
   const { skillPath } = pluginPaths(dir);
-  const installed = existsSync(skillPath);
+  const welcome = opts.scope === "user" ? welcomeSkillStatus(welcomeSkillPath(dir)) : undefined;
+  const installed = existsSync(skillPath) && (!welcome || welcome.installed);
 
   if (opts.json) {
-    printJson({ installed, target: dir });
+    printJson({ installed, target: dir, ...(welcome ? { welcomeSkill: welcome.installed } : {}) });
     return installed ? 0 : 1;
   }
   if (installed) {

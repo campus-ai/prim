@@ -89,14 +89,16 @@ Use `prim setup --skip-demo` to remember a skip, or
 `prim demo --agent <claude|codex|cursor|hermes>` to replay. Direct terminal `prim demo`
 uses the same prompts. Setup defaults to compact diagnostics; `prim setup --details`
 shows full child output. Default agent setup returns one JSON result with `welcome`,
-`onboarding`, and its `nextAction`. In Claude Code, setup instead returns `welcomeSkill`,
-the path of the prim-welcome skill that runs the welcome and demo (see below).
+`onboarding`, and its `nextAction`. In Claude Code and user-scope Codex sessions,
+setup instead returns `welcomeSkill`, the path of the prim-welcome skill that runs
+the welcome and demo (see below).
 Existing completed tours do not replay automatically.
 
-Agent hooks must acknowledge isolation before any sample is shown. Passive capture
-then stays excluded for this session, including resumes; start a new session to
-resume it. Other sessions, real-work enforcement and explicitly approved real
-Decision creation remain available. Synthetic records never join the team's graph.
+In the earlier tour used by other agents and project-scope Codex, agent hooks
+acknowledge isolation before any sample is shown; capture resumes in a new session.
+The prim-welcome tour pauses capture for the repository and resumes at the next
+user prompt after the demo when its hooks are running. Synthetic records never
+join the team's graph.
 This exercises a real evaluator and demo-only blocking policy, not native production
 Enforcement or live ingestion. Backend/email unavailability leaves the optional
 story pending while successful setup remains successful.
@@ -125,7 +127,7 @@ classifier treats prim as trusted tooling rather than untrusted downloaded code.
 
 ### Set up with your coding agent
 
-In Claude Code, paste this. The command is in **your** message, so the agent runs it
+In Claude Code or Codex, paste this. The command is in **your** message, so the agent runs it
 directly — instead of fetching a doc and executing a command from it, which an
 auto-mode safety classifier blocks as untrusted-origin code:
 

@@ -3,8 +3,9 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { checkDemoPause } from "../commands/doctor.js";
+import { captureReadiness, checkDemoPause } from "../commands/doctor.js";
 import { isRepoActiveForCapture } from "./activation.js";
+import { recordConversationCaptured } from "./commit-heartbeat.js";
 import {
   DEMO_PAUSE_MS,
   clearDemoPause,
@@ -117,5 +118,31 @@ describe("demo capture pause", () => {
     expect(isRepoActiveForCapture(repo)).toBe(false);
     expect(local()).toBeUndefined();
     expect(readDemoPause(repo)).toBeUndefined();
+  });
+
+  it("requires agent hook evidence before claiming capture is observed", () => {
+    git(repo, "config", "--local", "prim.active", "true");
+    const ready = [{ name: "codex-hooks", status: "ok" as const, detail: "trusted" }];
+    const untrusted = [
+      { name: "codex-hooks", status: "warn" as const, detail: "review in /hooks" },
+    ];
+    expect(captureReadiness("codex", ready, repo).state).toBe("unverified");
+    recordConversationCaptured(repo, "codex");
+    expect(captureReadiness("codex", ready, repo)).toMatchObject({
+      state: "observed",
+      hooks: "ready",
+      observedAt: expect.any(Number),
+    });
+    expect(captureReadiness("codex", untrusted, repo)).toMatchObject({
+      state: "unverified",
+      hooks: "unverified",
+    });
+    pauseCaptureForDemo(repo, "run-1");
+    endDemoPause(repo, "run-1");
+    expect(captureReadiness("codex", ready, repo)).toMatchObject({
+      state: "paused",
+      hooks: "ready",
+      resumeOnNextPrompt: true,
+    });
   });
 });

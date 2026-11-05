@@ -26,6 +26,7 @@
 
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import type { Command } from "commander";
 import { onboardingFinished } from "../demo/state.js";
@@ -41,6 +42,8 @@ import {
   globalHooksPathIsPrims,
   planGlobalHooks,
 } from "./hooks.js";
+import { userTargetFor } from "./skill.js";
+import { codexWelcomeSkillPath } from "./welcome-skill.js";
 
 const EXIT_INCOMPLETE = 1;
 const GITHUB_CONNECT_TIMEOUT_MS = 90_000;
@@ -447,6 +450,7 @@ export function registerSetupCommand(
     .option("--details", "show full human installation diagnostics on STDERR")
     .option("--skip-demo", "skip the optional author story and remember that choice")
     .action((opts: SetupCommandOptions) => {
+      const setupAt = Date.now();
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
       // a bare `prim setup` wires the integration matching the calling agent.
@@ -617,15 +621,15 @@ export function registerSetupCommand(
         }
       }
 
-      // A Claude Code session hands off to the prim-welcome skill. Anything
-      // else, including a person at a terminal, keeps the welcome and tour.
+      // Claude Code and user-scope Codex sessions hand off to prim-welcome.
+      // A person at a terminal keeps the earlier welcome and tour.
       const welcomeHandoff =
-        agent === "claude" &&
         scope === "user" &&
-        (opts.agent === "claude" || Boolean(process.env.CLAUDECODE));
+        ((agent === "claude" && (opts.agent === "claude" || Boolean(process.env.CLAUDECODE))) ||
+          (agent === "codex" && Boolean(process.env.CODEX_THREAD_ID)));
 
       // Connect this repository to GitHub before activation needs it. The
-      // Claude setup request ("set up Primitive for this repo") is the consent.
+      // setup request ("set up Primitive for this repo") is the consent.
       // Bounded: an install the user can only request (not approve) would
       // otherwise hold setup for the intent's whole lifetime. A pending
       // connection fails activation below, with its remedy, as on prod.
@@ -668,11 +672,16 @@ export function registerSetupCommand(
               : "ok";
       }
 
-      // Claude hands off to the prim-welcome skill, which owns everything the
+      // The agent hands off to prim-welcome, which owns everything the
       // user reads from here: explanation, the demo (which pauses capture while
       // it runs), and the handoff. `demo` says whether to offer it.
       if (welcomeHandoff) {
-        const welcomeSkill = welcomeSkillPathFor(process.cwd(), scope);
+        const welcomeSkill =
+          agent === "codex" ? codexWelcomeSkillPath() : welcomeSkillPathFor(process.cwd(), scope);
+        const mainSkill =
+          agent === "codex"
+            ? userTargetFor("codex")
+            : join(homedir(), ".claude", "skills", "prim", "SKILL.md");
         const failed = Object.keys(results).filter((key) => results[key] === "failed");
         if (failed.length === 0 && opts.skipDemo && run(["demo", "skip"]).code !== 0)
           note("demo · could not remember skip; installation remains configured");
@@ -701,6 +710,9 @@ export function registerSetupCommand(
             ? {}
             : {
                 welcomeSkill,
+                mainSkill,
+                agent,
+                setupAt,
                 prim: primCommand(),
                 demo: demoDone ? "done" : "due",
                 // For agents following the earlier setup prompt, which expects

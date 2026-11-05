@@ -888,6 +888,74 @@ describe("welcome skill tour", () => {
     expect(captured(f)).toBe(true);
   });
 
+  it("retries start without replacing its pause or capturing the fictional task", async () => {
+    const f = fixture();
+    const { requests } = await serveStory(f);
+    const first = await welcome(f, ["start"]);
+    const pause = config(f, "prim.demoPause");
+    const second = await welcome(f, ["start"]);
+    expect(second.json).toEqual(first.json);
+    expect(config(f, "prim.demoPause")).toBe(pause);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
+    await event(f, "retry-session", "UserPromptSubmit", { prompt: first.json.story.task });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+    expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+    expect((await welcome(f, ["resolve", "--choice", "adhere"])).json.stage).toBe("completed");
+    expect(captured(f)).toBe(false);
+    await event(f, "retry-session", "UserPromptSubmit", { prompt: "real task" });
+    expect(captured(f)).toBe(true);
+  });
+
+  it("rebinds an ending pause when a skipped tour restarts before the next prompt", async () => {
+    const f = fixture();
+    await serveStory(f);
+    await welcome(f, ["start"]);
+    const first = config(f, "prim.demoPause");
+    await welcome(f, ["skip"]);
+    expect(config(f, "prim.demoPause")).toMatch(/ ending$/u);
+    const restarted = await welcome(f, ["start"]);
+    expect(restarted.json.stage).toBe("prompt");
+    expect(config(f, "prim.demoPause")).not.toBe(first);
+    expect(config(f, "prim.demoPause")).toMatch(/ true active$/u);
+    await event(f, "restart-session", "UserPromptSubmit", { prompt: restarted.json.story.task });
+    expect(config(f, "prim.active")).toBe("false");
+    expect(captured(f)).toBe(false);
+  });
+
+  it.each(["adhere", "supersede"] as const)(
+    "resumes Codex capture on the next prompt after a %s welcome demo",
+    async (choice) => {
+      const f = fixture();
+      await serveStory(f);
+      const session = "codex-welcome-session";
+      const prompt = async (value: string) =>
+        f.hook("prim-hook", "codex", {
+          ...f.envelope("codex", "echo work", session, "UserPromptSubmit"),
+          prompt: value,
+        });
+      const started = await welcome(f, ["start"]);
+      await prompt(started.json.story.task);
+      expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
+      if (choice === "supersede") await prompt("Support needs email exports");
+      expect(
+        (
+          await welcome(f, [
+            "resolve",
+            "--choice",
+            choice,
+            ...(choice === "supersede" ? ["--reason", "Support needs email exports"] : []),
+          ])
+        ).json.stage,
+      ).toBe("completed");
+      expect(config(f, "prim.active")).toBe("false");
+      expect(captured(f)).toBe(false);
+      await prompt("real Codex work");
+      expect(config(f, "prim.active")).toBe("true");
+      expect(captured(f)).toBe(true);
+    },
+  );
+
   it("ends the pause on skip, stops the story if capture comes back, and types errors", async () => {
     const f = fixture();
     const { requests } = await serveStory(f);
@@ -918,7 +986,7 @@ describe("welcome skill tour", () => {
     expect(requests).not.toContain("/api/cli/demo/check");
   });
 
-  it("tolerates corrupt runs and replaces an abandoned tour", async () => {
+  it("tolerates corrupt runs and reuses an unfinished tour", async () => {
     const f = fixture();
     const { requests } = await serveStory(f);
     mkdirSync(join(f.config, "demo", "runs"), { recursive: true });
@@ -931,7 +999,8 @@ describe("welcome skill tour", () => {
     await welcome(f, ["start"]);
     expect(config(f, "prim.demoPause")).toBeUndefined();
     await welcome(f, ["start"]);
-    expect(requests.filter((path) => path === "/api/cli/demo/skip")).toHaveLength(1);
+    expect(requests.filter((path) => path === "/api/cli/demo/skip")).toHaveLength(0);
+    expect(requests.filter((path) => path === "/api/cli/demo/start")).toHaveLength(1);
     expect((await welcome(f, ["attempt"])).json.stage).toBe("conflict");
     const done = await welcome(f, ["resolve", "--choice", "adhere"]);
     expect(done.json).toMatchObject({
