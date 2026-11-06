@@ -1,7 +1,7 @@
 {
   "name": "@primitive.ai/prim",
-  "version": "0.1.0-alpha.121.seref-v3.1",
-  "description": "CLI for Primitive's decision graph \u2014 passive decision capture, conflict gate, and team presence",
+  "version": "0.1.0-alpha.123",
+  "description": "CLI for Primitive's decision graph — passive decision capture, conflict gate, and team presence",
   "type": "module",
   "license": "MIT",
   "repository": {
