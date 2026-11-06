@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.123](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.122...v0.1.0-alpha.123) (2026-11-06)
+
+
+### Bug Fixes
+
+* **enforcement:** restore bounded Claude V3 checks ([1d3da49](https://github.com/campus-ai/prim/commit/1d3da4916990cacf14c036e0a746e47d0e9016c0))
+
 ## [0.1.0-alpha.122](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.121...v0.1.0-alpha.122) (2026-11-05)
 
 
