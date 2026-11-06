@@ -13,9 +13,8 @@ presence — from the command line and via session + git hooks.
 > organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
-This pinned `0.1.0-alpha.121.seref-v3.1` build restores **bounded V3 checks for
-Claude Code**. Each automatic check uses one V3 request with a **12-second request
-timeout**, inside a **15-second supervisor budget** and **20-second Claude hook
+This release restores **bounded V3 checks for Claude Code**. Each automatic check
+uses one V3 request with a **12-second request timeout**, inside a **15-second supervisor budget** and **20-second Claude hook
 timeout**. Completed conflicts retain block/warn mode. Failed checks allow the
 tool with visible “change was not verified” feedback, including supervisor failure,
 missing binding, and unresolved shell targets. Unresolved targets never trigger

@@ -15,6 +15,7 @@ const { values } = parseArgs({
   options: { "package-root": { type: "string" }, schema: { type: "string" } },
 });
 const packageRoot = resolve(values["package-root"] ?? sourceRoot);
+const packageVersion = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version;
 const schemaPath = resolve(values.schema ?? join(sourceRoot, "contracts/cli-http-v1.schema.json"));
 const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
 const fixtures = JSON.parse(
@@ -180,7 +181,7 @@ try {
     assert.equal(result.output.systemMessage, undefined);
     assert.equal(requests.length, 1);
     assert.deepEqual(requests[0].paths, ["target.txt"]);
-    assert.match(requests[0].clientVersion, /seref-v3/u);
+    assert.equal(requests[0].clientVersion, packageVersion);
   });
   await scenario("conflict arriving after two seconds still blocks", async () => {
     respond = async () => {
