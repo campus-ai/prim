@@ -9,7 +9,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 // This drives the built hook and installers with real process, HTTP, Git, and
-// filesystem boundaries. It does not invoke an agent or touch the user's home.
+// filesystem boundaries. Claude automatic V3 is covered in check-preflight-v3-e2e.mjs. It does not invoke an agent or touch the user's home.
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = mkdtempSync(join(tmpdir(), "prim-preflight-v4-e2e-"));
 const home = join(root, "home");
@@ -205,7 +205,7 @@ async function run(args, input, overrides = {}, nodeArgs = [], rawInput = null) 
     child.stdin.end(rawInput ?? (input === undefined ? "" : JSON.stringify(input)));
   });
 }
-async function hook(agent = "claude_code", options = {}) {
+async function hook(agent = "codex", options = {}) {
   requests.length = 0;
   const result = await run(
     [join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"), "--agent", agent],
@@ -222,16 +222,7 @@ async function hook(agent = "claude_code", options = {}) {
   return { ...result, output: JSON.parse(result.stdout) };
 }
 function silent(agent, result) {
-  assert.deepEqual(
-    result.output,
-    agent === "cursor"
-      ? { permission: "allow" }
-      : agent === "claude_code"
-        ? {
-            hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
-          }
-        : {},
-  );
+  assert.deepEqual(result.output, agent === "cursor" ? { permission: "allow" } : {});
   assert.equal(result.stderr, "");
 }
 function denied(agent, output) {
@@ -265,7 +256,7 @@ try {
     ["hermes", "0.17.0"],
   ])
     writeFileSync(join(bin, host), `#!/bin/sh\nprintf '%s\\n' '${version}'\n`, { mode: 0o755 });
-  for (const agent of ["claude_code", "cursor", "codex", "hermes"]) {
+  for (const agent of ["cursor", "codex", "hermes"]) {
     for (const [name, options] of [
       ["oversized tool input", { input: envelope(agent, "x".repeat(1024 * 1024)) }],
       ["malformed JSON", { rawInput: '{"hook_event_name":' }],
@@ -357,7 +348,7 @@ try {
             message: "The credential authority changed",
           });
     const result = await hook();
-    silent("claude_code", result);
+    silent("codex", result);
 
     assert.doesNotMatch(result.stdout, /different check identity|changed evaluation identity/u);
   });
@@ -402,7 +393,7 @@ try {
     tool_name: "Bash",
     tool_input: { command },
   });
-  for (const agent of ["claude_code", "codex"]) {
+  for (const agent of ["codex"]) {
     for (const [name, response] of [
       ["old backend", () => completed()],
       ["malformed response", () => ({ invalid: true })],
@@ -585,12 +576,12 @@ try {
     async () => {
       respond = () => completed({ shellCheck: { targetMode: "files" } });
       const input = {
-        ...envelope("claude_code"),
+        ...envelope("codex"),
         tool_name: "Bash",
         tool_input: { command: `printf '${"x".repeat(8_000)}' > target.txt` },
       };
-      const result = await hook("claude_code", { input });
-      silent("claude_code", result);
+      const result = await hook("codex", { input });
+      silent("codex", result);
       assert.deepEqual(requests[0].body.paths, ["target.txt"]);
     },
   );
@@ -603,13 +594,10 @@ try {
         conflicts: [{ decisionId: "dec_0123abcd" }],
       });
     assert.equal(
-      denied(
-        "claude_code",
-        (await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } })).output,
-      ),
+      denied("codex", (await hook("codex", { env: { PRIM_HOOK_MODE: "warn" } })).output),
       false,
     );
-    assert.ok(denied("claude_code", (await hook()).output));
+    assert.ok(denied("codex", (await hook()).output));
   });
   for (const [name, value] of [
     ["ID-less completed response", completed({ checkId: undefined, evaluationId: undefined })],
@@ -649,26 +637,26 @@ try {
   ])
     await scenario(`${name} silently releases without fallback`, async () => {
       respond = () => value;
-      silent("claude_code", await hook());
+      silent("codex", await hook());
       assert.equal(requests.length, 1);
     });
   await scenario("wrong poll identity silently releases", async () => {
     respond = (body) =>
       body.operation === "start" ? processing() : completed({ checkId: "othercheck" });
-    silent("claude_code", await hook());
+    silent("codex", await hook());
   });
   await scenario("network failure silently releases even in warn mode", async () => {
     respond = (_, response) => {
       response.destroy();
     };
-    silent("claude_code", await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } }));
+    silent("codex", await hook("codex", { env: { PRIM_HOOK_MODE: "warn" } }));
   });
   await scenario("malformed conflict records silently release even in warn mode", async () => {
     respond = (_, response) => {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(completed({ conflicts: [null] })));
     };
-    silent("claude_code", await hook("claude_code", { env: { PRIM_HOOK_MODE: "warn" } }));
+    silent("codex", await hook("codex", { env: { PRIM_HOOK_MODE: "warn" } }));
     assert.equal(requests.length, 1);
   });
   await scenario("enforcement-disabled no-ID response preserves explicit exemption", async () => {
@@ -688,7 +676,7 @@ try {
           completedSemanticBatchCount: 0,
         },
       });
-    assert.equal(denied("claude_code", (await hook()).output), false);
+    assert.equal(denied("codex", (await hook()).output), false);
   });
   await scenario("enforcement disabled mid-poll is the sole identity exemption", async () => {
     respond = (body) =>
@@ -709,7 +697,7 @@ try {
               completedSemanticBatchCount: 0,
             },
           });
-    assert.equal(denied("claude_code", (await hook()).output), false);
+    assert.equal(denied("codex", (await hook()).output), false);
     assert.equal(requests.length, 2);
   });
   await scenario(
@@ -731,12 +719,14 @@ try {
             completedSemanticBatchCount: 0,
           },
         });
-      silent("claude_code", await hook());
+      silent("codex", await hook());
       const input = {
-        ...envelope("claude_code"),
-        tool_input: { file_path: join(root, "outside.txt"), content: "fixture" },
+        ...envelope("codex"),
+        tool_input: {
+          command: `*** Begin Patch\n*** Add File: ${join(root, "outside.txt")}\n+fixture\n*** End Patch`,
+        },
       };
-      assert.equal(denied("claude_code", (await hook("claude_code", { input })).output), false);
+      assert.equal(denied("codex", (await hook("codex", { input })).output), false);
       assert.deepEqual(requests[0].body.paths, []);
       assert.equal(requests[0].body.coverage, "unverified");
       const result = await run([
@@ -754,13 +744,13 @@ try {
     async () => {
       respond = () => completed();
       const prefix = "x".repeat(8_000);
-      await hook("claude_code", { input: envelope("claude_code", `${prefix}a`, "first") });
+      await hook("codex", { input: envelope("codex", `${prefix}a`, "first") });
       const first = requests[0].body;
-      await hook("claude_code", { input: envelope("claude_code", `${prefix}b`, "second") });
+      await hook("codex", { input: envelope("codex", `${prefix}b`, "second") });
       const changed = requests[0].body;
       assert.equal(first.proposal, changed.proposal);
       assert.notEqual(first.toolInputDigest, changed.toolInputDigest);
-      await hook("claude_code", { input: envelope("claude_code", `${prefix}a`, "retry") });
+      await hook("codex", { input: envelope("codex", `${prefix}a`, "retry") });
       assert.equal(first.toolInputDigest, requests[0].body.toolInputDigest);
       assert.notEqual(first.invocationId, requests[0].body.invocationId);
     },
@@ -772,14 +762,14 @@ try {
     writeFileSync(clock, "process.uptime = () => 1.5;\n");
     respond = () => processing();
     const started = Date.now();
-    const result = await hook("claude_code", { nodeArgs: ["--import", pathToFileURL(clock).href] });
-    silent("claude_code", result);
+    const result = await hook("codex", { nodeArgs: ["--import", pathToFileURL(clock).href] });
+    silent("codex", result);
     assert.ok(Date.now() - started < 3_000);
   });
   await scenario("single HTTP request shares the two-second hook budget", async () => {
     respond = () => undefined;
     const started = Date.now();
-    silent("claude_code", await hook());
+    silent("codex", await hook());
     assert.ok(Date.now() - started >= 1_000);
     assert.ok(Date.now() - started < 2_250);
   });
@@ -823,10 +813,10 @@ try {
           shellCheck: { targetMode: "repository" },
         });
       const results = await Promise.all([
-        hook("claude_code", { input: shellInput("claude_code") }),
+        hook("codex", { input: shellInput("codex") }),
         hook("codex", { input: shellInput("codex") }),
       ]);
-      silent("claude_code", results[0]);
+      silent("codex", results[0]);
       silent("codex", results[1]);
       assert.equal(completedInBackground, false);
       await new Promise((resolve) => setTimeout(resolve, 650));
@@ -834,22 +824,18 @@ try {
       clearTimeout(work);
     },
   );
-  for (const agent of ["claude_code", "codex", "cursor", "hermes"]) {
+  for (const agent of ["codex", "cursor", "hermes"]) {
     for (const state of ["processing", "paused", "completed"]) {
       await scenario(`${agent}: confirmed conflict in ${state} retains review`, async () => {
         respond = () =>
           (state === "completed" ? completed : processing)({
             state,
-            verdict: agent === "claude_code" ? "ask" : "block",
+            verdict: "block",
             reasonCode: "high_confidence_contradiction",
             conflicts: [{ decisionId: "dec_0123abcd", title: "Keep retries durable" }],
           });
         const result = await hook(agent);
-        assert.ok(
-          agent === "claude_code"
-            ? result.output.hookSpecificOutput.permissionDecision === "ask"
-            : denied(agent, result.output),
-        );
+        assert.ok(denied(agent, result.output));
         assert.match(result.stdout, /dec_0123abcd/u);
         assert.equal(requests.length, 1);
         const warn = await hook(agent, { env: { PRIM_HOOK_MODE: "warn" } });
@@ -881,15 +867,14 @@ try {
       );
       timer.unref();
     };
-    silent("claude_code", await hook());
+    silent("codex", await hook());
   });
   await scenario("stalled synchronous Git is killed within the hook deadline", async () => {
     const git = join(bin, "git");
     writeFileSync(git, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
     try {
-      silent("claude_code", await hook());
-      for (const agent of ["claude_code", "codex"])
-        silent(agent, await hook(agent, { input: shellInput(agent) }));
+      silent("codex", await hook());
+      for (const agent of ["codex"]) silent(agent, await hook(agent, { input: shellInput(agent) }));
     } finally {
       rmSync(git);
     }
@@ -901,8 +886,8 @@ try {
       'if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) process.exit(23);\n',
     );
     silent(
-      "claude_code",
-      await hook("claude_code", { env: { NODE_OPTIONS: `--import=${pathToFileURL(crash).href}` } }),
+      "codex",
+      await hook("codex", { env: { NODE_OPTIONS: `--import=${pathToFileURL(crash).href}` } }),
     );
   });
   await scenario("credential refresh shares the supervisor deadline", async () => {
@@ -922,8 +907,8 @@ if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) globalThis.fetch = (url
     writeFileSync(join(config, "refresh_token"), "synthetic-refresh-token");
     writeFileSync(join(config, "token_expires_at"), "1");
     silent(
-      "claude_code",
-      await hook("claude_code", {
+      "codex",
+      await hook("codex", {
         env: {
           PRIM_TOKEN: "",
           PRIM_CONFIG_DIR: config,
@@ -981,60 +966,57 @@ if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) globalThis.fetch = (url
         fixture.value.state !== "expired" &&
         fixture.value.conflicts.length > 0 &&
         ["block", "ask"].includes(fixture.value.verdict);
-      assert.equal(denied("claude_code", result.output), expectedDeny);
+      assert.equal(denied("codex", result.output), expectedDeny);
     });
   for (const host of ["claude", "codex", "cursor", "hermes"])
-    await scenario(
-      `${host}: installer writes and repairs two-second fail-open policy`,
-      async () => {
-        const args = [join(packageRoot, "dist/index.js"), host, "install", "--scope", "user"];
-        let result = await run(args);
-        assert.equal(result.code, 0, result.stderr);
-        const location = JSON.parse(result.stdout).path;
-        const raw = readFileSync(location, "utf8");
-        const settings = host === "hermes" ? parseYaml(raw) : JSON.parse(raw);
-        const event =
-          host === "hermes" ? "pre_tool_call" : host === "cursor" ? "preToolUse" : "PreToolUse";
-        const entries = settings.hooks[event];
-        const gate =
-          host === "claude" || host === "codex"
-            ? entries
-                .flatMap(({ hooks }) => hooks)
-                .find(({ command }) => command.includes("prim-pre-tool-use"))
-            : entries.find(({ command }) => command.includes("prim-pre-tool-use"));
-        assert.equal(gate.timeout, 2);
-        if (host === "claude") assert.equal(gate.onFailure, undefined);
-        if (host === "cursor") assert.equal(gate.failClosed, false);
-        if (host === "hermes") assert.equal(gate.fail_closed, false);
-        if (host === "codex") assert.match(result.stderr, /two seconds/u);
-        if (host === "claude" || host === "codex") {
-          gate.async = true;
-          writeFileSync(location, JSON.stringify(settings));
-          result = await run(args);
-          assert.equal(result.code, 0, result.stderr);
-          assert.equal(JSON.parse(result.stdout).changed, true);
-        }
-        // Repair an actual legacy gate, including its failure policy, and
-        // retain all unrelated lifecycle registrations.
-        gate.timeout = 300;
-        gate.async = undefined;
-        if (host === "claude") gate.onFailure = "block";
-        if (host === "cursor") gate.failClosed = true;
-        if (host === "hermes") gate.fail_closed = true;
-        writeFileSync(
-          location,
-          host === "hermes" ? stringifyYaml(settings) : JSON.stringify(settings),
-        );
+    await scenario(`${host}: installer writes and repairs bounded fail-open policy`, async () => {
+      const args = [join(packageRoot, "dist/index.js"), host, "install", "--scope", "user"];
+      let result = await run(args);
+      assert.equal(result.code, 0, result.stderr);
+      const location = JSON.parse(result.stdout).path;
+      const raw = readFileSync(location, "utf8");
+      const settings = host === "hermes" ? parseYaml(raw) : JSON.parse(raw);
+      const event =
+        host === "hermes" ? "pre_tool_call" : host === "cursor" ? "preToolUse" : "PreToolUse";
+      const entries = settings.hooks[event];
+      const gate =
+        host === "claude" || host === "codex"
+          ? entries
+              .flatMap(({ hooks }) => hooks)
+              .find(({ command }) => command.includes("prim-pre-tool-use"))
+          : entries.find(({ command }) => command.includes("prim-pre-tool-use"));
+      assert.equal(gate.timeout, host === "claude" ? 20 : 2);
+      if (host === "claude") assert.equal(gate.onFailure, undefined);
+      if (host === "cursor") assert.equal(gate.failClosed, false);
+      if (host === "hermes") assert.equal(gate.fail_closed, false);
+      if (host === "codex") assert.match(result.stderr, /two seconds/u);
+      if (host === "claude" || host === "codex") {
+        gate.async = true;
+        writeFileSync(location, JSON.stringify(settings));
         result = await run(args);
         assert.equal(result.code, 0, result.stderr);
         assert.equal(JSON.parse(result.stdout).changed, true);
-        const repaired = readFileSync(location, "utf8");
-        assert.doesNotMatch(repaired, /"onFailure": "block"|"failClosed": true|fail_closed: true/u);
-        result = await run(args);
-        assert.equal(result.code, 0, result.stderr);
-        assert.equal(JSON.parse(result.stdout).changed, false);
-      },
-    );
+      }
+      // Repair an actual legacy gate, including its failure policy, and
+      // retain all unrelated lifecycle registrations.
+      gate.timeout = 300;
+      gate.async = undefined;
+      if (host === "claude") gate.onFailure = "block";
+      if (host === "cursor") gate.failClosed = true;
+      if (host === "hermes") gate.fail_closed = true;
+      writeFileSync(
+        location,
+        host === "hermes" ? stringifyYaml(settings) : JSON.stringify(settings),
+      );
+      result = await run(args);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).changed, true);
+      const repaired = readFileSync(location, "utf8");
+      assert.doesNotMatch(repaired, /"onFailure": "block"|"failClosed": true|fail_closed: true/u);
+      result = await run(args);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).changed, false);
+    });
   await scenario(
     "unsupported host capability is machine-readable without claiming readiness",
     async () => {

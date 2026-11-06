@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-/** A two-second supervisor; blocking local work runs in a disposable process. */
+/** Bounded supervisor; blocking local work runs in a disposable process. */
 import { type ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseAgent } from "./agent.js";
 
-const BUDGET_MS = 2_000;
 const OUTPUT_RESERVE_MS = 150;
 const MAX_OUTPUT_BYTES = 262_144;
 const agent = parseAgent(process.argv);
+const budgetMs = agent === "claude_code" ? 15_000 : 2_000;
 const silent =
   agent === "cursor"
     ? { permission: "allow" }
@@ -16,7 +16,23 @@ const silent =
           hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
         }
       : {};
-const remaining = Math.max(0, BUDGET_MS - process.uptime() * 1_000 - OUTPUT_RESERVE_MS);
+const unverified = "[primitive] Decision check could not finish; change was not verified.";
+const optedOut =
+  process.env.PRIM_HOOK_MODE === "off" ||
+  process.env.PRIM_BYPASS === "1" ||
+  process.env.PRIM_BYPASS === "true";
+const fallback =
+  agent === "claude_code" && !optedOut
+    ? {
+        systemMessage: unverified,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          additionalContext: unverified,
+        },
+      }
+    : silent;
+const remaining = Math.max(0, budgetMs - process.uptime() * 1_000 - OUTPUT_RESERVE_MS);
 let child: ChildProcess | undefined;
 let finished = false;
 let stdout = "";
@@ -33,7 +49,7 @@ function stopWorker(): void {
   }
 }
 
-function finish(output: unknown = silent, diagnostics = ""): void {
+function finish(output: unknown = fallback, diagnostics = ""): void {
   if (finished) return;
   finished = true;
   clearTimeout(timer);

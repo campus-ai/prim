@@ -53,7 +53,9 @@ export function inspectFailureProtection(host: PreflightHost): FailureProtection
     status,
     detail:
       status === "supported"
-        ? `${host} ${version} supports the configured ${host === "claude" ? "default fail-open" : "failClosed: false"} policy and two-second timeout.`
+        ? host === "claude"
+          ? `Claude ${version}: bounded V3 checks use a 12-second request, 15-second supervisor, and 20-second host timeout; failed checks allow with unverified feedback.`
+          : `${host} ${version} supports the configured failClosed: false policy and two-second timeout.`
         : `${host} ${version ?? "version unknown"}: upgrade to ${minimum} or newer ${host === "cursor" ? "(Primitive's verified host compatibility baseline) " : ""}before relying on host timeout behavior; then run prim ${host} install and prim doctor.`,
   };
 }

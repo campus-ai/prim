@@ -33,6 +33,8 @@ const root = mkdtempSync(join(tmpdir(), "prim-claude-host-"));
 const cases = [
   "allow",
   "conflict",
+  "late-conflict",
+  "warn-conflict",
   "paused",
   "malformed",
   "deadline",
@@ -44,6 +46,7 @@ const cases = [
 let current;
 let calls = 0;
 let preflightRequests = 0;
+let unverifiedContext = false;
 const routes = [];
 const server = createServer(async (request, response) => {
   let raw = "";
@@ -57,41 +60,31 @@ const server = createServer(async (request, response) => {
   });
   if (request.url === "/api/cli/decisions/conflict-check") {
     preflightRequests += 1;
-    assert.equal(body.protocolVersion, 4);
+    assert.equal(body.protocolVersion, 3);
+    assert.equal(body.operation, undefined);
+    if (current === "deadline") return;
+    if (current === "late-conflict") await new Promise((resolve) => setTimeout(resolve, 2500));
     if (current === "malformed") {
       response.setHeader("Content-Type", "application/json");
       response.end("{invalid-json");
       return;
     }
-    const paused = current === "paused" || current === "deadline";
+    const paused = current === "paused";
+    const conflict = current.endsWith("conflict");
     response.setHeader("Content-Type", "application/json");
     response.end(
       JSON.stringify({
-        protocolVersion: 4,
-        shellCheck: { targetMode: "files" },
-        state: current === "deadline" ? "processing" : paused ? "paused" : "completed",
+        protocolVersion: 3,
         checkId: "hostcheck",
-        evaluationId: "hosteval",
-        verdict: current === "conflict" ? "block" : paused ? "unavailable" : "allow",
-        reasonCode:
-          current === "conflict"
-            ? "high_confidence_contradiction"
-            : paused
-              ? "semantic_unavailable"
-              : "no_conflicts",
+        verdict: conflict ? "block" : paused ? "unavailable" : "allow",
+        reasonCode: conflict
+          ? "high_confidence_contradiction"
+          : paused
+            ? "semantic_unavailable"
+            : "no_conflicts",
         message: paused ? "Fixture evaluation paused" : "Fixture complete",
-        conflicts: current === "conflict" ? [{ decisionId: "dec_0123abcd" }] : [],
+        conflicts: conflict ? [{ decisionId: "dec_0123abcd" }] : [],
         bypassed: [],
-        evaluationCoverage: {
-          candidateCount: 1,
-          submittedCount: 1,
-          evaluatedCount: paused ? 0 : 1,
-          bypassedCount: 0,
-          discoveryComplete: true,
-          status: paused ? "partial" : "completed",
-          semanticBatchCount: 1,
-          completedSemanticBatchCount: paused ? 0 : 1,
-        },
       }),
     );
     return;
@@ -106,6 +99,7 @@ const server = createServer(async (request, response) => {
     response.end("{}");
     return;
   }
+  unverifiedContext ||= JSON.stringify(body.messages).includes("change was not verified");
   calls += 1;
   const first = calls === 1;
   const content = first
@@ -171,6 +165,7 @@ try {
     current = name;
     calls = 0;
     preflightRequests = 0;
+    unverifiedContext = false;
     routes.length = 0;
     const cwd = join(root, name);
     const home = join(cwd, "home");
@@ -186,7 +181,7 @@ try {
       PRIM_CONFIG_DIR: join(home, "prim"),
       PRIM_API_URL: url,
       PRIM_TOKEN: "fixture-no-real-credential",
-      PRIM_HOOK_MODE: name === "conflict" ? "block" : "warn",
+      PRIM_HOOK_MODE: name === "warn-conflict" ? "warn" : "block",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: join(home, "gitconfig"),
       ANTHROPIC_BASE_URL: url,
@@ -214,14 +209,12 @@ try {
     const workerFault = join(cwd, "worker-fault.mjs");
     writeFileSync(
       workerFault,
-      `if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) { ${name === "worker-crash" ? "process.exit(23);" : "await new Promise(resolve => setTimeout(resolve, 5000));"} }\n`,
+      `if (process.argv[1]?.endsWith("pre-tool-use-worker.js")) { ${name === "worker-crash" ? "process.exit(23);" : "await new Promise(resolve => setTimeout(resolve, 30000));"} }\n`,
     );
     if (name.startsWith("worker-")) env.NODE_OPTIONS = `--import=${workerFault}`;
-    const clock = join(cwd, "clock.mjs");
-    writeFileSync(clock, "process.uptime = () => 0.5;\n");
     writeFileSync(
       wrapper,
-      `import { readFileSync, writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst raw=readFileSync(0,'utf8'); writeFileSync(${JSON.stringify(observed)},raw);\n${name === "crash" ? "process.exit(1);" : name === "timeout" ? "await new Promise(resolve=>setTimeout(resolve,5000));" : `const result=spawnSync(${JSON.stringify(process.execPath)},[${name === "deadline" ? `'--import',${JSON.stringify(clock)},` : ""}${JSON.stringify(join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"))},'--agent','claude'],{input:raw,encoding:'utf8',env:process.env}); process.stdout.write(result.stdout);process.stderr.write(result.stderr);process.exit(result.status??1);`}\n`,
+      `import { readFileSync, writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst raw=readFileSync(0,'utf8'); writeFileSync(${JSON.stringify(observed)},raw);\n${name === "crash" ? "process.exit(1);" : name === "timeout" ? "await new Promise(resolve=>setTimeout(resolve,30000));" : `const result=spawnSync(${JSON.stringify(process.execPath)},[${JSON.stringify(join(packageRoot, "dist/hook-runtime/hooks/pre-tool-use.js"))},'--agent','claude'],{input:raw,encoding:'utf8',env:process.env}); process.stdout.write(result.stdout);process.stderr.write(result.stderr);process.exit(result.status??1);`}\n`,
     );
     const settings = join(cwd, "settings.json");
     writeFileSync(
@@ -235,7 +228,7 @@ try {
                 {
                   type: "command",
                   command: `'${process.execPath}' '${wrapper}'`,
-                  timeout: 2,
+                  timeout: 20,
                 },
               ],
             },
@@ -284,7 +277,7 @@ try {
         reject(
           new Error(`Claude ${name} timed out; ${stderr}; ${stdout}; ${JSON.stringify(routes)}`),
         );
-      }, 30000);
+      }, 45000);
       child.once("error", reject);
       child.once("close", (code) => {
         clearTimeout(timer);
@@ -299,6 +292,7 @@ try {
       sentinelWritten: existsSync(join(cwd, "sentinel.txt")),
       modelRequests: calls,
       preflightRequests,
+      unverifiedContext,
     };
     if (!row.hookObserved)
       throw new Error(
@@ -308,14 +302,24 @@ try {
     assert.equal(result.code, 0, result.stderr);
     assert.equal(
       row.sentinelWritten,
-      ["allow", "crash", "timeout"].includes(name),
+      !["conflict", "late-conflict"].includes(name),
       `${JSON.stringify(row)}\n${result.stdout}\n${result.stderr}`,
     );
     assert.equal(
       preflightRequests > 0,
-      ["allow", "conflict", "paused", "malformed", "deadline"].includes(name),
+      [
+        "allow",
+        "conflict",
+        "late-conflict",
+        "warn-conflict",
+        "paused",
+        "malformed",
+        "deadline",
+      ].includes(name),
       JSON.stringify(row),
     );
+    if (["paused", "malformed", "deadline", "worker-crash", "worker-timeout"].includes(name))
+      assert.equal(unverifiedContext, true, JSON.stringify(row));
     results.push(row);
     console.error(
       `PASS actual Claude ${name}: sentinel ${row.sentinelWritten ? "written" : "blocked"}`,
@@ -324,8 +328,8 @@ try {
   const summary = {
     suite: "claude-preflight-host",
     hostVersion,
-    deadlineTiming: "accelerated remaining budget",
-    watchdogTimeoutSeconds: 2,
+    deadlineTiming: "real 12-second request and 15-second supervisor budgets",
+    watchdogTimeoutSeconds: 20,
     results,
   };
   console.log(JSON.stringify(summary));

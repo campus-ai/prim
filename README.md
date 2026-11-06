@@ -13,7 +13,16 @@ presence — from the command line and via session + git hooks.
 > organization, gates can warn, pause, or block a conflicting edit until you resolve
 > the decision and retry. Automatic decision capture in active repositories is separate.
 
-When Enforcement is enabled, automatic V4 checks wait at most **two seconds**.
+This pinned `0.1.0-alpha.121.seref-v3.1` build restores **bounded V3 checks for
+Claude Code**. Each automatic check uses one V3 request with a **12-second request
+timeout**, inside a **15-second supervisor budget** and **20-second Claude hook
+timeout**. Completed conflicts retain block/warn mode. Failed checks allow the
+tool with visible “change was not verified” feedback, including supervisor failure,
+missing binding, and unresolved shell targets. Unresolved targets never trigger
+an exhaustive repository-wide scan. V3 checking can omit candidates or evidence;
+it does not promise exhaustive coverage, sub-two-second completion, or V4 Slack alerts.
+
+Other agents retain automatic V4 checks that wait at most **two seconds**.
 Confirmed conflicts found in that window retain the existing review/warning
 behavior. Otherwise work proceeds silently, including on timeout, incomplete
 coverage, authentication problems, or service failure. Admitted evaluations
@@ -27,8 +36,8 @@ prim decisions preflight status <checkId>
 prim decisions preflight resume <checkId>
 ```
 
-There is no V3 fallback. Re-run `prim <agent> install` and `prim doctor` to repair
-the two-second hook timeout and fail-open settings. Claude uses its default
+Re-run `prim <agent> install` and `prim doctor` to repair
+the agent's hook timeout and fail-open settings. Claude uses its default
 failure behavior, Cursor uses `failClosed: false`, and Hermes uses
 `fail_closed: false`. Codex also permits the action if the hook fails. Reload or
 restart the host as directed by the installer. Older installations retain their
@@ -628,11 +637,16 @@ pnpm test:preflight-host:claude --binary /path/to/compatible/claude
 
 Each check covers completed allow, confirmed conflict, paused evaluation, malformed
 backend JSON, CLI deadline expiry, hook crash, and host watchdog expiry. Only the
-confirmed conflict prevents the sentinel write. The hook budget and watchdog are
-two seconds; no fixture waits minutes. Unsupported Claude versions fail before
+confirmed conflict in block mode prevents the sentinel write. Claude checks also
+cover conflicts arriving after two seconds and warn-mode demotion, using the real
+12-second request, 15-second supervisor, and 20-second host budgets. Other agents
+retain their two-second budget. Unsupported Claude versions fail before
 the fixture runs.
 The separate `pnpm test:preflight-v4 --schema /path/to/cli-http-v1.schema.json`
 check validates the built CLI against a supplied authoritative backend contract.
+Use `pnpm test:preflight-v3 --schema /path/to/cli-http-v1.schema.json` for Claude's
+V3 path. Pass `--package-root /path/to/installed/package` to test an installed
+tarball, including its managed launcher, against that same contract.
 
 ## License
 

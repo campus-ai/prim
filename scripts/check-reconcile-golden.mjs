@@ -36,16 +36,18 @@ const server = createServer(async (request, response) => {
       planScopeOnly && !body.paths?.includes("gameplans/pilot.yaml") ? "allow" : verdict;
     response.end(
       JSON.stringify({
-        protocolVersion: 4,
-        state: "completed",
+        protocolVersion: body.protocolVersion,
+        state: body.protocolVersion === 4 ? "completed" : undefined,
         checkId: "check1",
-        evaluationId: "evaluation1",
+        evaluationId: body.protocolVersion === 4 ? "evaluation1" : undefined,
         evaluationCoverage: {
           candidateCount: 2,
           submittedCount: 2,
           evaluatedCount: 2,
-          bypassedCount: 0,
-          discoveryComplete: true,
+          bypassedCount: body.protocolVersion === 4 ? 0 : undefined,
+          discoveryComplete: body.protocolVersion === 4 ? true : undefined,
+          selectionOmissions: body.protocolVersion === 3 ? [] : undefined,
+          evidenceOmissions: body.protocolVersion === 3 ? [] : undefined,
           status: "completed",
           semanticBatchCount: 1,
           completedSemanticBatchCount: 1,

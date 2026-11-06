@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Evaluation worker. Only confirmed conflicts affect the automatic hook result. */
+/** Evaluation worker. Claude uses bounded V3; other agents retain V4. */
 
 import { realpathSync } from "node:fs";
 import { relative } from "node:path";
@@ -33,10 +33,15 @@ import {
   readHookMode,
 } from "./pre-tool-use-scoring.js";
 import {
+  PREFLIGHT_TIMEOUT_MS,
+  type PreflightRequest as PreflightRequestV3,
   boundedClientVersion,
   proposalFor,
   proposalIsTruncated,
+  requestPreflight,
   resolvePreflightTargets,
+  resultForPreflight as resultForPreflightV3,
+  unverifiedResult,
 } from "./preflight-v3.js";
 
 import {
@@ -87,6 +92,17 @@ function failOpen(): HookOutput | CodexHookOutput | CursorHookOutput | HermesHoo
   if (agent === "hermes") return failOpenHermes();
   if (agent === "cursor") return failOpenCursor();
   return agent === "codex" ? failOpenCodex() : failOpenOutput();
+}
+
+async function unverified(message: string): Promise<void> {
+  if (agent === "claude_code") {
+    await emit(
+      buildHookOutput("allow", [unverifiedResult(`${message}; change was not verified.`)]),
+      true,
+    );
+  } else {
+    await emit(failOpen());
+  }
 }
 
 function invocationId(envelope: PreToolUseInput): string | undefined {
@@ -173,6 +189,10 @@ async function main(): Promise<void> {
     await emit(failOpen(), true);
     return;
   }
+  if (agent === "claude_code" && targets.paths.length === 0) {
+    await unverified("Mutation targets could not be resolved");
+    return;
+  }
   if (!protectedShell && targets.paths.length === 0 && !targets.definite) {
     await emit(failOpen());
     return;
@@ -186,7 +206,9 @@ async function main(): Promise<void> {
   const sessionId = envelope.session_id;
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
-    await emit(failOpen());
+    await unverified(
+      !binding ? "GitHub repo connection is required" : "Session or tool identity is missing",
+    );
     return;
   }
   const collectScopeAdmits = cachedCollectScopeAdmits(cwd, {
@@ -207,10 +229,7 @@ async function main(): Promise<void> {
         targetCoverage: targets.coverage,
       }
     : envelope.tool_input;
-  const request: PreflightRequest = {
-    protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
-    operation: "start",
-    toolInputDigest: toolInputDigest(toolName, envelope.tool_input),
+  const common = {
     agent,
     clientMode: mode,
     clientVersion: boundedClientVersion(packageVersion()),
@@ -219,6 +238,68 @@ async function main(): Promise<void> {
     repoSyncId: binding,
     paths: targets.paths,
     coverage: targets.coverage,
+    ...(branch === undefined ? {} : { branch }),
+    proposal: collectScopeAdmits ? proposalFor(proposalInput) : "",
+  };
+  if (agent === "claude_code") {
+    const request: PreflightRequestV3 = { ...common, protocolVersion: 3 };
+    let result: ConflictCheckResult;
+    try {
+      const remaining = Math.floor(Math.min(PREFLIGHT_TIMEOUT_MS, deadline - performance.now()));
+      if (remaining <= 0) throw new Error("Deadline exceeded");
+      const response = await requestPreflight(request, AbortSignal.timeout(remaining));
+      if (!response) {
+        await unverified("Decision check returned an invalid response");
+        return;
+      }
+      result = resultForPreflightV3(
+        response,
+        editPreview(toolName, envelope.tool_input, targets.paths),
+        request,
+        collectScopeAdmits && protectedShell && proposalIsTruncated(proposalInput),
+      );
+      if (result.verdict === "unavailable") {
+        result.unavailable = `${result.unavailable || "Decision check is unavailable"}; change was not verified.`;
+      }
+      const coverage = response.evaluationCoverage;
+      const notes = [
+        ...(targets.coverage === "unverified"
+          ? [
+              "[primitive] Some mutation targets could not be resolved; the complete change was not verified.",
+            ]
+          : []),
+        ...(coverage &&
+        (coverage.status !== "completed" ||
+          coverage.selectionOmissions?.length ||
+          coverage.evidenceOmissions?.length)
+          ? [
+              "[primitive] Decision coverage is incomplete; some candidates or evidence were not evaluated.",
+            ]
+          : []),
+      ];
+      if (notes.length > 0) {
+        const note = notes.join("\n");
+        result.reason = [result.reason, note].filter(Boolean).join("\n");
+        result.additionalContext = [result.additionalContext, note].filter(Boolean).join("\n");
+      }
+    } catch {
+      await unverified("Decision check failed or timed out");
+      return;
+    }
+    await emit(
+      buildHookOutput(
+        demoteForMode(result.verdict === "unavailable" ? "allow" : result.verdict, mode),
+        [result],
+      ),
+      true,
+    );
+    return;
+  }
+  const request: PreflightRequest = {
+    ...common,
+    protocolVersion: PREFLIGHT_PROTOCOL_VERSION,
+    operation: "start",
+    toolInputDigest: toolInputDigest(toolName, envelope.tool_input),
     ...(protectedShell
       ? {
           shellCheck: {
@@ -227,8 +308,6 @@ async function main(): Promise<void> {
           },
         }
       : {}),
-    ...(branch === undefined ? {} : { branch }),
-    proposal: collectScopeAdmits ? proposalFor(proposalInput) : "",
   };
   let result: ConflictCheckResult;
   try {

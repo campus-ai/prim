@@ -61,16 +61,16 @@ try {
     [join(config, "prim-hook-launcher-v1"), ["prim-pre-tool-use"]],
   ];
   const cases = [
-    ["python3 edit.py", undefined],
-    ["S=schema.ts; sed -n '1,10p' $S", undefined],
-    ['for f in a.ts b.ts; do cat "$f"; done', undefined],
+    ["python3 edit.py", "change was not verified"],
+    ["S=schema.ts; sed -n '1,10p' $S", "change was not verified"],
+    ['for f in a.ts b.ts; do cat "$f"; done', "change was not verified"],
     ["cd . && git status --short", undefined],
     ['python3 -c \'open("a.ts", "w").write("hi")\'', "GitHub repo connection is required"],
     ['node -e \'require("fs").writeFileSync("a.ts", "hi")\'', "GitHub repo connection is required"],
     ["git status --short", undefined],
   ];
   for (const [file, args] of entries) {
-    for (const [command] of cases) {
+    for (const [command, message] of cases) {
       const envelope = {
         hook_event_name: "PreToolUse",
         session_id: "shell-golden",
@@ -80,14 +80,14 @@ try {
         cwd: repo,
       };
       const result = JSON.parse(run(file, args, JSON.stringify(envelope), repo));
-      // An unavailable binding/service must silently allow every shell command.
+      // Claude allows unverified mutations with visible feedback; read-only stays silent.
       if (result.hookSpecificOutput?.permissionDecision !== "allow")
         throw new Error(`Unexpected hook disposition for ${command}: ${JSON.stringify(result)}`);
-      if (
-        result.systemMessage !== undefined ||
-        result.hookSpecificOutput?.additionalContext !== undefined
-      ) {
-        throw new Error(`Expected silent allow for ${command}`);
+      if (message) {
+        if (!result.systemMessage?.includes(message))
+          throw new Error(`Expected ${message} for ${command}: ${JSON.stringify(result)}`);
+      } else if (result.systemMessage !== undefined) {
+        throw new Error(`Expected silent allow for ${command}: ${JSON.stringify(result)}`);
       }
     }
   }
