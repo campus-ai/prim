@@ -100,7 +100,7 @@ function protectPath(path: string, directory: boolean): void {
       "-EncodedCommand",
       Buffer.from(script, "utf16le").toString("base64"),
     ],
-    { stdio: "ignore", windowsHide: true },
+    { stdio: "pipe", encoding: "utf8", windowsHide: true },
   );
 }
 
