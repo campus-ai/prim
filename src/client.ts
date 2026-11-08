@@ -28,6 +28,14 @@ import {
 } from "./lib/credentials.js";
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
 import { ingestUploaderHeaders } from "./lib/ingest-uploader.js";
+import {
+  acquireMachineCredential,
+  cachedMachineCredential,
+  hasMachineConfiguration,
+  machineContext,
+  machineSessionEnded,
+} from "./lib/machine-credentials.js";
+import { MachineAuthError } from "./lib/machine-protocol.js";
 import { terminalSafeLine } from "./lib/terminal-safe.js";
 import {
   WORKOS_CONNECT_RESPONSE_MAX_BYTES,
@@ -118,6 +126,7 @@ function removeCredentialFile(path: string): boolean {
 }
 
 export function getTokenExpiresAt(): number | undefined {
+  if (hasMachineConfiguration()) return cachedMachineCredential()?.expiresAt;
   const stored = readTrimmed(TOKEN_EXPIRES_PATH);
   if (stored === undefined) return undefined;
   const value = Number(stored);
@@ -223,6 +232,7 @@ function clearTerminalFingerprint(): void {
 
 /** True only while the persisted terminal marker matches the current refresh generation. */
 export function isSessionEnded(): boolean {
+  if (hasMachineConfiguration()) return machineSessionEnded();
   if (resolveAuthCredential()?.source !== "token_file") return false;
   const refreshToken = readTrimmed(REFRESH_TOKEN_PATH);
   const ended = terminalFingerprint();
@@ -349,6 +359,7 @@ export async function clearStoredCredentials(
 }
 
 export type RequestOptions = {
+  redirect?: "error" | "follow" | "manual";
   signal?: AbortSignal;
   /** Suppress broker diagnostics on machine-protocol hook paths. */
   quietRefresh?: boolean;
@@ -675,6 +686,8 @@ let _refreshInFlight: Promise<string | undefined> | undefined;
 
 /** One refresh-token rotation per process and on-disk credential generation. */
 export function refreshToken(options: RefreshOptions = {}): Promise<string | undefined> {
+  if (hasMachineConfiguration())
+    return acquireMachineCredential(options).then((credential) => credential?.accessToken);
   if (_refreshInFlight) return _refreshInFlight;
   const attempt = performTokenRefresh(options)
     .then((token) => {
@@ -768,6 +781,7 @@ async function fetchWithToken(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: options?.signal,
+    redirect: options?.redirect,
   });
 }
 
@@ -788,12 +802,90 @@ async function responseValue(response: Response): Promise<unknown> {
   return publicDecisionResponse(await response.json());
 }
 
+async function machineClient(
+  options: RequestOptions = {},
+  management = false,
+): Promise<CliManagementClient | undefined> {
+  let credential: Awaited<ReturnType<typeof acquireMachineCredential>>;
+  try {
+    credential = await acquireMachineCredential(options);
+  } catch (error) {
+    if (!(error instanceof MachineAuthError)) throw error;
+    throw new HttpError(error.terminal ? 401 : 503, error.message, { error: error.code });
+  }
+  if (!credential) return undefined;
+  const selected = credential;
+  const parse = management ? managementResponseValue : responseValue;
+  const send = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions: RequestOptions = {},
+  ) => {
+    if (machineContext()?.generation !== selected.generation) {
+      throw new HttpError(409, "Machine identity changed; restart the operation.");
+    }
+    const current = await acquireMachineCredential({ signal: requestOptions.signal });
+    if (
+      !current ||
+      current.generation !== selected.generation ||
+      current.machineId !== selected.machineId ||
+      current.organizationId !== selected.organizationId
+    )
+      throw new HttpError(409, "Machine identity changed; restart the operation.");
+    let response = await fetchWithToken(
+      method,
+      path,
+      body,
+      { ...requestOptions, redirect: "error" },
+      current.accessToken,
+      selected.apiUrl,
+    );
+    if (response.status === 401) {
+      const renewed = await acquireMachineCredential({
+        force: true,
+        signal: requestOptions.signal,
+      });
+      if (
+        !renewed ||
+        renewed.generation !== selected.generation ||
+        renewed.machineId !== selected.machineId ||
+        renewed.organizationId !== selected.organizationId
+      ) {
+        throw new HttpError(409, "Machine identity changed; restart the operation.");
+      }
+      response = await fetchWithToken(
+        method,
+        path,
+        body,
+        { ...requestOptions, redirect: "error" },
+        renewed.accessToken,
+        renewed.apiUrl,
+      );
+    }
+    if (response.status === 401)
+      throw new HttpError(
+        401,
+        "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
+      );
+    return parse(response);
+  };
+  return {
+    get: (path, opts) => send("GET", path, undefined, opts),
+    post: (path, body, opts) => send("POST", path, body, opts),
+    delete: (path, body, opts) => send("DELETE", path, body, opts),
+  };
+}
+
 async function request(
   method: string,
   path: string,
   body?: unknown,
   options?: RequestOptions,
 ): Promise<unknown> {
+  const machine = await machineClient(options);
+  if (machine)
+    return method === "GET" ? machine.get(path, options) : machine.post(path, body, options);
   const siteUrl = getSiteUrl();
   let credential = selectedCredential();
   let refreshAttempted = false;
@@ -860,6 +952,8 @@ export function getClient(): CliClient {
  * deliberately has no post-response token-refresh retry.
  */
 export async function getPinnedClient(options: RequestOptions = {}): Promise<CliClient> {
+  const machine = await machineClient(options);
+  if (machine) return machine;
   const siteUrl = getSiteUrl();
   let credential = selectedCredential();
   if (credential && isTokenExpiringSoon(credential)) {
@@ -893,6 +987,8 @@ export async function getPinnedClient(options: RequestOptions = {}): Promise<Cli
 export async function getPinnedManagementClient(
   options: RequestOptions = {},
 ): Promise<CliManagementClient> {
+  const machine = await machineClient(options, true);
+  if (machine) return machine;
   const siteUrl = getSiteUrl();
   let credential = selectedCredential();
   if (credential && isTokenExpiringSoon(credential)) {

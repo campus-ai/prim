@@ -1,4 +1,5 @@
 import { deliveryBacklogState } from "./delivery-backlog.js";
+import { hasMachineConfiguration } from "./machine-credentials.js";
 import { type Teammate, formatTeammates, formatTeammatesWithArea } from "./presence.js";
 
 export type DecisionIngestionStatus = "enabled" | "disabled";
@@ -76,7 +77,7 @@ export function formatStatusline(
   // Terminal auth is the actionable root cause and deliberately suppresses
   // lower-priority binding diagnostics. One line, one recovery action.
   if (snapshot?.healthy === false && snapshot.needsReauth) {
-    return `primitive ${version} (daemon: paused · run \`prim auth login\`${ingestionSuffix(ingestionStatus)})`;
+    return `primitive ${version} (daemon: paused · run \`${hasMachineConfiguration() ? "prim auth status" : "prim auth login"}\`${ingestionSuffix(ingestionStatus)})`;
   }
 
   const repositoryLabel = repositoryBindingDiagnosticLabel(

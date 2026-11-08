@@ -25,6 +25,77 @@
   ],
   "cases": [
     {
+      "name": "machine discovery uses environment audience",
+      "definition": "CliM2mConfiguration",
+      "valid": true,
+      "value": {
+        "protocol_version": 1,
+        "issuer": "https://auth.example.com",
+        "audience": "client_environment",
+        "m2m_only": false
+      }
+    },
+    {
+      "name": "machine capture includes provenance",
+      "definition": "MoveIngestRequest",
+      "valid": true,
+      "value": {
+        "batch": [
+          {
+            "moveId": "move_machine",
+            "capturedAt": 1,
+            "sessionId": "session_machine",
+            "eventType": "PostToolUse",
+            "payload": {},
+            "envelopeVersion": 5,
+            "capturedMachineId": "machine_1",
+            "capturedOrganizationId": "organization_1",
+            "captureAuthorityKind": "workos_m2m",
+            "decisionLifecycleProtocolVersion": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "machine capture cannot omit provenance",
+      "definition": "MoveIngestRequest",
+      "valid": false,
+      "value": {
+        "batch": [
+          {
+            "moveId": "move_machine",
+            "capturedAt": 1,
+            "sessionId": "session_machine",
+            "eventType": "PostToolUse",
+            "payload": {},
+            "envelopeVersion": 5,
+            "capturedOrganizationId": "organization_1",
+            "captureAuthorityKind": "workos_m2m",
+            "decisionLifecycleProtocolVersion": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "machine authentication status",
+      "definition": "CliAuthStatusResponse",
+      "valid": true,
+      "value": {
+        "authenticated": true,
+        "organizationBindingVersion": 2,
+        "captureAuthorityKind": "workos_m2m",
+        "organizationId": "organization_1",
+        "workosOrganizationId": "org_workos",
+        "principal": {
+          "kind": "machine",
+          "machineId": "machine_1",
+          "clientId": "client_installation",
+          "displayName": "Build runner",
+          "scopes": ["cli:read"]
+        }
+      }
+    },
+    {
       "name": "demo run revision",
       "definition": "DemoRunRequest",
       "valid": true,

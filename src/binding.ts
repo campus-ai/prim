@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { jwtOrganizationId, resolveAuthCredential } from "./lib/credentials.js";
+import { hasMachineConfiguration, machineContext } from "./lib/machine-credentials.js";
 import { primConfigDirectory } from "./lib/paths.js";
 
 const PRIM_CONFIG_DIR = primConfigDirectory();
@@ -62,6 +63,7 @@ export function fromWorkspaceFile(startDir: string): string | undefined {
 }
 
 export function fromDefaultOrg(_cwd: string): string | undefined {
+  if (hasMachineConfiguration()) return machineContext()?.workosOrganizationId;
   const credential = resolveAuthCredential();
   return credential ? jwtOrganizationId(credential.token) : undefined;
 }
@@ -72,6 +74,10 @@ export type ResolvedBinding = {
 };
 
 export function resolveOrg(args: { sessionId: string; cwd: string }): ResolvedBinding {
+  if (hasMachineConfiguration()) {
+    const orgId = machineContext()?.workosOrganizationId;
+    return { orgId, source: orgId ? "defaultOrg" : "unbound" };
+  }
   const fromSession = fromSessionMarker(args.sessionId);
   if (fromSession) {
     return { orgId: fromSession, source: "session" };

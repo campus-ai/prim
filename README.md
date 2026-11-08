@@ -660,3 +660,51 @@ characters. Use the same ID in commands and at
 `shortId` compatibility field contains the eight characters without the prefix.
 Existing full record IDs remain accepted as inputs. Upgrade the backend before
 this CLI; an unavailable identity produces an error rather than a storage ID.
+
+### Machine credentials
+
+An administrator issues a separate WorkOS M2M application for each installation
+or workload. Configure its application client ID and enter the secret at the
+hidden prompt:
+
+```sh
+prim auth configure-machine --client-id client_APPLICATION
+prim auth status --json
+prim setup
+```
+
+For automated secret delivery, pipe the secret to
+`prim auth configure-machine --client-id client_APPLICATION --client-secret-stdin`.
+Never pass a secret as a command-line argument. CI can instead inject both
+`PRIM_M2M_CLIENT_ID` and `PRIM_M2M_CLIENT_SECRET`, along with the selected
+`PRIM_API_URL`. A complete environment pair overrides saved credentials;
+partial pairs and a conflicting `PRIM_TOKEN` fail explicitly. Injected
+credentials and tokens are never saved.
+
+Prim verifies the exchange and the API's protected machine identity before
+activating credentials. It uses the OS credential store by default (persistent
+Secret Service on Linux). If that store is unavailable on initial configuration,
+Prim uses owner-only files in its private configuration directory. Once a store
+is selected, a locked or failing keychain produces a recovery error rather than
+falling back to an old credential. `prim auth clear` removes saved credentials;
+unset injected environment variables separately.
+
+Tokens renew with another client-credentials exchange, without refresh tokens.
+Auth status reports identity, organization, effective scopes, storage, and expiry.
+Use `prim doctor --json` for journal and daemon recovery details. Machine access
+covers capture, checks, presence, organization-visible Decision reads, and the
+machine's own Decision lifecycle. Manage GitHub App installation and human API
+keys in the web application; the personal onboarding demo is not a machine task.
+
+Flush pending activity under its original credentials before migration where
+possible (`prim moves flush`). Machine capture uses separate, identity-bound
+journals. Legacy activity and activity from another machine are retained rather
+than reassigned. Terminal credential failures pause delivery while local capture
+continues. Ask the administrator to enable or rotate the same machine, then run
+`configure-machine` again. Do not edit or move journal records between identities.
+
+For concurrent backend/CLI development, `pnpm contracts:update --worktree <path>`
+imports an explicitly unpublished backend contract. Canonical provenance remains
+blocked until the backend is published and imported with
+`pnpm contracts:update --revision <full-commit>`. Production releases must pass
+`pnpm contracts:provenance`.

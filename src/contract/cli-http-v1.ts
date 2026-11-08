@@ -16,6 +16,7 @@ import type {
 import {
   isCliAuthStatusResponse,
   isCliErrorResponse,
+  isCliM2mConfiguration,
   isDecisionCascadeResponse,
   isDecisionCollectScopeResponse,
   isDecisionConfirmRequest,
@@ -84,6 +85,7 @@ export {
   isDemoCompleteRequest,
   isDemoStatusResponse,
   isCliAuthStatusResponse,
+  isCliM2mConfiguration,
   isCliErrorResponse,
   isDecisionCascadeResponse,
   isDecisionCollectScopeResponse,
@@ -397,6 +399,7 @@ export const cliHttpV1Validators = {
   DemoCompleteRequest: isDemoCompleteRequest,
   DemoStatusResponse: isDemoStatusResponse,
   CliAuthStatusResponse: isCliAuthStatusResponse,
+  CliM2mConfiguration: isCliM2mConfiguration,
   CliErrorResponse: isCliErrorResponse,
   DecisionCascadeResponse: isDecisionCascadeResponse,
   DecisionCollectScopeResponse: isDecisionCollectScopeResponse,

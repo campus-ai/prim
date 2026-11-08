@@ -1,3 +1,4 @@
+import type { MachineCaptureActor } from "../lib/machine-credentials.js";
 /**
  * Decision Event Pipeline — Move envelope.
  *
@@ -53,6 +54,8 @@ export type MoveEnvironment = {
 };
 
 type MoveFields = {
+  /** Immutable local author; never inferred from the credential used to flush. */
+  captureActor?: MachineCaptureActor;
   moveId: string;
   capturedAt: number;
   sessionId: string;

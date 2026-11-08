@@ -1,3 +1,4 @@
+import { machineCaptureActor, machineJournalBucket } from "./lib/machine-credentials.js";
 /**
  * Decision Event Pipeline — local NDJSON journal.
  *
@@ -120,7 +121,11 @@ export function journalPath(orgId: string | undefined): string {
 export function appendMove(move: Move, orgId: string | undefined): void {
   // Route through appendMoveToPath so the per-bucket journal inherits the
   // 0600 file mode / 0700 dir mode (the payloads are secret-bearing).
-  appendMoveToPath(journalPath(orgId), move);
+  const actor = machineCaptureActor();
+  appendMoveToPath(
+    journalPath(actor ? machineJournalBucket(actor) : orgId),
+    actor ? { ...move, captureActor: actor } : move,
+  );
 }
 
 function parseMoves(content: string): Move[] {

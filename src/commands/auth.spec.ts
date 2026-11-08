@@ -1,3 +1,9 @@
+vi.mock("../lib/machine-credentials.js", async () => ({
+  ...(await vi.importActual<typeof import("../lib/machine-credentials.js")>(
+    "../lib/machine-credentials.js",
+  )),
+  hasMachineConfiguration: vi.fn(() => false),
+}));
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

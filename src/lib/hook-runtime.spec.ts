@@ -82,7 +82,7 @@ describe("stageHookRuntime", () => {
     });
 
     const stagedFileSyncs = syncFile.mock.calls.filter(([path]) => path.includes("/.stage-"));
-    expect(stagedFileSyncs).toHaveLength(Object.keys(HOOK_RUNTIME_ENTRIES).length + 3);
+    expect(stagedFileSyncs).toHaveLength(Object.keys(HOOK_RUNTIME_ENTRIES).length + 5);
     const stagedDirectorySyncs = syncDirectory.mock.calls
       .map(([path], index) => ({ path, index }))
       .filter(({ path }) => path.includes("/.stage-"));

@@ -1,3 +1,5 @@
+import { hasMachineConfiguration } from "../lib/machine-credentials.js";
+import { verifyAuthStatus } from "./auth.js";
 /**
  * `prim doctor` — one-shot capture-pipeline health check.
  *
@@ -209,7 +211,26 @@ export function classifyAuthCredential(
   return { name: "auth", status: "ok", detail };
 }
 
-function checkAuth(): Check {
+async function checkAuth(): Promise<Check> {
+  try {
+    if (hasMachineConfiguration()) {
+      const status = await verifyAuthStatus();
+      return {
+        name: "auth",
+        status: status.authenticated ? "ok" : "fail",
+        detail: status.authenticated
+          ? `machine ${status.displayName ?? status.machineId} · ${status.storageBackend} · expires in ${Math.round((status.accessTokenExpiresInMs ?? 0) / 1000)}s`
+          : `machine authentication: ${status.recoveryReason}; unlock the credential store or run prim auth configure-machine`,
+      };
+    }
+  } catch {
+    return {
+      name: "auth",
+      status: "fail",
+      detail: "Invalid machine credential configuration; run prim auth status for recovery details",
+    };
+  }
+
   const credential = resolveAuthCredential();
   const storedCredential = credential?.source === "token_file";
   return classifyAuthCredential(
@@ -316,7 +337,7 @@ export function classifyDaemonHealth(
     return {
       name: "daemon",
       status: "fail",
-      detail: "authentication ended — run `prim auth login`",
+      detail: "authentication ended — run `prim auth status` for recovery instructions",
     };
   }
   if (!snapshot.heartbeat?.healthy) {
@@ -1269,7 +1290,7 @@ async function independentChecks(): Promise<{ before: Check[]; after: Check[] }>
   const backend = await checkBackend();
   const firing = inspectFiringHere();
   return {
-    before: [checkAuth()],
+    before: [await checkAuth()],
     after: [
       ...checkDemoPause(gitToplevel()),
       await checkJournalOrganization(),

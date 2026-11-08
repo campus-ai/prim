@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cachedMachineCredential, hasMachineConfiguration } from "./machine-credentials.js";
 import { primConfigDirectory } from "./paths.js";
 import {
   type WorkosConnectCredentialMetadata,
@@ -22,7 +23,7 @@ const MAX_CREDENTIAL_METADATA_BYTES = 4096;
 export const CREDENTIAL_MIGRATION_VERSION = 1;
 export const CREDENTIAL_MIGRATION_STATE = "family_bound";
 
-export type AuthCredentialSource = "environment" | "token_file";
+export type AuthCredentialSource = "environment" | "token_file" | "machine";
 
 export interface AuthCredential {
   token: string;
@@ -63,6 +64,11 @@ function readTrimmed(path: string): string | undefined {
 export function resolveAuthCredential(
   options: CredentialResolutionOptions = {},
 ): AuthCredential | undefined {
+  // Legacy resolvers with explicit test/storage paths do not select the global profile.
+  if (!options.tokenFilePath && hasMachineConfiguration({ env: options.env })) {
+    const machine = cachedMachineCredential({ env: options.env });
+    return machine ? { token: machine.accessToken, source: "machine" } : undefined;
+  }
   const envToken = (options.env ?? process.env).PRIM_TOKEN?.trim();
   if (envToken) return { token: envToken, source: "environment" };
 

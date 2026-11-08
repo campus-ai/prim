@@ -1,5 +1,8 @@
+import { getSiteUrl as resolveApiUrl } from "./client.js";
 import { type CliClient, getPinnedClient } from "./client.js";
 import { type MoveIngestRequest, isMoveIngestRequest } from "./contract/cli-http-v1.js";
+import { machineJournalBucket } from "./lib/machine-credentials.js";
+import { machineApiUrl, parseMachineIdentity } from "./lib/machine-protocol.js";
 import { DECISION_LIFECYCLE_PROTOCOL_VERSION } from "./protocol/decision-lifecycle.js";
 import type { Move } from "./protocol/move.js";
 
@@ -8,6 +11,8 @@ const ORGANIZATION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const UNBOUND_BUCKET = "_unbound";
 
 export type JournalRetentionReason =
+  | "machine_identity_mismatch"
+  | "legacy_authority_retained"
   | "identity_unavailable"
   | "no_current_organization"
   | "organization_identity_unreconciled"
@@ -21,7 +26,9 @@ export type RetainedJournalBucket = {
 };
 
 export type CurrentOrganizationBinding = {
-  captureAuthorityKind: "workos" | "service_token";
+  captureAuthorityKind: "workos" | "service_token" | "workos_m2m";
+  machineId?: string;
+  clientId?: string;
   organizationId: string;
   workosOrganizationId: string;
 };
@@ -67,6 +74,15 @@ export function parseOrganizationBinding(value: unknown): ParsedOrganizationBind
     return { state: "server_contract_unavailable" };
   }
   const record = value as Record<string, unknown>;
+  if (record.organizationBindingVersion === 2) {
+    try {
+      const principal = record.principal as Record<string, unknown>;
+      const identity = parseMachineIdentity(record, String(principal.clientId));
+      return { state: "current", binding: { captureAuthorityKind: "workos_m2m", ...identity } };
+    } catch {
+      return { state: "server_contract_unavailable" };
+    }
+  }
   if (
     record.authenticated !== true ||
     record.organizationBindingVersion !== ORGANIZATION_BINDING_VERSION ||
@@ -126,6 +142,29 @@ export function classifyJournalBuckets(
       retainedBuckets.push({ bucket, reason: binding });
       continue;
     }
+    if (binding.captureAuthorityKind === "workos_m2m") {
+      if (
+        binding.clientId &&
+        bucket ===
+          machineJournalBucket({
+            apiUrl: machineApiUrl(resolveApiUrl()),
+            clientId: binding.clientId,
+          })
+      )
+        deliverableBuckets.add(bucket);
+      else
+        retainedBuckets.push({
+          bucket,
+          reason: bucket.startsWith("_machine_")
+            ? "machine_identity_mismatch"
+            : "legacy_authority_retained",
+        });
+      continue;
+    }
+    if (bucket.startsWith("_machine_")) {
+      retainedBuckets.push({ bucket, reason: "machine_identity_mismatch" });
+      continue;
+    }
     if (bucket === binding.organizationId || bucket === binding.workosOrganizationId) {
       deliverableBuckets.add(bucket);
     } else {
@@ -153,9 +192,23 @@ export function buildOrganizationBoundMoveRequest(
       if (typeof move !== "object" || move === null || Array.isArray(move)) {
         return move;
       }
+      const { captureActor, ...wireMove } = move;
+      if (binding.captureAuthorityKind === "workos_m2m") {
+        if (
+          !captureActor ||
+          captureActor.clientId !== binding.clientId ||
+          captureActor.apiUrl !== machineApiUrl(resolveApiUrl()) ||
+          (captureActor.machineId && captureActor.machineId !== binding.machineId) ||
+          (captureActor.organizationId && captureActor.organizationId !== binding.organizationId)
+        )
+          throw new InvalidJournalEnvelopeError();
+      } else if (captureActor) throw new InvalidJournalEnvelopeError();
       return {
-        ...move,
-        envelopeVersion: 4,
+        ...wireMove,
+        envelopeVersion: binding.captureAuthorityKind === "workos_m2m" ? 5 : 4,
+        ...(binding.captureAuthorityKind === "workos_m2m"
+          ? { capturedMachineId: binding.machineId }
+          : {}),
         capturedOrganizationId,
         captureAuthorityKind: binding.captureAuthorityKind,
         decisionLifecycleProtocolVersion: DECISION_LIFECYCLE_PROTOCOL_VERSION,

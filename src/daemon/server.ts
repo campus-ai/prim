@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { acquireMachineCredential, hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { DECISION_IDENTITY_VERSION } from "./protocol.js";
 /**
  * `prim-daemon-server` — long-lived per-user companion for the prim hooks.
@@ -307,7 +308,7 @@ function enterReauthHold(): void {
   persistHealth();
   // One line, not one per poll: the whole point is to stop the spam.
   process.stderr.write(
-    "[prim-daemon] authentication ended — halting heartbeat + ingestion + Decision cache until `prim auth login` (captures continue to the journal)\n",
+    "[prim-daemon] authentication ended — halting heartbeat + ingestion + Decision cache; run `prim auth status` (captures continue to the journal)\n",
   );
 }
 
@@ -350,7 +351,7 @@ function exitReauthHold(): void {
  * heartbeat. The check reads only local credential files.
  */
 function resumeIfReauthenticated(): void {
-  if (reauthHold && !isSessionEnded() && resolveAuthCredential()) {
+  if (reauthHold && !isSessionEnded() && (hasMachineConfiguration() || resolveAuthCredential())) {
     exitReauthHold();
   }
 }
@@ -526,6 +527,12 @@ function scheduleHeartbeat(): void {
 }
 
 async function ensureTokenFresh(): Promise<void> {
+  if (hasMachineConfiguration()) {
+    await acquireMachineCredential({ signal: AbortSignal.timeout(HTTP_PROXY_TIMEOUT_MS) }).catch(
+      () => undefined,
+    );
+    return;
+  }
   if (resolveAuthCredential()?.source !== "token_file") {
     return;
   }
