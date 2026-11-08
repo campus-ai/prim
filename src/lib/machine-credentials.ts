@@ -90,8 +90,9 @@ function protectPath(path: string, directory: boolean): void {
     chmodSync(path, directory ? 0o700 : 0o600);
     return;
   }
+  // Use .NET directly: PowerShell 7 module paths can break Windows PowerShell cmdlet loading.
   const encodedPath = Buffer.from(path).toString("base64");
-  const script = `$ErrorActionPreference = 'Stop'; $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = [System.Security.AccessControl.${directory ? "DirectorySecurity" : "FileSecurity"}]::new(); $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', '${directory ? "ContainerInherit, ObjectInherit" : "None"}', 'None', 'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl`;
+  const script = `$ErrorActionPreference = 'Stop'; $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = [System.Security.AccessControl.${directory ? "DirectorySecurity" : "FileSecurity"}]::new(); $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', '${directory ? "ContainerInherit, ObjectInherit" : "None"}', 'None', 'Allow'); $acl.AddAccessRule($rule); [System.IO.${directory ? "Directory" : "File"}]::SetAccessControl($p, $acl)`;
   execFileSync(
     "powershell.exe",
     [
