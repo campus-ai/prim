@@ -91,7 +91,7 @@ function protectPath(path: string, directory: boolean): void {
     return;
   }
   const encodedPath = Buffer.from(path).toString("base64");
-  const script = `$ErrorActionPreference = 'Stop'; $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = New-Object Security.AccessControl.${directory ? "DirectorySecurity" : "FileSecurity"}; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', '${directory ? "ContainerInherit, ObjectInherit" : "None"}', 'None', 'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl`;
+  const script = `$ErrorActionPreference = 'Stop'; $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = [System.Security.AccessControl.${directory ? "DirectorySecurity" : "FileSecurity"}]::new(); $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', '${directory ? "ContainerInherit, ObjectInherit" : "None"}', 'None', 'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl`;
   execFileSync(
     "powershell.exe",
     [

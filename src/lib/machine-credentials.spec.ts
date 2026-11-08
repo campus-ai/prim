@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,6 +108,21 @@ describe("machine credentials", () => {
       expect(statSync(join(directory, `machine_${profile.generation}.json`)).mode & 0o777).toBe(
         0o600,
       );
+    } else {
+      for (const path of [directory, join(directory, `machine_${profile.generation}.json`)]) {
+        const encodedPath = Buffer.from(path).toString("base64");
+        const script = `$ErrorActionPreference = 'Stop'; $p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = Get-Acl -LiteralPath $p; $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])); if (!$acl.AreAccessRulesProtected -or $acl.GetOwner([System.Security.Principal.SecurityIdentifier]) -ne $sid -or $rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or $rules[0].AccessControlType -ne 'Allow' -or $rules[0].FileSystemRights -ne 'FullControl') { throw 'Credential ACL is not owner-only' }`;
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            Buffer.from(script, "utf16le").toString("base64"),
+          ],
+          { stdio: "pipe", windowsHide: true },
+        );
+      }
     }
     expect((await acquireMachineCredential({}, deps))?.storage).toBe("file");
   });
