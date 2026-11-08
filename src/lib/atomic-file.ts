@@ -25,6 +25,9 @@ const DEFAULT_FILE_MODE = 0o666;
 
 /** Flush directory entries created by a rename or recursive mkdir. */
 export function syncDirectory(path: string): void {
+  // Windows does not support fsync on directory handles. The file is still
+  // flushed before its atomic rename; POSIX also flushes the directory entry.
+  if (process.platform === "win32") return;
   const fd = openSync(path, constants.O_RDONLY);
   try {
     fsyncSync(fd);
