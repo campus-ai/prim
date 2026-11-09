@@ -70,6 +70,80 @@ function storageKey(directory: string, generation: string): string {
   return `${hash(directory)}:${generation}`;
 }
 
+function environmentContextPath(deps: MachineDependencies, clientId: string): string {
+  return join(
+    configurationDirectory(deps),
+    `machine_context_${hash(`${apiUrlFor(deps)}\0${clientId}`)}.json`,
+  );
+}
+
+/** Share only verified identity metadata with fresh hooks, never injected secrets or tokens. */
+function writeEnvironmentContext(credential: MachineCredential, deps: MachineDependencies): void {
+  const {
+    apiUrl,
+    issuer,
+    audience,
+    generation,
+    machineId,
+    clientId,
+    organizationId,
+    workosOrganizationId,
+    displayName,
+    scopes,
+    expiresAt,
+  } = credential;
+  try {
+    writePrivate(environmentContextPath(deps, clientId), {
+      version: 1,
+      apiUrl,
+      issuer,
+      audience,
+      generation,
+      machineId,
+      clientId,
+      organizationId,
+      workosOrganizationId,
+      displayName,
+      scopes,
+      expiresAt,
+    });
+  } catch {
+    // This cache is an optimization for local daemon clients, not an auth store.
+  }
+}
+
+function readEnvironmentContext(
+  environment: { clientId: string; generation: string },
+  deps: MachineDependencies,
+): (MachineConfiguration & MachineIdentity & { apiUrl: string; generation: string }) | undefined {
+  try {
+    const data = machineRecord(readPrivate(environmentContextPath(deps, environment.clientId)));
+    if (
+      data.generation !== environment.generation ||
+      data.clientId !== environment.clientId ||
+      data.apiUrl !== apiUrlFor(deps) ||
+      typeof data.expiresAt !== "number" ||
+      !Number.isFinite(data.expiresAt) ||
+      data.expiresAt <= Date.now()
+    )
+      return undefined;
+    const configuration = parseMachineConfiguration({
+      protocol_version: data.version,
+      issuer: data.issuer,
+      audience: data.audience,
+    });
+    const identity = parseStoredIdentity(data);
+    return {
+      ...configuration,
+      ...identity,
+      apiUrl: data.apiUrl as string,
+      generation: environment.generation,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function keyringEntry(key: string): SecretEntry {
   // Copied runtimes own their native loader and binary; never depend on the npm cache.
   let directory = dirname(fileURLToPath(import.meta.url));
@@ -145,6 +219,20 @@ function readPrivate(path: string): unknown | undefined {
   }
 }
 
+function parseStoredIdentity(data: Record<string, unknown>): MachineIdentity {
+  return parseMachineIdentity(
+    {
+      authenticated: true,
+      organizationBindingVersion: 2,
+      captureAuthorityKind: "workos_m2m",
+      organizationId: data.organizationId,
+      workosOrganizationId: data.workosOrganizationId,
+      principal: { ...data, kind: "machine" },
+    },
+    String(data.clientId),
+  );
+}
+
 function parseProfile(value: unknown): MachineProfile {
   const data = machineRecord(value);
   const config = parseMachineConfiguration({
@@ -162,17 +250,7 @@ function parseProfile(value: unknown): MachineProfile {
   ) {
     throw new MachineAuthError("invalid_storage", "Stored machine profile is malformed.");
   }
-  const identity = parseMachineIdentity(
-    {
-      authenticated: true,
-      organizationBindingVersion: 2,
-      captureAuthorityKind: "workos_m2m",
-      organizationId: data.organizationId,
-      workosOrganizationId: data.workosOrganizationId,
-      principal: { ...data, kind: "machine" },
-    },
-    data.clientId,
-  );
+  const identity = parseStoredIdentity(data);
   return {
     ...config,
     ...identity,
@@ -234,7 +312,12 @@ export function machineContext(
 ): (MachineIdentity & { issuer: string; generation: string; apiUrl: string }) | undefined {
   if (!hasMachineConfiguration(deps)) return undefined;
   const environment = environmentCredentials(deps);
-  if (environment) return cached?.generation === environment.generation ? cached : undefined;
+  if (environment) {
+    if (environmentTerminal === environment.generation) return undefined;
+    return cached?.generation === environment.generation && cached.expiresAt > Date.now()
+      ? cached
+      : readEnvironmentContext(environment, deps);
+  }
   const profile = readMachineProfile(deps);
   if (profile && profile.apiUrl !== apiUrlFor(deps))
     throw new MachineAuthError(
@@ -454,10 +537,19 @@ export async function acquireMachineCredential(
             generation: environment.generation,
             storage: "environment",
           };
+          writeEnvironmentContext(cached, deps);
           return cached;
         } catch (error) {
-          if (error instanceof MachineAuthError && error.terminal)
+          if (error instanceof MachineAuthError && error.terminal) {
             environmentTerminal = environment.generation;
+            const contextPath = environmentContextPath(deps, environment.clientId);
+            try {
+              if (machineRecord(readPrivate(contextPath)).generation === environment.generation)
+                rmSync(contextPath, { force: true });
+            } catch {
+              // Another generation or a missing metadata cache must not mask rejection.
+            }
+          }
           throw error;
         }
       },

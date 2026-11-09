@@ -206,6 +206,55 @@ describe("machine credentials", () => {
     expect(new Set(credentials.map((value) => value?.accessToken)).size).toBe(1);
     expect(tokens).toBe(2);
   });
+  it("shares only verified identity with fresh processes and binds it to the environment generation", async () => {
+    deps.env = {
+      ...deps.env,
+      PRIM_M2M_CLIENT_ID: clientId,
+      PRIM_M2M_CLIENT_SECRET: "injected-only",
+    };
+    const credential = await acquireMachineCredential({}, deps);
+    vi.resetModules();
+    const fresh = await import("./machine-credentials.js");
+    expect(fresh.machineContext(deps)).toMatchObject({
+      machineId: "machine_local",
+      generation: credential?.generation,
+    });
+    expect(fresh.cachedMachineCredential(deps)).toBeUndefined();
+    const files = readdirSync(directory);
+    expect(files).toHaveLength(1);
+    const metadata = readFileSync(join(directory, files[0]), "utf8");
+    expect(metadata).not.toContain("injected-only");
+    expect(metadata).not.toContain(credential?.accessToken);
+    expect(metadata).not.toContain("accessToken");
+    expect(metadata).not.toContain("clientSecret");
+    expect(
+      fresh.machineContext({ ...deps, env: { ...deps.env, PRIM_M2M_CLIENT_SECRET: "rotated" } }),
+    ).toBeUndefined();
+    expect(
+      fresh.machineContext({
+        ...deps,
+        env: { ...deps.env, PRIM_API_URL: "https://other.example.com" },
+      }),
+    ).toBeUndefined();
+    vi.spyOn(Date, "now").mockReturnValue((credential?.expiresAt ?? 0) + 1);
+    expect(fresh.machineContext(deps)).toBeUndefined();
+  });
+  it("withdraws shared environment context after terminal rejection", async () => {
+    deps.env = {
+      ...deps.env,
+      PRIM_M2M_CLIENT_ID: clientId,
+      PRIM_M2M_CLIENT_SECRET: "rejected-injection",
+    };
+    await acquireMachineCredential({}, deps);
+    tokenStatus = 401;
+    await expect(acquireMachineCredential({ force: true }, deps)).rejects.toMatchObject({
+      terminal: true,
+    });
+    vi.resetModules();
+    const fresh = await import("./machine-credentials.js");
+    expect(fresh.machineContext(deps)).toBeUndefined();
+    expect(readdirSync(directory)).toEqual([]);
+  });
   it("pauses terminal failures but retries temporary ones, with secret-free errors", async () => {
     await configureMachine(clientId, secret, deps);
     tokenStatus = 503;

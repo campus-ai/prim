@@ -679,7 +679,8 @@ Never pass a secret as a command-line argument. CI can instead inject both
 `PRIM_M2M_CLIENT_ID` and `PRIM_M2M_CLIENT_SECRET`, along with the selected
 `PRIM_API_URL`. A complete environment pair overrides saved credentials;
 partial pairs and a conflicting `PRIM_TOKEN` fail explicitly. Injected
-credentials and tokens are never saved.
+credentials and tokens are never saved. Prim shares only verified identity
+metadata with local hooks, tied to that credential generation and token expiry.
 
 Prim verifies the exchange and the API's protected machine identity before
 activating credentials. It uses the OS credential store by default (persistent

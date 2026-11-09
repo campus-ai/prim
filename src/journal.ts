@@ -118,14 +118,13 @@ export function journalPath(orgId: string | undefined): string {
   return join(bucketDir(orgId), JOURNAL_BASENAME);
 }
 
-export function appendMove(move: Move, orgId: string | undefined): void {
+export function appendMove(move: Move, orgId: string | undefined): Move {
   // Route through appendMoveToPath so the per-bucket journal inherits the
   // 0600 file mode / 0700 dir mode (the payloads are secret-bearing).
   const actor = machineCaptureActor();
-  appendMoveToPath(
-    journalPath(actor ? machineJournalBucket(actor) : orgId),
-    actor ? { ...move, captureActor: actor } : move,
-  );
+  const captured = actor ? { ...move, captureActor: actor } : move;
+  appendMoveToPath(journalPath(actor ? machineJournalBucket(actor) : orgId), captured);
+  return captured;
 }
 
 function parseMoves(content: string): Move[] {
