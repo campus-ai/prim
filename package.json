@@ -70,6 +70,7 @@
     "typecheck": "tsc --noEmit",
     "check:reconcile-golden": "node scripts/check-reconcile-golden.mjs",
     "test": "vitest run",
+    "test:machine-runtime": "node scripts/check-machine-runtime.mjs",
     "test:preflight-host": "node scripts/check-codex-preflight-host.mjs",
     "test:preflight-host:claude": "node scripts/check-claude-preflight-host.mjs",
     "test:preflight-v4": "node scripts/check-preflight-v4-e2e.mjs",

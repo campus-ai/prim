@@ -38,6 +38,22 @@ import {
 } from "./launchd.js";
 
 const UID = 501;
+
+it("requires an environment-inheriting foreground daemon before changing launchd", async () => {
+  const runner = vi.fn(() => {
+    throw new Error("launchd must not be touched");
+  });
+  await expect(
+    ensureMacDaemon({
+      runner,
+      env: {
+        PRIM_M2M_CLIENT_ID: "client_runner",
+        PRIM_M2M_CLIENT_SECRET: "fixture-secret",
+      },
+    }),
+  ).rejects.toMatchObject({ code: "machine_daemon_requires_environment" });
+  expect(runner).not.toHaveBeenCalled();
+});
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }

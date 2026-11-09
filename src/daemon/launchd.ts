@@ -25,6 +25,8 @@ import { binFile, stableHookCommand } from "../lib/bin-path.js";
 import { readBoundedRegularFile } from "../lib/bounded-file.js";
 import { withFileLock } from "../lib/file-lock.js";
 import { stableNodePath } from "../lib/hook-runtime.js";
+import { environmentCredentials } from "../lib/machine-credentials.js";
+import { MachineAuthError } from "../lib/machine-protocol.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { processIsAlive } from "../lib/process-liveness.js";
 import { compareSemver } from "../lib/semver.js";
@@ -1388,6 +1390,12 @@ export function daemonDriftHealClaimPath(options: RuntimePathOptions = {}): stri
 export async function ensureMacDaemon(
   options: EnsureMacDaemonOptions = {},
 ): Promise<EnsureMacDaemonResult> {
+  if (environmentCredentials({ env: options.env })) {
+    throw new MachineAuthError(
+      "machine_daemon_requires_environment",
+      "Injected machine credentials require `prim daemon start --foreground` in the same environment. Stop any existing daemon first. To use launchd across logins, configure saved credentials with `prim auth configure-machine`.",
+    );
+  }
   return withDaemonLifecycleLock(() => ensureMacDaemonLocked(options), options);
 }
 

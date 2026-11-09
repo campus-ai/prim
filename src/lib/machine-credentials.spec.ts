@@ -81,6 +81,69 @@ afterEach(() => {
 });
 
 describe("machine credentials", () => {
+  it("shares Retry-After across fresh processes and credential rotation", async () => {
+    await configureMachine(clientId, secret, deps);
+    let attempts = 0;
+    const now = Date.now();
+    const fetcher = deps.fetch;
+    if (!fetcher) throw new Error("missing fixture fetch");
+    deps.fetch = async (url, options) => {
+      if (String(url).endsWith("/oauth2/token")) {
+        attempts++;
+        return Response.json(
+          { error_description: secret },
+          {
+            status: 429,
+            headers: { "Retry-After": "120" },
+          },
+        );
+      }
+      return fetcher(url, options);
+    };
+    await expect(acquireMachineCredential({ force: true }, deps)).rejects.toMatchObject({
+      code: "token_service_unavailable",
+      terminal: false,
+      retryAt: expect.any(Number),
+    });
+    vi.resetModules();
+    const fresh = await import("./machine-credentials.js");
+    await expect(fresh.acquireMachineCredential({ force: true }, deps)).rejects.toMatchObject({
+      code: "token_service_unavailable",
+    });
+    await expect(
+      fresh.configureMachine(clientId, "replacement-secret", deps),
+    ).rejects.toMatchObject({
+      code: "token_service_unavailable",
+    });
+    expect(attempts).toBe(1);
+    vi.spyOn(Date, "now").mockReturnValue(now + 121_000);
+    await expect(fresh.acquireMachineCredential({ force: true }, deps)).rejects.toMatchObject({
+      code: "token_service_unavailable",
+    });
+    expect(attempts).toBe(2);
+  });
+
+  it("preserves HTTP-date retry timing and ignores invalid retry metadata", async () => {
+    const retry = new Date(Date.now() + 120_000).toUTCString();
+    await expect(
+      exchangeMachineCredentials(
+        configuration,
+        clientId,
+        secret,
+        undefined,
+        async () => new Response(null, { status: 429, headers: { "Retry-After": retry } }),
+      ),
+    ).rejects.toMatchObject({ retryAt: Date.parse(retry) });
+    await expect(
+      exchangeMachineCredentials(
+        configuration,
+        clientId,
+        secret,
+        undefined,
+        async () => new Response(null, { status: 429, headers: { "Retry-After": "invalid" } }),
+      ),
+    ).rejects.toMatchObject({ retryAt: undefined, terminal: false });
+  });
   it("verifies both exchange and protected identity before activating keychain credentials", async () => {
     const profile = await configureMachine(clientId, secret, deps);
     expect(profile.storage).toBe("keychain");
@@ -264,6 +327,7 @@ describe("machine credentials", () => {
     });
     expect(machineSessionEnded(deps)).toBe(false);
     tokenStatus = 401;
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120_000);
     await expect(acquireMachineCredential({ force: true }, deps)).rejects.toThrow(
       "Machine credentials were rejected",
     );

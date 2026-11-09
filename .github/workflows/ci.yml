@@ -54,6 +54,7 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm build
+      - run: pnpm test:machine-runtime
       - run: pnpm check:gameplan-package
       - run: pnpm check:gameplan-e2e
       - run: pnpm check:reconcile-golden

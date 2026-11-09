@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Move } from "../protocol/move.js";
 
+// Delivery tests isolate transport; broker process sharing is covered by the runtime E2E.
+vi.mock("../lib/machine-broker.js", () => ({
+  acquireBrokerCredential: async (options: { force?: boolean; signal?: AbortSignal }) => {
+    const { acquireMachineCredential } = await import("../lib/machine-credentials.js");
+    return acquireMachineCredential(options, { localEnvironment: true });
+  },
+}));
+
 let directory: string;
 const issuer = "https://auth.example.com";
 const audience = "client_environment";

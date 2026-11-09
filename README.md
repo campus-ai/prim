@@ -682,6 +682,17 @@ partial pairs and a conflicting `PRIM_TOKEN` fail explicitly. Injected
 credentials and tokens are never saved. Prim shares only verified identity
 metadata with local hooks, tied to that credential generation and token expiry.
 
+Injected credentials share access tokens through an authenticated, memory-only
+local broker. Provider retry delays are shared across processes and survive
+restarts without saving secrets or tokens. The broker runs from the copied
+runtime and exits after five minutes without authenticated requests.
+
+On macOS, launchd cannot inherit credentials from your terminal. Stop any
+existing daemon and run `prim daemon start --foreground` in the environment
+that supplies the machine credentials. Restart it with the new environment when
+rotating credentials. Prim rejects launchd configuration in environment mode;
+use saved machine credentials for a daemon that starts across logins.
+
 Prim verifies the exchange and the API's protected machine identity before
 activating credentials. It uses the OS credential store by default (persistent
 Secret Service on Linux). If that store is unavailable on initial configuration,
@@ -703,6 +714,9 @@ journals. Legacy activity and activity from another machine are retained rather
 than reassigned. Terminal credential failures pause delivery while local capture
 continues. Ask the administrator to enable or rotate the same machine, then run
 `configure-machine` again. Do not edit or move journal records between identities.
+For injected credentials, restart with the replacement environment. After
+verifying the replacement, the administrator must revoke the old WorkOS client
+secret; clearing local storage does not revoke it.
 
 For concurrent backend/CLI development, `pnpm contracts:update --worktree <path>`
 imports an explicitly unpublished backend contract. Canonical provenance remains

@@ -24,10 +24,19 @@ export class MachineAuthError extends Error {
     readonly code: string,
     message: string,
     readonly terminal = false,
+    readonly retryAt?: number,
   ) {
     super(message);
     this.name = "MachineAuthError";
   }
+}
+
+/** OAuth error bodies are untrusted; retain only bounded, standard retry metadata. */
+export function machineRetryAt(response: Response, now = Date.now()): number | undefined {
+  const value = response.headers.get("Retry-After")?.trim();
+  if (!value || value.length > 128) return undefined;
+  const timestamp = /^\d+$/u.test(value) ? now + Number(value) * 1000 : Date.parse(value);
+  return Number.isSafeInteger(timestamp) && timestamp > now ? timestamp : undefined;
 }
 
 export function machineString(value: unknown, maximum = 4096): value is string {
@@ -174,6 +183,7 @@ export async function exchangeMachineCredentials(
         ? "Machine credentials were rejected. Ask your administrator to rotate or enable them."
         : "The machine token service is temporarily unavailable.",
       terminal,
+      terminal ? undefined : machineRetryAt(response),
     );
   }
   const data = machineRecord(await readMachineJson(response, 64 * 1024));

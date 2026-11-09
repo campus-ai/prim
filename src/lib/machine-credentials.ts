@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { AsyncEntry } from "@napi-rs/keyring";
 import { atomicWriteFile } from "./atomic-file.js";
 import { withFileLock } from "./file-lock.js";
+import { acquireBrokerCredential } from "./machine-broker.js";
 import {
   MachineAuthError,
   type MachineConfiguration,
@@ -21,6 +22,7 @@ import {
   parseMachineIdentity,
   verifyMachineIdentity,
 } from "./machine-protocol.js";
+import { withMachineCooldown } from "./machine-retry.js";
 import { primConfigDirectory } from "./paths.js";
 
 export type MachineStorage = "keychain" | "file" | "environment";
@@ -45,6 +47,8 @@ export type MachineDependencies = {
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
   entry?: (key: string) => SecretEntry;
+  /** Only the credential broker itself performs environment exchanges directly. */
+  localEnvironment?: boolean;
 };
 
 const require = createRequire(import.meta.url);
@@ -266,7 +270,7 @@ export function readMachineProfile(deps: MachineDependencies = {}): MachineProfi
   return value === undefined ? undefined : parseProfile(value);
 }
 
-function environmentCredentials(
+export function environmentCredentials(
   deps: MachineDependencies,
 ): { clientId: string; clientSecret: string; generation: string } | undefined {
   const env = deps.env ?? process.env;
@@ -432,26 +436,35 @@ export async function configureMachine(
     );
   }
   const apiUrl = apiUrlFor(deps);
-  const configuration = await discoverMachineConfiguration(apiUrl, signal, deps.fetch);
-  const tokens = await exchangeMachineCredentials(
-    configuration,
-    clientId,
-    clientSecret,
-    signal,
-    deps.fetch,
-  );
-  const identity = await verifyMachineIdentity(
-    apiUrl,
-    tokens.accessToken,
-    clientId,
-    signal,
-    deps.fetch,
-  );
   const directory = configurationDirectory(deps);
   ensureDirectory(directory);
   return withFileLock(
     join(directory, "credentials.lock"),
     async () => {
+      const { configuration, tokens, identity } = await withMachineCooldown(
+        directory,
+        apiUrl,
+        clientId,
+        signal,
+        async () => {
+          const configuration = await discoverMachineConfiguration(apiUrl, signal, deps.fetch);
+          const tokens = await exchangeMachineCredentials(
+            configuration,
+            clientId,
+            clientSecret,
+            signal,
+            deps.fetch,
+          );
+          const identity = await verifyMachineIdentity(
+            apiUrl,
+            tokens.accessToken,
+            clientId,
+            signal,
+            deps.fetch,
+          );
+          return { configuration, tokens, identity };
+        },
+      );
       const previous = readMachineProfile(deps);
       const retired = readRetiredProfiles(directory);
       let profile: MachineProfile = {
@@ -498,6 +511,25 @@ export async function acquireMachineCredential(
       cached?.generation === environment.generation ? cached.accessToken : undefined;
     const directory = configurationDirectory(deps);
     ensureDirectory(directory);
+    if (!deps.fetch && !deps.localEnvironment) {
+      try {
+        cached = await acquireBrokerCredential({
+          directory,
+          apiUrl,
+          environment,
+          env: deps.env ?? process.env,
+          force: options.force,
+          observedToken,
+          signal,
+        });
+        writeEnvironmentContext(cached, deps);
+        return cached;
+      } catch (error) {
+        if (error instanceof MachineAuthError && error.terminal)
+          environmentTerminal = environment.generation;
+        throw error;
+      }
+    }
     return withFileLock(
       join(directory, "credentials.lock"),
       async () => {
@@ -514,20 +546,29 @@ export async function acquireMachineCredential(
         )
           return cached;
         try {
-          const configuration = await discoverMachineConfiguration(apiUrl, signal, deps.fetch);
-          const tokens = await exchangeMachineCredentials(
-            configuration,
-            environment.clientId,
-            environment.clientSecret,
-            signal,
-            deps.fetch,
-          );
-          const identity = await verifyMachineIdentity(
+          const { configuration, tokens, identity } = await withMachineCooldown(
+            directory,
             apiUrl,
-            tokens.accessToken,
             environment.clientId,
             signal,
-            deps.fetch,
+            async () => {
+              const configuration = await discoverMachineConfiguration(apiUrl, signal, deps.fetch);
+              const tokens = await exchangeMachineCredentials(
+                configuration,
+                environment.clientId,
+                environment.clientSecret,
+                signal,
+                deps.fetch,
+              );
+              const identity = await verifyMachineIdentity(
+                apiUrl,
+                tokens.accessToken,
+                environment.clientId,
+                signal,
+                deps.fetch,
+              );
+              return { configuration, tokens, identity };
+            },
           );
           cached = {
             ...configuration,
@@ -580,19 +621,28 @@ export async function acquireMachineCredential(
         record.expiresAt <= Date.now() + RENEW_BEFORE_MS
       ) {
         try {
-          const tokens = await exchangeMachineCredentials(
-            profile,
-            profile.clientId,
-            record.clientSecret,
-            signal,
-            deps.fetch,
-          );
-          const identity = await verifyMachineIdentity(
+          const { tokens, identity } = await withMachineCooldown(
+            directory,
             apiUrl,
-            tokens.accessToken,
             profile.clientId,
             signal,
-            deps.fetch,
+            async () => {
+              const tokens = await exchangeMachineCredentials(
+                profile,
+                profile.clientId,
+                record.clientSecret,
+                signal,
+                deps.fetch,
+              );
+              const identity = await verifyMachineIdentity(
+                apiUrl,
+                tokens.accessToken,
+                profile.clientId,
+                signal,
+                deps.fetch,
+              );
+              return { tokens, identity };
+            },
           );
           if (
             identity.machineId !== profile.machineId ||

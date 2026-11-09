@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { startMachineBroker } from "../lib/machine-broker.js";
 import { acquireMachineCredential, hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { DECISION_IDENTITY_VERSION } from "./protocol.js";
 /**
@@ -1136,4 +1137,4 @@ async function main(): Promise<void> {
   startSocketServer();
 }
 
-void main();
+void (process.argv.includes("--machine-token-broker") ? startMachineBroker() : main());
