@@ -121,7 +121,9 @@ describe("machine credentials", () => {
       code: "token_service_unavailable",
     });
     expect(attempts).toBe(2);
-  });
+    // Windows applies owner-only ACLs through several process launches here.
+    // The fake-clock retry assertions above remain independent of runner speed.
+  }, 15_000);
 
   it("preserves HTTP-date retry timing and ignores invalid retry metadata", async () => {
     const retry = new Date(Date.now() + 120_000).toUTCString();
