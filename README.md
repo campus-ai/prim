@@ -703,7 +703,7 @@ unset injected environment variables separately.
 
 Tokens renew with another client-credentials exchange, without refresh tokens.
 Auth status reports identity, organization, effective scopes, storage, and expiry.
-Use `prim doctor --json` for journal and daemon recovery details. Machine access
+Use `prim doctor` for journal and daemon recovery details (JSON on stdout). Machine access
 covers capture, checks, presence, organization-visible Decision reads, and the
 machine's own Decision lifecycle. Manage GitHub App installation and human API
 keys in the web application; the personal onboarding demo is not a machine task.

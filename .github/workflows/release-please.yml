@@ -41,9 +41,9 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || needs.release-please.outputs.tag_name }}
-      # Publish the coordinated shell-check release to the onboarding channel.
+      # Publish coordinated shell-check and M2M releases to the onboarding channel.
       # Later prereleases keep their existing alpha default.
-      npm_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || needs.release-please.outputs.tag_name == 'v0.1.0-alpha.119' && 'latest' || '' }}
+      npm_tag: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || (needs.release-please.outputs.tag_name == 'v0.1.0-alpha.119' || needs.release-please.outputs.tag_name == 'v0.1.0-alpha.124') && 'latest' || '' }}
     permissions:
       contents: read
       id-token: write
