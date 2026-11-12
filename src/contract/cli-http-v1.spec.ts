@@ -501,6 +501,8 @@ describe("generated CLI HTTP request-core contract", () => {
 
   it("rejects provenance path, repository, commit, and lock-shape tampering", async () => {
     const { artifact, fixtures, lock } = artifactFixture();
+    lock.developmentSource = undefined;
+    lock.sourceCommit = "9f394bb03d64c228190155ab3dbce15eca4cbbd5";
     const artifacts = lock.artifacts as Record<string, Record<string, unknown>>;
     artifacts.fixtures.sourcePath = "contracts/renamed-fixtures.json";
     await expect(

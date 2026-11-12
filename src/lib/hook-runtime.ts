@@ -22,6 +22,7 @@ import { atomicWriteFile, syncDirectory, syncFile } from "./atomic-file.js";
 import { STABLE_HOOK_LAUNCHER_NAME, packageRoot, packageVersion } from "./bin-path.js";
 import { withFileLockSync } from "./file-lock.js";
 import { GIT_HOOK_ENTRYPOINT_CONTENT, GIT_HOOK_ENTRYPOINT_NAME } from "./git-hook-contract.js";
+import { KEYRING_LOADER, KEYRING_NATIVE_FILES, keyringNativeBinary } from "./native-keyring.js";
 import { type PrimConfigDirectoryOptions, primConfigDirectory } from "./paths.js";
 import { compareSemver } from "./semver.js";
 
@@ -68,6 +69,7 @@ type HookRuntimeManifest = {
   version: string;
   nodePath: string;
   files: Record<HookRuntimeBin, string>;
+  native?: Record<string, string>;
 };
 
 export type HookRuntimePaths = {
@@ -158,7 +160,7 @@ function runtimePackageJson(manifest: HookRuntimeManifest): string {
 
 function validateRelease(releaseDir: string, manifest: HookRuntimeManifest): boolean {
   try {
-    if (!directReleaseLayout(releaseDir)) return false;
+    if (!directReleaseLayout(releaseDir, manifest)) return false;
     if (readFileSync(join(releaseDir, "manifest.json"), "utf8") !== exactManifest(manifest)) {
       return false;
     }
@@ -175,16 +177,22 @@ function validateRelease(releaseDir: string, manifest: HookRuntimeManifest): boo
       const target = join(releaseDir, relativePath);
       if (sha256(target) !== manifest.files[bin]) return false;
     }
+    for (const [path, digest] of Object.entries(manifest.native ?? {})) {
+      if (sha256(join(releaseDir, path)) !== digest) return false;
+    }
     return true;
   } catch {
     return false;
   }
 }
 
-function directReleaseLayout(releaseDir: string): boolean {
+function directReleaseLayout(releaseDir: string, manifest: HookRuntimeManifest): boolean {
   try {
     const directories = new Set([releaseDir]);
-    for (const relativePath of Object.values(HOOK_RUNTIME_ENTRIES)) {
+    for (const relativePath of [
+      ...Object.values(HOOK_RUNTIME_ENTRIES),
+      ...Object.keys(manifest.native ?? {}),
+    ]) {
       for (
         let directory = dirname(relativePath);
         directory !== ".";
@@ -194,7 +202,20 @@ function directReleaseLayout(releaseDir: string): boolean {
       }
     }
     if (![...directories].every((directory) => lstatSync(directory).isDirectory())) return false;
-    const files = ["manifest.json", "package.json", "node", ...Object.values(HOOK_RUNTIME_ENTRIES)];
+    const files = [
+      "manifest.json",
+      "package.json",
+      "node",
+      ...Object.values(HOOK_RUNTIME_ENTRIES),
+      ...Object.keys(manifest.native ?? {}),
+    ];
+    const owned = new Set([...directories, ...files.map((path) => join(releaseDir, path))]);
+    if (
+      ![...directories].every((directory) =>
+        readdirSync(directory).every((name) => owned.has(join(directory, name))),
+      )
+    )
+      return false;
     return files.every((relativePath) => lstatSync(join(releaseDir, relativePath)).isFile());
   } catch {
     return false;
@@ -209,7 +230,16 @@ function readReleaseManifest(releaseDir: string, releaseName: string): HookRunti
     const raw = readFileSync(manifestPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    if (!exactKeys(parsed, ["schemaVersion", "version", "nodePath", "files"])) return null;
+    if (
+      !exactKeys(parsed, [
+        "schemaVersion",
+        "version",
+        "nodePath",
+        "files",
+        ...("native" in parsed ? ["native"] : []),
+      ])
+    )
+      return null;
     const candidate = parsed as Partial<HookRuntimeManifest>;
     if (
       candidate.schemaVersion !== HOOK_RUNTIME_SCHEMA_VERSION ||
@@ -228,6 +258,17 @@ function readReleaseManifest(releaseDir: string, releaseName: string): HookRunti
     ) {
       return null;
     }
+    if (
+      candidate.native !== undefined &&
+      (!candidate.native ||
+        typeof candidate.native !== "object" ||
+        Array.isArray(candidate.native) ||
+        !exactKeys(candidate.native, KEYRING_NATIVE_FILES) ||
+        Object.values(candidate.native).some(
+          (digest) => typeof digest !== "string" || !/^[a-f0-9]{64}$/u.test(digest),
+        ))
+    )
+      return null;
     const manifest = candidate as HookRuntimeManifest;
     if (
       raw !== exactManifest(manifest) ||
@@ -332,7 +373,16 @@ function sourceManifest(sourceDir: string, version: string, nodePath: string): H
     }
     files[bin] = sha256(source);
   }
-  return { schemaVersion: HOOK_RUNTIME_SCHEMA_VERSION, version, nodePath, files };
+  return {
+    schemaVersion: HOOK_RUNTIME_SCHEMA_VERSION,
+    version,
+    nodePath,
+    files,
+    native: {
+      "native/keyring.cjs": createHash("sha256").update(KEYRING_LOADER).digest("hex"),
+      "native/keyring.node": sha256(keyringNativeBinary()),
+    },
+  };
 }
 
 /**
@@ -380,7 +430,10 @@ function privateFile(path: string, mode: number): boolean {
 
 function hasSafeRuntimeLayout(paths: HookRuntimePaths, selected: SelectedRelease): boolean {
   const releaseDirectories = new Set([selected.dir]);
-  for (const relativePath of Object.values(HOOK_RUNTIME_ENTRIES)) {
+  for (const relativePath of [
+    ...Object.values(HOOK_RUNTIME_ENTRIES),
+    ...Object.keys(selected.manifest.native ?? {}),
+  ]) {
     for (let directory = dirname(relativePath); directory !== "."; directory = dirname(directory)) {
       releaseDirectories.add(join(selected.dir, directory));
     }
@@ -398,9 +451,10 @@ function hasSafeRuntimeLayout(paths: HookRuntimePaths, selected: SelectedRelease
   ) {
     return false;
   }
-  return Object.values(HOOK_RUNTIME_ENTRIES).every((relativePath) =>
-    privateFile(join(selected.dir, relativePath), DATA_FILE_MODE),
-  );
+  return [
+    ...Object.values(HOOK_RUNTIME_ENTRIES),
+    ...Object.keys(selected.manifest.native ?? {}),
+  ].every((relativePath) => privateFile(join(selected.dir, relativePath), DATA_FILE_MODE));
 }
 
 function sameNodeExecutable(recorded: string, desired: string): boolean {
@@ -483,6 +537,19 @@ function writeRelease(
         throw new Error(`cannot stage hook runtime: ${bin} changed while it was copied`);
       }
       syncStagedFile(target);
+    }
+    if (manifest.native) {
+      const nativeDir = join(stagingDir, "native");
+      mkdirSync(nativeDir, { mode: DIRECTORY_MODE });
+      writeFileSync(join(nativeDir, "keyring.cjs"), KEYRING_LOADER, { mode: DATA_FILE_MODE });
+      copyFileSync(keyringNativeBinary(), join(nativeDir, "keyring.node"));
+      chmodSync(join(nativeDir, "keyring.node"), DATA_FILE_MODE);
+      for (const [path, digest] of Object.entries(manifest.native)) {
+        const target = join(stagingDir, path);
+        if (sha256(target) !== digest)
+          throw new Error("Native credential store changed while copying");
+        syncStagedFile(target);
+      }
     }
     const nodePath = join(stagingDir, "node");
     writeFileSync(nodePath, `${manifest.nodePath}\n`, {

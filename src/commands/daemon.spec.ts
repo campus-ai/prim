@@ -403,7 +403,7 @@ describe("daemonDegradedReason", () => {
           lastError: "poison queue",
         },
       }),
-    ).toBe("authentication requires `prim auth login`");
+    ).toBe("authentication ended — run `prim auth status` for recovery instructions");
   });
 
   it("surfaces a bounded, control-safe ingestion error and pending count", () => {
@@ -445,7 +445,7 @@ describe("daemonStartFailureReason", () => {
         { ...drainingSnapshot, version: "1.2.2", needsReauth: true },
         "1.2.3",
       ),
-    ).toBe("authentication requires `prim auth login`");
+    ).toBe("authentication ended — run `prim auth status` for recovery instructions");
     expect(
       daemonStartFailureReason(
         {
@@ -502,7 +502,7 @@ describe("formatDaemonSnapshotMessage", () => {
       "unbound",
     );
     expect(message).toBe(
-      "[prim] ✗ daemon unhealthy under launchd · pid=4242 · team: Alex, Maya · authentication requires `prim auth login`",
+      "[prim] ✗ daemon unhealthy under launchd · pid=4242 · team: Alex, Maya · authentication ended — run `prim auth status` for recovery instructions",
     );
     expect(message).not.toContain("Decision ingestion");
     expect(message).not.toContain("repository:");

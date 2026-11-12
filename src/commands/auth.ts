@@ -1,3 +1,6 @@
+import { classifyJournalBuckets, summarizeRetainedBuckets } from "../journal-organization.js";
+import { listBuckets } from "../journal.js";
+import { isNonInteractive } from "../lib/confirmation.js";
 /**
  * Auth commands for the prim CLI.
  *
@@ -12,6 +15,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { platform } from "node:os";
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 import type { Command } from "commander";
 import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from "../auth/api-keys.js";
 import {
@@ -26,6 +31,16 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
+import {
+  type MachineStorage,
+  acquireMachineCredential,
+  clearMachineCredentials,
+  configureMachine,
+  hasMachineConfiguration,
+  machineContext,
+  readMachineProfile,
+} from "../lib/machine-credentials.js";
+import { MachineAuthError, verifyMachineIdentity } from "../lib/machine-protocol.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import {
   WorkosConnectProtocolError,
@@ -243,6 +258,13 @@ export type AuthStatusResult = {
   accessTokenExpired: boolean;
   refreshTokenPresent: boolean;
   warnings: string[];
+  principalKind?: "machine";
+  machineId?: string;
+  displayName?: string;
+  effectiveScopes?: string[];
+  organizationId?: string;
+  storageBackend?: MachineStorage;
+  recoveryReason?: string;
 };
 
 function hasStoredRefreshToken(): boolean {
@@ -257,7 +279,7 @@ function hasStoredRefreshToken(): boolean {
 function authStatusResult(
   status: AuthVerificationStatus,
   reason: AuthVerificationReason,
-  source: "environment" | "token_file" | undefined,
+  source: "environment" | "token_file" | "machine" | undefined,
   refreshTokenPresent: boolean,
 ): AuthStatusResult {
   const expiresAt = source === "token_file" ? getTokenExpiresAt() : undefined;
@@ -276,6 +298,67 @@ function authStatusResult(
 
 /** Verify the selected credential without letting the protected probe rotate it again. */
 export async function verifyAuthStatus(): Promise<AuthStatusResult> {
+  let machineMetadata: Partial<AuthStatusResult> = {};
+  try {
+    if (hasMachineConfiguration()) {
+      const context = machineContext();
+      machineMetadata = {
+        principalKind: "machine",
+        machineId: context?.machineId,
+        displayName: context?.displayName,
+        organizationId: context?.organizationId,
+        storageBackend: process.env.PRIM_M2M_CLIENT_ID
+          ? "environment"
+          : readMachineProfile()?.storage,
+      };
+      const machine = await acquireMachineCredential({
+        signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+      });
+      if (!machine) throw new Error("missing machine");
+      machineMetadata = {
+        ...machineMetadata,
+        accessTokenExpiresInMs: machine.expiresAt - Date.now(),
+        accessTokenExpired: machine.expiresAt <= Date.now(),
+      };
+      const identity = await verifyMachineIdentity(
+        machine.apiUrl,
+        machine.accessToken,
+        machine.clientId,
+      );
+      return {
+        ...authStatusResult("valid", "verified", "machine", false),
+        principalKind: "machine",
+        machineId: machine.machineId,
+        displayName: identity.displayName,
+        effectiveScopes: identity.scopes,
+        organizationId: machine.organizationId,
+        storageBackend: machine.storage,
+        accessTokenExpiresInMs: machine.expiresAt - Date.now(),
+        accessTokenExpired: machine.expiresAt <= Date.now(),
+      };
+    }
+  } catch (error) {
+    const invalid =
+      error instanceof MachineAuthError &&
+      (error.terminal ||
+        [
+          "incomplete_machine_credentials",
+          "conflicting_credentials",
+          "deployment_mismatch",
+          "invalid_storage",
+        ].includes(error.code));
+    return {
+      ...authStatusResult(
+        invalid ? "invalid" : "unreachable",
+        invalid ? "access_rejected" : "verification_unavailable",
+        undefined,
+        false,
+      ),
+      ...machineMetadata,
+      principalKind: "machine",
+      recoveryReason: error instanceof MachineAuthError ? error.code : "verification_unavailable",
+    };
+  }
   const credential = resolveAuthCredential();
   if (!credential) {
     return authStatusResult("invalid", "missing_credentials", undefined, false);
@@ -346,6 +429,14 @@ function authStatusExitCode(status: AuthVerificationStatus): number {
 }
 
 function writeHumanAuthStatus(result: AuthStatusResult): void {
+  if (result.principalKind === "machine") {
+    console.error(
+      result.authenticated
+        ? `Machine ${result.machineId}: verified (${result.storageBackend}); organization ${result.organizationId}.`
+        : `Machine authentication ${result.status}: ${result.recoveryReason}. Check the credential store or run prim auth configure-machine with credentials from your administrator.`,
+    );
+    return;
+  }
   if (result.status === "invalid") {
     const detail =
       result.reason === "refresh_rejected"
@@ -382,8 +473,62 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
   for (const warning of result.warnings) console.log(`Warning: ${warning}`);
 }
 
+function requiresLegacyAuthentication(): boolean {
+  if (!hasMachineConfiguration()) return true;
+  reportFailure(
+    "machine_operation_not_supported",
+    "This installation uses machine credentials. Manage API keys and sign-in in the web application; use configure-machine to rotate machine credentials.",
+  );
+  return false;
+}
+
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
+  auth
+    .command("configure-machine")
+    .description("Configure administrator-issued WorkOS machine credentials")
+    .requiredOption("--client-id <id>", "WorkOS M2M application client ID")
+    .option("--client-secret-stdin", "Read the client secret from standard input")
+    .action(async (options: { clientId: string; clientSecretStdin?: boolean }) => {
+      try {
+        if (
+          !options.clientSecretStdin &&
+          (isNonInteractive(program.optsWithGlobals()) || process.env.PRIM_UNATTENDED)
+        )
+          throw new MachineAuthError(
+            "secret_input_required",
+            "Pass --client-secret-stdin or inject machine credentials in non-interactive sessions.",
+          );
+        const secret = await readMachineSecret(options.clientSecretStdin === true);
+        const profile = await configureMachine(options.clientId, secret);
+        console.error(
+          `Machine credentials saved in ${profile.storage === "keychain" ? "the OS credential store" : "an owner-only credential file (OS store unavailable)"}.`,
+        );
+        const retained = classifyJournalBuckets(
+          listBuckets().map(({ bucket }) => bucket),
+          { ...profile, captureAuthorityKind: "workos_m2m" },
+        ).retainedBuckets;
+        if (retained.length)
+          console.error(
+            `Captured activity retained under its original authority: ${summarizeRetainedBuckets(retained)}.`,
+          );
+        printJson({
+          retainedJournalBuckets: retained,
+          authenticated: true,
+          principalKind: "machine",
+          machineId: profile.machineId,
+          organizationId: profile.organizationId,
+          storageBackend: profile.storage,
+        });
+      } catch (error) {
+        reportFailure(
+          error instanceof MachineAuthError ? error.code : "machine_configuration_failed",
+          error instanceof MachineAuthError
+            ? error.message
+            : "Machine configuration failed; no provider response or secret was logged.",
+        );
+      }
+    });
 
   const apiKeys = auth
     .command("api-keys")
@@ -395,6 +540,7 @@ export function registerAuthCommands(program: Command) {
     .requiredOption("--name <name>", "Name for the API key")
     .option("--expires-at <epoch-ms>", "Optional expiration as Unix epoch milliseconds")
     .action(async (options: { name: string; expiresAt?: string }) => {
+      if (!requiresLegacyAuthentication()) return;
       const expiresAt = options.expiresAt === undefined ? undefined : Number(options.expiresAt);
       process.exitCode = await mintUserApiKey({
         name: options.name,
@@ -408,6 +554,7 @@ export function registerAuthCommands(program: Command) {
     .option("--limit <count>", "Maximum keys to return (1-100)", "100")
     .option("--after <api-key-id>", "Continue after this API-key ID")
     .action(async (options: { limit: string; after?: string }) => {
+      if (!requiresLegacyAuthentication()) return;
       process.exitCode = await listUserApiKeys({
         limit: Number(options.limit),
         ...(options.after === undefined ? {} : { after: options.after }),
@@ -418,6 +565,7 @@ export function registerAuthCommands(program: Command) {
     .command("revoke <apiKeyId>")
     .description("Revoke one API key owned by the current user and organization")
     .action(async (apiKeyId: string) => {
+      if (!requiresLegacyAuthentication()) return;
       process.exitCode = await revokeUserApiKey(apiKeyId);
     });
 
@@ -426,6 +574,7 @@ export function registerAuthCommands(program: Command) {
     .description("Authenticate via browser (WorkOS OAuth)")
     .option("--no-browser", "Print the verification URL without opening a browser")
     .action(async (options: { browser: boolean }) => {
+      if (!requiresLegacyAuthentication()) return;
       const siteUrl = getSiteUrl();
 
       let discovery: Awaited<ReturnType<typeof discoverWorkosConnect>>;
@@ -591,6 +740,7 @@ export function registerAuthCommands(program: Command) {
     .command("set-token <token>")
     .description("Save a bearer token for authenticated CLI calls")
     .action(async (token: string) => {
+      if (!requiresLegacyAuthentication()) return;
       await setStoredToken(token);
       console.log(`Token saved to ${TOKEN_FILE_PATH}`);
     });
@@ -599,6 +749,7 @@ export function registerAuthCommands(program: Command) {
     .command("clear")
     .description("Remove the saved authentication token")
     .action(async () => {
+      const machineRemoved = await clearMachineCredentials();
       const removed = await clearStoredCredentials({
         beforeClear: async (refreshTokenValue, metadata) => {
           if (!refreshTokenValue || metadata.state !== "legacy_broker") return;
@@ -624,7 +775,7 @@ export function registerAuthCommands(program: Command) {
         },
       });
 
-      if (removed) {
+      if (removed || machineRemoved) {
         console.log("Local tokens removed.");
       } else {
         console.log("No saved tokens found.");
@@ -641,6 +792,41 @@ export function registerAuthCommands(program: Command) {
       else writeHumanAuthStatus(result);
       process.exit(authStatusExitCode(result.status));
     });
+}
+
+async function readMachineSecret(fromStdin: boolean): Promise<string> {
+  if (fromStdin) {
+    let input = "";
+    for await (const chunk of process.stdin) {
+      input += String(chunk);
+      if (Buffer.byteLength(input) > 4098)
+        throw new MachineAuthError("invalid_credentials", "Machine secret is too long.");
+    }
+    return input.replace(/\r?\n$/u, "");
+  }
+  if (!process.stdin.isTTY || process.env.CI || process.env.PRIM_NON_INTERACTIVE) {
+    throw new MachineAuthError(
+      "secret_input_required",
+      "Pass --client-secret-stdin or inject PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET.",
+    );
+  }
+  const muted = new Writable({
+    write(_chunk, _encoding, done) {
+      done();
+    },
+  });
+  const input = createInterface({ input: process.stdin, output: muted, terminal: true });
+  console.error("Machine client secret (hidden):");
+  return new Promise((resolve, reject) => {
+    input.once("SIGINT", () => {
+      input.close();
+      reject(new MachineAuthError("cancelled", "Machine configuration cancelled."));
+    });
+    input.question("", (secret) => {
+      input.close();
+      resolve(secret);
+    });
+  });
 }
 
 /**

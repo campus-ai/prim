@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +16,7 @@ const root = mkdtempSync(join(tmpdir(), "prim-hook-runtime-smoke-"));
 const home = join(root, "home");
 const config = join(root, "config");
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const installation = join(root, "installation");
 const env = {
   ...process.env,
   HOME: home,
@@ -17,6 +26,8 @@ const env = {
   PRIM_HOOK_MODE: "block",
   PRIM_BYPASS: "",
   PRIM_TOKEN: "",
+  PRIM_M2M_CLIENT_ID: undefined,
+  PRIM_M2M_CLIENT_SECRET: undefined,
   PRIM_API_URL: "http://127.0.0.1:1",
 };
 
@@ -38,7 +49,19 @@ function run(file, args, input, cwd = packageRoot) {
 
 try {
   mkdirSync(home, { recursive: true });
-  run(process.execPath, ["dist/index.js", "claude", "install", "--scope", "user"]);
+  mkdirSync(installation);
+  for (const path of ["dist", "assets", "package.json", "SKILL.md", "skills"]) {
+    if (existsSync(join(packageRoot, path)))
+      cpSync(join(packageRoot, path), join(installation, path), { recursive: true });
+  }
+  symlinkSync(join(packageRoot, "node_modules"), join(installation, "node_modules"), "junction");
+  run(
+    process.execPath,
+    ["dist/index.js", "claude", "install", "--scope", "user"],
+    undefined,
+    installation,
+  );
+  rmSync(installation, { recursive: true, force: true });
   const output = run(join(config, "prim-hook-launcher-v1"), ["prim-session-start"], "{}").trim();
   if (output !== "{}") throw new Error(`prim-session-start emitted unexpected output: ${output}`);
   const settings = JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8"));
@@ -92,7 +115,7 @@ try {
     }
   }
   process.stdout.write(
-    `${JSON.stringify({ status: "pass", hookBundlesAndLauncher: 3, shellCases: cases.length, bashMatcher: "installed" })}\n`,
+    `${JSON.stringify({ status: "pass", hookBundlesAndLauncher: 3, shellCases: cases.length, bashMatcher: "installed", sourceInstallationRemoved: true })}\n`,
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

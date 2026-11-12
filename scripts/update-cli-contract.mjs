@@ -22,7 +22,7 @@ const ARTIFACTS = {
 };
 
 function usage() {
-  return "usage: pnpm contracts:update --revision <full-client-commit> | pnpm contracts:provenance";
+  return "usage: pnpm contracts:update --revision <full-client-commit> | pnpm contracts:update --worktree <backend-path> | pnpm contracts:provenance";
 }
 
 function fullCommit(value, label) {
@@ -108,6 +108,10 @@ function fetchCanonicalArtifacts(revision) {
 
 function readLock() {
   const lock = parseObject(readFileSync(LOCK_PATH), "contract lock");
+  if (lock.developmentSource !== undefined)
+    throw new Error(
+      "Contract source is an unpublished worktree. Commit and publish the backend, then run contracts:update --revision <commit> before release.",
+    );
   assertExactKeys(
     lock,
     ["artifactId", "artifacts", "contractVersion", "scope", "sourceCommit", "sourceRepository"],
@@ -141,12 +145,13 @@ function readLock() {
   return lock;
 }
 
-function writeContract(revision) {
-  const bytes = fetchCanonicalArtifacts(revision);
+function writeContract(revision, development) {
+  const bytes = development?.bytes ?? fetchCanonicalArtifacts(revision);
   const schema = parseArtifacts(bytes);
   const lock = {
     sourceRepository: SOURCE_REPOSITORY,
     sourceCommit: revision,
+    ...(development ? { developmentSource: development.provenance } : {}),
     artifacts: Object.fromEntries(
       Object.entries(ARTIFACTS).map(([name, artifact]) => [
         name,
@@ -182,16 +187,66 @@ function verifyProvenance() {
   }
 }
 
+function importDevelopmentWorktree(worktree) {
+  const source = resolve(worktree);
+  const git = (...args) => execFileSync("git", ["-C", source, ...args]);
+  const remote = git("remote", "get-url", "origin").toString().trim();
+  if (
+    !/^((https:\/\/github\.com\/)|(git@github\.com:))campus-ai\/primitive(?:\.git)?$/u.test(remote)
+  )
+    throw new Error("Local contract source must be a checkout of campus-ai/primitive");
+  const baseCommit = fullCommit(git("rev-parse", "HEAD").toString().trim(), "baseCommit");
+  const sourceHash = createHash("sha256");
+  sourceHash.update(git("diff", "HEAD", "--", "convex", "scripts", "contracts"));
+  const untracked = git(
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    "convex",
+    "scripts",
+    "contracts",
+  )
+    .toString()
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  for (const path of untracked) {
+    sourceHash.update(path);
+    sourceHash.update("\0");
+    sourceHash.update(readFileSync(join(source, path)));
+  }
+  const bytes = Object.fromEntries(
+    Object.entries(ARTIFACTS).map(([name, artifact]) => [
+      name,
+      readFileSync(join(source, artifact.sourcePath)),
+    ]),
+  );
+  writeContract(null, {
+    bytes,
+    provenance: { baseCommit, worktreeDiffSha256: sourceHash.digest("hex") },
+  });
+  process.stderr.write(
+    "Imported unpublished backend contract for development. Canonical provenance remains blocked until contracts:update --revision is run.\n",
+  );
+}
+
 function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       check: { type: "boolean" },
       revision: { type: "string" },
+      worktree: { type: "string" },
     },
   });
-  if (positionals.length > 0 || (values.check === true && values.revision !== undefined)) {
+  if (positionals.length > 0 || Object.keys(values).length !== 1) {
     throw new Error(usage());
+  }
+  if (Object.keys(values).length === 1 && typeof values.worktree === "string") {
+    importDevelopmentWorktree(values.worktree);
+    return;
   }
   if (values.check === true) {
     verifyProvenance();

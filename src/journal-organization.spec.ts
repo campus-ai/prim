@@ -156,3 +156,64 @@ describe("journal organization binding", () => {
     );
   });
 });
+
+describe("machine journal authority", () => {
+  const machine = {
+    ...binding,
+    captureAuthorityKind: "workos_m2m" as const,
+    machineId: "machine_one",
+    clientId: "client_installation",
+  };
+  const apiUrl = "https://api.getprimitive.ai";
+  it("retains legacy and other-machine buckets after switching", async () => {
+    const { machineJournalBucket } = await import("./lib/machine-credentials.js");
+    const selected = machineJournalBucket({ apiUrl, clientId: machine.clientId });
+    const other = machineJournalBucket({ apiUrl, clientId: "client_other" });
+    const result = classifyJournalBuckets(
+      [binding.organizationId, binding.workosOrganizationId, selected, other],
+      machine,
+    );
+    expect([...result.deliverableBuckets]).toEqual([selected]);
+    expect(result.retainedBuckets).toEqual(
+      expect.arrayContaining([
+        { bucket: binding.organizationId, reason: "legacy_authority_retained" },
+        { bucket: other, reason: "machine_identity_mismatch" },
+      ]),
+    );
+  });
+  it("never assigns legacy bytes or another machine's capture to a new machine", () => {
+    expect(() => buildOrganizationBoundMoveRequest([move()], machine)).toThrow(
+      InvalidJournalEnvelopeError,
+    );
+    const captured: Move = {
+      ...move(),
+      captureActor: { kind: "machine", apiUrl, clientId: "client_other" },
+    };
+    expect(() => buildOrganizationBoundMoveRequest([captured], machine)).toThrow(
+      InvalidJournalEnvelopeError,
+    );
+    expect(() => buildOrganizationBoundMoveRequest([captured], binding)).toThrow(
+      InvalidJournalEnvelopeError,
+    );
+  });
+  it("emits v5 with machine provenance without rewriting the journal record", () => {
+    const captured: Move = {
+      ...move(),
+      captureActor: {
+        kind: "machine",
+        apiUrl,
+        clientId: machine.clientId,
+        machineId: machine.machineId,
+        organizationId: machine.organizationId,
+      },
+    };
+    const request = buildOrganizationBoundMoveRequest([captured], machine);
+    expect(request.batch[0]).toMatchObject({
+      envelopeVersion: 5,
+      capturedMachineId: machine.machineId,
+      captureAuthorityKind: "workos_m2m",
+    });
+    expect(request.batch[0]).not.toHaveProperty("captureActor");
+    expect(captured.envelopeVersion).toBe(1);
+  });
+});

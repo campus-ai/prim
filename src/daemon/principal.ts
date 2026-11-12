@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { decodeJwtPayload, resolveAuthCredential } from "../lib/credentials.js";
+import { hasMachineConfiguration, machineContext } from "../lib/machine-credentials.js";
 
 const PRINCIPAL_COMPONENT_MAX_LENGTH = 512;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
@@ -30,6 +31,7 @@ function sha256(value: string): string {
 export function resolveDaemonCredentialKey(
   token = resolveAuthCredential()?.token,
 ): string | undefined {
+  if (hasMachineConfiguration()) return machineContext()?.generation;
   return token ? sha256(token) : undefined;
 }
 
@@ -37,6 +39,16 @@ export function resolveDaemonCredentialKey(
 export function resolveDaemonPrincipal(
   token = resolveAuthCredential()?.token,
 ): DaemonPrincipal | undefined {
+  if (hasMachineConfiguration()) {
+    const machine = machineContext();
+    return machine
+      ? {
+          principalId: sha256(`${machine.issuer}\0${machine.clientId}`),
+          organizationId: machine.workosOrganizationId,
+          credentialFingerprint: sha256(machine.generation),
+        }
+      : undefined;
+  }
   if (!token) return undefined;
   const payload = decodeJwtPayload(token);
   const subject = boundedClaim(payload?.sub);

@@ -282,7 +282,11 @@ describe("macOS daemon start readiness", () => {
   });
 
   it.each([
-    ["terminal auth", { needsReauth: true }, "authentication requires `prim auth login`"],
+    [
+      "terminal auth",
+      { needsReauth: true },
+      "authentication ended — run `prim auth status` for recovery instructions",
+    ],
     [
       "an unhealthy heartbeat",
       { heartbeat: { healthy: false, consecutiveFailures: 3, lastError: "HTTP 503" } },

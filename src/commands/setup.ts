@@ -1,3 +1,4 @@
+import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 /**
  * `prim setup` — the whole install in one command.
  *
@@ -528,10 +529,18 @@ export function registerSetupCommand(
       // 0 · Verify auth before changing any integration or permission state.
       // A transport/backend outage is indeterminate, not invalid credentials:
       // abort without opening a browser or partially installing setup.
+      const machine = hasMachineConfiguration();
       let authStatus = parseSetupAuthStatus(run(["auth", "status", "--json"], true));
       if (authStatus === "unreachable") {
         note("auth · verification unavailable; no setup changes were made");
         exit(EXIT_USAGE);
+        return;
+      }
+      if (authStatus === "invalid" && machine) {
+        note(
+          "auth · machine credentials need attention; run prim auth status, then configure-machine with administrator-issued credentials",
+        );
+        exit(EXIT_INCOMPLETE);
         return;
       }
       if (authStatus === "invalid") {
@@ -624,6 +633,7 @@ export function registerSetupCommand(
       // Claude Code and user-scope Codex sessions hand off to prim-welcome.
       // A person at a terminal keeps the earlier welcome and tour.
       const welcomeHandoff =
+        !machine &&
         scope === "user" &&
         ((agent === "claude" && (opts.agent === "claude" || Boolean(process.env.CLAUDECODE))) ||
           (agent === "codex" && Boolean(process.env.CODEX_THREAD_ID)));
@@ -672,6 +682,15 @@ export function registerSetupCommand(
               : "ok";
       }
 
+      if (machine) {
+        const failed = Object.keys(results).filter((key) => results[key] === "failed");
+        note(
+          "machine · GitHub App installation, API key administration, and personal onboarding are available in the web application",
+        );
+        printJson({ ok: failed.length === 0, principalKind: "machine", results, failed, health });
+        if (failed.length) exit(EXIT_INCOMPLETE);
+        return;
+      }
       // The agent hands off to prim-welcome, which owns everything the
       // user reads from here: explanation, the demo (which pauses capture while
       // it runs), and the handoff. `demo` says whether to offer it.

@@ -1,3 +1,4 @@
+import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 /**
  * The terminal-auth notice surfaced at SessionStart.
  *
@@ -25,6 +26,11 @@ export const REAUTH_NOTICE =
 export function reauthNoticeFields(
   agent: Agent,
 ): { systemMessage?: string; additionalContext?: string } | undefined {
-  if (agent === "claude_code") return { systemMessage: REAUTH_NOTICE };
+  if (agent === "claude_code")
+    return {
+      systemMessage: hasMachineConfiguration()
+        ? "[prim] machine delivery paused; local capture remains saved. Run `prim auth status` and ask your administrator to enable or rotate machine credentials."
+        : REAUTH_NOTICE,
+    };
   return;
 }

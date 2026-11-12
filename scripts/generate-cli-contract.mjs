@@ -144,7 +144,15 @@ function assertLockedArtifact(lockEntry, expectedPath, bytes, label) {
 function assertArtifactLock(artifactBytes, artifact, fixtureBytes, fixtures, lock) {
   assertExactKeys(
     lock,
-    ["artifactId", "artifacts", "contractVersion", "scope", "sourceCommit", "sourceRepository"],
+    [
+      "artifactId",
+      "artifacts",
+      "contractVersion",
+      "scope",
+      "sourceCommit",
+      "sourceRepository",
+      ...(lock.developmentSource !== undefined ? ["developmentSource"] : []),
+    ],
     "contract lock",
   );
   if (lock.sourceRepository !== SOURCE_REPOSITORY) {
@@ -177,7 +185,18 @@ function assertArtifactLock(artifactBytes, artifact, fixtureBytes, fixtures, loc
   if (artifact["x-primitive-scope"] !== lock.scope) {
     throw new Error("contract scope does not match its lock");
   }
-  if (!/^[0-9a-f]{40}$/u.test(nonemptyString(lock.sourceCommit, "sourceCommit"))) {
+  if (lock.developmentSource !== undefined) {
+    const source = lock.developmentSource;
+    if (!source || typeof source !== "object" || Array.isArray(source))
+      throw new Error("Invalid development source");
+    assertExactKeys(source, ["baseCommit", "worktreeDiffSha256"], "development source");
+    if (
+      lock.sourceCommit !== null ||
+      !/^[a-f0-9]{40}$/u.test(source.baseCommit) ||
+      !/^[a-f0-9]{64}$/u.test(source.worktreeDiffSha256)
+    )
+      throw new Error("Invalid development source provenance");
+  } else if (!/^[0-9a-f]{40}$/u.test(nonemptyString(lock.sourceCommit, "sourceCommit"))) {
     throw new Error("sourceCommit must be a full lowercase Git object ID");
   }
   if (

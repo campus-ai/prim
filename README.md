@@ -660,3 +660,66 @@ characters. Use the same ID in commands and at
 `shortId` compatibility field contains the eight characters without the prefix.
 Existing full record IDs remain accepted as inputs. Upgrade the backend before
 this CLI; an unavailable identity produces an error rather than a storage ID.
+
+### Machine credentials
+
+An administrator issues a separate WorkOS M2M application for each installation
+or workload. Configure its application client ID and enter the secret at the
+hidden prompt:
+
+```sh
+prim auth configure-machine --client-id client_APPLICATION
+prim auth status --json
+prim setup
+```
+
+For automated secret delivery, pipe the secret to
+`prim auth configure-machine --client-id client_APPLICATION --client-secret-stdin`.
+Never pass a secret as a command-line argument. CI can instead inject both
+`PRIM_M2M_CLIENT_ID` and `PRIM_M2M_CLIENT_SECRET`, along with the selected
+`PRIM_API_URL`. A complete environment pair overrides saved credentials;
+partial pairs and a conflicting `PRIM_TOKEN` fail explicitly. Injected
+credentials and tokens are never saved. Prim shares only verified identity
+metadata with local hooks, tied to that credential generation and token expiry.
+
+Injected credentials share access tokens through an authenticated, memory-only
+local broker. Provider retry delays are shared across processes and survive
+restarts without saving secrets or tokens. The broker runs from the copied
+runtime and exits after five minutes without authenticated requests.
+
+On macOS, launchd cannot inherit credentials from your terminal. Stop any
+existing daemon and run `prim daemon start --foreground` in the environment
+that supplies the machine credentials. Restart it with the new environment when
+rotating credentials. Prim rejects launchd configuration in environment mode;
+use saved machine credentials for a daemon that starts across logins.
+
+Prim verifies the exchange and the API's protected machine identity before
+activating credentials. It uses the OS credential store by default (persistent
+Secret Service on Linux). If that store is unavailable on initial configuration,
+Prim uses owner-only files in its private configuration directory. Once a store
+is selected, a locked or failing keychain produces a recovery error rather than
+falling back to an old credential. `prim auth clear` removes saved credentials;
+unset injected environment variables separately.
+
+Tokens renew with another client-credentials exchange, without refresh tokens.
+Auth status reports identity, organization, effective scopes, storage, and expiry.
+Use `prim doctor` for journal and daemon recovery details (JSON on stdout). Machine access
+covers capture, checks, presence, organization-visible Decision reads, and the
+machine's own Decision lifecycle. Manage GitHub App installation and human API
+keys in the web application; the personal onboarding demo is not a machine task.
+
+Flush pending activity under its original credentials before migration where
+possible (`prim moves flush`). Machine capture uses separate, identity-bound
+journals. Legacy activity and activity from another machine are retained rather
+than reassigned. Terminal credential failures pause delivery while local capture
+continues. Ask the administrator to enable or rotate the same machine, then run
+`configure-machine` again. Do not edit or move journal records between identities.
+For injected credentials, restart with the replacement environment. After
+verifying the replacement, the administrator must revoke the old WorkOS client
+secret; clearing local storage does not revoke it.
+
+For concurrent backend/CLI development, `pnpm contracts:update --worktree <path>`
+imports an explicitly unpublished backend contract. Canonical provenance remains
+blocked until the backend is published and imported with
+`pnpm contracts:update --revision <full-commit>`. Production releases must pass
+`pnpm contracts:provenance`.

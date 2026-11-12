@@ -137,7 +137,7 @@ interface StatusSnapshot {
 export function daemonDegradedReason(snapshot: StatusSnapshot | null): string | undefined {
   if (!snapshot || snapshot.healthy !== false) return undefined;
   if (snapshot.needsReauth) {
-    return "authentication requires `prim auth login`";
+    return "authentication ended — run `prim auth status` for recovery instructions";
   }
   if (snapshot.heartbeat?.healthy === false) {
     const detail = boundedHealthError(snapshot.heartbeat.lastError);
@@ -388,6 +388,10 @@ async function detachedDaemonStart(opts: { foreground?: boolean }): Promise<void
   if (opts.foreground) {
     // Inherit all stdio so the user sees the daemon's lifecycle log.
     const child = spawnDaemon({ stdio: "inherit" });
+    // Supervisors signal this foreground parent; forward shutdown to its daemon.
+    for (const signal of ["SIGTERM", "SIGINT"] as const) {
+      process.once(signal, () => child.kill(signal));
+    }
     child.on("exit", (code) => {
       process.exit(code ?? 0);
     });
