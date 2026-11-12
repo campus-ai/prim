@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.124](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.123...v0.1.0-alpha.124) (2026-11-12)
+
+
+### Features
+
+* **auth:** support WorkOS machine credentials in the CLI ([763d33d](https://github.com/campus-ai/prim/commit/763d33d5c83d2a8590cee4a6f34a7869e7d74046))
+
 ## [0.1.0-alpha.123](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.122...v0.1.0-alpha.123) (2026-11-06)
 
 
