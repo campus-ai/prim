@@ -1,6 +1,6 @@
 {
   "sourceRepository": "campus-ai/primitive",
-  "sourceCommit": "eb18036df04533e54daa34614335d2b6477d4361",
+  "sourceCommit": "ad7943ab73350c587ee10a9eeb0c7214eff6aead",
   "artifacts": {
     "schema": {
       "sourcePath": "contracts/cli-http-v1.schema.json",
