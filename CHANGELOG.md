@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.125](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.124...v0.1.0-alpha.125) (2026-11-13)
+
+
+### Features
+
+* **auth:** enroll developer installations during setup ([f355c8f](https://github.com/campus-ai/prim/commit/f355c8f4f4fe8bdf0ee4e9dab0e4a25d6fba478c))
+
 ## [0.1.0-alpha.124](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.123...v0.1.0-alpha.124) (2026-11-12)
 
 
