@@ -31,7 +31,12 @@ function sha256(value: string): string {
 export function resolveDaemonCredentialKey(
   token = resolveAuthCredential()?.token,
 ): string | undefined {
-  if (hasMachineConfiguration()) return machineContext()?.generation;
+  if (hasMachineConfiguration()) {
+    const machine = machineContext();
+    return machine
+      ? `${machine.generation}${machine.authorizedUserId ? `\0${machine.authorizedUserId}` : ""}`
+      : undefined;
+  }
   return token ? sha256(token) : undefined;
 }
 
@@ -43,7 +48,9 @@ export function resolveDaemonPrincipal(
     const machine = machineContext();
     return machine
       ? {
-          principalId: sha256(`${machine.issuer}\0${machine.clientId}`),
+          principalId: sha256(
+            `${machine.issuer}\0${machine.clientId}${machine.authorizedUserId ? `\0${machine.authorizedUserId}` : ""}`,
+          ),
           organizationId: machine.workosOrganizationId,
           credentialFingerprint: sha256(machine.generation),
         }

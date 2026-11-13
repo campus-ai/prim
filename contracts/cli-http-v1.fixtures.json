@@ -25,6 +25,59 @@
   ],
   "cases": [
     {
+      "name": "developer enrollment start",
+      "definition": "CliEnrollmentStart",
+      "valid": true,
+      "value": {
+        "installationId": "d71ab169-7ccc-4f0f-986e-98692dc61c6d",
+        "requestId": "a5ad0b98-9793-40bb-8bd9-d5df04f9d99c",
+        "displayName": "Developer laptop",
+        "publicKey": "public-key-fixture",
+        "challenge": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "enrollment returns opaque exchange ID",
+      "definition": "CliEnrollmentStartResponse",
+      "valid": true,
+      "value": {
+        "enrollmentId": "exchange_fixture"
+      }
+    },
+    {
+      "name": "enrollment requires verifier",
+      "definition": "CliEnrollmentRedeem",
+      "valid": true,
+      "value": {
+        "enrollmentId": "exchange_fixture",
+        "verifier": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "name": "enrollment returns encrypted secret and verified owner",
+      "definition": "CliEnrollmentRedeemResponse",
+      "valid": true,
+      "value": {
+        "ciphertext": "encrypted_fixture",
+        "clientId": "client_installation",
+        "machineId": "machine_fixture",
+        "authorizedUserId": "user_fixture"
+      }
+    },
+    {
+      "name": "enrollment cannot select its owner",
+      "definition": "CliEnrollmentStart",
+      "valid": false,
+      "value": {
+        "installationId": "d71ab169-7ccc-4f0f-986e-98692dc61c6d",
+        "requestId": "a5ad0b98-9793-40bb-8bd9-d5df04f9d99c",
+        "displayName": "Developer laptop",
+        "publicKey": "public-key-fixture",
+        "challenge": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "userId": "victim"
+      }
+    },
+    {
       "name": "machine discovery uses environment audience",
       "definition": "CliM2mConfiguration",
       "valid": true,

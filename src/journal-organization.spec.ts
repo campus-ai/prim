@@ -216,4 +216,54 @@ describe("machine journal authority", () => {
     expect(request.batch[0]).not.toHaveProperty("captureActor");
     expect(captured.envelopeVersion).toBe(1);
   });
+  it("preserves the delegated human and machine in v6 without reassigning captured bytes", async () => {
+    const delegated = { ...machine, authorizedUserId: "user_alex" };
+    const captured: Move = {
+      ...move(),
+      captureActor: {
+        kind: "machine",
+        apiUrl,
+        clientId: machine.clientId,
+        machineId: machine.machineId,
+        organizationId: machine.organizationId,
+        authorizedUserId: delegated.authorizedUserId,
+      },
+    };
+    const original = JSON.stringify(captured);
+    expect(buildOrganizationBoundMoveRequest([captured], delegated).batch[0]).toMatchObject({
+      envelopeVersion: 6,
+      capturedMachineId: machine.machineId,
+      capturedUserId: delegated.authorizedUserId,
+    });
+    expect(JSON.stringify(captured)).toBe(original);
+    for (const other of [machine, binding, { ...delegated, authorizedUserId: "user_sam" }]) {
+      expect(() => buildOrganizationBoundMoveRequest([captured], other)).toThrow(
+        InvalidJournalEnvelopeError,
+      );
+    }
+    const serviceCapture: Move = {
+      ...captured,
+      captureActor: {
+        kind: "machine",
+        apiUrl,
+        clientId: machine.clientId,
+        machineId: machine.machineId,
+        organizationId: machine.organizationId,
+      },
+    };
+    expect(() => buildOrganizationBoundMoveRequest([serviceCapture], delegated)).toThrow(
+      InvalidJournalEnvelopeError,
+    );
+    const { machineJournalBucket } = await import("./lib/machine-credentials.js");
+    const bucket = machineJournalBucket({ apiUrl, ...delegated });
+    const otherBucket = machineJournalBucket({
+      apiUrl,
+      ...delegated,
+      authorizedUserId: "user_sam",
+    });
+    expect(bucket).not.toBe(otherBucket);
+    expect([
+      ...classifyJournalBuckets([bucket, otherBucket], delegated).deliverableBuckets,
+    ]).toEqual([bucket]);
+  });
 });

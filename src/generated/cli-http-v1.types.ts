@@ -20,7 +20,46 @@ export type CliAuthStatusResponse =
         displayName: string;
         scopes: string[];
       };
+    }
+  | {
+      authenticated: true;
+      organizationBindingVersion: 3;
+      captureAuthorityKind: "workos_m2m";
+      organizationId: string;
+      workosOrganizationId: string;
+      principal: {
+        kind: "machine";
+        machineId: string;
+        clientId: string;
+        displayName: string;
+        scopes: string[];
+        authorizedUserId: string;
+      };
     };
+
+export interface CliEnrollmentRedeem {
+  enrollmentId: string;
+  verifier: string;
+}
+
+export interface CliEnrollmentRedeemResponse {
+  ciphertext: string;
+  clientId: string;
+  machineId: string;
+  authorizedUserId: string;
+}
+
+export interface CliEnrollmentStart {
+  installationId: string;
+  requestId: string;
+  displayName: string;
+  publicKey: string;
+  challenge: string;
+}
+
+export interface CliEnrollmentStartResponse {
+  enrollmentId: string;
+}
 
 export interface CliErrorResponse {
   error: string;
@@ -32,6 +71,7 @@ export interface CliM2MConfiguration {
   issuer: string;
   audience: string;
   m2m_only: boolean;
+  developer_enrollment?: boolean;
 }
 
 export interface DecisionCascadeResponse {
@@ -1016,6 +1056,33 @@ export interface MoveIngestRequest {
             };
         capturedOrganizationId: string;
         capturedMachineId: string;
+        capturedUserId: string;
+        captureAuthorityKind: "workos_m2m";
+        decisionLifecycleProtocolVersion: number;
+        producer?: "claude_code" | "codex" | "cursor" | "hermes";
+        toolOutcome?: "succeeded" | "returned" | "failed" | "interrupted" | "prevented" | "unknown";
+        envelopeVersion: 6;
+        [k: string]: unknown | undefined;
+      }
+    | {
+        moveId: string;
+        capturedAt: number;
+        sessionId: string;
+        invocationId?: string;
+        eventType: string;
+        payload?: unknown;
+        env?: unknown;
+        repositoryContext?:
+          | {
+              kind: "repository_bound";
+              repoSyncId: string;
+            }
+          | {
+              kind: "non_repository";
+            };
+        capturedOrganizationId: string;
+        capturedMachineId: string;
+        capturedUserId?: string;
         captureAuthorityKind: "workos_m2m";
         decisionLifecycleProtocolVersion: number;
         producer?: "claude_code" | "codex" | "cursor" | "hermes";
@@ -1041,6 +1108,7 @@ export interface MoveIngestRequest {
             };
         capturedOrganizationId: string;
         capturedMachineId?: string;
+        capturedUserId?: string;
         captureAuthorityKind: "workos" | "service_token";
         decisionLifecycleProtocolVersion: number;
         producer?: "claude_code" | "codex" | "cursor" | "hermes";
@@ -1066,6 +1134,7 @@ export interface MoveIngestRequest {
             };
         capturedOrganizationId?: string;
         capturedMachineId?: string;
+        capturedUserId?: string;
         captureAuthorityKind?: "workos" | "service_token" | "workos_m2m";
         decisionLifecycleProtocolVersion?: number;
         producer?: "claude_code" | "codex" | "cursor" | "hermes";

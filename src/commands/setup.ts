@@ -1,4 +1,4 @@
-import { hasMachineConfiguration } from "../lib/machine-credentials.js";
+import { hasMachineConfiguration, machineContext } from "../lib/machine-credentials.js";
 /**
  * `prim setup` — the whole install in one command.
  *
@@ -529,7 +529,8 @@ export function registerSetupCommand(
       // 0 · Verify auth before changing any integration or permission state.
       // A transport/backend outage is indeterminate, not invalid credentials:
       // abort without opening a browser or partially installing setup.
-      const machine = hasMachineConfiguration();
+      let machine = hasMachineConfiguration();
+      let developerInstallation = Boolean(machineContext()?.authorizedUserId);
       let authStatus = parseSetupAuthStatus(run(["auth", "status", "--json"], true));
       if (authStatus === "unreachable") {
         note("auth · verification unavailable; no setup changes were made");
@@ -564,6 +565,37 @@ export function registerSetupCommand(
       } else {
         note("auth · already authenticated");
       }
+      if (!machine) note("auth · enrolling this installation…");
+      let enrollment = run(["auth", "enroll", "--if-supported"], true);
+      if (
+        enrollment.code !== 0 &&
+        setupChildPayload(enrollment.stdout)?.error === "human_sign_in_required" &&
+        !process.env.PRIM_TOKEN
+      ) {
+        note("auth · sign in once to authorize this developer installation…");
+        if (run(["auth", "login"]).code === 0)
+          enrollment = run(["auth", "enroll", "--if-supported"], true);
+      }
+      if (enrollment.code !== 0) {
+        note(
+          "auth · installation enrollment failed; existing credentials and captured activity were preserved. Run prim auth enroll for details.",
+        );
+        exit(EXIT_INCOMPLETE);
+        return;
+      }
+      const payload = setupChildPayload(enrollment.stdout);
+      machine = hasMachineConfiguration();
+      developerInstallation = Boolean(
+        payload?.authorizedUserId ?? machineContext()?.authorizedUserId,
+      );
+      if (
+        payload?.retainedJournalBuckets &&
+        Array.isArray(payload.retainedJournalBuckets) &&
+        payload.retainedJournalBuckets.length
+      )
+        note(
+          "auth · pending activity retained under its original authorization; inspect with prim moves status",
+        );
       results.auth = "ok";
 
       // 1 · Pre-authorize prim at USER scope after verified auth.
@@ -685,9 +717,18 @@ export function registerSetupCommand(
       if (machine) {
         const failed = Object.keys(results).filter((key) => results[key] === "failed");
         note(
-          "machine · GitHub App installation, API key administration, and personal onboarding are available in the web application",
+          developerInstallation
+            ? "setup · installation authorized for your account; Decisions keep your ownership. Manage GitHub connections in the web application."
+            : "machine · GitHub App installation, API key administration, and personal onboarding are available in the web application",
         );
-        printJson({ ok: failed.length === 0, principalKind: "machine", results, failed, health });
+        printJson({
+          ok: failed.length === 0,
+          principalKind: "machine",
+          installationKind: developerInstallation ? "developer" : "service",
+          results,
+          failed,
+          health,
+        });
         if (failed.length) exit(EXIT_INCOMPLETE);
         return;
       }
