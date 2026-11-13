@@ -43,6 +43,8 @@ export type MachineCredential = MachineConfiguration &
   };
 type SecretEntry = Pick<AsyncEntry, "getPassword" | "setPassword" | "deletePassword">;
 export type MachineDependencies = {
+  expectedAuthorizedUserId?: string;
+  expectedOrganizationId?: string;
   directory?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
@@ -93,6 +95,7 @@ function writeEnvironmentContext(credential: MachineCredential, deps: MachineDep
     organizationId,
     workosOrganizationId,
     displayName,
+    authorizedUserId,
     scopes,
     expiresAt,
   } = credential;
@@ -108,6 +111,7 @@ function writeEnvironmentContext(credential: MachineCredential, deps: MachineDep
       organizationId,
       workosOrganizationId,
       displayName,
+      authorizedUserId,
       scopes,
       expiresAt,
     });
@@ -227,7 +231,7 @@ function parseStoredIdentity(data: Record<string, unknown>): MachineIdentity {
   return parseMachineIdentity(
     {
       authenticated: true,
-      organizationBindingVersion: 2,
+      organizationBindingVersion: data.authorizedUserId ? 3 : 2,
       captureAuthorityKind: "workos_m2m",
       organizationId: data.organizationId,
       workosOrganizationId: data.workosOrganizationId,
@@ -376,6 +380,7 @@ async function loadRecord(
         "generation",
         "storage",
         "machineId",
+        "authorizedUserId",
         "clientId",
         "organizationId",
         "workosOrganizationId",
@@ -462,6 +467,24 @@ export async function configureMachine(
             signal,
             deps.fetch,
           );
+          if (
+            deps.expectedAuthorizedUserId &&
+            identity.authorizedUserId !== deps.expectedAuthorizedUserId
+          )
+            throw new MachineAuthError(
+              "delegation_mismatch",
+              "The enrolled installation does not have the expected user delegation.",
+              true,
+            );
+          if (
+            deps.expectedOrganizationId &&
+            identity.organizationId !== deps.expectedOrganizationId
+          )
+            throw new MachineAuthError(
+              "delegation_mismatch",
+              "The installation belongs to a different organization.",
+              true,
+            );
           return { configuration, tokens, identity };
         },
       );
@@ -646,6 +669,7 @@ export async function acquireMachineCredential(
           );
           if (
             identity.machineId !== profile.machineId ||
+            identity.authorizedUserId !== profile.authorizedUserId ||
             identity.organizationId !== profile.organizationId ||
             identity.workosOrganizationId !== profile.workosOrganizationId
           )
@@ -707,6 +731,7 @@ export type MachineCaptureActor = {
   clientId: string;
   issuer?: string;
   machineId?: string;
+  authorizedUserId?: string;
   organizationId?: string;
 };
 
@@ -722,6 +747,7 @@ export function machineCaptureActor(
       clientId: context.clientId,
       issuer: context.issuer,
       machineId: context.machineId,
+      authorizedUserId: context.authorizedUserId,
       organizationId: context.organizationId,
     };
   const injected = environmentCredentials(deps);
@@ -731,9 +757,9 @@ export function machineCaptureActor(
 }
 
 export function machineJournalBucket(
-  identity: Pick<MachineCaptureActor, "apiUrl" | "clientId">,
+  identity: Pick<MachineCaptureActor, "apiUrl" | "clientId" | "authorizedUserId">,
 ): string {
-  return `_machine_${hash(`${identity.apiUrl}\0${identity.clientId}`)}`;
+  return `_machine_${hash(`${identity.apiUrl}\0${identity.clientId}${identity.authorizedUserId ? `\0${identity.authorizedUserId}` : ""}`)}`;
 }
 
 function readRetiredProfiles(directory: string): MachineProfile[] {
@@ -763,4 +789,12 @@ async function cleanupRetired(deps: MachineDependencies, signal?: AbortSignal): 
   }
   if (pending.length) writePrivate(path, pending);
   else rmSync(path, { force: true });
+}
+
+/** Enrollment metadata uses the same owner-only directory and ACL policy as credentials. */
+export function prepareMachineMetadataDirectory(directory: string): void {
+  ensureDirectory(directory);
+}
+export function writeMachineMetadata(path: string, value: unknown): void {
+  writePrivate(path, value);
 }

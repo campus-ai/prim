@@ -28,6 +28,7 @@ export type RetainedJournalBucket = {
 export type CurrentOrganizationBinding = {
   captureAuthorityKind: "workos" | "service_token" | "workos_m2m";
   machineId?: string;
+  authorizedUserId?: string;
   clientId?: string;
   organizationId: string;
   workosOrganizationId: string;
@@ -74,7 +75,7 @@ export function parseOrganizationBinding(value: unknown): ParsedOrganizationBind
     return { state: "server_contract_unavailable" };
   }
   const record = value as Record<string, unknown>;
-  if (record.organizationBindingVersion === 2) {
+  if (record.organizationBindingVersion === 2 || record.organizationBindingVersion === 3) {
     try {
       const principal = record.principal as Record<string, unknown>;
       const identity = parseMachineIdentity(record, String(principal.clientId));
@@ -149,6 +150,7 @@ export function classifyJournalBuckets(
           machineJournalBucket({
             apiUrl: machineApiUrl(resolveApiUrl()),
             clientId: binding.clientId,
+            authorizedUserId: binding.authorizedUserId,
           })
       )
         deliverableBuckets.add(bucket);
@@ -197,6 +199,7 @@ export function buildOrganizationBoundMoveRequest(
         if (
           !captureActor ||
           captureActor.clientId !== binding.clientId ||
+          captureActor.authorizedUserId !== binding.authorizedUserId ||
           captureActor.apiUrl !== machineApiUrl(resolveApiUrl()) ||
           (captureActor.machineId && captureActor.machineId !== binding.machineId) ||
           (captureActor.organizationId && captureActor.organizationId !== binding.organizationId)
@@ -205,9 +208,13 @@ export function buildOrganizationBoundMoveRequest(
       } else if (captureActor) throw new InvalidJournalEnvelopeError();
       return {
         ...wireMove,
-        envelopeVersion: binding.captureAuthorityKind === "workos_m2m" ? 5 : 4,
+        envelopeVersion:
+          binding.captureAuthorityKind === "workos_m2m" ? (binding.authorizedUserId ? 6 : 5) : 4,
         ...(binding.captureAuthorityKind === "workos_m2m"
-          ? { capturedMachineId: binding.machineId }
+          ? {
+              capturedMachineId: binding.machineId,
+              ...(binding.authorizedUserId ? { capturedUserId: binding.authorizedUserId } : {}),
+            }
           : {}),
         capturedOrganizationId,
         captureAuthorityKind: binding.captureAuthorityKind,

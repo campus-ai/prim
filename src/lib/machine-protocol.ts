@@ -8,9 +8,14 @@ export const MACHINE_SCOPES = [
   "cli:decisions:write",
 ] as const;
 
-export type MachineConfiguration = { issuer: string; audience: string };
+export type MachineConfiguration = {
+  issuer: string;
+  audience: string;
+  developerEnrollment?: boolean;
+};
 export type MachineIdentity = {
   machineId: string;
+  authorizedUserId?: string;
   clientId: string;
   organizationId: string;
   workosOrganizationId: string;
@@ -89,7 +94,11 @@ export function parseMachineConfiguration(value: unknown): MachineConfiguration 
       "The WorkOS issuer must be an HTTPS origin.",
     );
   }
-  return { issuer: record.issuer, audience: record.audience };
+  return {
+    issuer: record.issuer,
+    audience: record.audience,
+    ...(record.developer_enrollment === true ? { developerEnrollment: true } : {}),
+  };
 }
 
 export function machineSignal(signal?: AbortSignal): AbortSignal {
@@ -236,7 +245,10 @@ export function parseMachineIdentity(value: unknown, clientId: string): MachineI
   if (
     data.authenticated !== true ||
     data.captureAuthorityKind !== "workos_m2m" ||
-    data.organizationBindingVersion !== 2 ||
+    ![2, 3].includes(data.organizationBindingVersion as number) ||
+    (data.organizationBindingVersion === 3
+      ? !machineString(principal.authorizedUserId, 256)
+      : principal.authorizedUserId !== undefined) ||
     principal.kind !== "machine" ||
     principal.clientId !== clientId ||
     !machineString(principal.machineId, 256) ||
@@ -254,6 +266,9 @@ export function parseMachineIdentity(value: unknown, clientId: string): MachineI
   }
   return {
     machineId: principal.machineId,
+    ...(data.organizationBindingVersion === 3
+      ? { authorizedUserId: principal.authorizedUserId as string }
+      : {}),
     clientId,
     displayName: principal.displayName,
     organizationId: data.organizationId,

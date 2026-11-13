@@ -1,6 +1,7 @@
 import { classifyJournalBuckets, summarizeRetainedBuckets } from "../journal-organization.js";
 import { listBuckets } from "../journal.js";
 import { isNonInteractive } from "../lib/confirmation.js";
+import { enrollDeveloperInstallation } from "../lib/developer-enrollment.js";
 /**
  * Auth commands for the prim CLI.
  *
@@ -260,6 +261,8 @@ export type AuthStatusResult = {
   warnings: string[];
   principalKind?: "machine";
   machineId?: string;
+  authorizedUserId?: string;
+  enrollmentRequired?: boolean;
   displayName?: string;
   effectiveScopes?: string[];
   organizationId?: string;
@@ -329,6 +332,7 @@ export async function verifyAuthStatus(): Promise<AuthStatusResult> {
         ...authStatusResult("valid", "verified", "machine", false),
         principalKind: "machine",
         machineId: machine.machineId,
+        authorizedUserId: identity.authorizedUserId,
         displayName: identity.displayName,
         effectiveScopes: identity.scopes,
         organizationId: machine.organizationId,
@@ -405,6 +409,24 @@ export async function verifyAuthStatus(): Promise<AuthStatusResult> {
       return authStatusResult("valid", "verified", credential.source, refreshPresent);
     }
     if (response.status === 401 || response.status === 403) {
+      // Human sign-in remains usable solely for enrollment after operational cutover.
+      try {
+        const bootstrap = await fetch(`${getSiteUrl()}/api/cli/auth/enrollment/status`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          redirect: "error",
+          signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+        });
+        if (bootstrap.ok) {
+          const status = (await bootstrap.json()) as Record<string, unknown>;
+          if (status.authenticated === true && status.enrollmentRequired === true)
+            return {
+              ...authStatusResult("valid", "verified", credential.source, refreshPresent),
+              enrollmentRequired: true,
+            };
+        }
+      } catch {
+        /* Fall through to the original protected response. */
+      }
       return authStatusResult("invalid", "access_rejected", credential.source, refreshPresent);
     }
     return authStatusResult(
@@ -432,7 +454,7 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
   if (result.principalKind === "machine") {
     console.error(
       result.authenticated
-        ? `Machine ${result.machineId}: verified (${result.storageBackend}); organization ${result.organizationId}.`
+        ? `Installation ${result.machineId}: verified (${result.storageBackend}); organization ${result.organizationId}${result.authorizedUserId ? `; acting for user ${result.authorizedUserId}` : "; service identity"}.`
         : `Machine authentication ${result.status}: ${result.recoveryReason}. Check the credential store or run prim auth configure-machine with credentials from your administrator.`,
     );
     return;
@@ -452,7 +474,11 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
     return;
   }
 
-  console.log("Authenticated (verified).");
+  console.log(
+    result.enrollmentRequired
+      ? "Sign-in verified. Run prim setup to authorize this installation before using the CLI."
+      : "Authenticated (verified).",
+  );
   if (result.tokenFile) {
     console.log(`Token file: ${result.tokenFile}`);
   } else {
@@ -484,6 +510,37 @@ function requiresLegacyAuthentication(): boolean {
 
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
+  auth
+    .command("enroll")
+    .description("Authorize this developer installation using your signed-in account")
+    .option("--if-supported", "Keep legacy authentication when server enrollment is unavailable")
+    .action(async (options: { ifSupported?: boolean }) => {
+      try {
+        const result = await enrollDeveloperInstallation(options.ifSupported);
+        if (result.enrolled)
+          console.error(
+            result.authorizedUserId
+              ? "Installation authorized for your account. Your Decisions keep their existing ownership."
+              : "Existing service machine credentials retained.",
+          );
+        if ("retainedJournalBuckets" in result && result.retainedJournalBuckets?.length)
+          console.error(
+            "Pending activity was retained under its original authorization; inspect it with prim moves status.",
+          );
+        if ("activationPending" in result && result.activationPending)
+          console.error(
+            "Installation works; retiring older secrets is pending. Run prim auth enroll again to retry cleanup.",
+          );
+        printJson(result);
+      } catch (error) {
+        reportFailure(
+          error instanceof MachineAuthError ? error.code : "enrollment_failed",
+          error instanceof MachineAuthError
+            ? error.message
+            : "Enrollment could not finish. Check organization policy and sign in with prim auth login, then retry setup. Existing credentials were preserved.",
+        );
+      }
+    });
   auth
     .command("configure-machine")
     .description("Configure administrator-issued WorkOS machine credentials")

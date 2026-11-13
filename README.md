@@ -723,3 +723,30 @@ imports an explicitly unpublished backend contract. Canonical provenance remains
 blocked until the backend is published and imported with
 `pnpm contracts:update --revision <full-commit>`. Production releases must pass
 `pnpm contracts:provenance`.
+
+### Developer installation enrollment
+
+When automatic enrollment is enabled by your organization, run `prim setup`.
+Sign in once and select your organization; Prim registers this installation and
+stores its machine credentials in the OS credential store (or the existing private
+file fallback). Repeated setup reuses the installation. No WorkOS dashboard access
+or copying of client secrets is required. `prim auth enroll` also enrolls an already
+signed-in installation.
+
+The installation authenticates the request while your account owns the Decisions.
+Your private drafts, existing Decisions, and normal lifecycle permissions remain
+available. Human/agent attribution and adoption rules stay the same. The installation
+is recorded as provenance. Administrators can manage enrollment policy and revoke
+installations in the web application's Settings → Developer installations.
+
+Setup attempts to deliver pending legacy captures before changing credentials.
+Any remaining activity stays under its original authorization; inspect it with
+`prim moves status`. It is never uploaded under newly assigned authorship.
+`prim auth status` reports the installation, authorized user, storage backend, and
+expiry without revealing credentials. If older-secret retirement is pending, rerun
+`prim auth enroll` to retry it.
+
+On a server without enrollment, setup retains legacy authentication. Existing
+manually configured machines and CI credentials remain service identities; routine
+setup does not convert them into developer installations. GitHub installation and
+API-key administration remain available in the web application.

@@ -830,6 +830,7 @@ async function machineClient(
       !current ||
       current.generation !== selected.generation ||
       current.machineId !== selected.machineId ||
+      current.authorizedUserId !== selected.authorizedUserId ||
       current.organizationId !== selected.organizationId
     )
       throw new HttpError(409, "Machine identity changed; restart the operation.");
@@ -850,6 +851,7 @@ async function machineClient(
         !renewed ||
         renewed.generation !== selected.generation ||
         renewed.machineId !== selected.machineId ||
+        renewed.authorizedUserId !== selected.authorizedUserId ||
         renewed.organizationId !== selected.organizationId
       ) {
         throw new HttpError(409, "Machine identity changed; restart the operation.");

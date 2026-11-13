@@ -1,4 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+const machine = vi.hoisted(() => ({
+  context: undefined as
+    | undefined
+    | {
+        issuer: string;
+        clientId: string;
+        workosOrganizationId: string;
+        generation: string;
+        authorizedUserId?: string;
+      },
+}));
+vi.mock("../lib/machine-credentials.js", () => ({
+  hasMachineConfiguration: () => Boolean(machine.context),
+  machineContext: () => machine.context,
+  cachedMachineCredential: () => undefined,
+}));
+afterEach(() => {
+  machine.context = undefined;
+});
 import {
   daemonPrincipalsMatch,
   isDaemonPrincipal,
@@ -15,6 +34,22 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("daemon principals", () => {
+  it("invalidates cached and socket authority when a machine's delegated user changes", () => {
+    machine.context = {
+      issuer: "https://issuer.test",
+      clientId: "client_laptop",
+      workosOrganizationId: "org_1",
+      generation: "unchanged-secret-generation",
+      authorizedUserId: "user_alex",
+    };
+    const alex = resolveDaemonPrincipal();
+    const key = resolveDaemonCredentialKey();
+    machine.context.authorizedUserId = "user_sam";
+    expect(daemonPrincipalsMatch(alex, resolveDaemonPrincipal())).toBe(false);
+    expect(resolveDaemonCredentialKey()).not.toBe(key);
+    machine.context.authorizedUserId = undefined;
+    expect(daemonPrincipalsMatch(alex, resolveDaemonPrincipal())).toBe(false);
+  });
   it("derives a non-secret generation-bound principal from a JWT", () => {
     const token = jwt({ iss: "https://issuer.test", sub: "user_1", org_id: "org_1" });
     const principal = resolveDaemonPrincipal(token);
