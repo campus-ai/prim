@@ -84,9 +84,9 @@ try {
     [join(config, "prim-hook-launcher-v1"), ["prim-pre-tool-use"]],
   ];
   const cases = [
-    ["python3 edit.py", "change was not verified"],
-    ["S=schema.ts; sed -n '1,10p' $S", "change was not verified"],
-    ['for f in a.ts b.ts; do cat "$f"; done', "change was not verified"],
+    ["python3 edit.py", undefined],
+    ["S=schema.ts; sed -n '1,10p' $S", undefined],
+    ['for f in a.ts b.ts; do cat "$f"; done', undefined],
     ["cd . && git status --short", undefined],
     ['python3 -c \'open("a.ts", "w").write("hi")\'', "GitHub repo connection is required"],
     ['node -e \'require("fs").writeFileSync("a.ts", "hi")\'', "GitHub repo connection is required"],
