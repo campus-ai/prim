@@ -91,10 +91,22 @@ export function anyUnverified(results: ConflictCheckResult[]): boolean {
  * clean pass.
  */
 export function unverifiedNote(results: ConflictCheckResult[]): string {
-  // Keep unavailable/truncated state in the verdict mapping, but do not add
-  // repetitive coverage notices to the host's visible lifecycle output.
-  void results;
-  return "";
+  const causes: string[] = [];
+  const unavailable = results.find(
+    (result) =>
+      result.verdict === "unavailable" &&
+        !result.unavailable?.startsWith("Mutation targets could not be resolved"),
+  );
+  if (unavailable) {
+    causes.push(
+      unavailable.unavailable
+        ? `decision check skipped — ${unavailable.unavailable}`
+        : "decision check skipped — not verified",
+    );
+  }
+  // Truncation remains represented by the warning verdict, without a repeated
+  // lifecycle notice on every shell command.
+  return causes.map((cause) => `[primitive] ${cause}`).join("\n");
 }
 
 export type HookOutput = {
