@@ -95,7 +95,7 @@ export function unverifiedNote(results: ConflictCheckResult[]): string {
   const unavailable = results.find(
     (result) =>
       result.verdict === "unavailable" &&
-        !result.unavailable?.startsWith("Mutation targets could not be resolved"),
+      !result.unavailable?.startsWith("Mutation targets could not be resolved"),
   );
   if (unavailable) {
     causes.push(
