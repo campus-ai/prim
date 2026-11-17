@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.126](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.125...v0.1.0-alpha.126) (2026-11-17)
+
+
+### Bug Fixes
+
+* **hooks:** silence coverage notices, preserve verdicts ([0578424](https://github.com/campus-ai/prim/commit/05784242932ad8391fe14cd9164578b54b2cff41))
+
 ## [0.1.0-alpha.125](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.124...v0.1.0-alpha.125) (2026-11-13)
 
 
