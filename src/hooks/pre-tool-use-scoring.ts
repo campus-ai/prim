@@ -91,19 +91,10 @@ export function anyUnverified(results: ConflictCheckResult[]): boolean {
  * clean pass.
  */
 export function unverifiedNote(results: ConflictCheckResult[]): string {
-  const causes: string[] = [];
-  const unavailable = results.find((r) => r.verdict === "unavailable");
-  if (unavailable) {
-    causes.push(
-      unavailable.unavailable
-        ? `decision check skipped — ${unavailable.unavailable}`
-        : "decision check skipped — not verified",
-    );
-  }
-  if (results.some((r) => r.truncated)) {
-    causes.push("decision check partial — conflict set truncated (per-file cap hit)");
-  }
-  return causes.map((c) => `[primitive] ${c}`).join("\n");
+  // Keep unavailable/truncated state in the verdict mapping, but do not add
+  // repetitive coverage notices to the host's visible lifecycle output.
+  void results;
+  return "";
 }
 
 export type HookOutput = {

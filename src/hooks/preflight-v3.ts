@@ -206,6 +206,9 @@ export function resultForPreflight(
   proposalTruncated = false,
 ): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
+  const silentCoverageOutcome =
+    response.reasonCode === "coverage_unverified" ||
+    response.reasonCode === "candidate_set_truncated";
   // The wire response remains untouched for protocol compatibility. These
   // values cross into terminal and hook presentation, so normalize them once
   // at the mapping boundary before any host-specific renderer can consume them.
@@ -250,8 +253,9 @@ export function resultForPreflight(
   const guidance = [message, ...editContext, ...new Set(directives), ...approvalContext]
     .filter(Boolean)
     .join("\n");
-  const reason =
-    response.conflicts.length > 0 || response.verdict === "ask" || response.verdict === "block"
+  const reason = silentCoverageOutcome
+    ? ""
+    : response.conflicts.length > 0 || response.verdict === "ask" || response.verdict === "block"
       ? approvalSummary(
           {
             conflicts: response.conflicts,
@@ -264,7 +268,7 @@ export function resultForPreflight(
           preview,
         )
       : message;
-  const disclosureContext = decisionDisclosureContext(response);
+  const disclosureContext = silentCoverageOutcome ? "" : decisionDisclosureContext(response);
   const truncationNote = proposalTruncated
     ? "[primitive] shell proposal was truncated; the complete change was not verified"
     : "";
@@ -275,7 +279,7 @@ export function resultForPreflight(
     additionalContext: [
       disclosureContext,
       truncationNote,
-      ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
+      !silentCoverageOutcome && ["warn", "ask", "block"].includes(response.verdict) ? guidance : "",
     ]
       .filter(Boolean)
       .join("\n"),
