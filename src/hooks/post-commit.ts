@@ -26,6 +26,7 @@ import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { recordPostCommitFired } from "../lib/commit-heartbeat.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
+import { reportMaintenancePause } from "../lib/migration-maintenance.js";
 import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
@@ -229,6 +230,7 @@ if (!process.env.VITEST) {
   try {
     runPostCommit();
   } catch (err) {
+    reportMaintenancePause(err);
     if (process.env.PRIM_HOOK_DEBUG) {
       const detail = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[prim-post-commit] capture failed: ${detail}\n`);

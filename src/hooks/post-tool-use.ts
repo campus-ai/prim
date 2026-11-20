@@ -33,6 +33,7 @@ import { observeDemoInvocation } from "../demo/isolation.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
+import { reportMaintenancePause } from "../lib/migration-maintenance.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Move } from "../protocol/move.js";
 import { type Agent, parseAgent } from "./agent.js";
@@ -323,6 +324,7 @@ async function main(): Promise<void> {
       process.stderr.write(`${renderVerdictFooter(result.verdictFooter)}\n`);
     }
   } catch (err) {
+    reportMaintenancePause(err);
     debug(`ingest failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (agent === "codex" && verdictFooter) {

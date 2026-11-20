@@ -36,6 +36,7 @@ import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { recordConversationCaptured } from "../lib/commit-heartbeat.js";
 import { currentBranch, resolveRepositoryContext } from "../lib/git.js";
+import { reportMaintenancePause } from "../lib/migration-maintenance.js";
 import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import { parseAgent } from "./agent.js";
@@ -95,6 +96,7 @@ async function main(): Promise<void> {
       return;
     }
   } catch (error) {
+    reportMaintenancePause(error);
     writeHookDebug("capture failed", error);
     await emitOutput(cursorPassiveOutput());
     return;
