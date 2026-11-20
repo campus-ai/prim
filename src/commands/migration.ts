@@ -6,6 +6,7 @@ import {
   pauseMaintenance,
   resumeMaintenance,
 } from "../lib/migration-maintenance.js";
+import { registerHandoffCommands } from "./migration-handoff.js";
 
 function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -25,6 +26,7 @@ export function registerMigrationCommands(program: Command): void {
   const migration = program
     .command("migration")
     .description("Prepare a cooperative drain-first legacy handoff");
+  registerHandoffCommands(migration);
   migration
     .command("pause")
     .description("Persist a capture/delivery pause and wait for admitted operations")
