@@ -261,7 +261,7 @@ function expectedOwnedHookContent(hookName: string): string | null {
 
 // An owned global hook is either the current script or one an earlier release
 // wrote, recognized exactly (modulo its pinned version) so it stays removable.
-function isExpectedOwnedGlobalHook(content: string, hookName: string): boolean {
+export function isExpectedOwnedGlobalHook(content: string, hookName: string): boolean {
   const expected = expectedOwnedHookContent(hookName);
   if (expected === null) return false;
   if (content === expected) return true;

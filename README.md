@@ -636,6 +636,12 @@ preparation, explicitly resume only after confirming hooks still target legacy:
 prim migration resume --id <maintenanceId>
 ```
 
+The explicit `prim migration handoff prepare|apply|rollback|status` coordinator is
+specified in [Reversible native maintenance handoff](docs/native-maintenance-handoff.md).
+It uses reviewed exact old entries, pinned native executables, private snapshots,
+protected forward identity verification, and settled native Quit before switching files.
+It never automatically starts native operation or resumes legacy capture.
+
 The coordinator durably reserves the pause before switching configuration, using
 `migration-handoff-reservation.json` with a transaction ID and canonical directory
 reference. This reservation survives a coordinator crash and remains after native
