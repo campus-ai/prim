@@ -112,6 +112,14 @@ function move(id: string): Move {
   };
 }
 
+/** Seed drain inputs in one append; capture admission is exercised by process E2Es. */
+function appendFixtureMoves(path: string, moves: readonly Move[]): void {
+  writeFileSync(path, moves.map((item) => `${JSON.stringify(item)}\n`).join(""), {
+    flag: "a",
+    mode: 0o600,
+  });
+}
+
 describe("batchMoves", () => {
   it("returns no batches for an empty list", () => {
     expect(batchMoves([], 500)).toEqual([]);
@@ -346,9 +354,7 @@ describe("flush replay stability", () => {
   it("streams a large rotation in bounded batches without reordering", async () => {
     const flushing = join(dir, "journal.ndjson.flushing.1.2");
     const moves = Array.from({ length: 1_201 }, (_, index) => move(`large-${String(index)}`));
-    for (const item of moves) {
-      appendMoveToPath(flushing, item);
-    }
+    appendFixtureMoves(flushing, moves);
     const delivered: string[] = [];
     const batchSizes: number[] = [];
     const client: CliClient = {
@@ -899,9 +905,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
   }
 
   function writeJournal(moves: Move[]): void {
-    for (const item of moves) {
-      appendMoveToPath(flushing, item);
-    }
+    appendFixtureMoves(flushing, moves);
   }
 
   function readCheckpoint(): DrainCheckpoint {
@@ -1139,9 +1143,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
     // Two batches each, so each drain attempts one checkpoint.
     const moves = Array.from({ length: 501 }, (_, index) => move(`no-progress-${String(index)}`));
     const drainTwoBatches = (path: string) => {
-      for (const item of moves) {
-        appendMoveToPath(path, item);
-      }
+      appendFixtureMoves(path, moves);
       return fresh.drainFlushingPath(path, recordingClient().client, binding);
     };
 
@@ -1503,7 +1505,7 @@ describe("drain checkpoints and byte-bounded batches", () => {
       flushed: 2,
       quarantined: 0,
     });
-    expect(mocks.atomicWriteFile).not.toHaveBeenCalled();
+    expect(checkpointWrites()).toEqual([]);
 
     const moves = Array.from({ length: 1_000 }, (_, index) => move(`final-${String(index)}`));
     writeJournal(moves);
