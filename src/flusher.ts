@@ -60,6 +60,7 @@ import {
   sweepOrphanedDrainProgress,
 } from "./journal.js";
 import { withFileLock } from "./lib/file-lock.js";
+import { withMaintenanceActivity } from "./lib/migration-maintenance.js";
 import { processIsAlive } from "./lib/process-liveness.js";
 import type { Move } from "./protocol/move.js";
 
@@ -706,28 +707,36 @@ function isFlushLockContended(error: unknown): boolean {
 
 /** Serialize drains within AND across processes so rotations are never stolen. */
 export function flush(): Promise<FlushResult> {
-  if (flushInFlight) {
-    return flushInFlight;
-  }
-  const attempt = withFileLock(FLUSH_LOCK_PATH, flushOnce, {
-    timeoutMs: FLUSH_LOCK_TIMEOUT_MS,
-  })
-    .catch((error: unknown): FlushResult => {
-      // Another prim process holds the drain lock and will drain these buckets
-      // and orphans; bowing out avoids the concurrent re-drain. Non-contention
-      // failures (a real drain error) still propagate to the caller.
-      if (isFlushLockContended(error)) {
-        return { flushed: 0, quarantined: 0, skipped: true };
-      }
-      throw error;
-    })
-    .finally(() => {
-      if (flushInFlight === attempt) {
-        flushInFlight = undefined;
-      }
-    });
-  flushInFlight = attempt;
-  return attempt;
+  return flushWithMaintenance();
+}
+
+/** Explicit operator drain while the matching durable maintenance pause holds. */
+export function flushForMaintenance(maintenanceId: string): Promise<FlushResult> {
+  return flushWithMaintenance(maintenanceId);
+}
+
+function flushWithMaintenance(maintenanceId?: string): Promise<FlushResult> {
+  return withMaintenanceActivity(
+    "drain",
+    async () => {
+      // Validate every caller's maintenance identity before sharing an already
+      // admitted drain. A wrong-ID caller cannot borrow a previous promise.
+      if (flushInFlight) return flushInFlight;
+      const attempt = withFileLock(FLUSH_LOCK_PATH, flushOnce, {
+        timeoutMs: FLUSH_LOCK_TIMEOUT_MS,
+      })
+        .catch((error: unknown): FlushResult => {
+          if (isFlushLockContended(error)) return { flushed: 0, quarantined: 0, skipped: true };
+          throw error;
+        })
+        .finally(() => {
+          if (flushInFlight === attempt) flushInFlight = undefined;
+        });
+      flushInFlight = attempt;
+      return attempt;
+    },
+    maintenanceId,
+  );
 }
 
 /**
