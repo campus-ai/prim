@@ -38,7 +38,7 @@ import {
   hookCommandResolutions,
   stableHookCommand,
 } from "../lib/bin-path.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { reportFailureProtection } from "../lib/preflight-host.js";
 
@@ -80,6 +80,8 @@ const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
 export function projectRoot(): string {
   return gitToplevel() ?? process.cwd();
 }
+
+const PRIM_REPOSITORY_ENV = "PRIM_REPOSITORY";
 
 const projectScopePath = (): string => join(projectRoot(), ".claude", "settings.json");
 
@@ -571,6 +573,32 @@ function removeAutoModeTrust(settings: ClaudeSettings): ClaudeSettings {
   return { ...settings, autoMode: hasOther ? nextAutoMode : undefined };
 }
 
+/**
+ * Record the checkout's GitHub repository in project settings. Claude Code
+ * passes `env` to every hook and command, so a clone without a usable origin
+ * (a Claude Code cloud bundle upload has none) still binds to the repository
+ * this checkout's origin names. Origin stays authoritative wherever it exists.
+ */
+export function applyRepositoryDeclaration(
+  settings: ClaudeSettings,
+  repository: string | null,
+): ClaudeSettings {
+  if (!repository) return settings;
+  const env = isPlainObject(settings.env) ? settings.env : {};
+  if (env[PRIM_REPOSITORY_ENV] === repository) return settings;
+  return { ...settings, env: { ...env, [PRIM_REPOSITORY_ENV]: repository } };
+}
+
+export function removeRepositoryDeclaration(settings: ClaudeSettings): ClaudeSettings {
+  if (!isPlainObject(settings.env) || !(PRIM_REPOSITORY_ENV in settings.env)) return settings;
+  const { [PRIM_REPOSITORY_ENV]: _removed, ...env } = settings.env;
+  return { ...settings, env: Object.keys(env).length > 0 ? env : undefined };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function applyInstall(
   settings: ClaudeSettings,
   options: { force?: boolean; statuslineCommand?: string; installStatusline?: boolean } = {},
@@ -698,11 +726,16 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     scope,
     scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
   );
-  const after = applyInstall(before, {
+  const installed = applyInstall(before, {
     force,
     statuslineCommand: STATUSLINE_COMMAND,
     installStatusline: !blockedByUserStatusline,
   });
+  // User scope spans every repository, so only project scope may declare one.
+  const after =
+    scope === "project"
+      ? applyRepositoryDeclaration(installed, githubRepositoryFullName(projectRoot()))
+      : installed;
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
@@ -722,7 +755,8 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
 export function performUninstall(scope: Scope): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const after = applyUninstall(before);
+  const uninstalled = applyUninstall(before);
+  const after = scope === "project" ? removeRepositoryDeclaration(uninstalled) : uninstalled;
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
