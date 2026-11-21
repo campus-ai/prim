@@ -17,9 +17,11 @@ import {
   PRIM_PERMISSION_RULE,
   applyAutoModeTrust,
   applyInstall,
+  applyRepositoryDeclaration,
   applyUninstall,
   feedbackInstalled,
   isGateInstalled,
+  removeRepositoryDeclaration,
   resolveScope,
   statuslineState,
   userStatuslineBlocksProjectInstall,
@@ -705,5 +707,37 @@ describe("resolveScope", () => {
 
   it("honors an explicit user (machine-global) scope", () => {
     expect(resolveScope("user")).toBe("user");
+  });
+});
+
+describe("repository declaration (PRIM_REPOSITORY)", () => {
+  it("records the repository alongside existing env without disturbing it", () => {
+    const out = applyRepositoryDeclaration({ env: { FOO: "1" } }, "campus-ai/prim");
+    expect(out.env).toEqual({ FOO: "1", PRIM_REPOSITORY: "campus-ai/prim" });
+  });
+
+  it("is a no-op when the declaration already matches or no repository is known", () => {
+    const declared: ClaudeSettings = { env: { PRIM_REPOSITORY: "campus-ai/prim" } };
+    expect(applyRepositoryDeclaration(declared, "campus-ai/prim")).toBe(declared);
+    expect(applyRepositoryDeclaration(declared, null)).toBe(declared);
+  });
+
+  it("updates a stale declaration to the checkout's origin", () => {
+    const out = applyRepositoryDeclaration(
+      { env: { PRIM_REPOSITORY: "old/name" } },
+      "campus-ai/prim",
+    );
+    expect(out.env).toEqual({ PRIM_REPOSITORY: "campus-ai/prim" });
+  });
+
+  it("removes only the declaration and drops an emptied env", () => {
+    expect(
+      removeRepositoryDeclaration({ env: { FOO: "1", PRIM_REPOSITORY: "campus-ai/prim" } }).env,
+    ).toEqual({ FOO: "1" });
+    expect(
+      removeRepositoryDeclaration({ env: { PRIM_REPOSITORY: "campus-ai/prim" } }).env,
+    ).toBeUndefined();
+    const untouched: ClaudeSettings = { env: { FOO: "1" } };
+    expect(removeRepositoryDeclaration(untouched)).toBe(untouched);
   });
 });

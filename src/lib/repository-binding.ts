@@ -18,7 +18,9 @@ export async function resolveRepositoryBindingWithClient(
 ): Promise<RepositoryBindingResult> {
   const repositoryFullName = githubRepositoryFullName(root);
   if (!repositoryFullName) {
-    throw new Error("origin must be a GitHub HTTPS/SSH remote in owner/name form");
+    throw new Error(
+      "origin must be a GitHub HTTPS/SSH remote in owner/name form, or set PRIM_REPOSITORY=owner/name",
+    );
   }
   let response: BindResponse;
   try {

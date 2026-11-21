@@ -85,16 +85,10 @@ export function currentBranch(cwd: string): string | undefined {
   return gitValue(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
 }
 
-/** Return a strict GitHub owner/repository name from origin, never credentials. */
-export function githubRepositoryFullName(cwd: string): string | null {
-  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
-  if (!remote || [...remote].some((char) => char < " " || char === "\u007f")) return null;
-  const match =
-    /^(?:git@github\.com:([^?#]+)|(?:https|ssh):\/\/(?:[^/@]+@)?github\.com(?::\d+)?\/([^?#]+))$/i.exec(
-      remote,
-    );
-  const path = match?.[1] ?? match?.[2];
-  if (!path) return null;
+type RepositoryEnvironment = Readonly<Record<string, string | undefined>>;
+
+/** Validate one `owner/name` path; trailing `.git` and edge slashes are ignored. */
+function githubOwnerRepository(path: string): string | null {
   const parts = path
     .replace(/^\/+|\/+$/g, "")
     .replace(/\.git$/i, "")
@@ -107,6 +101,68 @@ export function githubRepositoryFullName(cwd: string): string | null {
     return null;
   }
   return `${parts[0]}/${parts[1]}`;
+}
+
+/**
+ * Claude Code cloud sessions clone GitHub repositories through a loopback git
+ * proxy, so origin reads `http://local_proxy@127.0.0.1:<port>/git/<owner>/<name>`.
+ * Only a session that reports itself as remote may claim that shape: on any
+ * other machine a loopback origin is an arbitrary local server.
+ */
+function claudeCloudProxyRepository(remote: string, env: RepositoryEnvironment): string | null {
+  if (env.CLAUDE_CODE_REMOTE !== "true") return null;
+  let url: URL;
+  try {
+    url = new URL(remote);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "http:" ||
+    url.username !== "local_proxy" ||
+    url.password ||
+    url.hostname !== "127.0.0.1" ||
+    !url.port ||
+    url.search ||
+    url.hash
+  ) {
+    return null;
+  }
+  const path = /^\/git\/([^/]+\/[^/]+)\/?$/.exec(url.pathname)?.[1];
+  return path ? githubOwnerRepository(path) : null;
+}
+
+function originGithubRepository(remote: string, env: RepositoryEnvironment): string | null {
+  if ([...remote].some((char) => char < " " || char === "\u007f")) return null;
+  const match =
+    /^(?:git@github\.com:([^?#]+)|(?:https|ssh):\/\/(?:[^/@]+@)?github\.com(?::\d+)?\/([^?#]+))$/i.exec(
+      remote,
+    );
+  const path = match?.[1] ?? match?.[2];
+  return path ? githubOwnerRepository(path) : claudeCloudProxyRepository(remote, env);
+}
+
+/**
+ * The checkout's declared GitHub repository. `prim claude install --scope
+ * project` records it in the project's Claude settings so a clone without a
+ * usable origin (a Claude Code cloud bundle upload has none) still resolves.
+ */
+export function declaredGithubRepository(env: RepositoryEnvironment = process.env): string | null {
+  const value = env.PRIM_REPOSITORY?.trim();
+  return value ? githubOwnerRepository(value) : null;
+}
+
+/**
+ * Return a strict GitHub owner/repository name, never credentials. Origin wins;
+ * a declared PRIM_REPOSITORY applies only when origin does not name a GitHub
+ * repository.
+ */
+export function githubRepositoryFullName(
+  cwd: string,
+  env: RepositoryEnvironment = process.env,
+): string | null {
+  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
+  return (remote ? originGithubRepository(remote, env) : null) ?? declaredGithubRepository(env);
 }
 
 export function canonicalGitRoot(cwd: string): string | null {
@@ -154,9 +210,17 @@ export function relatedWorktreeTarget(
  * hashed. The normalized value never leaves this process; only its SHA-256
  * digest is put on the wire.
  */
-export function normalizeOriginRemote(remote: string): string | undefined {
+export function normalizeOriginRemote(
+  remote: string,
+  env: RepositoryEnvironment = process.env,
+): string | undefined {
   const value = remote.trim();
   if (!value) return undefined;
+
+  // The cloud proxy's port changes every session. Identify the repository it
+  // serves, exactly as a developer's github.com clone would.
+  const proxied = claudeCloudProxyRepository(value, env);
+  if (proxied) return `github.com/${proxied}`;
 
   // SCP-style remotes (`git@github.com:org/repo.git`). The path is deliberately
   // case-preserving; only the DNS hostname is case-insensitive.
@@ -204,7 +268,11 @@ export function resolveRepositoryContext(cwd: string = process.cwd()): Repositor
 
   const origin = gitValue(repoRoot, ["config", "--get", "remote.origin.url"]);
   const repoFullName = githubRepositoryFullName(repoRoot) ?? undefined;
-  const normalizedOrigin = origin ? normalizeOriginRemote(origin) : undefined;
+  // Without a usable origin, a declared GitHub repository keys the checkout as
+  // its github.com clone would, so the identity matches developers' clones.
+  const normalizedOrigin =
+    (origin ? normalizeOriginRemote(origin) : undefined) ??
+    (repoFullName ? `github.com/${repoFullName}` : undefined);
   if (normalizedOrigin) {
     return {
       repoRoot,
