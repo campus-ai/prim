@@ -154,6 +154,47 @@ process (auth → session hooks → daemon → skill → activate this repositor
 step-by-step the agent follows — and the manual fallback — live in
 [`setup.md`](./setup.md).
 
+### Claude Code cloud environments
+
+Prim runs in [Claude Code cloud sessions](https://code.claude.com/docs/en/claude-code-on-the-web)
+with nothing to do by hand per session. Configure it once:
+
+1. **Commit prim's project hooks** in each repository. Cloud sessions load hooks from the
+   repository, not from your machine:
+
+   ```bash
+   prim claude install --scope project   # also records PRIM_REPOSITORY in .claude/settings.json
+   git add .claude/settings.json && git commit -m "chore: enable prim in Claude Code"
+   ```
+
+2. **Mint credentials for the environment** on your own machine. This signs you in once,
+   enrolls a separate installation in your name, and prints its credentials. Nothing is
+   stored locally, and your machine's own credentials are untouched:
+
+   ```bash
+   prim auth enroll --new-installation "Claude Code cloud" --print-env
+   ```
+
+3. **Configure the [cloud environment](https://code.claude.com/docs/en/cloud-environments)**:
+   - **Network access**: Limited, with `api.getprimitive.ai` and `signin.getprimitive.ai`
+     under Allowed domains. Both are blocked by default.
+   - **Environment variables**: paste the two `PRIM_M2M_*` lines from step 2. Anyone who
+     uses the environment can read them, so keep the environment personal.
+   - **Setup script**:
+
+     ```bash
+     #!/bin/bash
+     set -euo pipefail
+     npm install -g @primitive.ai/prim@latest
+     prim setup --cloud --prepare   # stage the hook runtime; no credentials or network needed
+     ```
+
+Each session, prim's SessionStart hook activates the repository and connects it to
+Primitive. If it cannot, it says why: missing credentials or a blocked domain.
+`prim setup --cloud` verifies the session step by step and also installs the git
+pre-commit check. Decisions captured in the environment belong to you; revoke the
+installation in Settings → Developer installations.
+
 ## Commands
 
 ### Setup
@@ -165,6 +206,8 @@ prim setup --agent codex     # Same, for OpenAI Codex
 prim setup --agent hermes    # Same, for Hermes Agent (global-only config)
 prim setup --no-daemon       # Stop it and persistently opt out of supervised delivery
 prim setup --global-hooks-path  # Also route every repository's git hooks through prim
+prim setup --cloud --prepare # Claude Code cloud setup script: stage the hook runtime
+prim setup --cloud           # Claude Code cloud session: verify credentials, wire git hooks, activate
 ```
 
 Orchestrates auth → session hooks → supervised daemon → git hooks (`--scope project`, or `--global-hooks-path`) → skill → activate this repo (which wires its git hooks) → capture-health gate → welcome,
@@ -199,6 +242,7 @@ prim auth login              # Authenticate via browser
 prim auth set-token <token>  # Save a bearer token (e.g. for CI)
 prim auth clear              # Remove saved tokens
 prim auth status             # Check authentication status
+prim auth enroll --new-installation <name> --print-env # Credentials for a cloud environment
 prim auth api-keys mint --name <name> [--expires-at <epoch-ms>] # Mint a user key; secret prints once
 prim auth api-keys list [--limit <count>] [--after <api-key-id>] # List user-key metadata
 prim auth api-keys revoke <api-key-id> # Revoke a user key

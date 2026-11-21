@@ -11,6 +11,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { diagnoseCloudSession, isClaudeCloudSession } from "../lib/cloud-session.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
@@ -288,7 +289,21 @@ export async function processSessionStart(
   }
 
   if (agent === "claude_code") {
+    // In a Claude Code cloud session an unbound active repository usually means
+    // missing credentials or a blocked host, both of which otherwise fail open
+    // without a word. Name the fix where the user and agent will see it.
+    let cloudNotice: string | undefined;
+    if (active && !claudeBinding && isClaudeCloudSession()) {
+      try {
+        cloudNotice = await diagnoseCloudSession();
+      } catch {
+        // The diagnosis is advisory; SessionStart stays fail-soft.
+      }
+    }
     const additionalContext = [
+      cloudNotice
+        ? `${cloudNotice} Tell the user this in one sentence before starting their task.`
+        : undefined,
       claudeBinding ? claudeBindingReminder(claudeBinding) : undefined,
       active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined,
     ]
@@ -307,7 +322,8 @@ export async function processSessionStart(
         const rendered = lease ? renderFeedback(lease) : undefined;
         return {
           output: buildHookOutput({
-            systemMessage: rendered?.systemMessage,
+            systemMessage:
+              [cloudNotice, rendered?.systemMessage].filter(Boolean).join("\n\n") || undefined,
             additionalContext,
             reloadSkills,
           }),
@@ -324,7 +340,9 @@ export async function processSessionStart(
         };
       }
     }
-    return { output: buildHookOutput({ additionalContext, reloadSkills }) };
+    return {
+      output: buildHookOutput({ systemMessage: cloudNotice, additionalContext, reloadSkills }),
+    };
   }
 
   await activeProjectRoot(cwd);
