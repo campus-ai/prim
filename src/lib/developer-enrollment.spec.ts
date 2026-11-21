@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   flush: vi.fn(),
   discovery: vi.fn(),
+  bearer: [] as string[],
+  exchange: vi.fn(),
+  verify: vi.fn(),
 }));
 vi.mock("../client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../client.js")>()),
@@ -20,6 +23,10 @@ vi.mock("../client.js", async (importOriginal) => ({
     post: mocks.post,
     get: mocks.get,
   }),
+  getBearerClient: (token: string) => {
+    mocks.bearer.push(token);
+    return { post: mocks.post, get: mocks.get };
+  },
 }));
 vi.mock("../flusher.js", () => ({ flush: mocks.flush }));
 vi.mock("../journal.js", () => ({ listBuckets: () => [] }));
@@ -43,9 +50,15 @@ vi.mock("./machine-credentials.js", () => ({
 vi.mock("./machine-protocol.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./machine-protocol.js")>()),
   discoverMachineConfiguration: mocks.discovery,
+  exchangeMachineCredentials: mocks.exchange,
+  verifyMachineIdentity: mocks.verify,
 }));
+import { readdirSync } from "node:fs";
 import { HttpError } from "../client.js";
-import { enrollDeveloperInstallation } from "./developer-enrollment.js";
+import {
+  enrollDeveloperInstallation,
+  enrollEnvironmentInstallation,
+} from "./developer-enrollment.js";
 import { parseMachineIdentity } from "./machine-protocol.js";
 
 beforeEach(() => {
@@ -68,6 +81,20 @@ beforeEach(() => {
     };
   });
   vi.stubEnv("PRIM_TOKEN", "");
+  mocks.bearer.length = 0;
+  mocks.exchange.mockResolvedValue({
+    accessToken: "machine-access",
+    expiresAt: Date.now() + 60_000,
+  });
+  mocks.verify.mockResolvedValue({
+    machineId: "cloud",
+    authorizedUserId: "alex",
+    clientId: "client_cloud",
+    displayName: "Claude Code cloud",
+    organizationId: "org",
+    workosOrganizationId: "org_workos",
+    scopes: ["cli:read"],
+  });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -209,4 +236,102 @@ it("requires a versioned user binding and refuses ambiguous machine ownership", 
       "client_laptop",
     ),
   ).toThrow();
+});
+
+describe("environment installation enrollment", () => {
+  function serveEnrollment(secret = "cloud-secret") {
+    const starts: Record<string, unknown>[] = [];
+    let ciphertext = "";
+    mocks.post.mockImplementation(async (path, body) => {
+      if (path.endsWith("/start")) {
+        starts.push(body);
+        ciphertext = publicEncrypt(
+          { key: body.publicKey, oaepHash: "sha256", padding: constants.RSA_PKCS1_OAEP_PADDING },
+          Buffer.from(secret),
+        ).toString("base64");
+        return { enrollmentId: "enrollment" };
+      }
+      if (path.endsWith("/redeem"))
+        return {
+          ciphertext,
+          clientId: "client_cloud",
+          machineId: "cloud",
+          authorizedUserId: "alex",
+        };
+      throw new Error(`unexpected ${path}`);
+    });
+    return starts;
+  }
+
+  it("mints a named, separate installation under the given human session and stores nothing", async () => {
+    mocks.configured = true; // this machine is already enrolled; it must stay untouched
+    const starts = serveEnrollment();
+    const installation = await enrollEnvironmentInstallation("  Claude Code cloud ", "human-jwt");
+    expect(installation).toEqual({
+      displayName: "Claude Code cloud",
+      clientId: "client_cloud",
+      clientSecret: "cloud-secret",
+      machineId: "cloud",
+      authorizedUserId: "alex",
+      organizationId: "org",
+    });
+    expect(mocks.bearer).toEqual(["human-jwt"]);
+    expect(starts[0]).toMatchObject({ displayName: "Claude Code cloud" });
+    expect(starts[0]?.installationId).toMatch(/^[a-f0-9-]{36}$/u);
+    expect(mocks.exchange).toHaveBeenCalledWith(expect.any(Object), "client_cloud", "cloud-secret");
+    expect(mocks.verify).toHaveBeenCalledWith(
+      "https://api.example.com",
+      "machine-access",
+      "client_cloud",
+    );
+    expect(mocks.configure).not.toHaveBeenCalled();
+    expect(mocks.flush).not.toHaveBeenCalled();
+    expect(mocks.post).not.toHaveBeenCalledWith(
+      "/api/cli/auth/enrollment/activate",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(readdirSync(mocks.directory)).toEqual([]);
+  });
+
+  it("rejects a credential that is not delegated to the signed-in user", async () => {
+    serveEnrollment();
+    mocks.verify.mockResolvedValue({
+      machineId: "cloud",
+      clientId: "client_cloud",
+      displayName: "Claude Code cloud",
+      organizationId: "org",
+      workosOrganizationId: "org_workos",
+      scopes: ["cli:read"],
+    });
+    await expect(enrollEnvironmentInstallation("cloud", "human-jwt")).rejects.toMatchObject({
+      code: "delegation_mismatch",
+    });
+  });
+
+  it("asks for a human sign-in when the session cannot enroll", async () => {
+    mocks.get.mockRejectedValue(new HttpError(403, "human_sign_in_required"));
+    await expect(enrollEnvironmentInstallation("cloud", "machine-token")).rejects.toMatchObject({
+      code: "human_sign_in_required",
+    });
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the server has enrollment disabled", async () => {
+    mocks.discovery.mockResolvedValue({
+      issuer: "https://auth.example.com",
+      audience: "client_env",
+      developerEnrollment: false,
+    });
+    await expect(enrollEnvironmentInstallation("cloud", "human-jwt")).rejects.toMatchObject({
+      code: "enrollment_unavailable",
+    });
+  });
+
+  it.each(["", "   ", "x".repeat(129), "bad\u0007name"])("rejects the name %j", async (name) => {
+    await expect(enrollEnvironmentInstallation(name, "human-jwt")).rejects.toMatchObject({
+      code: "invalid_installation_name",
+    });
+    expect(mocks.discovery).not.toHaveBeenCalled();
+  });
 });

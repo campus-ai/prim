@@ -1,7 +1,10 @@
 import { classifyJournalBuckets, summarizeRetainedBuckets } from "../journal-organization.js";
 import { listBuckets } from "../journal.js";
 import { isNonInteractive } from "../lib/confirmation.js";
-import { enrollDeveloperInstallation } from "../lib/developer-enrollment.js";
+import {
+  enrollDeveloperInstallation,
+  enrollEnvironmentInstallation,
+} from "../lib/developer-enrollment.js";
 /**
  * Auth commands for the prim CLI.
  *
@@ -681,13 +684,88 @@ async function signInInteractively(options: { browser: boolean }): Promise<Inter
   }
 }
 
+type EnrollOptions = {
+  ifSupported?: boolean;
+  newInstallation?: string;
+  printEnv?: boolean;
+  browser: boolean;
+};
+
+/**
+ * Format one `.env` line that Claude Code cloud environments (and dotenv
+ * parsers) read back verbatim: plain when safe, otherwise single-quoted so a
+ * `#` or space cannot truncate the value.
+ */
+export function envLine(key: string, value: string): string {
+  if (/^[\w.~+/=-]+$/u.test(value)) return `${key}=${value}`;
+  if (!value.includes("'") && ![...value].some((char) => char < " ")) return `${key}='${value}'`;
+  throw new MachineAuthError("invalid_credentials", `${key} cannot be written as an .env value.`);
+}
+
+async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
+  if (!options.newInstallation || !options.printEnv || options.ifSupported) {
+    reportFailure(
+      "invalid_arguments",
+      "Use --new-installation <name> together with --print-env (and without --if-supported).",
+    );
+    return;
+  }
+  console.error(
+    `Sign in to authorize a new installation named "${stripControlChars(options.newInstallation)}". This machine's own credentials are not changed.`,
+  );
+  const signIn = await signInInteractively({ browser: options.browser });
+  if (!signIn.ok) {
+    reportFailure(signIn.error, signIn.detail);
+    return;
+  }
+  try {
+    const installation = await enrollEnvironmentInstallation(
+      options.newInstallation,
+      signIn.credentials.accessToken,
+    );
+    const lines = [
+      envLine("PRIM_M2M_CLIENT_ID", installation.clientId),
+      envLine("PRIM_M2M_CLIENT_SECRET", installation.clientSecret),
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+    console.error(
+      [
+        `Installation "${stripControlChars(installation.displayName)}" is authorized for your account; its Decisions belong to you.`,
+        "Paste both lines into the environment's variables. The secret is shown only once and is not stored on this machine.",
+        "Revoke it any time in Settings → Developer installations.",
+      ].join("\n"),
+    );
+    process.exitCode = EXIT_OK;
+  } catch (error) {
+    reportFailure(
+      error instanceof MachineAuthError ? error.code : "enrollment_failed",
+      error instanceof MachineAuthError
+        ? error.message
+        : "Enrollment could not finish. Check the organization's enrollment policy, then retry.",
+    );
+  }
+}
+
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
   auth
     .command("enroll")
     .description("Authorize this developer installation using your signed-in account")
     .option("--if-supported", "Keep legacy authentication when server enrollment is unavailable")
-    .action(async (options: { ifSupported?: boolean }) => {
+    .option(
+      "--new-installation <name>",
+      "Enroll a separate installation that runs elsewhere, such as a Claude Code cloud environment (requires --print-env)",
+    )
+    .option(
+      "--print-env",
+      "Print the new installation's PRIM_M2M_* credentials to STDOUT for an environment's variables",
+    )
+    .option("--no-browser", "Print the sign-in URL without opening a browser")
+    .action(async (options: EnrollOptions) => {
+      if (options.newInstallation !== undefined || options.printEnv) {
+        await enrollNewInstallation(options);
+        return;
+      }
       try {
         const result = await enrollDeveloperInstallation(options.ifSupported);
         if (result.enrolled)
