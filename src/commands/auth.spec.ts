@@ -43,6 +43,13 @@ vi.mock("node:fs", async () => {
   };
 });
 
+vi.mock("../lib/developer-enrollment.js", async () => ({
+  ...(await vi.importActual<typeof import("../lib/developer-enrollment.js")>(
+    "../lib/developer-enrollment.js",
+  )),
+  enrollEnvironmentInstallation: vi.fn(),
+}));
+
 // Login opens a browser via execFile — never do that from a test run.
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -61,12 +68,14 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
+import { enrollEnvironmentInstallation } from "../lib/developer-enrollment.js";
 import {
   discoverWorkosConnect,
   pollWorkosDeviceAuthorization,
   requestWorkosDeviceAuthorization,
 } from "../lib/workos-connect.js";
 import {
+  envLine,
   fetchAuthBrokerConfig,
   openBrowser,
   parseAuthBrokerConfig,
@@ -770,5 +779,117 @@ describe("auth status --json", () => {
     expect(human).toContain("Authenticated (verified).");
     expect(human).toContain("Token source: fixed environment credential");
     expect(human).toContain("Refresh token: not applicable");
+  });
+});
+
+describe("auth enroll --new-installation --print-env", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+  });
+
+  function deviceSignIn() {
+    vi.mocked(discoverWorkosConnect).mockResolvedValue({
+      state: "available",
+      configuration: {
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+        scopes: ["openid", "offline_access"],
+      },
+    });
+    vi.mocked(requestWorkosDeviceAuthorization).mockResolvedValue({
+      deviceCode: "device-code",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://auth.example.test/device",
+      expiresIn: 600,
+      interval: 5,
+    });
+    vi.mocked(pollWorkosDeviceAuthorization).mockResolvedValue({
+      accessToken: "human-access",
+      refreshToken: "human-refresh",
+      expiresIn: 300,
+    });
+  }
+
+  async function run(args: string[]) {
+    const stdout: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+    await program.parseAsync(["auth", "enroll", ...args], { from: "user" });
+    return {
+      stdout: stdout.join("") + logs.mock.calls.flat().join("\n"),
+      stderr: stderr.mock.calls.flat().join("\n"),
+    };
+  }
+
+  it("signs in without storing the session and prints only .env lines to STDOUT", async () => {
+    deviceSignIn();
+    vi.mocked(enrollEnvironmentInstallation).mockResolvedValue({
+      displayName: "Claude Code cloud",
+      clientId: "client_cloud",
+      clientSecret: "s3cr3t+/=",
+      machineId: "cloud",
+      authorizedUserId: "alex",
+      organizationId: "org",
+    });
+    const { stdout, stderr } = await run([
+      "--new-installation",
+      "Claude Code cloud",
+      "--print-env",
+      "--no-browser",
+    ]);
+    expect(stdout).toBe("PRIM_M2M_CLIENT_ID=client_cloud\nPRIM_M2M_CLIENT_SECRET=s3cr3t+/=\n");
+    expect(enrollEnvironmentInstallation).toHaveBeenCalledWith("Claude Code cloud", "human-access");
+    expect(commitCredentials).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
+    expect(stderr).toContain("ABCD-EFGH");
+    expect(stderr).toContain("Developer installations");
+    expect(stderr).not.toContain("s3cr3t");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it.each([
+    [["--print-env"]],
+    [["--new-installation", "cloud"]],
+    [["--new-installation", "cloud", "--print-env", "--if-supported"]],
+  ])("rejects the incomplete flag set %j before signing in", async (args) => {
+    const { stdout } = await run(args);
+    expect(JSON.parse(stdout)).toMatchObject({ error: "invalid_arguments" });
+    expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports an enrollment refusal without printing credentials", async () => {
+    deviceSignIn();
+    const { MachineAuthError } = await import("../lib/machine-protocol.js");
+    vi.mocked(enrollEnvironmentInstallation).mockRejectedValue(
+      new MachineAuthError("enrollment_unavailable", "Automatic enrollment is not enabled."),
+    );
+    const { stdout } = await run(["--new-installation", "cloud", "--print-env", "--no-browser"]);
+    expect(stdout).not.toContain("PRIM_M2M_");
+    expect(JSON.parse(stdout)).toMatchObject({ error: "enrollment_unavailable" });
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("envLine", () => {
+  it.each([
+    ["client_01ABC", "K=client_01ABC"],
+    ["abc+/=~.-_", "K=abc+/=~.-_"],
+    ["has #hash", "K='has #hash'"],
+  ])("formats %j", (value, expected) => {
+    expect(envLine("K", value)).toBe(expected);
+  });
+
+  it("refuses values a .env parser could not read back", () => {
+    expect(() => envLine("K", "it's")).toThrow();
+    expect(() => envLine("K", "line\nbreak")).toThrow();
   });
 });

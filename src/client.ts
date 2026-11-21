@@ -983,6 +983,25 @@ export async function getPinnedClient(options: RequestOptions = {}): Promise<Cli
 }
 
 /**
+ * Pin one caller-held bearer token and deployment, bypassing stored
+ * credentials. For a human session that exists only in this process, such as
+ * the one that mints another installation's credential; no refresh, no retry.
+ */
+export function getBearerClient(token: string, siteUrl: string = getSiteUrl()): CliClient {
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    responseValue(await fetchWithToken(method, path, body, requestOptions, token, siteUrl));
+  return {
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
+  };
+}
+
+/**
  * Pin one credential and deployment for a management operation without a
  * post-response retry: a lost mint result may still have created a key.
  */
