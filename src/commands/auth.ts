@@ -1,7 +1,11 @@
 import { classifyJournalBuckets, summarizeRetainedBuckets } from "../journal-organization.js";
 import { listBuckets } from "../journal.js";
 import { isNonInteractive } from "../lib/confirmation.js";
-import { enrollDeveloperInstallation } from "../lib/developer-enrollment.js";
+import {
+  enrollDeveloperInstallation,
+  enrollEnvironmentInstallation,
+  prepareEnvironmentEnrollment,
+} from "../lib/developer-enrollment.js";
 /**
  * Auth commands for the prim CLI.
  *
@@ -22,6 +26,7 @@ import type { Command } from "commander";
 import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from "../auth/api-keys.js";
 import {
   REFRESH_TOKEN_PATH,
+  type StoredCredentials,
   TOKEN_FILE_PATH,
   clearStoredCredentials,
   commitCredentials,
@@ -508,13 +513,258 @@ function requiresLegacyAuthentication(): boolean {
   return false;
 }
 
+type InteractiveSignIn =
+  | { ok: true; flow: "device" | "legacy"; credentials: StoredCredentials }
+  | { ok: false; error: string; detail?: string };
+
+/**
+ * Sign a human in through the browser and return the credential bundle without
+ * storing it. `auth login` persists the result; minting a credential for
+ * another installation uses it once and lets it go.
+ */
+async function signInInteractively(options: { browser: boolean }): Promise<InteractiveSignIn> {
+  const siteUrl = getSiteUrl();
+
+  let discovery: Awaited<ReturnType<typeof discoverWorkosConnect>>;
+  try {
+    discovery = await discoverWorkosConnect(siteUrl);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof WorkosConnectProtocolError ? error.code : "config_fetch_failed",
+      detail: error instanceof Error ? error.message : "Connect discovery failed",
+    };
+  }
+
+  if (discovery.state === "available") {
+    try {
+      const authorization = await requestWorkosDeviceAuthorization(discovery.configuration);
+      const verificationUrl =
+        authorization.verificationUriComplete ?? authorization.verificationUri;
+      console.error(`Authenticate at:\n${verificationUrl}`);
+      console.error(`Verification code: ${authorization.userCode}`);
+      if (options.browser) openBrowser(verificationUrl);
+      const tokens = await pollWorkosDeviceAuthorization(discovery.configuration, authorization);
+      return {
+        ok: true,
+        flow: "device",
+        credentials: {
+          ...tokens,
+          metadata: {
+            version: 1,
+            family: "workos_connect",
+            issuer: discovery.configuration.issuer,
+            clientId: discovery.configuration.clientId,
+          },
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof WorkosConnectProtocolError ? error.code : "device_authorization_failed",
+        detail: error instanceof Error ? error.message : "Device authorization failed",
+      };
+    }
+  }
+
+  let config: AuthBrokerConfig;
+  try {
+    config = await fetchAuthBrokerConfig(siteUrl);
+  } catch {
+    return {
+      ok: false,
+      error: "config_fetch_failed",
+      detail: "Failed to fetch MCP config. Is the Convex backend running?",
+    };
+  }
+  const { verifier, challenge } = generatePkce();
+  const state = base64url(randomBytes(16));
+  const redirectUri = `http://${LOCALHOST}:${CALLBACK_PORT}/callback`;
+
+  // The handler is the only code that writes a callback response or knows
+  // about HTML, and it never exits the process: it resolves an outcome from
+  // res.end's flush callback (so the page is always on the wire first) that
+  // the single exit point below turns into one exit.
+  let settle!: (result: CallbackResult) => void;
+  const outcome = new Promise<CallbackResult>((resolve) => {
+    settle = resolve;
+  });
+
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://${LOCALHOST}`);
+    if (url.pathname !== "/callback") {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+    const page = resolveCallbackPage(url.searchParams, state);
+    res.writeHead(page.status, HTML_HEADERS);
+    res.end(page.html, () => settle(page.result));
+  });
+
+  // Bind the fixed callback port. Without an error handler a stale or
+  // parallel login holding the port would hang forever, since the timeout
+  // is only armed after a successful bind.
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException) => reject(err);
+      server.once("error", onError);
+      server.listen(CALLBACK_PORT, LOCALHOST, () => {
+        server.removeListener("error", onError);
+        resolve();
+      });
+    });
+  } catch (err) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      return {
+        ok: false,
+        error: "callback_port_in_use",
+        detail: `Port ${CALLBACK_PORT} is in use — another prim sign-in may be running. Close it and retry.`,
+      };
+    }
+    return {
+      ok: false,
+      error: "callback_bind_failed",
+      detail: `Could not start the local callback server: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // A post-bind server error would otherwise be an unhandled emitter error
+  // that crashes the process; the timeout still bounds the wait.
+  server.on("error", () => {
+    // Swallow late socket errors — the outcome/timeout still resolves.
+  });
+
+  const authUrl = new URL(config.authorization_endpoint);
+  authUrl.searchParams.set("client_id", config.client_id);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("provider", "authkit");
+  authUrl.searchParams.set("scope", config.default_scopes.join(" "));
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("code_challenge", challenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+
+  // Guidance is for the human at the browser, so it rides STDERR — STDOUT
+  // stays reserved for the machine-readable result line emitted on success.
+  if (options.browser) {
+    console.error("Opening browser for authentication...");
+    openBrowser(authUrl.toString());
+  }
+  console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
+  console.error("Waiting for callback...");
+
+  // Timeout resolves the same outcome as a callback, so every path funnels
+  // through the single exit below. unref'd so the timer never keeps the
+  // process alive — the listening server does, and closing it lets us exit.
+  const timer = setTimeout(() => {
+    settle({ authenticated: false, error: "timeout", detail: "Authentication timed out." });
+  }, CALLBACK_TIMEOUT_MS);
+  timer.unref();
+
+  const result = await outcome;
+  clearTimeout(timer);
+  server.close();
+
+  if (!result.authenticated) {
+    return { ok: false, error: result.error, detail: result.detail };
+  }
+
+  // The success page is already flushed; exchange the code here so the exit
+  // decision lives in exactly one place.
+  try {
+    const tokens = await exchangeCode(siteUrl, result.code, verifier, redirectUri);
+    return { ok: true, flow: "legacy", credentials: tokens };
+  } catch (err) {
+    return {
+      ok: false,
+      error: "token_exchange_failed",
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+type EnrollOptions = {
+  ifSupported?: boolean;
+  newInstallation?: string;
+  printEnv?: boolean;
+  browser: boolean;
+};
+
+/**
+ * Credential output owns STDOUT, so a failure there must leave it empty: a
+ * `--print-env >> .env` would otherwise append a JSON line to the file.
+ */
+function reportEnrollmentFailure(error: string, detail?: string): void {
+  const human = detail
+    ? `${stripControlChars(error)}: ${stripControlChars(detail)}`
+    : stripControlChars(error);
+  console.error(`Enrollment failed: ${human}`);
+  process.exitCode = EXIT_FAIL;
+}
+
+async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
+  if (!options.newInstallation || !options.printEnv || options.ifSupported) {
+    reportEnrollmentFailure(
+      "invalid_arguments",
+      "Use --new-installation <name> together with --print-env (and without --if-supported).",
+    );
+    return;
+  }
+  try {
+    const enrollment = await prepareEnvironmentEnrollment(options.newInstallation);
+    console.error(
+      `Sign in to authorize a new installation named "${stripControlChars(enrollment.name)}". This machine's own credentials are not changed.`,
+    );
+    const signIn = await signInInteractively({ browser: options.browser });
+    if (!signIn.ok) {
+      reportEnrollmentFailure(signIn.error, signIn.detail);
+      return;
+    }
+    const installation = await enrollEnvironmentInstallation(
+      enrollment,
+      signIn.credentials.accessToken,
+    );
+    process.stdout.write(`${installation.environment.join("\n")}\n`);
+    console.error(
+      [
+        `Installation "${stripControlChars(installation.displayName)}" is authorized for your account; its Decisions belong to you.`,
+        "Paste these lines into the environment's variables. The secret is shown only once and is not stored on this machine.",
+        "An organization admin can revoke the installation in Settings → Developer installations.",
+      ].join("\n"),
+    );
+    process.exitCode = EXIT_OK;
+  } catch (error) {
+    reportEnrollmentFailure(
+      error instanceof MachineAuthError ? error.code : "enrollment_failed",
+      error instanceof MachineAuthError
+        ? error.message
+        : "Enrollment could not finish. Check the organization's enrollment policy, then retry.",
+    );
+  }
+}
+
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
   auth
     .command("enroll")
     .description("Authorize this developer installation using your signed-in account")
     .option("--if-supported", "Keep legacy authentication when server enrollment is unavailable")
-    .action(async (options: { ifSupported?: boolean }) => {
+    .option(
+      "--new-installation <name>",
+      "Enroll a separate installation that runs elsewhere, such as a Claude Code cloud environment (requires --print-env)",
+    )
+    .option(
+      "--print-env",
+      "Print the new installation's PRIM_M2M_* credentials to STDOUT for an environment's variables",
+    )
+    .option("--no-browser", "Print the sign-in URL without opening a browser")
+    .action(async (options: EnrollOptions) => {
+      if (options.newInstallation !== undefined || options.printEnv) {
+        await enrollNewInstallation(options);
+        return;
+      }
       try {
         const result = await enrollDeveloperInstallation(options.ifSupported);
         if (result.enrolled)
@@ -632,164 +882,24 @@ export function registerAuthCommands(program: Command) {
     .option("--no-browser", "Print the verification URL without opening a browser")
     .action(async (options: { browser: boolean }) => {
       if (!requiresLegacyAuthentication()) return;
-      const siteUrl = getSiteUrl();
-
-      let discovery: Awaited<ReturnType<typeof discoverWorkosConnect>>;
+      const signIn = await signInInteractively(options);
+      if (!signIn.ok) {
+        reportFailure(signIn.error, signIn.detail);
+        return;
+      }
       try {
-        discovery = await discoverWorkosConnect(siteUrl);
-      } catch (error) {
-        reportFailure(
-          error instanceof WorkosConnectProtocolError ? error.code : "config_fetch_failed",
-          error instanceof Error ? error.message : "Connect discovery failed",
-        );
-        return;
-      }
-
-      if (discovery.state === "available") {
-        try {
-          const authorization = await requestWorkosDeviceAuthorization(discovery.configuration);
-          const verificationUrl =
-            authorization.verificationUriComplete ?? authorization.verificationUri;
-          console.error(`Authenticate at:\n${verificationUrl}`);
-          console.error(`Verification code: ${authorization.userCode}`);
-          if (options.browser) openBrowser(verificationUrl);
-          const tokens = await pollWorkosDeviceAuthorization(
-            discovery.configuration,
-            authorization,
-          );
-          await commitCredentials({
-            ...tokens,
-            metadata: {
-              version: 1,
-              family: "workos_connect",
-              issuer: discovery.configuration.issuer,
-              clientId: discovery.configuration.clientId,
-            },
-          });
-          reportSuccess();
-        } catch (error) {
-          reportFailure(
-            error instanceof WorkosConnectProtocolError
-              ? error.code
-              : "device_authorization_failed",
-            error instanceof Error ? error.message : "Device authorization failed",
-          );
-        }
-        return;
-      }
-
-      let config: AuthBrokerConfig;
-      try {
-        config = await fetchAuthBrokerConfig(siteUrl);
-      } catch {
-        reportFailure(
-          "config_fetch_failed",
-          "Failed to fetch MCP config. Is the Convex backend running?",
-        );
-        return;
-      }
-      const { verifier, challenge } = generatePkce();
-      const state = base64url(randomBytes(16));
-      const redirectUri = `http://${LOCALHOST}:${CALLBACK_PORT}/callback`;
-
-      // The handler is the only code that writes a callback response or knows
-      // about HTML, and it never exits the process: it resolves an outcome from
-      // res.end's flush callback (so the page is always on the wire first) that
-      // the single exit point below turns into one exit.
-      let settle!: (result: CallbackResult) => void;
-      const outcome = new Promise<CallbackResult>((resolve) => {
-        settle = resolve;
-      });
-
-      const server = createServer((req, res) => {
-        const url = new URL(req.url ?? "/", `http://${LOCALHOST}`);
-        if (url.pathname !== "/callback") {
-          res.writeHead(404);
-          res.end("Not found");
-          return;
-        }
-        const page = resolveCallbackPage(url.searchParams, state);
-        res.writeHead(page.status, HTML_HEADERS);
-        res.end(page.html, () => settle(page.result));
-      });
-
-      // Bind the fixed callback port. Without an error handler a stale or
-      // parallel login holding the port would hang forever, since the timeout
-      // is only armed after a successful bind.
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const onError = (err: NodeJS.ErrnoException) => reject(err);
-          server.once("error", onError);
-          server.listen(CALLBACK_PORT, LOCALHOST, () => {
-            server.removeListener("error", onError);
-            resolve();
-          });
-        });
-      } catch (err) {
-        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EADDRINUSE") {
-          reportFailure(
-            "callback_port_in_use",
-            `Port ${CALLBACK_PORT} is in use — another 'prim auth login' may be running. Close it and retry.`,
-          );
-        } else {
-          reportFailure(
-            "callback_bind_failed",
-            `Could not start the local callback server: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-        return;
-      }
-
-      // A post-bind server error would otherwise be an unhandled emitter error
-      // that crashes the process; the timeout still bounds the wait.
-      server.on("error", () => {
-        // Swallow late socket errors — the outcome/timeout still resolves.
-      });
-
-      const authUrl = new URL(config.authorization_endpoint);
-      authUrl.searchParams.set("client_id", config.client_id);
-      authUrl.searchParams.set("redirect_uri", redirectUri);
-      authUrl.searchParams.set("response_type", "code");
-      authUrl.searchParams.set("provider", "authkit");
-      authUrl.searchParams.set("scope", config.default_scopes.join(" "));
-      authUrl.searchParams.set("state", state);
-      authUrl.searchParams.set("code_challenge", challenge);
-      authUrl.searchParams.set("code_challenge_method", "S256");
-
-      // Guidance is for the human at the browser, so it rides STDERR — STDOUT
-      // stays reserved for the machine-readable result line emitted on success.
-      if (options.browser) {
-        console.error("Opening browser for authentication...");
-        openBrowser(authUrl.toString());
-      }
-      console.error(`If the browser doesn't open, visit:\n${authUrl.toString()}\n`);
-      console.error("Waiting for callback...");
-
-      // Timeout resolves the same outcome as a callback, so every path funnels
-      // through the single exit below. unref'd so the timer never keeps the
-      // process alive — the listening server does, and closing it lets us exit.
-      const timer = setTimeout(() => {
-        settle({ authenticated: false, error: "timeout", detail: "Authentication timed out." });
-      }, CALLBACK_TIMEOUT_MS);
-      timer.unref();
-
-      const result = await outcome;
-      clearTimeout(timer);
-      server.close();
-
-      if (!result.authenticated) {
-        reportFailure(result.error, result.detail);
-        return;
-      }
-
-      // The success page is already flushed; exchange the code here so the exit
-      // decision lives in exactly one place.
-      try {
-        const tokens = await exchangeCode(siteUrl, result.code, verifier, redirectUri);
-        await commitCredentials(tokens);
+        await commitCredentials(signIn.credentials);
         reportSuccess();
-      } catch (err) {
-        reportFailure("token_exchange_failed", err instanceof Error ? err.message : String(err));
+      } catch (error) {
+        // Each flow keeps the failure code it reported before sign-in was shared.
+        reportFailure(
+          signIn.flow === "device" ? "device_authorization_failed" : "token_exchange_failed",
+          error instanceof Error
+            ? error.message
+            : signIn.flow === "device"
+              ? "Device authorization failed"
+              : String(error),
+        );
       }
     });
 

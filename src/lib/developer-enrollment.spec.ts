@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   flush: vi.fn(),
   discovery: vi.fn(),
+  bearer: [] as string[],
+  exchange: vi.fn(),
+  verify: vi.fn(),
 }));
 vi.mock("../client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../client.js")>()),
@@ -20,6 +23,10 @@ vi.mock("../client.js", async (importOriginal) => ({
     post: mocks.post,
     get: mocks.get,
   }),
+  getBearerClient: (token: string) => {
+    mocks.bearer.push(token);
+    return { post: mocks.post, get: mocks.get };
+  },
 }));
 vi.mock("../flusher.js", () => ({ flush: mocks.flush }));
 vi.mock("../journal.js", () => ({ listBuckets: () => [] }));
@@ -43,9 +50,17 @@ vi.mock("./machine-credentials.js", () => ({
 vi.mock("./machine-protocol.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./machine-protocol.js")>()),
   discoverMachineConfiguration: mocks.discovery,
+  exchangeMachineCredentials: mocks.exchange,
+  verifyMachineIdentity: mocks.verify,
 }));
+import { readdirSync } from "node:fs";
 import { HttpError } from "../client.js";
-import { enrollDeveloperInstallation } from "./developer-enrollment.js";
+import {
+  enrollDeveloperInstallation,
+  enrollEnvironmentInstallation,
+  installationEnvironment,
+  prepareEnvironmentEnrollment,
+} from "./developer-enrollment.js";
 import { parseMachineIdentity } from "./machine-protocol.js";
 
 beforeEach(() => {
@@ -68,6 +83,20 @@ beforeEach(() => {
     };
   });
   vi.stubEnv("PRIM_TOKEN", "");
+  mocks.bearer.length = 0;
+  mocks.exchange.mockResolvedValue({
+    accessToken: "machine-access",
+    expiresAt: Date.now() + 60_000,
+  });
+  mocks.verify.mockResolvedValue({
+    machineId: "cloud",
+    authorizedUserId: "alex",
+    clientId: "client_cloud",
+    displayName: "Claude Code cloud",
+    organizationId: "org",
+    workosOrganizationId: "org_workos",
+    scopes: ["cli:read"],
+  });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -209,4 +238,214 @@ it("requires a versioned user binding and refuses ambiguous machine ownership", 
       "client_laptop",
     ),
   ).toThrow();
+});
+
+describe("environment installation enrollment", () => {
+  function serveEnrollment(secret = "cloud-secret") {
+    const starts: Record<string, unknown>[] = [];
+    let ciphertext = "";
+    mocks.post.mockImplementation(async (path, body) => {
+      if (path.endsWith("/start")) {
+        starts.push(body);
+        ciphertext = publicEncrypt(
+          { key: body.publicKey, oaepHash: "sha256", padding: constants.RSA_PKCS1_OAEP_PADDING },
+          Buffer.from(secret),
+        ).toString("base64");
+        return { enrollmentId: "enrollment" };
+      }
+      if (path.endsWith("/redeem"))
+        return {
+          ciphertext,
+          clientId: "client_cloud",
+          machineId: "cloud",
+          authorizedUserId: "alex",
+        };
+      throw new Error(`unexpected ${path}`);
+    });
+    return starts;
+  }
+
+  const enroll = async (name = "cloud", token = "human-jwt") =>
+    enrollEnvironmentInstallation(await prepareEnvironmentEnrollment(name), token);
+
+  it("mints a named, separate installation under the given human session and stores nothing", async () => {
+    mocks.configured = true; // this machine is already enrolled; it must stay untouched
+    const starts = serveEnrollment();
+    const installation = await enroll("  Claude Code cloud ");
+    expect(installation).toEqual({
+      environment: [
+        "PRIM_M2M_CLIENT_ID=client_cloud",
+        "PRIM_M2M_CLIENT_SECRET=cloud-secret",
+        "PRIM_API_URL=https://api.example.com",
+      ],
+      displayName: "Claude Code cloud",
+      clientId: "client_cloud",
+      clientSecret: "cloud-secret",
+      machineId: "cloud",
+      authorizedUserId: "alex",
+      organizationId: "org",
+    });
+    expect(mocks.bearer).toEqual(["human-jwt"]);
+    expect(starts[0]).toMatchObject({ displayName: "Claude Code cloud" });
+    expect(starts[0]?.installationId).toMatch(/^[a-f0-9-]{36}$/u);
+    expect(mocks.exchange).toHaveBeenCalledWith(expect.any(Object), "client_cloud", "cloud-secret");
+    expect(mocks.verify).toHaveBeenCalledWith(
+      "https://api.example.com",
+      "machine-access",
+      "client_cloud",
+    );
+    expect(mocks.configure).not.toHaveBeenCalled();
+    expect(mocks.flush).not.toHaveBeenCalled();
+    expect(mocks.post).not.toHaveBeenCalledWith(
+      "/api/cli/auth/enrollment/activate",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(readdirSync(mocks.directory)).toEqual([]);
+  });
+
+  it.each([
+    ["is not delegated", { authorizedUserId: undefined }],
+    ["belongs to another organization", { organizationId: "other-org" }],
+    ["is a different machine than the one redeemed", { machineId: "elsewhere" }],
+  ])("rejects a credential that %s and names the installation to revoke", async (_label, patch) => {
+    serveEnrollment();
+    mocks.verify.mockResolvedValue({
+      machineId: "cloud",
+      authorizedUserId: "alex",
+      clientId: "client_cloud",
+      displayName: "cloud",
+      organizationId: "org",
+      workosOrganizationId: "org_workos",
+      scopes: ["cli:read"],
+      ...patch,
+    });
+    const error = await enroll().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "delegation_mismatch" });
+    expect((error as Error).message).toMatch(/Installation "cloud" was already registered/u);
+  });
+
+  it("names the registered installation when the token exchange fails after redeem", async () => {
+    serveEnrollment();
+    mocks.exchange.mockRejectedValue(new Error("socket hang up"));
+    const error = await enroll().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "enrollment_failed" });
+    expect((error as Error).message).toMatch(/revoke it in Settings/u);
+  });
+
+  it("names the installation when the minted secret cannot be written as .env", async () => {
+    serveEnrollment("has space");
+    const error = await enroll().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "invalid_credentials" });
+    expect((error as Error).message).toMatch(/Installation "cloud" was already registered/u);
+  });
+
+  it.each([
+    ["is lost", new TypeError("fetch failed")],
+    ["fails at a gateway", new HttpError(502, "bad gateway")],
+  ])(
+    "warns that a /start response that %s may have registered the installation",
+    async (_label, failure) => {
+      mocks.post.mockRejectedValue(failure);
+      const error = await enroll().catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "enrollment_failed" });
+      expect((error as Error).message).toMatch(/may have been registered/u);
+    },
+  );
+
+  it("does not claim an installation exists when the start is refused", async () => {
+    mocks.post.mockRejectedValue(new HttpError(403, "installation_limit_reached"));
+    const error = await enroll().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HttpError);
+  });
+
+  it("rejects a redeem authorized for someone else", async () => {
+    serveEnrollment();
+    const served = mocks.post.getMockImplementation();
+    mocks.post.mockImplementation(async (path: string, body: unknown) => {
+      const response = await served?.(path, body);
+      return path.endsWith("/redeem") ? { ...response, authorizedUserId: "mallory" } : response;
+    });
+    await expect(enroll()).rejects.toMatchObject({ code: "invalid_enrollment" });
+    expect(mocks.exchange).not.toHaveBeenCalled();
+  });
+
+  it("explains a rejected session without pointing at prim auth login", async () => {
+    mocks.get.mockRejectedValue(new HttpError(403, "human_sign_in_required"));
+    const error = await enroll("cloud", "machine-token").catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "human_sign_in_required" });
+    expect((error as Error).message).not.toMatch(/prim auth login/u);
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps the local sign-in hint for this machine's own enrollment", async () => {
+    mocks.get.mockRejectedValue(new HttpError(401, "human_sign_in_required"));
+    await expect(enrollDeveloperInstallation()).rejects.toMatchObject({
+      code: "human_sign_in_required",
+      message: "Sign in once with prim auth login to authorize this developer installation.",
+    });
+  });
+
+  it.each(["not a url", "https://api.example.com/path", "http://[::1]:3210"])(
+    "refuses the deployment %j before discovery",
+    async (url) => {
+      const client = await import("../client.js");
+      const siteUrl = vi.spyOn(client, "getSiteUrl").mockReturnValue(url);
+      try {
+        await expect(prepareEnvironmentEnrollment("cloud")).rejects.toMatchObject({
+          code: "invalid_configuration",
+        });
+        expect(mocks.discovery).not.toHaveBeenCalled();
+      } finally {
+        siteUrl.mockRestore();
+      }
+    },
+  );
+
+  it("refuses before any sign-in when the server has enrollment disabled", async () => {
+    mocks.discovery.mockResolvedValue({
+      issuer: "https://auth.example.com",
+      audience: "client_env",
+      developerEnrollment: false,
+    });
+    await expect(prepareEnvironmentEnrollment("cloud")).rejects.toMatchObject({
+      code: "enrollment_unavailable",
+    });
+  });
+
+  it.each(["", "   ", "x".repeat(129), "bad\u0007name", "c1\u0085name", "zero\u200bwidth"])(
+    "rejects the name %j before discovery",
+    async (name) => {
+      await expect(prepareEnvironmentEnrollment(name)).rejects.toMatchObject({
+        code: "invalid_installation_name",
+      });
+      expect(mocks.discovery).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("installationEnvironment", () => {
+  const credential = { clientId: "client_01ABC", clientSecret: "s3cr3t.~+/=-_" };
+
+  it("writes bare .env lines for the default deployment", () => {
+    expect(installationEnvironment(credential, "https://api.getprimitive.ai")).toEqual([
+      "PRIM_M2M_CLIENT_ID=client_01ABC",
+      "PRIM_M2M_CLIENT_SECRET=s3cr3t.~+/=-_",
+    ]);
+  });
+
+  it("carries a non-default deployment with the credential", () => {
+    expect(installationEnvironment(credential, "http://localhost:3210")).toContain(
+      "PRIM_API_URL=http://localhost:3210",
+    );
+  });
+
+  it.each(["", "has space", "hash#tail", "it's", "line\nbreak", "caf\u00e9", "del\u007f"])(
+    "refuses a value it cannot write bare: %j",
+    (clientSecret) => {
+      expect(() =>
+        installationEnvironment({ ...credential, clientSecret }, "https://api.getprimitive.ai"),
+      ).toThrow(/cannot be written/u);
+    },
+  );
 });

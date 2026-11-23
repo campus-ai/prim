@@ -66,6 +66,17 @@ describe("scrub", () => {
     expect(scrub(`cookie=${unsignedJwt}`)).toBe("cookie=<REDACTED:jwt>");
   });
 
+  it("redacts a printed machine secret in env, quoted, and JSON forms", () => {
+    const secret = "AbC123xyz.~+/=-secret";
+    for (const line of [
+      `PRIM_M2M_CLIENT_SECRET=${secret}`,
+      `PRIM_M2M_CLIENT_SECRET='${secret}'`,
+      `"PRIM_M2M_CLIENT_SECRET": "${secret}"`,
+    ])
+      expect(scrub(line)).not.toContain(secret);
+    expect(scrub("PRIM_M2M_CLIENT_ID=client_01ABC")).toBe("PRIM_M2M_CLIENT_ID=client_01ABC");
+  });
+
   it("redacts an entire private-key block including newlines", () => {
     const key = [
       "-----BEGIN RSA PRIVATE KEY-----",
@@ -141,6 +152,7 @@ describe("scrub", () => {
       "gcp-oauth-token",
       "github-pat",
       "jwt",
+      "prim-m2m-secret",
       "private-key",
       "sk-api-key",
       "slack-token",
