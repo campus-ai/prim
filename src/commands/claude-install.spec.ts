@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * `prim claude install|uninstall` coverage — pure merge helpers.
  *
@@ -9,7 +13,7 @@
  * wrappers (atomic write, scope resolution) are covered by a release smoke.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
@@ -17,9 +21,13 @@ import {
   PRIM_PERMISSION_RULE,
   applyAutoModeTrust,
   applyInstall,
+  applyRepositoryDeclaration,
   applyUninstall,
   feedbackInstalled,
   isGateInstalled,
+  projectSettingsAfterInstall,
+  projectSettingsAfterUninstall,
+  removeRepositoryDeclaration,
   resolveScope,
   statuslineState,
   userStatuslineBlocksProjectInstall,
@@ -705,5 +713,98 @@ describe("resolveScope", () => {
 
   it("honors an explicit user (machine-global) scope", () => {
     expect(resolveScope("user")).toBe("user");
+  });
+});
+
+describe("repository declaration (PRIM_REPOSITORY)", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+  function repo(origin?: string): string {
+    const root = mkdtempSync(join(tmpdir(), "prim-declare-"));
+    roots.push(root);
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    if (origin) execFileSync("git", ["remote", "add", "origin", origin], { cwd: root });
+    return root;
+  }
+
+  it("records origin's repository alongside existing env without disturbing it", () => {
+    const out = applyRepositoryDeclaration({ env: { FOO: "1" } }, "campus-ai/prim");
+    expect(out.env).toEqual({ FOO: "1", PRIM_REPOSITORY: "campus-ai/prim" });
+  });
+
+  it("keeps an existing valid declaration, so a fork's origin cannot rewrite upstream's", () => {
+    const declared: ClaudeSettings = { env: { PRIM_REPOSITORY: "campus-ai/prim" } };
+    expect(applyRepositoryDeclaration(declared, "contributor/prim")).toBe(declared);
+    expect(applyRepositoryDeclaration(declared, null)).toBe(declared);
+  });
+
+  it("lets --force correct a stale declaration", () => {
+    const out = applyRepositoryDeclaration(
+      { env: { PRIM_REPOSITORY: "old-owner/prim" } },
+      "campus-ai/prim",
+      true,
+    );
+    expect(out.env).toEqual({ PRIM_REPOSITORY: "campus-ai/prim" });
+  });
+
+  it("replaces an invalid existing declaration", () => {
+    const out = applyRepositoryDeclaration(
+      { env: { PRIM_REPOSITORY: "not a repo" } },
+      "campus-ai/prim",
+    );
+    expect(out.env).toEqual({ PRIM_REPOSITORY: "campus-ai/prim" });
+  });
+
+  it("removes only the declaration install would write, dropping an emptied env", () => {
+    expect(
+      removeRepositoryDeclaration(
+        { env: { FOO: "1", PRIM_REPOSITORY: "campus-ai/prim" } },
+        "campus-ai/prim",
+      ).env,
+    ).toEqual({ FOO: "1" });
+    expect(
+      removeRepositoryDeclaration({ env: { PRIM_REPOSITORY: "campus-ai/prim" } }, "campus-ai/prim")
+        .env,
+    ).toBeUndefined();
+    const handWritten: ClaudeSettings = { env: { PRIM_REPOSITORY: "other/name" } };
+    expect(removeRepositoryDeclaration(handWritten, "campus-ai/prim")).toBe(handWritten);
+    expect(removeRepositoryDeclaration(handWritten, null)).toBe(handWritten);
+  });
+
+  it("install declares the repository origin names, never one from the environment", () => {
+    vi.stubEnv("PRIM_REPOSITORY", "env-owner/env-repo");
+    expect(projectSettingsAfterInstall({}, repo("git@github.com:campus-ai/prim.git")).env).toEqual({
+      PRIM_REPOSITORY: "campus-ai/prim",
+    });
+    expect(projectSettingsAfterInstall({}, repo()).env).toBeUndefined();
+    expect(
+      projectSettingsAfterInstall({}, repo("https://gitlab.example.com/t/p.git")).env,
+    ).toBeUndefined();
+  });
+
+  it("install with --force corrects a stale declaration from origin", () => {
+    const root = repo("https://github.com/campus-ai/prim.git");
+    const stale: ClaudeSettings = { env: { PRIM_REPOSITORY: "old-owner/prim" } };
+    expect(projectSettingsAfterInstall(stale, root).env).toEqual({
+      PRIM_REPOSITORY: "old-owner/prim",
+    });
+    expect(projectSettingsAfterInstall(stale, root, true).env).toEqual({
+      PRIM_REPOSITORY: "campus-ai/prim",
+    });
+  });
+
+  it("uninstall removes the declaration origin would write and keeps any other", () => {
+    const root = repo("https://github.com/campus-ai/prim.git");
+    expect(
+      projectSettingsAfterUninstall({ env: { PRIM_REPOSITORY: "campus-ai/prim" } }, root).env,
+    ).toBeUndefined();
+    expect(
+      projectSettingsAfterUninstall({ env: { PRIM_REPOSITORY: "other/name" } }, root).env,
+    ).toEqual({
+      PRIM_REPOSITORY: "other/name",
+    });
   });
 });

@@ -38,7 +38,7 @@ import {
   hookCommandResolutions,
   stableHookCommand,
 } from "../lib/bin-path.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, originGithubRepository, parseGithubRepositoryName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { reportFailureProtection } from "../lib/preflight-host.js";
 
@@ -80,6 +80,8 @@ const USER_SCOPE_PATH = join(homedir(), ".claude", "settings.json");
 export function projectRoot(): string {
   return gitToplevel() ?? process.cwd();
 }
+
+const PRIM_REPOSITORY_ENV = "PRIM_REPOSITORY";
 
 const projectScopePath = (): string => join(projectRoot(), ".claude", "settings.json");
 
@@ -571,6 +573,60 @@ function removeAutoModeTrust(settings: ClaudeSettings): ClaudeSettings {
   return { ...settings, autoMode: hasOther ? nextAutoMode : undefined };
 }
 
+/**
+ * Record the checkout's GitHub repository as `env.PRIM_REPOSITORY` in its
+ * committed project settings, where prim reads it back from the file (never
+ * from the environment) when a clone has no usable origin: a Claude Code
+ * cloud bundle upload has none. Only origin is a source; an existing,
+ * different declaration is kept (a fork's origin must not rewrite the
+ * committed upstream name) unless `--force` corrects it, e.g. after a rename.
+ */
+export function applyRepositoryDeclaration(
+  settings: ClaudeSettings,
+  repository: string | null,
+  force = false,
+): ClaudeSettings {
+  if (!repository) return settings;
+  const env = isPlainObject(settings.env) ? settings.env : {};
+  const existing = env[PRIM_REPOSITORY_ENV];
+  if (existing === repository) return settings;
+  if (!force && typeof existing === "string" && parseGithubRepositoryName(existing.trim()))
+    return settings;
+  return { ...settings, env: { ...env, [PRIM_REPOSITORY_ENV]: repository } };
+}
+
+/** Remove the declaration only when it is the one install would write from origin. */
+export function removeRepositoryDeclaration(
+  settings: ClaudeSettings,
+  repository: string | null,
+): ClaudeSettings {
+  if (!repository || !isPlainObject(settings.env)) return settings;
+  if (settings.env[PRIM_REPOSITORY_ENV] !== repository) return settings;
+  const { [PRIM_REPOSITORY_ENV]: _removed, ...env } = settings.env;
+  return { ...settings, env: Object.keys(env).length > 0 ? env : undefined };
+}
+
+/** Project-scope settings after the repository declaration step of install. */
+export function projectSettingsAfterInstall(
+  settings: ClaudeSettings,
+  root: string,
+  force = false,
+): ClaudeSettings {
+  return applyRepositoryDeclaration(settings, originGithubRepository(root), force);
+}
+
+/** Project-scope settings after the repository declaration step of uninstall. */
+export function projectSettingsAfterUninstall(
+  settings: ClaudeSettings,
+  root: string,
+): ClaudeSettings {
+  return removeRepositoryDeclaration(settings, originGithubRepository(root));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function applyInstall(
   settings: ClaudeSettings,
   options: { force?: boolean; statuslineCommand?: string; installStatusline?: boolean } = {},
@@ -698,11 +754,14 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
     scope,
     scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
   );
-  const after = applyInstall(before, {
+  const installed = applyInstall(before, {
     force,
     statuslineCommand: STATUSLINE_COMMAND,
     installStatusline: !blockedByUserStatusline,
   });
+  // User scope spans every repository, so only project scope may declare one.
+  const after =
+    scope === "project" ? projectSettingsAfterInstall(installed, projectRoot(), force) : installed;
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
@@ -722,7 +781,9 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
 export function performUninstall(scope: Scope): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
-  const after = applyUninstall(before);
+  const uninstalled = applyUninstall(before);
+  const after =
+    scope === "project" ? projectSettingsAfterUninstall(uninstalled, projectRoot()) : uninstalled;
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) {
     atomicWrite(path, after);
@@ -817,7 +878,10 @@ export function registerClaudeCommands(program: Command): void {
       "--scope <scope>",
       "project (default, the repo's .claude/settings.json) or user (~/.claude/settings.json)",
     )
-    .option("--force", "Replace any drifted prim hook entries")
+    .option(
+      "--force",
+      "Replace any drifted prim hook entries and a stale PRIM_REPOSITORY declaration",
+    )
     .action((opts: { scope?: string; force?: boolean }) => {
       const scope = resolveScope(opts.scope);
       const result = performInstall(scope, opts.force ?? false);

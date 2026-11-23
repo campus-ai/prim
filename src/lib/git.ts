@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const GIT_TIMEOUT_MS = 1_000;
+const MAX_SETTINGS_BYTES = 1024 * 1024;
 const GITHUB_OWNER_PATTERN = /^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
-const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u;
+const GITHUB_REPOSITORY_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$/u;
 
 /**
  * The repository's top-level working directory for `cwd` (default: process cwd),
@@ -52,7 +53,7 @@ export function mainWorktreeRoot(cwd?: string): string | null {
   }
 }
 
-export type RepositoryIdentitySource = "origin" | "root_commit";
+export type RepositoryIdentitySource = "origin" | "declared" | "root_commit";
 
 export type RepositoryContext = {
   /** Canonical local git worktree root. */
@@ -60,7 +61,7 @@ export type RepositoryContext = {
   /** Opaque, clone-stable repository identity. Absent for an unidentifiable repo. */
   repoKey?: string;
   identitySource?: RepositoryIdentitySource;
-  /** Validated GitHub owner/name when origin is GitHub. */
+  /** Validated GitHub owner/name from a GitHub origin, or else the checkout's declaration. */
   repoFullName?: string;
   /** Existing server-issued local repository binding. */
   repoSyncId?: string;
@@ -85,16 +86,8 @@ export function currentBranch(cwd: string): string | undefined {
   return gitValue(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
 }
 
-/** Return a strict GitHub owner/repository name from origin, never credentials. */
-export function githubRepositoryFullName(cwd: string): string | null {
-  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
-  if (!remote || [...remote].some((char) => char < " " || char === "\u007f")) return null;
-  const match =
-    /^(?:git@github\.com:([^?#]+)|(?:https|ssh):\/\/(?:[^/@]+@)?github\.com(?::\d+)?\/([^?#]+))$/i.exec(
-      remote,
-    );
-  const path = match?.[1] ?? match?.[2];
-  if (!path) return null;
+/** Validate one `owner/name` path; trailing `.git` and edge slashes are ignored. */
+export function parseGithubRepositoryName(path: string): string | null {
   const parts = path
     .replace(/^\/+|\/+$/g, "")
     .replace(/\.git$/i, "")
@@ -107,6 +100,81 @@ export function githubRepositoryFullName(cwd: string): string | null {
     return null;
   }
   return `${parts[0]}/${parts[1]}`;
+}
+
+function githubRepositoryFromRemote(remote: string): string | null {
+  if ([...remote].some((char) => char < " " || char === "\u007f")) return null;
+  const match =
+    /^(?:git@github\.com:([^?#]+)|(?:https|ssh):\/\/(?:[^/@]+@)?github\.com(?::\d+)?\/([^?#]+))$/i.exec(
+      remote,
+    );
+  const path = match?.[1] ?? match?.[2];
+  return path ? parseGithubRepositoryName(path) : null;
+}
+
+/**
+ * Whether origin identifies the repository on its own (a GitHub or other
+ * normalizable remote). Exactly when it does not, a declaration applies.
+ */
+export function originIdentifiesRepository(cwd: string): boolean {
+  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
+  return (
+    remote !== undefined &&
+    Boolean(githubRepositoryFromRemote(remote) || normalizeOriginRemote(remote))
+  );
+}
+
+/** The GitHub repository origin names, never credentials; null when it names none. */
+export function originGithubRepository(cwd: string): string | null {
+  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
+  return remote ? githubRepositoryFromRemote(remote) : null;
+}
+
+/**
+ * The GitHub repository a checkout declares for itself as `env.PRIM_REPOSITORY`
+ * in its `.claude/settings.json` (the working-tree file, normally committed);
+ * `prim claude install --scope project` records it from origin. It is read
+ * from that file, never from the process environment, so a declaration
+ * identifies only the checkout that carries it, the same for every process
+ * that resolves the checkout.
+ */
+export function declaredGithubRepository(repoRoot: string): string | null {
+  const path = join(repoRoot, ".claude", "settings.json");
+  let parsed: unknown;
+  try {
+    // A real directory and a regular file of settings size only: a symlink
+    // could borrow another checkout's identity, and a FIFO or device would
+    // hang the hook reading it.
+    if (!lstatSync(join(repoRoot, ".claude")).isDirectory()) return null;
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return null;
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  const env =
+    typeof parsed === "object" && parsed !== null ? (parsed as { env?: unknown }).env : undefined;
+  const value =
+    typeof env === "object" && env !== null
+      ? (env as Record<string, unknown>).PRIM_REPOSITORY
+      : undefined;
+  return typeof value === "string" ? parseGithubRepositoryName(value.trim()) : null;
+}
+
+/**
+ * Return a strict GitHub owner/repository name, never credentials. A GitHub
+ * origin names it. A declaration applies only when origin cannot identify the
+ * repository at all (a Claude Code cloud bundle upload has no origin), so the
+ * name and the repository key always come from the same source.
+ */
+export function githubRepositoryFullName(cwd: string): string | null {
+  const remote = gitValue(cwd, ["config", "--get", "remote.origin.url"]);
+  if (remote) {
+    const fromOrigin = githubRepositoryFromRemote(remote);
+    if (fromOrigin || normalizeOriginRemote(remote)) return fromOrigin;
+  }
+  const root = gitToplevel(cwd);
+  return root ? declaredGithubRepository(root) : null;
 }
 
 export function canonicalGitRoot(cwd: string): string | null {
@@ -210,6 +278,17 @@ export function resolveRepositoryContext(cwd: string = process.cwd()): Repositor
       repoRoot,
       repoKey: opaqueRepoKey("origin", normalizedOrigin),
       identitySource: "origin",
+      repoFullName,
+    };
+  }
+  // Without a usable origin, the checkout's declaration (the repoFullName
+  // resolved above) keys it exactly as its github.com clone is keyed, so the
+  // identity matches developers' clones.
+  if (repoFullName) {
+    return {
+      repoRoot,
+      repoKey: opaqueRepoKey("origin", `github.com/${repoFullName}`),
+      identitySource: "declared",
       repoFullName,
     };
   }
