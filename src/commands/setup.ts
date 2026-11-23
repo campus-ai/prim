@@ -1,4 +1,5 @@
 import { hasMachineConfiguration, machineContext } from "../lib/machine-credentials.js";
+import { prepareCloudImage, setupCloudSession } from "./setup-cloud.js";
 /**
  * `prim setup` — the whole install in one command.
  *
@@ -422,6 +423,8 @@ type SetupCommandOptions = {
   globalHooksPath?: boolean;
   skipDemo?: boolean;
   details?: boolean;
+  cloud?: boolean;
+  prepare?: boolean;
 };
 
 export function registerSetupCommand(
@@ -450,7 +453,15 @@ export function registerSetupCommand(
     .option("--no-daemon", "stop and disable the companion daemon")
     .option("--details", "show full human installation diagnostics on STDERR")
     .option("--skip-demo", "skip the optional author story and remember that choice")
-    .action((opts: SetupCommandOptions) => {
+    .option(
+      "--cloud",
+      "set up a Claude Code cloud session with machine credentials: git hooks and activation only, no daemon or onboarding",
+    )
+    .option(
+      "--prepare",
+      "with --cloud, stage the hook runtime from the environment's setup script (no credentials or network)",
+    )
+    .action((opts: SetupCommandOptions, command: Command) => {
       const setupAt = Date.now();
       // Explicit --agent wins and is typo-checked (usage error → exit 2, the
       // CLI's convention for rejected input); when omitted, infer from the env so
@@ -470,6 +481,26 @@ export function registerSetupCommand(
       }
       if (opts.scope !== "project" && opts.scope !== "user") {
         process.stderr.write(`[prim] unknown --scope "${opts.scope}" (expected project or user)\n`);
+        (dependencies.exit ?? process.exit)(EXIT_USAGE);
+        return;
+      }
+      if (opts.prepare && !opts.cloud) {
+        process.stderr.write("[prim] --prepare applies only with --cloud\n");
+        (dependencies.exit ?? process.exit)(EXIT_USAGE);
+        return;
+      }
+      // Cloud setup wires Claude Code only, with its own daemon and scope
+      // rules; an explicit flag it would ignore is a usage error, not a no-op.
+      const cloudConflicts = opts.cloud
+        ? [
+            opts.agent !== undefined && agentInput !== "claude" ? "--agent" : undefined,
+            command.getOptionValueSource("scope") === "cli" ? "--scope" : undefined,
+            opts.globalHooksPath ? "--global-hooks-path" : undefined,
+            opts.migrate ? "--migrate" : undefined,
+          ].filter((flag): flag is string => flag !== undefined)
+        : [];
+      if (cloudConflicts.length) {
+        process.stderr.write(`[prim] --cloud does not combine with ${cloudConflicts.join(", ")}\n`);
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
         return;
       }
@@ -499,7 +530,8 @@ export function registerSetupCommand(
           const childArgs = opts.details ? args.filter((arg) => arg !== "--compact") : args;
           const r = spawnSync(process.execPath, [self, ...childArgs], {
             ...setupStepSpawnOptions(capture, process.env, {
-              startsDaemon: opts.daemon,
+              // Cloud setup stops the daemon, so its steps drain for themselves.
+              startsDaemon: opts.daemon && !opts.cloud,
               compact: true,
             }),
             timeout: timeoutMs,
@@ -519,6 +551,13 @@ export function registerSetupCommand(
           process.stderr.write(`[prim] ${msg}\n`);
         });
       const exit = dependencies.exit ?? process.exit;
+      if (opts.cloud) {
+        const cloud = { run, note, exit, parseAuthStatus: parseSetupAuthStatus };
+        if (opts.prepare) prepareCloudImage(cloud);
+        else setupCloudSession(cloud);
+        return;
+      }
+
       // Surface an inferred agent — the install it wires depends on it, and the
       // user can correct a wrong guess with --agent. The claude fallback is the
       // historical default, so it stays silent.
