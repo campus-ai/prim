@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError, getClient } from "../client.js";
 import { clearRepoSyncId, setRepoSyncId, setRepositoryBindingState } from "./activation.js";
-import { githubRepositoryFullName } from "./git.js";
+import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
 import {
   bindRepository,
   bindRepositoryWithClient,
@@ -27,7 +27,10 @@ vi.mock("./activation.js", () => ({
   setRepoSyncId: vi.fn(),
   setRepositoryBindingState: vi.fn(),
 }));
-vi.mock("./git.js", () => ({ githubRepositoryFullName: vi.fn() }));
+vi.mock("./git.js", () => ({
+  githubRepositoryFullName: vi.fn(),
+  originIdentifiesRepository: vi.fn(),
+}));
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -123,8 +126,19 @@ describe("bindRepository", () => {
 
   it("rejects a non-GitHub origin before the request", async () => {
     vi.mocked(githubRepositoryFullName).mockReturnValue(null);
-    await expect(bindRepository("/repo")).rejects.toThrow("origin must be a GitHub");
+    vi.mocked(originIdentifiesRepository).mockReturnValue(true);
+    await expect(bindRepository("/repo")).rejects.toThrow(
+      /^origin must be a GitHub HTTPS\/SSH remote in owner\/name form$/u,
+    );
     expect(vi.mocked(getClient)().post).not.toHaveBeenCalled();
+  });
+
+  it("suggests the committed declaration only where origin cannot identify the repository", async () => {
+    vi.mocked(githubRepositoryFullName).mockReturnValue(null);
+    vi.mocked(originIdentifiesRepository).mockReturnValue(false);
+    await expect(bindRepository("/repo")).rejects.toThrow(
+      "origin does not identify this checkout's repository; commit its repository declaration",
+    );
   });
 
   it.each([{}, { repoSyncId: "" }, { repoSyncId: 1 }, { repoSyncId: "-leading" }])(

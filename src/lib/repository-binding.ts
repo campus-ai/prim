@@ -1,6 +1,6 @@
 import { type CliClient, HttpError, type RequestOptions, getClient } from "../client.js";
 import { isValidRepoSyncId, setRepoSyncId, setRepositoryBindingState } from "./activation.js";
-import { githubRepositoryFullName } from "./git.js";
+import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
 
 type BindResponse = { repoSyncId?: unknown };
 
@@ -18,7 +18,13 @@ export async function resolveRepositoryBindingWithClient(
 ): Promise<RepositoryBindingResult> {
   const repositoryFullName = githubRepositoryFullName(root);
   if (!repositoryFullName) {
-    throw new Error("origin must be a GitHub HTTPS/SSH remote in owner/name form");
+    // A declaration only counts where origin cannot identify the repository
+    // (a Claude Code cloud bundle upload has no origin), so suggest it only there.
+    throw new Error(
+      originIdentifiesRepository(root)
+        ? "origin must be a GitHub HTTPS/SSH remote in owner/name form"
+        : "origin does not identify this checkout's repository; commit its repository declaration (`prim claude install --scope project`, run in a clone whose origin is on GitHub, records PRIM_REPOSITORY in .claude/settings.json)",
+    );
   }
   let response: BindResponse;
   try {
