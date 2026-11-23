@@ -43,6 +43,14 @@ vi.mock("node:fs", async () => {
   };
 });
 
+vi.mock("../lib/developer-enrollment.js", async () => ({
+  ...(await vi.importActual<typeof import("../lib/developer-enrollment.js")>(
+    "../lib/developer-enrollment.js",
+  )),
+  enrollEnvironmentInstallation: vi.fn(),
+  prepareEnvironmentEnrollment: vi.fn(),
+}));
+
 // Login opens a browser via execFile — never do that from a test run.
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -61,6 +69,10 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
+import {
+  enrollEnvironmentInstallation,
+  prepareEnvironmentEnrollment,
+} from "../lib/developer-enrollment.js";
 import {
   discoverWorkosConnect,
   pollWorkosDeviceAuthorization,
@@ -770,5 +782,151 @@ describe("auth status --json", () => {
     expect(human).toContain("Authenticated (verified).");
     expect(human).toContain("Token source: fixed environment credential");
     expect(human).toContain("Refresh token: not applicable");
+  });
+});
+
+describe("auth enroll --new-installation --print-env", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+  });
+
+  function deviceSignIn() {
+    vi.mocked(discoverWorkosConnect).mockResolvedValue({
+      state: "available",
+      configuration: {
+        issuer: "https://auth.example.test",
+        clientId: "client_cli",
+        scopes: ["openid", "offline_access"],
+      },
+    });
+    vi.mocked(requestWorkosDeviceAuthorization).mockResolvedValue({
+      deviceCode: "device-code",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://auth.example.test/device",
+      expiresIn: 600,
+      interval: 5,
+    });
+    vi.mocked(pollWorkosDeviceAuthorization).mockResolvedValue({
+      accessToken: "human-access",
+      refreshToken: "human-refresh",
+      expiresIn: 300,
+    });
+  }
+
+  async function run(args: string[]) {
+    const stdout: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+    await program.parseAsync(["auth", "enroll", ...args], { from: "user" });
+    return {
+      stdout: stdout.join("") + logs.mock.calls.flat().join("\n"),
+      stderr: stderr.mock.calls.flat().join("\n"),
+    };
+  }
+
+  const enrollment = {
+    name: "Claude Code cloud",
+    siteUrl: "https://api.getprimitive.ai",
+    configuration: { issuer: "https://auth.example.com", audience: "client_env" },
+  } as Awaited<ReturnType<typeof prepareEnvironmentEnrollment>>;
+
+  beforeEach(() => {
+    vi.mocked(prepareEnvironmentEnrollment).mockResolvedValue(enrollment);
+  });
+
+  it("signs in without storing the session and prints only .env lines to STDOUT", async () => {
+    deviceSignIn();
+    vi.mocked(enrollEnvironmentInstallation).mockResolvedValue({
+      environment: ["PRIM_M2M_CLIENT_ID=client_cloud", "PRIM_M2M_CLIENT_SECRET=s3cr3t+/="],
+      displayName: "Claude Code cloud",
+      clientId: "client_cloud",
+      clientSecret: "s3cr3t+/=",
+      machineId: "cloud",
+      authorizedUserId: "alex",
+      organizationId: "org",
+    });
+    const { stdout, stderr } = await run([
+      "--new-installation",
+      "Claude Code cloud",
+      "--print-env",
+      "--no-browser",
+    ]);
+    expect(stdout).toBe("PRIM_M2M_CLIENT_ID=client_cloud\nPRIM_M2M_CLIENT_SECRET=s3cr3t+/=\n");
+    expect(prepareEnvironmentEnrollment).toHaveBeenCalledWith("Claude Code cloud");
+    expect(enrollEnvironmentInstallation).toHaveBeenCalledWith(enrollment, "human-access");
+    expect(commitCredentials).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
+    expect(stderr).toContain("ABCD-EFGH");
+    expect(stderr).toContain("Developer installations");
+    expect(stderr).not.toContain("s3cr3t");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it.each([
+    [["--print-env"]],
+    [["--new-installation", "cloud"]],
+    [["--new-installation", "cloud", "--print-env", "--if-supported"]],
+  ])("rejects the incomplete flag set %j before signing in", async (args) => {
+    const { stdout, stderr } = await run(args);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Enrollment failed: invalid_arguments");
+    expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("refuses a bad name or disabled server before anyone signs in", async () => {
+    const { MachineAuthError } = await import("../lib/machine-protocol.js");
+    vi.mocked(prepareEnvironmentEnrollment).mockRejectedValue(
+      new MachineAuthError("invalid_installation_name", "Name the installation."),
+    );
+    const { stdout, stderr } = await run(["--new-installation", " ", "--print-env"]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("invalid_installation_name");
+    expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    expect(enrollEnvironmentInstallation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("keeps STDOUT empty when the sign-in itself fails", async () => {
+    vi.mocked(discoverWorkosConnect).mockRejectedValue(new Error("offline"));
+    const { stdout, stderr } = await run(["--new-installation", "cloud", "--print-env"]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Enrollment failed");
+    expect(enrollEnvironmentInstallation).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports an enrollment refusal without printing credentials", async () => {
+    deviceSignIn();
+    const { MachineAuthError } = await import("../lib/machine-protocol.js");
+    vi.mocked(enrollEnvironmentInstallation).mockRejectedValue(
+      new MachineAuthError("enrollment_unavailable", "Automatic enrollment is not enabled."),
+    );
+    const { stdout, stderr } = await run([
+      "--new-installation",
+      "cloud",
+      "--print-env",
+      "--no-browser",
+    ]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Enrollment failed: enrollment_unavailable");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports an unexpected failure generically, without STDOUT", async () => {
+    deviceSignIn();
+    vi.mocked(enrollEnvironmentInstallation).mockRejectedValue(new TypeError("fetch failed"));
+    const { stdout, stderr } = await run(["--new-installation", "cloud", "--print-env"]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Enrollment failed: enrollment_failed");
+    expect(process.exitCode).toBe(1);
   });
 });

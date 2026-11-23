@@ -232,6 +232,23 @@ describe("client credential store", () => {
     );
   });
 
+  it("pins a caller-held bearer to its origin and never follows a redirect", async () => {
+    process.env.PRIM_TOKEN = "stored-token";
+    const fetchMock = vi.fn((_input: unknown, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse({ ok: true })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getBearerClient } = await import("./client.js");
+    const client = getBearerClient("human-jwt", "https://api-a.example.test");
+
+    await client.post("/api/cli/auth/enrollment/start", {}, { redirect: "follow" });
+
+    const [input, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(input)).toBe("https://api-a.example.test/api/cli/auth/enrollment/start");
+    expect(init?.redirect).toBe("error");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer human-jwt");
+  });
+
   it("pins management mutations and never retries a mint after a 401 response", async () => {
     process.env.PRIM_TOKEN = "fixed-token";
     const fetchMock = vi.fn(() =>

@@ -61,6 +61,11 @@ export const DEFAULT_RULES: ReadonlyArray<RedactionRule> = [
     pattern: /\bAWS_(?:SECRET_ACCESS_KEY|SESSION_TOKEN)"?\s*[:=]\s*["']?[A-Za-z0-9/+=]{20,}["']?/gi,
     reason: "aws-secret",
   },
+  {
+    // `prim auth enroll --print-env` output an agent may write into a file.
+    pattern: /\bPRIM_M2M_CLIENT_SECRET"?\s*[:=]\s*["']?[^\s"']+["']?/g,
+    reason: "prim-m2m-secret",
+  },
   { pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g, reason: "gcp-api-key" },
   {
     pattern: /\bya29\.[0-9A-Za-z_-]{20,}(?![0-9A-Za-z_-])/g,

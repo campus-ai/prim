@@ -49,7 +49,7 @@ import {
 const CONFIG_DIR_MODE = 0o700;
 const CREDENTIAL_FILE_MODE = 0o600;
 const REFRESH_THRESHOLD_MS = 60_000;
-const DEFAULT_API_URL = "https://api.getprimitive.ai";
+export const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
 
 export {
@@ -976,6 +976,36 @@ export async function getPinnedClient(options: RequestOptions = {}): Promise<Cli
     requestOptions?: RequestOptions,
   ): Promise<unknown> =>
     responseValue(await fetchWithToken(method, path, body, requestOptions, token, siteUrl));
+  return {
+    get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
+    post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
+  };
+}
+
+/**
+ * Pin one caller-held bearer token to a caller-validated deployment origin,
+ * bypassing stored credentials. For a human session that exists only in this
+ * process, such as the one that mints another installation's credential; no
+ * refresh, no retry, and no redirects: the token must never follow a response
+ * to another origin.
+ */
+export function getBearerClient(token: string, siteUrl: string): CliClient {
+  const pinnedRequest = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions?: RequestOptions,
+  ): Promise<unknown> =>
+    responseValue(
+      await fetchWithToken(
+        method,
+        path,
+        body,
+        { ...requestOptions, redirect: "error" },
+        token,
+        siteUrl,
+      ),
+    );
   return {
     get: (path, requestOptions) => pinnedRequest("GET", path, undefined, requestOptions),
     post: (path, body, requestOptions) => pinnedRequest("POST", path, body, requestOptions),
