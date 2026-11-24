@@ -11,6 +11,7 @@ import {
   isClaudeCloudSession,
   repositoryIdentityRemedy,
 } from "../lib/cloud-session.js";
+import { resolveStoredCredential } from "../lib/credentials.js";
 import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
@@ -241,9 +242,10 @@ function sessionSteps(
     results.credentials = "failed";
     return;
   }
-  // A fixed bearer token also authenticates prim; only no credential at all
-  // is missing.
-  if (!machine && !env.PRIM_TOKEN?.trim()) {
+  // A fixed bearer token or a stored sign-in also authenticates prim; only no
+  // credential at all is missing. The SessionStart diagnosis asks the same
+  // question the same way, so the two never disagree.
+  if (!machine && !resolveStoredCredential(env)) {
     remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
     results.credentials = "missing";
     return;
@@ -255,7 +257,19 @@ function sessionSteps(
     remedy(
       auth === "unreachable"
         ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
-        : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
+        : machine
+          ? `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`
+          : // A fixed token or stored sign-in has no installation to revoke.
+            `credentials · the sign-in was rejected: ${CLOUD_CREDENTIALS_REMEDY}`,
+    );
+    results.credentials = "failed";
+    return;
+  }
+  // A human sign-in the server accepts only for enrolling an installation
+  // verifies, yet authorizes nothing else, and a cloud session cannot enroll.
+  if (enrollmentRequired(status.stdout)) {
+    remedy(
+      `credentials · this sign-in can only enroll an installation, which a cloud session cannot do: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
     return;
@@ -308,6 +322,17 @@ function sessionSteps(
   step("hooks", "git hooks", ["hooks", "install"]);
   // An unconnected repository fails here; the enable output names the GitHub connection.
   step("enable", "activate this repo", ["enable", "--non-interactive"]);
+}
+
+/** `auth status --json` verified the sign-in for enrollment only. */
+function enrollmentRequired(stdout: string): boolean {
+  try {
+    return (
+      (JSON.parse(stdout || "{}") as { enrollmentRequired?: unknown }).enrollmentRequired === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** The machine credential failure's own guidance from `auth status --json`, if any. */

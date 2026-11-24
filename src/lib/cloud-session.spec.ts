@@ -1,15 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const humanCredential = vi.hoisted(() => ({ value: undefined as { token: string } | undefined }));
-vi.mock("./credentials.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./credentials.js")>()),
-  resolveAuthCredential: () => humanCredential.value,
-}));
-
 import { cloudAllowedDomains, cloudEgressRemedy, diagnoseCloudSession } from "./cloud-session.js";
 
 const API = "https://api.getprimitive.ai";
@@ -38,7 +31,6 @@ function egress(blocked: string[]): typeof fetch {
 
 beforeEach(() => {
   configDir = mkdtempSync(join(tmpdir(), "prim-cloud-session-"));
-  humanCredential.value = undefined;
 });
 afterEach(() => rmSync(configDir, { recursive: true, force: true }));
 
@@ -218,7 +210,7 @@ describe("diagnoseCloudSession", () => {
   });
 
   it("accepts a stored human credential as present", async () => {
-    humanCredential.value = { token: "human" };
+    writeFileSync(join(configDir, "token"), "human\n", { mode: 0o600 });
     const notice = await diagnoseCloudSession({ env: cloudEnv(), fetch: egress([]), siteUrl: API });
     expect(notice).toContain("prim setup --cloud");
   });
