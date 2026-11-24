@@ -3,6 +3,7 @@ import {
   CLOUD_GITHUB_CONNECT_REMEDY,
   isClaudeCloudSession,
 } from "../lib/cloud-env.js";
+import { isCloudMachineSession } from "../lib/cloud-session.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { verifyAuthStatus } from "./auth.js";
 /**
@@ -599,8 +600,8 @@ export function classifyRepositoryBinding(
 ): Check {
   const connectionCapabilities =
     "It enables repository-specific file attribution, Conflict Gate verification, and commit correlation.";
-  // The connection is made in a browser, which a cloud VM does not have.
-  const cloud = isClaudeCloudSession();
+  // The connection is made in a browser, as a person; a machine cannot.
+  const cloud = isCloudMachineSession();
   if (current.status === "unbound") {
     if (!active) {
       return {

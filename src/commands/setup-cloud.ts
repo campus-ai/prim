@@ -1,5 +1,5 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY, CLOUD_SETUP_POINTER } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -12,6 +12,7 @@ import {
   cloudAllowedDomains,
   cloudEgressRemedy,
   isClaudeCloudSession,
+  isCloudMachineSession,
   repositoryIdentityRemedy,
 } from "../lib/cloud-session.js";
 import { resolveStoredCredential } from "../lib/credentials.js";
@@ -19,7 +20,7 @@ import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
-import { clearMachineCooldowns } from "../lib/machine-retry.js";
+import { SERVER_WAIT_PREFIX, clearMachineCooldowns } from "../lib/machine-retry.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
@@ -320,7 +321,7 @@ function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean
     const detail = authFailureDetail(status.stdout);
     remedy(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
+        ? unreachableRemedy(detail, env)
         : machine
           ? `credentials · ${detail ?? "rejected"}${
               // Guidance that already names the replacement needs no second copy.
@@ -380,14 +381,14 @@ function repositoryRoot(
 /** Whether Claude Code has prim's hooks loaded for this repository. */
 function sessionHooks(
   { deps, results, remedy, env }: SessionCheck,
-  root: string,
+  root: string | undefined,
   options: { preparedNow?: boolean },
 ): void {
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
   const pendingHooks = options.preparedNow === true || preparedInSession(env);
   if (
-    hasProjectPrimInstall(root) ||
+    (root !== undefined && hasProjectPrimInstall(root)) ||
     (!pendingHooks &&
       isPreparedCloudSession(env) &&
       (deps.userHooksComplete ?? cloudUserInstallComplete)())
@@ -402,7 +403,12 @@ function sessionHooks(
     results.session = "missing";
   } else {
     remedy(
-      "session hooks · none: run `prim setup --cloud --prepare` in the environment's setup script, or commit `prim claude install --scope project` in this repository",
+      `session hooks · none: run \`prim setup --cloud --prepare\` in the environment's setup script${
+        // Outside a repository there is nothing to commit an install to.
+        root === undefined
+          ? ""
+          : ", or commit `prim claude install --scope project` in this repository"
+      }`,
     );
     results.session = "missing";
   }
@@ -428,7 +434,9 @@ function sessionSteps(
   const check: SessionCheck = { deps, results, remedy, env: deps.env ?? process.env };
   const credentials = credentialsReady(check);
   const root = repositoryRoot(check, outcome);
-  if (root) sessionHooks(check, root, options);
+  // Whether the environment's image carries the hooks needs no repository; a
+  // repository that opts out wants nothing set up, so nothing is judged for it.
+  if (!outcome.optedOut) sessionHooks(check, root ?? gitToplevel(deps.cwd) ?? undefined, options);
   if (!credentials || !root) return;
 
   const step = (key: string, label: string, args: string[]): void => {
@@ -440,8 +448,9 @@ function sessionSteps(
   // Preparing in this session already recorded the daemon opt-out.
   if (results.daemon === undefined) step("daemon", "", ["daemon", "stop"]);
   step("hooks", "git hooks", ["hooks", "install"]);
-  // An unconnected repository fails here, and no command in a cloud session
-  // can connect it: name the fix rather than a command to run for the reason.
+  // An unconnected repository fails here. A machine cannot connect it from
+  // the session, and a person's sign-in can only print the link: name the fix
+  // either way rather than a command to run for the reason.
   deps.note("activate this repo · installing…");
   const enabled = deps.run(["enable", "--non-interactive"]);
   results.enable = enabled.code === 0 ? "ok" : "failed";
@@ -449,10 +458,27 @@ function sessionSteps(
     const unconnected = unconnectedRepository(enabled.stdout);
     remedy(
       unconnected
-        ? `repository · ${unconnected} is not connected to Primitive: ${CLOUD_GITHUB_CONNECT_REMEDY}`
+        ? `repository · ${unconnected} is not connected to Primitive: ${
+            isCloudMachineSession(deps.env ?? process.env)
+              ? CLOUD_GITHUB_CONNECT_REMEDY
+              : "run `prim github connect --no-browser` and open the link it prints"
+          }`
         : "activate this repo · failed; run `prim enable --non-interactive` to see why",
     );
   }
+}
+
+/**
+ * Why the credential check could not reach Primitive, said once. A wait the
+ * sign-in service asked for is not a network fault, and no setting ends it.
+ * A failure that names the host it could not reach keeps that host, which may
+ * not be the default one, and adds the full list instead of repeating the fix.
+ */
+function unreachableRemedy(detail: string | undefined, env: NodeJS.ProcessEnv): string {
+  if (detail?.startsWith(SERVER_WAIT_PREFIX)) return `credentials · ${detail}`;
+  if (detail?.includes("Allowed domains"))
+    return `credentials · ${detail}; prim needs ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} allowed`;
+  return `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`;
 }
 
 /** The repository `enable --non-interactive` reported as not connected, if that is why it failed. */
@@ -485,8 +511,12 @@ function enrollmentRequired(stdout: string): boolean {
 function authFailureDetail(stdout: string): string | undefined {
   try {
     const parsed = JSON.parse(stdout || "{}") as { recoveryDetail?: unknown };
+    // A message that points at cloud setup is relayed without the pointer:
+    // this is cloud setup.
     return typeof parsed.recoveryDetail === "string"
-      ? stripControlChars(parsed.recoveryDetail).replace(/\.$/u, "")
+      ? stripControlChars(parsed.recoveryDetail)
+          .replace(CLOUD_SETUP_POINTER, "")
+          .replace(/\.$/u, "")
       : undefined;
   } catch {
     return undefined;

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { discoverMachineConfiguration, rejectedCredentialsMessage } from "./machine-protocol.js";
+import {
+  discoverMachineConfiguration,
+  rejectedCredentialsMessage,
+  verifyMachineIdentity,
+} from "./machine-protocol.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -24,6 +28,20 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
       discoverMachineConfiguration("https://api.example.com", undefined, unreachable),
     ).rejects.toMatchObject({
       message: "Machine authentication is temporarily unavailable. Check the connection and retry.",
+    });
+  });
+
+  it("says the same when the API, not the token service, rejects the machine", async () => {
+    const forbidden = (async () => new Response("{}", { status: 403 })) as unknown as typeof fetch;
+    const verify = () =>
+      verifyMachineIdentity("https://api.example.com", "token", "client_1", undefined, forbidden);
+    await expect(verify()).rejects.toMatchObject({
+      message: expect.stringContaining("Ask your administrator"),
+    });
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    await expect(verify()).rejects.toMatchObject({
+      code: "machine_access_rejected",
+      message: expect.stringContaining("The cloud environment's credentials were rejected"),
     });
   });
 
