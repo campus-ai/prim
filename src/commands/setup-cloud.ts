@@ -127,8 +127,9 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "session")) return;
   const results: CloudResults = {};
   const remedies: string[] = [];
-  const optedOut = sessionSteps(deps, results, remedies);
-  finish(deps, "session", results, remedies, optedOut);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, {}, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
 }
 
 /**
@@ -156,8 +157,9 @@ export function setupDetectedCloudSession(deps: CloudSetupDependencies): void {
     prepareSteps(deps, results, remedies, "session");
     preparedNow = results.prepared === "ok";
   }
-  const optedOut = sessionSteps(deps, results, remedies, { preparedNow });
-  finish(deps, "session", results, remedies, optedOut);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, { preparedNow }, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
 }
 
 /**
@@ -235,16 +237,20 @@ function prepareSteps(
     );
 }
 
-/**
- * The per-session steps; a missing prerequisite stops the rest. Returns true
- * when the repository commits its own opt-out and nothing was activated.
- */
+/** What the session steps found beyond each step's own result. */
+type SessionOutcome = {
+  /** The repository commits its own opt-out and nothing was activated. */
+  optedOut?: boolean;
+};
+
+/** The per-session steps; a missing prerequisite stops the rest. */
 function sessionSteps(
   deps: CloudSetupDependencies,
   results: CloudResults,
   remedies: string[],
   options: { preparedNow?: boolean } = {},
-): boolean {
+  outcome: SessionOutcome = {},
+): void {
   const remedy = (message: string): void => {
     deps.note(message);
     remedies.push(message);
@@ -256,14 +262,14 @@ function sessionSteps(
   } catch (error) {
     remedy(`credentials · ${error instanceof MachineAuthError ? error.message : String(error)}`);
     results.credentials = "failed";
-    return false;
+    return;
   }
   // A fixed bearer token also authenticates prim; only no credential at all
   // is missing.
   if (!machine && !env.PRIM_TOKEN?.trim()) {
     remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
     results.credentials = "missing";
-    return false;
+    return;
   }
   const status = deps.run(["auth", "status", "--json"], true);
   const auth = deps.parseAuthStatus(status);
@@ -275,7 +281,7 @@ function sessionSteps(
         : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
     );
     results.credentials = "failed";
-    return false;
+    return;
   }
   results.credentials = "ok";
 
@@ -283,7 +289,7 @@ function sessionSteps(
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
-    return false;
+    return;
   }
   // The repository's committed opt-out is its answer to a prepared environment
   // (and to this command, which the documented agent prompt runs): leave it
@@ -293,12 +299,13 @@ function sessionSteps(
       "repository · opted out: its .claude/settings.json declares PRIM_ACTIVE=false, so prim stays off here. `prim enable` turns it on for this session's clone; `prim enable --scope project` removes the opt-out",
     );
     results.repository = "ok";
-    return true;
+    outcome.optedOut = true;
+    return;
   }
   if (!githubRepositoryFullName(root)) {
     remedy(`repository · ${repositoryIdentityRemedy(root)}`);
     results.repository = "missing";
-    return false;
+    return;
   }
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
@@ -335,7 +342,6 @@ function sessionSteps(
   step("hooks", "git hooks", ["hooks", "install"]);
   // An unconnected repository fails here; the enable output names the GitHub connection.
   step("enable", "activate this repo", ["enable", "--non-interactive"]);
-  return false;
 }
 
 /** The machine credential failure's own guidance from `auth status --json`, if any. */
