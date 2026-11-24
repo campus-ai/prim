@@ -52,7 +52,10 @@ type Integration = {
   scope: Scope;
   file: () => string;
   uninstall: () => Promise<{ changed: boolean }>;
-  installed: () => Promise<unknown>;
+  /** Settings holding only prim's entries, the keys they sit under, and what uninstall leaves. */
+  installed: () => Promise<object>;
+  holds: string[];
+  emptied: object;
 };
 
 const base = (scope: Scope): string => (scope === "project" ? repo : home);
@@ -63,7 +66,12 @@ const integrations: Integration[] = (["project", "user"] as const).flatMap((scop
     scope,
     file: () => join(base(scope), ".claude", "settings.json"),
     uninstall: async () => (await import("./claude-install.js")).performUninstall(scope),
-    installed: async () => (await import("./claude-install.js")).applyInstall({}),
+    installed: async () => {
+      const claude = await import("./claude-install.js");
+      return claude.applyAutoModeTrust(claude.applyInstall({}));
+    },
+    holds: ["autoMode", "hooks", "permissions", "statusLine"],
+    emptied: { hooks: {} },
   },
   {
     name: "Codex",
@@ -71,6 +79,8 @@ const integrations: Integration[] = (["project", "user"] as const).flatMap((scop
     file: () => join(base(scope), ".codex", "hooks.json"),
     uninstall: async () => (await import("./codex-install.js")).performUninstall(scope),
     installed: async () => (await import("./codex-install.js")).applyInstall({}),
+    holds: ["hooks"],
+    emptied: { hooks: {} },
   },
   {
     name: "Cursor",
@@ -78,24 +88,25 @@ const integrations: Integration[] = (["project", "user"] as const).flatMap((scop
     file: () => join(base(scope), ".cursor", "hooks.json"),
     uninstall: async () => (await import("./cursor-install.js")).performUninstall(scope),
     installed: async () => (await import("./cursor-install.js")).applyCursorInstall({}, scope),
+    holds: ["hooks", "version"],
+    emptied: { version: 1, hooks: {} },
   },
 ]);
+// Titled by a plain string: `$name` would print each value quoted.
+const cases = integrations.map((entry) => [`${entry.name} ${entry.scope}`, entry] as const);
 
 describe("uninstalling an integration that is not installed", () => {
-  it.each(integrations)(
-    "$name $scope scope creates no file and no directory",
-    async ({ uninstall }) => {
-      const result = await uninstall();
+  it.each(cases)("%s scope creates no file and no directory", async (_title, { uninstall }) => {
+    const result = await uninstall();
 
-      expect(result.changed).toBe(false);
-      expect(readdirSync(repo)).toEqual([".git"]);
-      expect(readdirSync(home)).toEqual([]);
-    },
-  );
+    expect(result.changed).toBe(false);
+    expect(readdirSync(repo)).toEqual([".git"]);
+    expect(readdirSync(home)).toEqual([]);
+  });
 
-  it.each(integrations)(
-    "$name $scope scope leaves a file holding nothing of prim's untouched",
-    async ({ file, uninstall }) => {
+  it.each(cases)(
+    "%s scope leaves a file holding nothing of prim's untouched",
+    async (_title, { file, uninstall }) => {
       // Compact and unterminated, so any rewrite changes the bytes.
       const foreign = '{"custom":true}';
       mkdirSync(dirname(file()), { recursive: true });
@@ -108,22 +119,64 @@ describe("uninstalling an integration that is not installed", () => {
     },
   );
 
-  it.each(integrations)(
-    "$name $scope scope still empties a file holding only prim's entries",
-    async ({ file, uninstall, installed }) => {
+  it.each(cases)(
+    "%s scope still empties a file holding only prim's entries, and keeps the file",
+    async (_title, { file, uninstall, installed, holds, emptied }) => {
+      const settings = await installed();
+      expect(Object.keys(settings).sort()).toEqual(holds);
       mkdirSync(dirname(file()), { recursive: true });
-      writeFileSync(file(), JSON.stringify(await installed()));
+      writeFileSync(file(), JSON.stringify(settings));
 
       const result = await uninstall();
 
       expect(result.changed).toBe(true);
-      expect(JSON.parse(readFileSync(file(), "utf8")).hooks).toEqual({});
+      // The whole file: for Claude Code that is the statusline, the permission
+      // rule and the auto-mode trust gone along with the hooks.
+      expect(JSON.parse(readFileSync(file(), "utf8"))).toEqual(emptied);
     },
   );
 });
 
-describe("prim uninstall where nothing is installed", () => {
-  it("leaves a clean checkout and an empty home exactly as it found them", async () => {
+// Claude Code's settings carry prim content outside `hooks`, so a file can hold
+// some of it and no `hooks` key at all. Uninstall must still find and remove it.
+describe("uninstalling Claude Code content from a file with no hooks key", () => {
+  const settingsFile = (scope: Scope): string => join(base(scope), ".claude", "settings.json");
+
+  it.each(["project", "user"] as const)(
+    "%s scope removes prim's statusline and keeps the rest of the file",
+    async (scope) => {
+      const claude = await import("./claude-install.js");
+      const { statusLine } = claude.applyInstall({});
+      expect(statusLine).toBeDefined();
+      mkdirSync(dirname(settingsFile(scope)), { recursive: true });
+      writeFileSync(settingsFile(scope), JSON.stringify({ model: "opus", statusLine }));
+
+      const result = claude.performUninstall(scope);
+
+      expect(result.changed).toBe(true);
+      expect(result.statusline).toBe(false);
+      expect(readFileSync(settingsFile(scope), "utf8")).toBe('{\n  "model": "opus"\n}\n');
+    },
+  );
+
+  it.each(["project", "user"] as const)(
+    "%s scope removes a pre-authorization that was never followed by an install",
+    async (scope) => {
+      const claude = await import("./claude-install.js");
+      claude.performPermissionInstall(scope);
+      const written = JSON.parse(readFileSync(settingsFile(scope), "utf8"));
+      expect(Object.keys(written).sort()).toEqual(["autoMode", "permissions"]);
+
+      const result = claude.performUninstall(scope);
+
+      expect(result.changed).toBe(true);
+      expect(readFileSync(settingsFile(scope), "utf8")).toBe("{}\n");
+    },
+  );
+});
+
+describe("prim uninstall's agent integration steps where nothing is installed", () => {
+  it("create nothing in the checkout or under HOME", async () => {
     const { registerUninstallCommand } = await import("./uninstall.js");
     const claude = await import("./claude-install.js");
     const codex = await import("./codex-install.js");
