@@ -788,11 +788,12 @@ describe("agent contract in cloud setup output", () => {
 
   it("relays a failure's own advice once, and never a pointer back at itself", () => {
     const blocked =
-      "Machine authentication could not reach signin.getprimitive.ai. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).";
+      "Machine authentication could not reach signin.staging.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).";
     const cooling =
       "Machine authentication is cooling down after a temporary failure; in this Claude Code cloud session, run `prim setup --cloud` for the fix";
     for (const [recoveryDetail, relayed] of [
-      [blocked, undefined],
+      // The host that failed is kept; it need not be the default one.
+      [blocked, "could not reach signin.staging.example.com"],
       [cooling, "(Machine authentication is cooling down after a temporary failure)"],
     ] as const) {
       const { deps, notes } = harness({
@@ -804,8 +805,55 @@ describe("agent contract in cloud setup output", () => {
       const line = notes.find((note) => note.startsWith("credentials ·")) ?? "";
       expect(line.match(/Allowed domains/gu)).toHaveLength(1);
       expect(line).not.toContain("run `prim setup --cloud`");
-      if (relayed) expect(line).toContain(relayed);
+      expect(line).toContain(relayed);
     }
+  });
+
+  it("does not blame the network for a wait the sign-in service asked for", () => {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      parseAuthStatus: () => "unreachable",
+      run: () => ({
+        code: 2,
+        stdout: JSON.stringify({
+          recoveryDetail: "The sign-in service asked prim to wait; retry in about 290s",
+        }),
+      }),
+    });
+    setupCloudSession(deps);
+    expect(notes).toContain(
+      "credentials · The sign-in service asked prim to wait; retry in about 290s",
+    );
+    expect(notes.join("\n")).not.toContain("Allowed domains");
+  });
+
+  it("gives a person's sign-in the link it can use, where a machine is sent home", () => {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_TOKEN: "person-token" },
+      run: (args) =>
+        args[0] === "enable"
+          ? {
+              code: 1,
+              stdout: JSON.stringify({
+                bindingStatus: "unbound",
+                repositoryFullName: "campus-ai/demo-app",
+              }),
+            }
+          : { code: 0, stdout: "{}" },
+    });
+    setupCloudSession(deps);
+    expect(notes).toContain(
+      "repository · campus-ai/demo-app is not connected to Primitive: run `prim github connect --no-browser` and open the link it prints",
+    );
+  });
+
+  it("offers no commit where there is no repository to commit to", () => {
+    const { deps, notes } = harness({ cwd: tempDir("prim-cloud-norepo-") });
+    setupCloudSession(deps);
+    expect(notes).toContain(
+      "session hooks · none: run `prim setup --cloud --prepare` in the environment's setup script",
+    );
   });
 
   it("names the missing setup script alongside a rejected credential", () => {

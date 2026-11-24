@@ -35,6 +35,15 @@ export function clearMachineCooldowns(directory: string): void {
   }
 }
 
+/**
+ * How a wait the server asked for begins. It is neither prim's backoff nor a
+ * network fault, so nothing about the environment fixes it: only the wait does.
+ */
+export const SERVER_WAIT_PREFIX = "The sign-in service asked prim to wait";
+
+/** A Retry-After is honoured, but not one that would outlast the session by years. */
+const MAX_SERVER_WAIT_MS = 15 * 60_000;
+
 /** Call while holding credentials.lock. This file contains no credentials or tokens. */
 export async function withMachineCooldown<T>(
   directory: string,
@@ -46,7 +55,10 @@ export async function withMachineCooldown<T>(
   signal?.throwIfAborted();
   const key = createHash("sha256").update(`${apiUrl}\0${clientId}`).digest("hex");
   const path = join(directory, `machine_retry_${key}.json`);
-  let state = { failures: 0, retryAt: 0 };
+  let state: { failures: number; retryAt: number; serverRetryAfter?: unknown } = {
+    failures: 0,
+    retryAt: 0,
+  };
   try {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.size > 1024) throw new Error("Invalid retry state");
@@ -67,11 +79,14 @@ export async function withMachineCooldown<T>(
   if (state.retryAt > Date.now())
     throw new MachineAuthError(
       "token_service_unavailable",
-      // The cooldown hides the failure that started it; cloud setup retries
-      // at once and names the cause.
-      isClaudeCloudSession()
-        ? cloudSetupPointer("Machine authentication is cooling down after a temporary failure")
-        : "Machine authentication is cooling down after a temporary failure. Retry later.",
+      !isClaudeCloudSession()
+        ? "Machine authentication is cooling down after a temporary failure. Retry later."
+        : state.serverRetryAfter === true
+          ? // Cloud setup keeps this wait too, so pointing at it would loop.
+            `${SERVER_WAIT_PREFIX}; retry in about ${Math.ceil((state.retryAt - Date.now()) / 1000)}s`
+          : // The cooldown hides the failure that started it; cloud setup
+            // retries at once and names the cause.
+            cloudSetupPointer("Machine authentication is cooling down after a temporary failure"),
       false,
       state.retryAt,
     );
@@ -92,7 +107,10 @@ export async function withMachineCooldown<T>(
     ) {
       const failures = Math.min(16, state.failures + 1);
       const backoff = Math.min(60_000, 1000 * 2 ** (failures - 1));
-      const retryAt = error.retryAt ?? Date.now() + Math.ceil(backoff * (1 + Math.random()));
+      const retryAt =
+        error.retryAt === undefined
+          ? Date.now() + Math.ceil(backoff * (1 + Math.random()))
+          : Math.min(error.retryAt, Date.now() + MAX_SERVER_WAIT_MS);
       atomicWriteFile(
         path,
         JSON.stringify({

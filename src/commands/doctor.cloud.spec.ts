@@ -54,6 +54,17 @@ describe("doctor guidance in Claude Code cloud sessions", () => {
     }
   });
 
+  it("keeps the direct command for a cloud session carrying a person's own token", () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_CONFIG_DIR", "/nonexistent/prim-config");
+    for (const name of ["PRIM_M2M_CLIENT_ID", "PRIM_M2M_CLIENT_SECRET", "PRIM_M2M_CLIENT_AUTH"])
+      vi.stubEnv(name, undefined);
+    vi.stubEnv("PRIM_TOKEN", "person-token");
+    expect(classifyRepositoryBinding(undefined, unbound, true).detail).toContain(
+      "Run `prim github connect` to complete it.",
+    );
+  });
+
   it("keeps the direct command on a developer machine", () => {
     expect(classifyRepositoryBinding(undefined, unbound, true).detail).toContain(
       "Run `prim github connect` to complete it.",

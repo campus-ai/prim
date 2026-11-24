@@ -77,6 +77,7 @@ beforeEach(() => {
 afterEach(() => {
   process.exitCode = ORIGINAL_EXIT_CODE;
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("prim github connect", () => {
@@ -149,7 +150,6 @@ describe("prim github connect", () => {
       `[prim] GitHub repo connection is required for ${UNBOUND.repositoryFullName} and cannot be completed from a Claude Code cloud session: run \`prim github connect\` in a clone of it on your own machine, then start a new cloud session\n`,
     );
     expect(process.exitCode).toBe(2);
-    vi.unstubAllEnvs();
   });
 
   it("still offers the installation to a cloud session carrying a person's own token", async () => {
@@ -170,7 +170,6 @@ describe("prim github connect", () => {
 
     expect(deps.createInstallIntent).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(0);
-    vi.unstubAllEnvs();
   });
 
   it("runs the canonical intent, browser, poll, and final binding sequence on one pinned client", async () => {

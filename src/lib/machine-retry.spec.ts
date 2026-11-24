@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -80,6 +80,46 @@ describe("machine cooldown", () => {
     const request = vi.fn();
     await expect(attempt(directory, request)).rejects.toMatchObject({ retryAt });
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("marks only a wait the server asked for, so prim's own backoff is still cleared", async () => {
+    const directory = tempDir();
+    await attempt(directory, () => {
+      throw new MachineAuthError("authentication_unavailable", "unreachable");
+    }).catch(() => undefined);
+    expect(JSON.parse(readFileSync(cooldownPath(directory), "utf8"))).not.toHaveProperty(
+      "serverRetryAfter",
+    );
+
+    clearMachineCooldowns(directory);
+    await expect(attempt(directory, async () => "token")).resolves.toBe("token");
+  });
+
+  it("says a server's wait is a wait, with how long, and points nowhere", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const directory = tempDir();
+    coolDown(directory, { serverRetryAfter: true });
+    await expect(attempt(directory, vi.fn())).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /^The sign-in service asked prim to wait; retry in about (59|60)s$/u,
+      ),
+    });
+  });
+
+  it("honours a server's wait only up to fifteen minutes", async () => {
+    const directory = tempDir();
+    const before = Date.now();
+    await attempt(directory, () => {
+      throw new MachineAuthError(
+        "token_service_unavailable",
+        "busy",
+        false,
+        before + 86_400_000_000,
+      );
+    }).catch(() => undefined);
+    const { retryAt } = JSON.parse(readFileSync(cooldownPath(directory), "utf8"));
+    expect(retryAt).toBeGreaterThanOrEqual(before + 15 * 60_000);
+    expect(retryAt).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
   });
 
   it("clears nothing, and does not throw, where there is no config directory", () => {
