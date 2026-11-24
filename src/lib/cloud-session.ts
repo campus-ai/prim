@@ -2,7 +2,7 @@ import { getSiteUrl } from "../client.js";
 import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
 import { resolveStoredCredential } from "./credentials.js";
 import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
-import { hasMachineConfiguration } from "./machine-credentials.js";
+import { NETWORK_TOKEN_AUTH, hasMachineConfiguration } from "./machine-credentials.js";
 import { MachineAuthError, machineApiUrl } from "./machine-protocol.js";
 
 export { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession };
@@ -31,16 +31,26 @@ function hostOf(url: string, fallback: string): string {
   }
 }
 
-/** The hosts a cloud environment's network allowlist must include for prim. */
+/**
+ * The hosts a cloud environment's network allowlist must include for prim.
+ * With a proxy-held token (network-token) prim never contacts the sign-in
+ * service: the proxy does, from outside the VM.
+ */
 export function cloudAllowedDomains(
   siteUrl: string = getSiteUrl(),
   signInHost: string = PRODUCTION_SIGN_IN_HOST,
+  env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  return [...new Set([hostOf(siteUrl, "api.getprimitive.ai"), signInHost])];
+  const api = hostOf(siteUrl, "api.getprimitive.ai");
+  return env.PRIM_M2M_CLIENT_AUTH === NETWORK_TOKEN_AUTH ? [api] : [...new Set([api, signInHost])];
 }
 
-export function cloudEgressRemedy(siteUrl?: string, signInHost?: string): string {
-  return `add ${cloudAllowedDomains(siteUrl, signInHost).join(" and ")} to the cloud environment's Allowed domains (Network access: Limited)`;
+export function cloudEgressRemedy(
+  siteUrl?: string,
+  signInHost?: string,
+  env?: NodeJS.ProcessEnv,
+): string {
+  return `add ${cloudAllowedDomains(siteUrl, signInHost, env).join(" and ")} to the cloud environment's Allowed domains (Network access: Limited)`;
 }
 
 type ProbeResult = { ok: true; response: Response } | { ok: false; failure: string };
@@ -119,8 +129,8 @@ export async function diagnoseCloudSession(
   const siteUrl = options.siteUrl ?? getSiteUrl();
   const config = await probe(`${siteUrl.replace(/\/+$/u, "")}/api/cli/auth/m2m/config`, fetchImpl);
   if (!config.ok)
-    return `${prefix}: ${unreachable("Primitive", config.failure, cloudEgressRemedy(siteUrl))}`;
-  if (machine) {
+    return `${prefix}: ${unreachable("Primitive", config.failure, cloudEgressRemedy(siteUrl, undefined, env))}`;
+  if (machine && env.PRIM_M2M_CLIENT_AUTH !== NETWORK_TOKEN_AUTH) {
     let issuer: string | undefined;
     try {
       const body = (await config.response.json()) as { issuer?: unknown };

@@ -321,3 +321,68 @@ export async function verifyMachineIdentity(
   }
   return parseMachineIdentity(await readMachineJson(response, 16 * 1024), clientId);
 }
+
+/**
+ * Read the API's answer to an identity check whose request carried no token:
+ * in network-token mode the cloud environment's proxy attaches it. A refusal
+ * therefore points at that proxy's network secret, not at a credential prim
+ * holds, and a verified identity for another client means the secret's
+ * client ID and PRIM_M2M_CLIENT_ID differ.
+ */
+export function parseInjectedMachineIdentity(
+  status: number,
+  value: unknown,
+  apiUrl: string,
+  clientId: string,
+): MachineIdentity {
+  const rejected = () =>
+    new MachineAuthError(
+      "network_token_rejected",
+      `Primitive did not accept this machine: the cloud environment's proxy attached no token it accepts, or the installation was revoked. Check the environment's OAuth 2.0 client credentials network secret: allowed website ${new URL(apiUrl).hostname}, the client ID (${clientId}), the client secret, and the token URL.`,
+      true,
+    );
+  if (status === 401 || status === 403) throw rejected();
+  if (status < 200 || status > 299)
+    throw new MachineAuthError(
+      "verification_unavailable",
+      "Machine verification is temporarily unavailable.",
+    );
+  let data: Record<string, unknown>;
+  try {
+    data = machineRecord(value);
+  } catch {
+    throw new MachineAuthError("invalid_response", "Invalid machine authentication response.");
+  }
+  if (data.authenticated !== true) throw rejected();
+  const principal =
+    data.principal && typeof data.principal === "object"
+      ? (data.principal as Record<string, unknown>)
+      : {};
+  if (
+    principal.kind === "machine" &&
+    typeof principal.clientId === "string" &&
+    principal.clientId !== clientId
+  )
+    throw new MachineAuthError(
+      "network_secret_mismatch",
+      `The proxy's token belongs to another machine. Check that the network secret's client ID equals PRIM_M2M_CLIENT_ID (${clientId}).`,
+      true,
+    );
+  return parseMachineIdentity(data, clientId);
+}
+
+/** Verify the identity the cloud environment's proxy authenticates this machine as. */
+export async function verifyInjectedMachineIdentity(
+  apiUrl: string,
+  clientId: string,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<MachineIdentity> {
+  const response = await fetchMachine(
+    `${machineApiUrl(apiUrl)}/api/cli/auth/status`,
+    { redirect: "error", signal: machineSignal(signal) },
+    fetchImpl,
+  );
+  const value = response.ok ? await readMachineJson(response, 16 * 1024) : undefined;
+  return parseInjectedMachineIdentity(response.status, value, apiUrl, clientId);
+}

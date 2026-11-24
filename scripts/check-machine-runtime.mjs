@@ -24,6 +24,12 @@ let daemon;
 let api;
 let provider;
 let proxy;
+let injectedApi;
+// Set while the stand-in proxy plays an "OAuth 2.0 client credentials" network
+// secret: it attaches the token to API requests, which this models by handing
+// them to a face of the API that needs none.
+let injecting = false;
+const injectedPaths = [];
 const tunnels = [];
 let proxyConnections = 0;
 const pids = new Set();
@@ -88,10 +94,19 @@ try {
   provider.listen(0, "127.0.0.1");
   await once(provider, "listening");
   const issuer = `https://127.0.0.1:${provider.address().port}`;
-  api = httpServer((req, res) => {
+  const serveApi = (viaInjectingProxy) => (req, res) => {
     res.setHeader("Content-Type", "application/json");
     if (req.url.endsWith("/m2m/config")) {
       res.end(JSON.stringify({ protocol_version: 1, issuer, audience: "client_environment" }));
+      return;
+    }
+    if (viaInjectingProxy) {
+      // The proxy attaches the token after the request leaves the VM; what
+      // prim itself sent must carry none.
+      assert.equal(req.headers.authorization, undefined, "prim must send no credential");
+      injectedPaths.push(req.url);
+    } else if (!req.headers.authorization?.startsWith("Bearer ")) {
+      res.writeHead(401).end("{}");
       return;
     }
     if (req.url.endsWith("/auth/status")) {
@@ -120,9 +135,13 @@ try {
       return;
     }
     res.end(JSON.stringify({ decisions: [], hasMore: false }));
-  });
+  };
+  api = httpServer(serveApi(false));
   api.listen(0, "127.0.0.1");
   await once(api, "listening");
+  injectedApi = httpServer(serveApi(true));
+  injectedApi.listen(0, "127.0.0.1");
+  await once(injectedApi, "listening");
   await mkdir(source);
   await cp(resolve("dist/hook-runtime"), join(source, "dist"), { recursive: true });
   const { writeFile } = await import("node:fs/promises");
@@ -191,6 +210,12 @@ try {
   // passes it on. The real one adds the client secret on the way. A client
   // may open a CONNECT tunnel, or hand a plain-HTTP request over whole with
   // the full URL on its request line; both are a request "through the proxy".
+  // While it plays a token-attaching secret, the proxy hands API requests to
+  // the face of the API that needs no token, whichever way they arrive.
+  const proxiedPort = (requested) =>
+    injecting && Number(requested) === api.address().port
+      ? injectedApi.address().port
+      : Number(requested);
   proxy = httpServer((request, response) => {
     let target;
     try {
@@ -201,11 +226,12 @@ try {
       return;
     }
     tunnels.push(target.host);
+    const port = proxiedPort(target.port || 80);
     const { "proxy-connection": _hop, "proxy-authorization": _auth, ...headers } = request.headers;
     const upstream = httpRequest(
       {
         host: target.hostname,
-        port: target.port || 80,
+        port,
         method: request.method,
         path: `${target.pathname}${target.search}`,
         headers,
@@ -224,8 +250,9 @@ try {
   proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
     tunnels.push(request.url);
-    const [host, port] = request.url.split(":");
-    const upstream = connect(Number(port), host, () => {
+    const [host, requested] = request.url.split(":");
+    const port = proxiedPort(requested);
+    const upstream = connect(port, host, () => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       upstream.write(head);
       upstream.pipe(socket);
@@ -288,6 +315,50 @@ try {
   const keys = (await readdir(config)).filter((name) => name.endsWith(".key"));
   assert.equal(keys.length, 1, "network-secret processes must agree on one broker key");
   reports.push("network-secret processes share one key and one credential-free exchange");
+  // Network-token mode: the proxy holds the token as well. Prim requests none,
+  // and every API request reaches the API only through the broker and the
+  // proxy; a request prim made directly would arrive without a token (401).
+  injecting = true;
+  const exchangesBeforeTokenMode = exchanges;
+  const tokenModeEnv = {
+    ...networkEnv,
+    PRIM_M2M_CLIENT_AUTH: "network-token",
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    NO_PROXY: "",
+  };
+  const tokenModeStatus = async () =>
+    JSON.parse(
+      (
+        await promisify(execFile)(
+          process.execPath,
+          [join(copied, "dist/index.js"), "auth", "status", "--json"],
+          { env: tokenModeEnv, timeout: 15000 },
+        )
+      ).stdout,
+    );
+  const tokenModeStatuses = await Promise.all(Array.from({ length: 4 }, () => tokenModeStatus()));
+  assert.ok(
+    tokenModeStatuses.every(
+      (value) => value.status === "valid" && value.machineId === "machine_runtime",
+    ),
+    `network-token status must verify through the proxy: ${JSON.stringify(tokenModeStatuses[0])}`,
+  );
+  assert.equal(exchanges, exchangesBeforeTokenMode, "network-token mode must request no token");
+  assert.ok(
+    injectedPaths.filter((path) => path.endsWith("/auth/status")).length >= 2,
+    "the broker's identity check and the command's own must both pass through the proxy",
+  );
+  const readsBefore = injectedPaths.length;
+  const read = await promisify(execFile)(
+    process.execPath,
+    [join(copied, "dist/index.js"), "decisions", "recent"],
+    { env: tokenModeEnv, timeout: 15000 },
+  );
+  assert.ok(injectedPaths.length > readsBefore, "an API read must pass through the proxy");
+  assert.ok(!read.stdout.includes("Bearer") && !read.stderr.includes("Bearer"));
+  injecting = false;
+  reports.push("network-token mode requests no token and reaches the API only through the proxy");
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);
@@ -329,6 +400,8 @@ try {
   provider?.close();
   proxy?.closeAllConnections();
   proxy?.close();
+  injectedApi?.closeAllConnections();
+  injectedApi?.close();
   await delay(100);
   await rm(root, { recursive: true, force: true });
 }

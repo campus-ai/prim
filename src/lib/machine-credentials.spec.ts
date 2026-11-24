@@ -533,3 +533,152 @@ describe("network-secret mode (PRIM_M2M_CLIENT_AUTH=network-secret)", () => {
     );
   });
 });
+
+describe("network-token mode (PRIM_M2M_CLIENT_AUTH=network-token)", () => {
+  function tokenEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    return {
+      PRIM_API_URL: "https://api-token.example.com",
+      PRIM_M2M_CLIENT_ID: clientId,
+      PRIM_M2M_CLIENT_AUTH: "network-token",
+      ...extra,
+    };
+  }
+  const requests = () =>
+    vi.mocked(deps.fetch as typeof fetch).mock.calls.map(([url, init]) => ({
+      url: String(url),
+      init: init as RequestInit,
+    }));
+
+  it("is its own mode, with its own broker, beside network-secret", async () => {
+    const { environmentCredentials } = await import("./machine-credentials.js");
+    const tokenMode = environmentCredentials({ ...deps, env: tokenEnv() });
+    const secretMode = environmentCredentials({
+      ...deps,
+      env: tokenEnv({ PRIM_M2M_CLIENT_AUTH: "network-secret" }),
+    });
+    expect(tokenMode).toMatchObject({ clientId, tokenInjection: "network" });
+    expect(tokenMode).not.toHaveProperty("secretInjection");
+    expect(secretMode).not.toHaveProperty("tokenInjection");
+    expect(tokenMode?.generation).not.toBe(secretMode?.generation);
+  });
+
+  it("names both modes when the value is neither, and refuses a secret left in the variables", () => {
+    expect(() =>
+      hasMachineConfiguration({ ...deps, env: tokenEnv({ PRIM_M2M_CLIENT_AUTH: "oauth" }) }),
+    ).toThrow("PRIM_M2M_CLIENT_AUTH accepts network-secret or network-token.");
+    expect(() =>
+      hasMachineConfiguration({ ...deps, env: tokenEnv({ PRIM_M2M_CLIENT_SECRET: secret }) }),
+    ).toThrow("with PRIM_M2M_CLIENT_AUTH=network-token the environment's network secret");
+    expect(() =>
+      hasMachineConfiguration({ ...deps, env: tokenEnv({ PRIM_M2M_CLIENT_ID: undefined }) }),
+    ).toThrow("Set PRIM_M2M_CLIENT_ID with PRIM_M2M_CLIENT_AUTH=network-token.");
+  });
+
+  it("requests no token and sends no credential: the API says who the proxy's token is", async () => {
+    deps.env = tokenEnv();
+    const before = Date.now();
+    const credential = await acquireMachineCredential({}, deps);
+    expect(credential).toMatchObject({
+      storage: "environment",
+      tokenInjection: "network",
+      accessToken: "",
+      machineId: "machine_local",
+      clientId,
+    });
+    // Trusted for about an hour, then verified again.
+    expect(credential?.expiresAt).toBeGreaterThanOrEqual(before + 59 * 60_000);
+    expect(credential?.expiresAt).toBeLessThanOrEqual(Date.now() + 61 * 60_000);
+    expect(tokens).toBe(0);
+    const sent = requests();
+    expect(sent.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/cli/auth/m2m/config",
+      "/api/cli/auth/status",
+    ]);
+    for (const { init } of sent)
+      expect(JSON.stringify(init?.headers ?? {})).not.toMatch(/authorization/iu);
+    // Nothing secret is on disk either: there is none to write.
+    for (const name of readdirSync(directory))
+      expect(readFileSync(join(directory, name), "utf8")).not.toMatch(/accessToken|signature_/u);
+  });
+
+  it("points a refusal at the OAuth network secret and retries after a pause", async () => {
+    deps.env = tokenEnv({ PRIM_API_URL: "https://api-token-rejected.example.com" });
+    verificationStatus = 401;
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_token_rejected",
+      terminal: true,
+      message: expect.stringContaining(
+        "OAuth 2.0 client credentials network secret: allowed website api-token-rejected.example.com",
+      ),
+    });
+    const attempts = requests().length;
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_token_rejected",
+    });
+    expect(requests()).toHaveLength(attempts);
+    expect(machineSessionEnded(deps)).toBe(false);
+    verificationStatus = 200;
+    vi.useFakeTimers({ now: Date.now() + 31_000, toFake: ["Date"] });
+    try {
+      expect((await acquireMachineCredential({}, deps))?.machineId).toBe("machine_local");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops handing out an identity the API has since refused", async () => {
+    // Verified, then the installation is revoked while the broker lives on.
+    const { machineContext } = await import("./machine-credentials.js");
+    deps.env = tokenEnv({ PRIM_API_URL: "https://api-token-revoked.example.com" });
+    expect((await acquireMachineCredential({}, deps))?.machineId).toBe("machine_local");
+    expect(machineContext(deps)?.machineId).toBe("machine_local");
+
+    // A caller's request got a 401, so it asks for a fresh verification.
+    verificationStatus = 401;
+    await expect(acquireMachineCredential({ force: true }, deps)).rejects.toMatchObject({
+      code: "network_token_rejected",
+    });
+    // The next caller is told at once, without a request of its own, and no
+    // stale identity is left for hooks to act under.
+    const sent = requests().length;
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_token_rejected",
+    });
+    expect(requests()).toHaveLength(sent);
+    expect(machineContext(deps)).toBeUndefined();
+  });
+
+  it("names a network secret that authenticates as another client", async () => {
+    deps.env = tokenEnv({
+      PRIM_API_URL: "https://api-token-other.example.com",
+      PRIM_M2M_CLIENT_ID: "client_expected",
+    });
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_secret_mismatch",
+      message: expect.stringContaining("equals PRIM_M2M_CLIENT_ID (client_expected)"),
+    });
+  });
+
+  it("treats an unauthenticated 200 as a refusal, not as an identity", async () => {
+    deps.env = tokenEnv({ PRIM_API_URL: "https://api-token-anonymous.example.com" });
+    const fetcher = deps.fetch as typeof fetch;
+    deps.fetch = vi.fn(async (url, options) =>
+      String(url).endsWith("/auth/status")
+        ? Response.json({ authenticated: false })
+        : fetcher(url, options),
+    ) as typeof fetch;
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_token_rejected",
+    });
+  });
+
+  it("refuses to forward for a credential the proxy does not hold the token of", async () => {
+    const { forwardMachineRequest } = await import("./machine-credentials.js");
+    await expect(
+      forwardMachineRequest({ method: "GET", path: "/api/cli/auth/status" }, undefined, {
+        ...deps,
+        env: tokenEnv({ PRIM_M2M_CLIENT_AUTH: "network-secret" }),
+      }),
+    ).rejects.toMatchObject({ code: "identity_changed" });
+  });
+});

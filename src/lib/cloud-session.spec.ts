@@ -115,6 +115,30 @@ describe("diagnoseCloudSession", () => {
     expect(notice).toContain("could not be reached");
   });
 
+  it("never probes the sign-in service when the proxy holds the token", async () => {
+    // In network-token mode the proxy requests tokens from outside the VM, so
+    // a blocked sign-in host is not a fault.
+    const fetchSpy = vi.fn(egress(["signin.getprimitive.ai"]));
+    const notice = await diagnoseCloudSession({
+      env: cloudEnv({ PRIM_M2M_CLIENT_ID: "client_cloud", PRIM_M2M_CLIENT_AUTH: "network-token" }),
+      fetch: fetchSpy,
+      siteUrl: API,
+    });
+    expect(notice).not.toContain("sign-in service");
+    expect(notice).toContain("prim setup --cloud");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks only for the API host when the proxy holds the token", async () => {
+    const notice = await diagnoseCloudSession({
+      env: cloudEnv({ PRIM_M2M_CLIENT_ID: "client_cloud", PRIM_M2M_CLIENT_AUTH: "network-token" }),
+      fetch: egress(["api.getprimitive.ai"]),
+      siteUrl: API,
+    });
+    expect(notice).toContain("add api.getprimitive.ai to the cloud environment's Allowed domains");
+    expect(notice).not.toContain("signin.getprimitive.ai");
+  });
+
   it("asks nothing of the VM's Node settings in network-secret mode", async () => {
     // The token broker routes itself through the proxy; a session whose
     // variables lack NODE_USE_ENV_PROXY is configured correctly.

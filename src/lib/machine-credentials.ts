@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { AsyncEntry } from "@napi-rs/keyring";
 import { atomicWriteFile } from "./atomic-file.js";
 import { withFileLock } from "./file-lock.js";
-import { acquireBrokerCredential } from "./machine-broker.js";
+import { acquireBrokerCredential, forwardBrokerRequest } from "./machine-broker.js";
 import {
   MachineAuthError,
   type MachineConfiguration,
@@ -27,8 +27,10 @@ import {
   machineApiUrl,
   machineRecord,
   machineString,
+  parseInjectedMachineIdentity,
   parseMachineConfiguration,
   parseMachineIdentity,
+  verifyInjectedMachineIdentity,
   verifyMachineIdentity,
 } from "./machine-protocol.js";
 import { withMachineCooldown } from "./machine-retry.js";
@@ -49,6 +51,11 @@ export type MachineCredential = MachineConfiguration &
     apiUrl: string;
     generation: string;
     storage: MachineStorage;
+    /**
+     * The cloud environment's proxy holds the access token and attaches it to
+     * API requests; `accessToken` is empty and requests go through the broker.
+     */
+    tokenInjection?: "network";
   };
 type SecretEntry = Pick<AsyncEntry, "getPassword" | "setPassword" | "deletePassword">;
 export type MachineDependencies = {
@@ -285,17 +292,25 @@ export function readMachineProfile(deps: MachineDependencies = {}): MachineProfi
 
 /** The secret reaches the token service through the cloud environment's network secret. */
 export const NETWORK_SECRET_AUTH = "network-secret";
+/**
+ * The cloud environment's proxy requests the tokens too (an "OAuth 2.0 client
+ * credentials" network secret) and attaches one to each API request, so
+ * neither the secret nor a token ever enters the VM.
+ */
+export const NETWORK_TOKEN_AUTH = "network-token";
+/** How long a proxy-authenticated identity is trusted before it is verified again. */
+const INJECTED_IDENTITY_TTL_MS = 60 * 60_000;
 
 export type EnvironmentCredentials = {
   clientId: string;
   /**
-   * The client secret, or in network-secret mode a local random key: the
-   * broker authenticates its peers with it and the token request never
-   * carries it.
+   * The client secret, or in a network mode a local random key: the broker
+   * authenticates its peers with it and no request to a service carries it.
    */
   clientSecret: string;
   generation: string;
   secretInjection?: "network";
+  tokenInjection?: "network";
 };
 
 const brokerKeys = new Map<string, string>();
@@ -381,34 +396,35 @@ export function environmentCredentials(
     PRIM_M2M_CLIENT_AUTH: auth,
   } = env;
   if (clientId === undefined && clientSecret === undefined && auth === undefined) return undefined;
-  if (auth !== undefined && auth !== NETWORK_SECRET_AUTH)
+  if (auth !== undefined && auth !== NETWORK_SECRET_AUTH && auth !== NETWORK_TOKEN_AUTH)
     throw new MachineAuthError(
       "incomplete_machine_credentials",
-      `PRIM_M2M_CLIENT_AUTH accepts only ${NETWORK_SECRET_AUTH}.`,
+      `PRIM_M2M_CLIENT_AUTH accepts ${NETWORK_SECRET_AUTH} or ${NETWORK_TOKEN_AUTH}.`,
     );
-  if (auth === NETWORK_SECRET_AUTH) {
+  if (auth !== undefined) {
     if (!clientId || !/^client_[\w-]+$/u.test(clientId))
       throw new MachineAuthError(
         "incomplete_machine_credentials",
-        "Set PRIM_M2M_CLIENT_ID with PRIM_M2M_CLIENT_AUTH=network-secret.",
+        `Set PRIM_M2M_CLIENT_ID with PRIM_M2M_CLIENT_AUTH=${auth}.`,
       );
     if (clientSecret !== undefined)
       throw new MachineAuthError(
         "conflicting_credentials",
-        "Unset PRIM_M2M_CLIENT_SECRET: with PRIM_M2M_CLIENT_AUTH=network-secret the environment's network secret supplies it.",
+        `Unset PRIM_M2M_CLIENT_SECRET: with PRIM_M2M_CLIENT_AUTH=${auth} the environment's network secret supplies it.`,
       );
     // The broker routes its own requests through the environment's proxy
     // (see brokerEnvironment). Earlier versions took routing from the caller's
     // environment and keyed the generation on it ("routed" or "direct"); this
     // marker differs from both, so an upgraded prim never reuses a broker
     // that an older one started without routing.
-    const generation = hash(
-      `${apiUrlFor(deps)}\0${clientId}\0${NETWORK_SECRET_AUTH}\0broker-proxy`,
-    );
+    // The mode is part of the key: the two modes' brokers do different work.
+    const generation = hash(`${apiUrlFor(deps)}\0${clientId}\0${auth}\0broker-proxy`);
     const credentials = {
       clientId,
       generation,
-      secretInjection: "network",
+      ...(auth === NETWORK_TOKEN_AUTH
+        ? { tokenInjection: "network" }
+        : { secretInjection: "network" }),
     } as EnvironmentCredentials;
     // Only paths that talk to the broker need its key; checking whether
     // credentials are configured must not write to disk.
@@ -671,6 +687,9 @@ export async function acquireMachineCredential(
   const apiUrl = apiUrlFor(deps);
   const environment = environmentCredentials(deps);
   if (environment) {
+    // Fixed in the cloud environment's settings, which no process here can
+    // watch: a rejection is retried after a pause, never held for good.
+    const networkManaged = Boolean(environment.secretInjection || environment.tokenInjection);
     const observedToken =
       cached?.generation === environment.generation ? cached.accessToken : undefined;
     const directory = configurationDirectory(deps);
@@ -689,7 +708,7 @@ export async function acquireMachineCredential(
         writeEnvironmentContext(cached, deps);
         return cached;
       } catch (error) {
-        if (error instanceof MachineAuthError && error.terminal && !environment.secretInjection)
+        if (error instanceof MachineAuthError && error.terminal && !networkManaged)
           environmentTerminal = environment.generation;
         throw error;
       }
@@ -710,7 +729,7 @@ export async function acquireMachineCredential(
         )
           return cached;
         if (
-          environment.secretInjection &&
+          networkManaged &&
           networkRejection?.generation === environment.generation &&
           networkRejection.until > Date.now()
         )
@@ -723,6 +742,21 @@ export async function acquireMachineCredential(
             signal,
             async () => {
               const configuration = await discoverMachineConfiguration(apiUrl, signal, deps.fetch);
+              if (environment.tokenInjection) {
+                // No token to request or hold: ask the API who the proxy's
+                // token says this is, and trust that for a while.
+                const identity = await verifyInjectedMachineIdentity(
+                  apiUrl,
+                  environment.clientId,
+                  signal,
+                  deps.fetch,
+                );
+                const tokens = {
+                  accessToken: "",
+                  expiresAt: Date.now() + INJECTED_IDENTITY_TTL_MS,
+                };
+                return { configuration, tokens, identity };
+              }
               const tokens = await exchangeMachineCredentials(
                 configuration,
                 environment.clientId,
@@ -764,6 +798,7 @@ export async function acquireMachineCredential(
             apiUrl,
             generation: environment.generation,
             storage: "environment",
+            ...(environment.tokenInjection ? { tokenInjection: "network" as const } : {}),
           };
           writeEnvironmentContext(cached, deps);
           return cached;
@@ -771,12 +806,23 @@ export async function acquireMachineCredential(
           // A rejected network secret is fixed in the environment's settings,
           // which this process cannot see change: retry after a short pause
           // rather than for the life of a long-running broker.
-          if (environment.secretInjection && error instanceof MachineAuthError && error.terminal) {
+          if (networkManaged && error instanceof MachineAuthError && error.terminal) {
             networkRejection = {
               generation: environment.generation,
               until: Date.now() + NETWORK_REJECTION_PAUSE_MS,
               error,
             };
+            // What was cached has just been refused (a revoked installation,
+            // a changed network secret): stop handing it out, so callers get
+            // this answer at once instead of one doomed request each.
+            if (cached?.generation === environment.generation) cached = undefined;
+            const contextPath = environmentContextPath(deps, environment.clientId);
+            try {
+              if (machineRecord(readPrivate(contextPath)).generation === environment.generation)
+                rmSync(contextPath, { force: true });
+            } catch {
+              // Another generation's or a missing metadata cache is not ours to remove.
+            }
             throw error;
           }
           if (error instanceof MachineAuthError && error.terminal) {
@@ -867,6 +913,61 @@ export async function acquireMachineCredential(
     },
     { signal },
   );
+}
+
+export type MachineApiRequest = {
+  method: string;
+  /** Path and query on the API origin, such as `/api/cli/auth/status`. */
+  path: string;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
+/**
+ * Send one API request for a credential whose token the cloud environment's
+ * proxy attaches (see NETWORK_TOKEN_AUTH). It goes through the broker, the
+ * one prim process whose requests pass through that proxy, and carries no
+ * Authorization header of prim's own.
+ */
+export async function forwardMachineRequest(
+  request: MachineApiRequest,
+  signal?: AbortSignal,
+  deps: MachineDependencies = {},
+): Promise<Response> {
+  const environment = environmentCredentials(deps);
+  if (!environment?.tokenInjection)
+    throw new MachineAuthError(
+      "identity_changed",
+      "Machine identity changed; restart the operation.",
+    );
+  const directory = configurationDirectory(deps);
+  ensureDirectory(directory);
+  return forwardBrokerRequest({
+    directory,
+    apiUrl: apiUrlFor(deps),
+    environment,
+    env: deps.env ?? process.env,
+    request,
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000),
+  });
+}
+
+/** Ask the API, now, who an acquired credential authenticates as. */
+export async function verifyAcquiredMachineIdentity(
+  machine: MachineCredential,
+  deps: MachineDependencies = {},
+): Promise<MachineIdentity> {
+  if (!machine.tokenInjection)
+    return verifyMachineIdentity(machine.apiUrl, machine.accessToken, machine.clientId);
+  const response = await forwardMachineRequest(
+    { method: "GET", path: "/api/cli/auth/status" },
+    AbortSignal.timeout(10_000),
+    deps,
+  );
+  const value = response.ok ? await response.json().catch(() => undefined) : undefined;
+  return parseInjectedMachineIdentity(response.status, value, machine.apiUrl, machine.clientId);
 }
 
 export async function clearMachineCredentials(deps: MachineDependencies = {}): Promise<boolean> {
