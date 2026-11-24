@@ -216,6 +216,10 @@ process in the VM; on Node 22 each also prints "EnvHttpProxyAgent is experimenta
 Running plain `prim setup` inside a cloud session (for example through the agent prompt
 above) detects the session and does the cloud setup; browser sign-in, the daemon, and
 onboarding are skipped there, and `prim auth login` explains why it cannot run.
+`--prepare` belongs in the setup script: Claude Code reads its hooks when it starts, and
+new sessions start from the environment's image. Run inside a session, it wires only
+that VM and says the image was not prepared by that run (a VM the image had already
+prepared stays prepared).
 
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a

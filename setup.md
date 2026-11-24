@@ -333,6 +333,9 @@ is inactive.
 (no browser sign-in, no daemon, no onboarding). Credentials come from the cloud
 environment's variables, and the environment's setup script should run
 `prim setup --cloud --prepare`; see the README's "Claude Code cloud environments".
+Do not run `--prepare` yourself inside a session: it wires only that VM, whose
+Claude Code has already loaded its hooks, and reports that it did not prepare
+the image.
 Cloud setup returns no `welcomeSkill` or `nextAction`: follow its `instructions`,
 and relay each entry of `remedies` to the user when it is incomplete.
 

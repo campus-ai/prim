@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -59,6 +59,8 @@ function harness(overrides: Partial<CloudSetupDependencies> = {}) {
     },
     ...overrides,
   };
+  // Never the real config directory: preparing clears and writes its marker.
+  deps.env = { PRIM_CONFIG_DIR: tempDir("prim-cloud-config-"), ...deps.env };
   return { deps, calls, notes, exit };
 }
 
@@ -85,7 +87,7 @@ describe("prepareCloudImage", () => {
       ["skill", "install", "--agent", "claude", "--scope", "user"],
       ["daemon", "stop"],
     ]);
-    expect(deps.markPrepared).toHaveBeenCalledOnce();
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("image");
     expect(printed).toEqual([
       {
         ok: true,
@@ -148,6 +150,102 @@ describe("prepareCloudImage", () => {
     expect(deps.markPrepared).not.toHaveBeenCalled();
     expect(printed[0]).toMatchObject({ ok: false, failed: ["userHooks"] });
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("is the image's prepare in a setup script, even where the VM already says cloud", () => {
+    // The setup script runs before Claude Code launches: no CLAUDECODE.
+    const { deps, exit } = harness({ env: { CLAUDE_CODE_REMOTE: "true" } });
+    prepareCloudImage(deps);
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("image");
+    expect(printed[0]).toMatchObject({ ok: true, results: { prepared: "ok" } });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("run inside a session, wires only this VM and says the image is still unprepared", () => {
+    const { deps, notes, exit } = harness({
+      env: {
+        CLAUDE_CODE_REMOTE: "true",
+        CLAUDECODE: "1",
+        PRIM_CONFIG_DIR: tempDir("prim-cloud-config-"),
+      },
+    });
+    prepareCloudImage(deps);
+    expect(deps.installUserHooks).toHaveBeenCalledOnce();
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("session");
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      cloud: "prepare",
+      results: { userHooks: "ok", prepared: "ok", image: "missing" },
+      failed: ["image"],
+      remedies: [expect.stringMatching(/not prepared by this run.*setup script/u)],
+      instructions: expect.stringContaining("Cloud setup is incomplete"),
+    });
+    expect(notes.join("\n")).toContain("inside a running Claude Code session");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("cannot turn hooks pending from an in-session setup back into a prepared report", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    const env = {
+      CLAUDE_CODE_REMOTE: "true",
+      CLAUDECODE: "1",
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "secret",
+      PRIM_CONFIG_DIR: configDir,
+    };
+    // Real marker writes, so each run sees what the one before left behind.
+    setupDetectedCloudSession(harness({ cwd: repo(false), env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+
+    prepareCloudImage(harness({ env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+    expect(printed[1]).toMatchObject({ ok: false, results: { image: "missing" } });
+
+    setupCloudSession(harness({ cwd: repo(false), env, markPrepared: undefined }).deps);
+    expect(printed[2]).toMatchObject({
+      ok: false,
+      results: { session: "missing" },
+      remedies: [expect.stringContaining("add `prim setup --cloud --prepare`")],
+    });
+  });
+
+  it("run inside a session on an unprepared VM, never records the image's origin", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    prepareCloudImage(harness({ env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+  });
+
+  it("re-run inside a session the image prepared, leaves its live hooks reported as live", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    const { deps, exit } = harness({ env, markPrepared: undefined });
+    prepareCloudImage(deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1\n");
+    expect(printed[0]).toMatchObject({ ok: true, failed: [] });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("does not trust an image marker whose user-scope hooks are gone", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    const { deps } = harness({ env, markPrepared: undefined, userHooksComplete: () => false });
+    prepareCloudImage(deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["image"] });
+  });
+
+  it("does not add the image remedy when the in-session wiring itself failed", () => {
+    const { deps } = harness({
+      env: { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1" },
+      installUserHooks: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+    prepareCloudImage(deps);
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["userHooks"] });
   });
 
   it("refuses on a developer's machine, where it would disable the daemon", () => {

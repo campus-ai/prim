@@ -1,4 +1,5 @@
 import { hasProjectPrimInstall } from "../lib/activation.js";
+import { insideClaudeCode } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   isPreparedCloudSession,
@@ -38,7 +39,7 @@ export type CloudSetupDependencies = {
     | "unreachable";
   stage?: () => void;
   installUserHooks?: () => void;
-  markPrepared?: () => void;
+  markPrepared?: (origin: "image" | "session") => void;
   /** A developer's own user-scope prim install that preparing would rewrite. */
   developerInstall?: () => boolean;
   /** The VM's user-scope settings still carry prim's complete cloud wiring. */
@@ -94,6 +95,12 @@ type CloudResults = Record<string, CloudSetupStep>;
  * committed install. It marks the environment prepared, so sessions activate
  * the repositories they open, and records the daemon opt-out (a paused VM
  * would only kill the daemon; capture delivers directly instead).
+ *
+ * Run from inside a session instead, it wires a VM whose Claude Code has
+ * already read its settings, and new sessions start from the environment's
+ * image, not this VM. It then records that origin and reports that this run
+ * did not prepare the image, so neither it nor a later `prim setup --cloud`
+ * claims hooks that never loaded.
  */
 export function prepareCloudImage(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "prepare")) return;
@@ -110,8 +117,36 @@ export function prepareCloudImage(deps: CloudSetupDependencies): void {
   }
   const results: CloudResults = {};
   const remedies: string[] = [];
-  prepareSteps(deps, results, remedies);
+  const origin = prepareOrigin(deps);
+  prepareSteps(deps, results, remedies, origin);
+  if (origin === "session" && results.prepared === "ok") {
+    // This run cannot see the environment's setup script, only that it did
+    // not prepare this VM before Claude Code started.
+    const reason =
+      "image · not prepared by this run: it ran inside a running Claude Code session, so only this VM is wired. Claude Code loads the hooks when it next starts here, and new sessions start from the environment's image. If the environment's setup script does not run `prim setup --cloud --prepare` yet, add it there; sessions started after that load the hooks";
+    deps.note(reason);
+    remedies.push(reason);
+    results.image = "missing";
+  }
   finish(deps, "prepare", results, remedies);
+}
+
+/**
+ * Who is preparing: the environment's setup script, or a command inside a
+ * session. Claude Code reads its settings once, when it starts, and the setup
+ * script runs before that; anything Claude Code itself started runs after.
+ * The exception is a VM the image already prepared: its hooks were wired
+ * before Claude Code started, so re-running there leaves them live. Decided
+ * before the steps clear the earlier marker.
+ */
+function prepareOrigin(deps: CloudSetupDependencies): "image" | "session" {
+  const env = deps.env ?? process.env;
+  if (!insideClaudeCode(env)) return "image";
+  const live =
+    isPreparedCloudSession(env) &&
+    !preparedInSession(env) &&
+    (deps.userHooksComplete ?? cloudUserInstallComplete)();
+  return live ? "image" : "session";
 }
 
 /**
@@ -214,10 +249,8 @@ function prepareSteps(
   // Activation needs only the runtime and the hooks; a missing skill or
   // allow-rule is reported but does not switch prim off everywhere.
   if (results.runtime === "ok" && results.userHooks === "ok")
-    attempt(
-      "prepared",
-      "cloud activation",
-      deps.markPrepared ?? (() => markCloudPrepared(env, origin)),
+    attempt("prepared", "cloud activation", () =>
+      (deps.markPrepared ?? ((from) => markCloudPrepared(env, from)))(origin),
     );
 }
 
