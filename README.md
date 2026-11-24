@@ -196,22 +196,21 @@ To keep the client secret out of the VM's variables, give it to the environment'
 Under **Network secrets**, add a **Username and password** secret for host
 `signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the
 username, the `PRIM_M2M_CLIENT_SECRET` value as the password. Then replace the
-`PRIM_M2M_CLIENT_SECRET` line in the variables with the last two of these (keep any
+`PRIM_M2M_CLIENT_SECRET` line in the variables with the second of these (keep any
 other line step 1 printed, such as `PRIM_API_URL`):
 
 ```text
 PRIM_M2M_CLIENT_ID=client_...
 PRIM_M2M_CLIENT_AUTH=network-secret
-NODE_USE_ENV_PROXY=1
 ```
 
 The proxy adds the secret to prim's token request as HTTP Basic authentication, so no
 process in the session can read the secret or carry it out of the VM; processes in the
 session can still obtain short-lived tokens through the proxy, as prim does. Keep
-`signin.getprimitive.ai` under Allowed domains. `NODE_USE_ENV_PROXY=1` routes prim's
-requests through that proxy, and prim says so if it is missing. It applies to every Node
-process in the VM; on Node 22 each also prints "EnvHttpProxyAgent is experimental", which
-`NODE_NO_WARNINGS=1` in the variables hides (along with all other Node warnings).
+`signin.getprimitive.ai` under Allowed domains. Prim's token broker, the one process
+that requests tokens, sends its own requests through that proxy; nothing else in the VM
+has to. An environment set up for an earlier prim may still carry `NODE_USE_ENV_PROXY=1`
+(and `NODE_NO_WARNINGS=1`) in its variables: both are harmless and can be removed.
 
 Running plain `prim setup` inside a cloud session (for example through the agent prompt
 above) detects the session and does the cloud setup; browser sign-in, the daemon, and

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { createServer as httpServer } from "node:http";
+import { request as httpRequest, createServer as httpServer } from "node:http";
 import { createServer as httpsServer } from "node:https";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -22,6 +23,9 @@ let tokenStatus = 200;
 let daemon;
 let api;
 let provider;
+let proxy;
+const tunnels = [];
+let proxyConnections = 0;
 const pids = new Set();
 const reports = [];
 try {
@@ -183,26 +187,104 @@ try {
   await status({ PRIM_M2M_CLIENT_SECRET: `${secret}-rotated` });
   assert.equal(exchanges, 2, "secret rotation must use a new broker generation");
   reports.push("secret rotation invalidates the token cache");
-  const { PRIM_M2M_CLIENT_SECRET: _secret, ...networkEnv } = env;
+  // Stands in for the cloud environment's proxy: it records each request and
+  // passes it on. The real one adds the client secret on the way. A client
+  // may open a CONNECT tunnel, or hand a plain-HTTP request over whole with
+  // the full URL on its request line; both are a request "through the proxy".
+  proxy = httpServer((request, response) => {
+    let target;
+    try {
+      target = new URL(request.url);
+    } catch {
+      tunnels.push(`unroutable ${request.method} ${request.url}`);
+      response.writeHead(400).end();
+      return;
+    }
+    tunnels.push(target.host);
+    const { "proxy-connection": _hop, "proxy-authorization": _auth, ...headers } = request.headers;
+    const upstream = httpRequest(
+      {
+        host: target.hostname,
+        port: target.port || 80,
+        method: request.method,
+        path: `${target.pathname}${target.search}`,
+        headers,
+      },
+      (answer) => {
+        response.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(response);
+      },
+    );
+    upstream.on("error", (error) => {
+      tunnels.push(`${target.host} upstream ${error.code ?? error.message}`);
+      response.writeHead(502).end();
+    });
+    request.pipe(upstream);
+  });
+  proxy.on("connection", () => proxyConnections++);
+  proxy.on("connect", (request, socket, head) => {
+    tunnels.push(request.url);
+    const [host, port] = request.url.split(":");
+    const upstream = connect(Number(port), host, () => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on("error", (error) => {
+      tunnels.push(`${request.url} upstream ${error.code ?? error.message}`);
+      socket.destroy();
+    });
+    socket.on("error", () => upstream.destroy());
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const proxyUrl = `http://127.0.0.1:${proxy.address().port}`;
+  const {
+    PRIM_M2M_CLIENT_SECRET: _secret,
+    NODE_USE_ENV_PROXY: _routed,
+    NODE_OPTIONS: _options,
+    http_proxy: _http,
+    https_proxy: _https,
+    no_proxy: _no,
+    ...networkEnv
+  } = env;
   const networkStatus = async () => {
     const result = await promisify(execFile)(
       process.execPath,
       [join(copied, "dist/index.js"), "auth", "status", "--json"],
       {
+        // As in a cloud VM whose variables name no Node proxy setting: a
+        // proxy is configured, and nothing tells the caller's Node to use it.
         env: {
           ...networkEnv,
           PRIM_M2M_CLIENT_AUTH: "network-secret",
-          HTTPS_PROXY: "",
-          https_proxy: "",
+          HTTP_PROXY: proxyUrl,
+          HTTPS_PROXY: proxyUrl,
+          NO_PROXY: "",
         },
         timeout: 15000,
       },
     );
     return JSON.parse(result.stdout);
   };
-  const networkStatuses = await Promise.all(Array.from({ length: 4 }, () => networkStatus()));
-  assert.ok(networkStatuses.every((value) => value.status === "valid"));
+  // A failing status exits non-zero; keep its answer so the assertion can say
+  // what the broker reached.
+  const networkStatuses = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      networkStatus().catch((error) => ({ failed: error.stdout || String(error) })),
+    ),
+  );
+  assert.ok(
+    networkStatuses.every((value) => value.status === "valid"),
+    `network-secret status through the proxy: ${JSON.stringify(networkStatuses)}; proxy connections ${proxyConnections}, requests ${JSON.stringify(tunnels)}; credential-free exchanges ${networkExchanges}; brokers ${JSON.stringify((await readdir(config)).filter((name) => name.startsWith("machine_broker_")))}`,
+  );
   assert.equal(networkExchanges, 1, "network-secret processes must share one broker exchange");
+  assert.ok(
+    tunnels.includes(`127.0.0.1:${provider.address().port}`),
+    "the broker must send its token request through the environment's proxy by itself",
+  );
+  reports.push("network-secret broker routes its token request through the proxy unaided");
   const keys = (await readdir(config)).filter((name) => name.endsWith(".key"));
   assert.equal(keys.length, 1, "network-secret processes must agree on one broker key");
   reports.push("network-secret processes share one key and one credential-free exchange");
@@ -245,6 +327,8 @@ try {
   api?.close();
   provider?.closeAllConnections();
   provider?.close();
+  proxy?.closeAllConnections();
+  proxy?.close();
   await delay(100);
   await rm(root, { recursive: true, force: true });
 }

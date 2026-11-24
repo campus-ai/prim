@@ -115,7 +115,9 @@ describe("diagnoseCloudSession", () => {
     expect(notice).toContain("could not be reached");
   });
 
-  it("names NODE_USE_ENV_PROXY in network-secret mode before probing", async () => {
+  it("asks nothing of the VM's Node settings in network-secret mode", async () => {
+    // The token broker routes itself through the proxy; a session whose
+    // variables lack NODE_USE_ENV_PROXY is configured correctly.
     const fetchSpy = vi.fn(egress([]));
     const notice = await diagnoseCloudSession({
       env: cloudEnv({
@@ -126,8 +128,9 @@ describe("diagnoseCloudSession", () => {
       fetch: fetchSpy,
       siteUrl: API,
     });
-    expect(notice).toContain("NODE_USE_ENV_PROXY=1");
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(notice).not.toContain("NODE_USE_ENV_PROXY");
+    expect(notice).toContain("prim setup --cloud");
+    expect(fetchSpy).toHaveBeenCalled();
   });
 
   it("never adds the generic credential remedy to a network-secret configuration error", async () => {

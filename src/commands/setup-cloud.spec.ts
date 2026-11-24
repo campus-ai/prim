@@ -338,16 +338,16 @@ describe("setupCloudSession", () => {
       run: (args) => ({
         code: args[0] === "auth" ? 1 : 0,
         stdout: JSON.stringify({
-          recoveryDetail: "Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables.",
+          recoveryDetail: "Check the cloud environment's network secret for signin.example.com.",
         }),
       }),
     });
     setupCloudSession(deps);
     const text = notes.join("\n");
     expect(text).toContain(
-      "credentials · Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables;",
+      "credentials · Check the cloud environment's network secret for signin.example.com;",
     );
-    expect(text.indexOf("NODE_USE_ENV_PROXY")).toBeLessThan(text.indexOf("revoke"));
+    expect(text.indexOf("network secret")).toBeLessThan(text.indexOf("revoke"));
   });
 
   it("names the allowed domains when Primitive is unreachable", () => {

@@ -371,28 +371,6 @@ function networkSecretBrokerKey(deps: MachineDependencies, clientId: string): st
   return key;
 }
 
-/** Whether this Node process sends its requests through the environment's proxy. */
-export function proxyRouted(env: NodeJS.ProcessEnv): boolean {
-  // Only what the environment carries counts: the broker is spawned with this
-  // environment, not this process's command-line flags.
-  const flag = (value: string) => value === "--use-env-proxy" || value === "--use-env-proxy=true";
-  return env.NODE_USE_ENV_PROXY === "1" || (env.NODE_OPTIONS ?? "").split(/\s+/u).some(flag);
-}
-
-/**
- * Network-secret mode depends on the agent proxy adding the secret, and Node
- * sends traffic through that proxy only when told to. Without it the token
- * request goes out bare and is rejected. Purely local, so it runs before any
- * network call and before contacting the broker.
- */
-export function networkSecretRoutingProblem(env: NodeJS.ProcessEnv): string | undefined {
-  if (env.PRIM_M2M_CLIENT_AUTH !== NETWORK_SECRET_AUTH) return undefined;
-  const proxied = Boolean(env.HTTPS_PROXY || env.https_proxy);
-  return proxied && !proxyRouted(env)
-    ? "Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables so prim's token request passes through the proxy that adds the network secret."
-    : undefined;
-}
-
 export function environmentCredentials(
   deps: MachineDependencies,
 ): EnvironmentCredentials | undefined {
@@ -419,11 +397,13 @@ export function environmentCredentials(
         "conflicting_credentials",
         "Unset PRIM_M2M_CLIENT_SECRET: with PRIM_M2M_CLIENT_AUTH=network-secret the environment's network secret supplies it.",
       );
-    // Routing is part of the generation: a broker started before
-    // NODE_USE_ENV_PROXY was set keeps its environment, so the fixed
-    // environment must reach a fresh broker rather than the stale one.
+    // The broker routes its own requests through the environment's proxy
+    // (see brokerEnvironment). Earlier versions took routing from the caller's
+    // environment and keyed the generation on it ("routed" or "direct"); this
+    // marker differs from both, so an upgraded prim never reuses a broker
+    // that an older one started without routing.
     const generation = hash(
-      `${apiUrlFor(deps)}\0${clientId}\0${NETWORK_SECRET_AUTH}\0${proxyRouted(env) ? "routed" : "direct"}`,
+      `${apiUrlFor(deps)}\0${clientId}\0${NETWORK_SECRET_AUTH}\0broker-proxy`,
     );
     const credentials = {
       clientId,
@@ -691,10 +671,6 @@ export async function acquireMachineCredential(
   const apiUrl = apiUrlFor(deps);
   const environment = environmentCredentials(deps);
   if (environment) {
-    if (environment.secretInjection) {
-      const routing = networkSecretRoutingProblem(deps.env ?? process.env);
-      if (routing) throw new MachineAuthError("proxy_routing_required", routing, true);
-    }
     const observedToken =
       cached?.generation === environment.generation ? cached.accessToken : undefined;
     const directory = configurationDirectory(deps);
