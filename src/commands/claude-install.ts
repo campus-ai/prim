@@ -769,7 +769,10 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
       hooks[event] = list;
     }
   }
-  const next: ClaudeSettings = { ...settings, hooks };
+  // Settings with no `hooks` key gain none. An added empty one reads as a
+  // change, so uninstall would create an absent file or rewrite a foreign one.
+  const next: ClaudeSettings =
+    settings.hooks === undefined ? { ...settings } : { ...settings, hooks };
   // Remove our statusline; leave a user-defined one untouched.
   if (isPrimStatusLine(next)) {
     next.statusLine = undefined;
