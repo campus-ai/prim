@@ -5,10 +5,21 @@
  * act where `prim.active` is true. These commands set that repo-local flag, so
  * a user installs prim once and opts each repo in (or out) with one command —
  * no per-repo hook wiring. AX: STDOUT is the JSON result, STDERR the human line.
+ *
+ * The flag is per-clone, so it cannot outlive a Claude Code cloud session,
+ * which starts from a fresh clone every time. `--scope project` also records
+ * (disable) or removes (enable) the repository's committed opt-out,
+ * `PRIM_ACTIVE=false` in its `.claude/settings.json`, which every clone carries.
  */
 import type { Command, OptionValues } from "commander";
 import { daemonRequest } from "../daemon/client.js";
-import { repoActiveFlag, setRepoActive } from "../lib/activation.js";
+import {
+  declaresInactive,
+  markActivationExplicit,
+  repoActiveFlag,
+  setRepoActive,
+} from "../lib/activation.js";
+import { isPreparedCloudSession } from "../lib/cloud-prepared.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
@@ -19,9 +30,10 @@ import {
   ensureEffectiveGitHook,
   externalHookRemedy,
 } from "../lib/git-hooks.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, isGitIgnored } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
+import { planProjectInactiveDeclaration } from "./claude-install.js";
 import { runGithubConnect } from "./github.js";
 import { refreshOwnedGlobalHooks, stageGitHookRuntime } from "./hooks.js";
 
@@ -124,7 +136,18 @@ function hookPathFields(paths: Partial<Record<ManagedGitHookName, string>>): {
   };
 }
 
+/** `--scope project` is the only scope; without it the command touches this clone alone. */
+function projectScope(globals: OptionValues, active: boolean): boolean {
+  if (globals.scope === undefined) return false;
+  if (globals.scope === "project") return true;
+  process.stderr.write(
+    `[prim] invalid --scope '${String(globals.scope)}': \`prim ${active ? "enable" : "disable"}\` accepts only 'project'\n`,
+  );
+  process.exit(2);
+}
+
 async function applyActivation(active: boolean, globals: OptionValues = {}): Promise<void> {
+  const project = projectScope(globals, active);
   const root = gitToplevel();
   if (!root) {
     process.stderr.write(
@@ -132,12 +155,16 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     );
     process.exit(1);
   }
-  let phase = active ? "post-commit hook coverage" : "local deactivation";
+  let phase = "the repository's committed opt-out";
   try {
     let binding: RepositoryBindingResult | undefined;
     let hookPaths: Partial<Record<ManagedGitHookName, string>> = {};
     let hooksChanged = false;
     const wasActive = repoActiveFlag(root) === "true";
+    // First, while nothing has changed: a settings file prim cannot rewrite
+    // (invalid JSON, a symbolic link, $HOME) fails the whole command.
+    const declaration = project ? planProjectInactiveDeclaration(root, !active) : undefined;
+    phase = active ? "post-commit hook coverage" : "local deactivation";
     if (active) {
       ({ paths: hookPaths, changed: hooksChanged } = wireRepositoryHooks(root));
       phase = "GitHub repo connection";
@@ -150,6 +177,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
         printJson({
           active: false,
           repo: root,
+          declaredInactive: declaresInactive(root),
           bindingStatus: binding.status,
           repositoryFullName: binding.repositoryFullName,
           ...hookPathFields(hookPaths),
@@ -170,6 +198,14 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     // An explicit enable/disable wins over a demo pause's saved value.
     clearDemoPause(root);
     setRepoActive(root, active);
+    // The flag is now the user's own, not an implicit activation prim wrote.
+    markActivationExplicit(root);
+    if (declaration) {
+      // Last: the clone already reflects the choice if this write fails, and
+      // the error names the file that still needs it.
+      phase = "the repository's committed opt-out";
+      declaration.apply();
+    }
     // Disabled, commits are not expected to reach prim; the next enable (or
     // SessionStart once re-activated) starts a fresh expectation.
     if (!active) clearHooksWired(root);
@@ -182,9 +218,34 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     }
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
+    const declaredInactive = declaresInactive(root);
+    // An opt-out git ignores never reaches another clone: `git add` skips it
+    // without `-f`, and "commit it" alone would leave the user with nothing.
+    const ignored = Boolean(project && !active && isGitIgnored(root, ".claude/settings.json"));
+    if (declaration?.changed)
+      process.stderr.write(
+        active
+          ? `[prim] removed this repository's opt-out from ${declaration.path}; commit the change so new clones and Claude Code cloud sessions follow it\n`
+          : `[prim] recorded this repository's opt-out (PRIM_ACTIVE=false) in ${declaration.path}; commit it so prim stays off in every clone and every Claude Code cloud session, until someone runs \`prim enable\` there\n`,
+      );
+    if (ignored)
+      process.stderr.write(
+        "[prim] this repository's .gitignore covers .claude/settings.json, so a plain `git add` skips it: stage it with `git add -f .claude/settings.json`, or the opt-out stays in this clone only\n",
+      );
+    else if (active && declaredInactive)
+      process.stderr.write(
+        "[prim] this repository commits an opt-out (PRIM_ACTIVE=false in .claude/settings.json): enabled for this clone only. `prim enable --scope project` removes the opt-out\n",
+      );
+    else if (!active && !declaredInactive && isPreparedCloudSession())
+      process.stderr.write(
+        "[prim] this lasts for this session's clone only: the next Claude Code cloud session starts from a fresh one. To keep prim off in this repository, run `prim disable --scope project` and commit .claude/settings.json\n",
+      );
     printJson({
       active,
       repo: root,
+      declaredInactive,
+      ...(declaration?.changed ? { settingsPath: declaration.path } : {}),
+      ...(ignored ? { settingsIgnored: true } : {}),
       ...(binding
         ? {
             bindingStatus: binding.status,
@@ -209,11 +270,19 @@ export function registerActivationCommands(program: Command): void {
   program
     .command("enable")
     .description("Activate prim's hooks in this repo (git config prim.active=true)")
+    .option(
+      "--scope <scope>",
+      "project: also remove the repository's committed opt-out from .claude/settings.json",
+    )
     .action((_opts: unknown, command: Command) => applyActivation(true, command.optsWithGlobals()));
 
   program
     .command("disable")
     .description("Mute prim's hooks in this repo (git config prim.active=false)")
+    .option(
+      "--scope <scope>",
+      "project: also record the opt-out in .claude/settings.json to commit, so it holds in every clone and Claude Code cloud session",
+    )
     .action((_opts: unknown, command: Command) =>
       applyActivation(false, command.optsWithGlobals()),
     );

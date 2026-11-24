@@ -1,4 +1,4 @@
-import { hasProjectPrimInstall } from "../lib/activation.js";
+import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -163,8 +163,9 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "session")) return;
   const results: CloudResults = {};
   const remedies: string[] = [];
-  sessionSteps(deps, results, remedies);
-  finish(deps, "session", results, remedies);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, {}, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
 }
 
 /**
@@ -182,12 +183,27 @@ export function setupDetectedCloudSession(deps: CloudSetupDependencies): void {
   const remedies: string[] = [];
   const root = gitToplevel(deps.cwd);
   let preparedNow = false;
-  if (!isPreparedCloudSession(env) && !(root && hasProjectPrimInstall(root))) {
+  // A repository that opts out wants nothing set up, the VM included: an
+  // environment left unprepared may be how its owner keeps prim off elsewhere.
+  if (
+    !isPreparedCloudSession(env) &&
+    !(root && hasProjectPrimInstall(root)) &&
+    !(root && optsOut(root))
+  ) {
     prepareSteps(deps, results, remedies, "session");
     preparedNow = results.prepared === "ok";
   }
-  sessionSteps(deps, results, remedies, { preparedNow });
-  finish(deps, "session", results, remedies);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, { preparedNow }, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
+}
+
+/**
+ * The repository commits its opt-out and nobody turned this clone on. An
+ * activation prim itself wrote down for an implicit opt-in is not that.
+ */
+function optsOut(root: string): boolean {
+  return declaresInactive(root) && !explicitlyActive(root);
 }
 
 /**
@@ -255,12 +271,19 @@ function prepareSteps(
     );
 }
 
+/** What the session steps found beyond each step's own result. */
+type SessionOutcome = {
+  /** The repository commits its own opt-out and nothing was activated. */
+  optedOut?: boolean;
+};
+
 /** The per-session steps; a missing prerequisite stops the rest. */
 function sessionSteps(
   deps: CloudSetupDependencies,
   results: CloudResults,
   remedies: string[],
   options: { preparedNow?: boolean } = {},
+  outcome: SessionOutcome = {},
 ): void {
   const remedy = (message: string): void => {
     deps.note(message);
@@ -313,6 +336,17 @@ function sessionSteps(
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
+    return;
+  }
+  // The repository's committed opt-out is its answer to a prepared environment
+  // (and to this command, which the documented agent prompt runs): leave it
+  // off. A clone someone explicitly enabled is theirs to keep on.
+  if (optsOut(root)) {
+    deps.note(
+      "repository · opted out: its .claude/settings.json declares PRIM_ACTIVE=false, so prim stays off here. `prim enable` turns it on for this session's clone; `prim enable --scope project` removes the opt-out",
+    );
+    results.repository = "ok";
+    outcome.optedOut = true;
     return;
   }
   if (!githubRepositoryFullName(root)) {
@@ -385,6 +419,7 @@ function finish(
   mode: "prepare" | "session",
   results: CloudResults,
   remedies: string[],
+  optedOut = false,
 ): void {
   const failed = Object.keys(results).filter((key) => results[key] !== "ok");
   deps.note(
@@ -398,8 +433,18 @@ function finish(
     failed.length === 0
       ? mode === "prepare"
         ? "The cloud environment is prepared; sessions started from it load prim's hooks."
-        : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
+        : optedOut
+          ? "This repository opts out of Primitive (PRIM_ACTIVE=false in its .claude/settings.json), so nothing was activated. Tell the user in one sentence, then continue their task; do not run prim enable unless they ask."
+          : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
       : "Cloud setup is incomplete. Tell the user each remedy in one sentence before continuing; do not run prim auth login or prim auth enroll, which cannot work in a cloud session.";
-  printJson({ ok: failed.length === 0, cloud: mode, results, failed, remedies, instructions });
+  printJson({
+    ok: failed.length === 0,
+    cloud: mode,
+    results,
+    failed,
+    remedies,
+    instructions,
+    ...(optedOut ? { optedOut: true } : {}),
+  });
   if (failed.length) deps.exit(EXIT_INCOMPLETE);
 }

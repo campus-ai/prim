@@ -9,7 +9,13 @@ import {
   leaseDecisionFeedback,
   renderFeedback,
 } from "../decisions/feedback.js";
-import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
+import {
+  isRepoActiveForCapture,
+  markActivationImplicit,
+  repoActiveFlag,
+  setRepoActive,
+  withdrawImplicitActivation,
+} from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
 import { diagnoseCloudSession, isClaudeCloudSession } from "../lib/cloud-session.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
@@ -70,6 +76,9 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
         // Legacy project installs are considered active by the Node gate, but
         // the portable post-commit shell block can only read Git config.
         setRepoActive(root, true);
+        // Prim's write, not the user's `prim enable`: a later committed
+        // opt-out must be able to withdraw it.
+        markActivationImplicit(root);
         shellGateActive = true;
       } catch {
         // Do not refresh to a raw-config-gated block that would silently turn
@@ -174,6 +183,9 @@ export async function processSessionStart(
   }
 
   const cwd = envelope.cwd ?? process.cwd();
+  // A repository that has since committed its opt-out takes back the
+  // activation an earlier session wrote down for it.
+  withdrawImplicitActivation(cwd);
   if (!gitToplevel(cwd) || !isRepoActiveForCapture(cwd)) {
     // Preserve the local disable marker without starting presence or capture.
     if (repoActiveFlag(cwd) === "false") clearHooksWired(cwd);

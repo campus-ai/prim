@@ -6,6 +6,7 @@ vi.mock("node:child_process", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
+  lstatSync: vi.fn(),
   readFileSync: vi.fn(() => ""),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock("node:fs", () => ({
 }));
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   PRIM_ACTIVE_KEY,
@@ -22,6 +23,7 @@ import {
   PRIM_REPO_SYNC_REPOSITORY_KEY,
   clearRepoSyncId,
   decisionIngestionStatus,
+  declaresInactive,
   hasProjectPrimInstall,
   isRepoActive,
   isRepoActiveForCapture,
@@ -331,6 +333,29 @@ describe("hasProjectPrimInstall (self-heal, bounded to the repo root)", () => {
     mockedExistsSync.mockImplementation((p) => String(p) === "/repo/.claude/settings.json");
     mockedReadFileSync.mockReturnValue('{"note":"prim-directive, unrelated to hooks"}');
     expect(hasProjectPrimInstall("/repo")).toBe(false);
+  });
+});
+
+describe("declaresInactive (bounded to the repo root)", () => {
+  const settingsFile = (): void => {
+    vi.mocked(lstatSync).mockImplementation(((path: string) => ({
+      isDirectory: () => String(path).endsWith(".claude"),
+      isFile: () => String(path).endsWith("settings.json"),
+      size: 64,
+    })) as unknown as typeof lstatSync);
+    mockedReadFileSync.mockReturnValue(JSON.stringify({ env: { PRIM_ACTIVE: "false" } }));
+  };
+
+  it("is true for a repository whose own settings declare the opt-out", () => {
+    gitMock({ flag: undefined, root: "/repo" });
+    settingsFile();
+    expect(declaresInactive("/repo")).toBe(true);
+  });
+
+  it("is false when the repo root IS $HOME — that file is the user-scope config", () => {
+    gitMock({ flag: undefined, root: homedir() });
+    settingsFile();
+    expect(declaresInactive(homedir())).toBe(false);
   });
 });
 
