@@ -11,6 +11,7 @@ import {
 } from "../decisions/feedback.js";
 import { isRepoActiveForCapture, repoActiveFlag, setRepoActive } from "../lib/activation.js";
 import { warmBinCache } from "../lib/bin-cache.js";
+import { diagnoseCloudSession, isClaudeCloudSession } from "../lib/cloud-session.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
@@ -25,6 +26,11 @@ import { reauthNoticeFields } from "./reauth-notice.js";
 
 const DAEMON_TIMEOUT_MS = 250;
 const REPOSITORY_BIND_TIMEOUT_MS = 1_000;
+// A Claude Code cloud VM starts every resumed session cold: the first bind
+// also spawns the token broker and runs discovery, the token exchange, and
+// identity verification. One second failed that in a live VM and showed a
+// false "not connected" notice although later hooks connected fine.
+const CLOUD_REPOSITORY_BIND_TIMEOUT_MS = 10_000;
 
 // Keep these shared clauses in lockstep with the SKILL.md description. Claude
 // and Codex differ only in how they invoke the installed Prim workflow.
@@ -102,7 +108,9 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
       // stale when the origin or the organization's connected repository
       // changes. The server remains authoritative and the write is idempotent.
       const binding = await bindRepository(root, {
-        signal: AbortSignal.timeout(REPOSITORY_BIND_TIMEOUT_MS),
+        signal: AbortSignal.timeout(
+          isClaudeCloudSession() ? CLOUD_REPOSITORY_BIND_TIMEOUT_MS : REPOSITORY_BIND_TIMEOUT_MS,
+        ),
         quietRefresh: true,
       });
       try {
@@ -120,7 +128,11 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
   }
 }
 
-function claudeBindingReminder(binding: RepositoryBindingResult): string {
+function claudeBindingReminder(binding: RepositoryBindingResult, cloud = false): string {
+  // A cloud VM has no browser to drive the GitHub App flow; the connection is
+  // made once from the developer's own machine and then applies here too.
+  if (cloud && binding.status !== "connected")
+    return `GitHub repo connection is required before Primitive can attribute work in ${binding.repositoryFullName}, and it cannot be completed from this Claude Code cloud session. Before doing task work, tell the user exactly: "Primitive needs a one-time GitHub connection for ${binding.repositoryFullName}. Run \`prim github connect\` in a clone of it on your own machine, then start a new cloud session." Then continue the user's request.`;
   if (binding.status === "connected") {
     return `The GitHub repo connection is complete for ${binding.repositoryFullName}. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation. In your first response, begin with exactly: "GitHub repo connection is complete for ${binding.repositoryFullName}. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation." Then continue the user's request.`;
   }
@@ -288,8 +300,22 @@ export async function processSessionStart(
   }
 
   if (agent === "claude_code") {
+    // In a Claude Code cloud session an unbound active repository usually means
+    // missing credentials or a blocked host, both of which otherwise fail open
+    // without a word. Name the fix where the user and agent will see it.
+    let cloudNotice: string | undefined;
+    if (active && !claudeBinding && isClaudeCloudSession()) {
+      try {
+        cloudNotice = await diagnoseCloudSession({ cwd: projectRoot ?? cwd });
+      } catch {
+        // The diagnosis is advisory; SessionStart stays fail-soft.
+      }
+    }
     const additionalContext = [
-      claudeBinding ? claudeBindingReminder(claudeBinding) : undefined,
+      cloudNotice
+        ? `${cloudNotice} Tell the user this in one sentence before starting their task.`
+        : undefined,
+      claudeBinding ? claudeBindingReminder(claudeBinding, isClaudeCloudSession()) : undefined,
       active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined,
     ]
       .filter((value): value is string => value !== undefined)
@@ -307,7 +333,8 @@ export async function processSessionStart(
         const rendered = lease ? renderFeedback(lease) : undefined;
         return {
           output: buildHookOutput({
-            systemMessage: rendered?.systemMessage,
+            systemMessage:
+              [cloudNotice, rendered?.systemMessage].filter(Boolean).join("\n\n") || undefined,
             additionalContext,
             reloadSkills,
           }),
@@ -324,7 +351,9 @@ export async function processSessionStart(
         };
       }
     }
-    return { output: buildHookOutput({ additionalContext, reloadSkills }) };
+    return {
+      output: buildHookOutput({ systemMessage: cloudNotice, additionalContext, reloadSkills }),
+    };
   }
 
   await activeProjectRoot(cwd);

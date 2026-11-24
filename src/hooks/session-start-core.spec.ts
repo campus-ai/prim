@@ -1,0 +1,154 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  bind: vi.fn(),
+  diagnose: vi.fn(),
+  cloud: vi.fn(),
+}));
+
+vi.mock("../client.js", () => ({
+  getSiteUrl: () => "https://api.example.com",
+  isSessionEnded: () => false,
+}));
+vi.mock("../commands/claude-plugin.js", () => ({
+  refreshClaudePlugins: async () => ({ installed: 0, refreshed: 0 }),
+}));
+vi.mock("../commands/skill.js", () => ({
+  hasUsableCodexGuidance: () => false,
+  hasUsableCursorSkill: () => false,
+}));
+vi.mock("../daemon/client.js", () => ({ daemonRequest: async () => undefined }));
+vi.mock("../daemon/self-heal.js", () => ({ kickDaemonEnsure: () => undefined }));
+vi.mock("../lib/activation.js", () => ({
+  isRepoActiveForCapture: () => true,
+  repoActiveFlag: () => "true",
+  setRepoActive: () => undefined,
+}));
+vi.mock("../lib/bin-cache.js", () => ({ warmBinCache: () => undefined }));
+vi.mock("../lib/cloud-session.js", () => ({
+  diagnoseCloudSession: mocks.diagnose,
+  isClaudeCloudSession: mocks.cloud,
+}));
+vi.mock("../lib/collect-scope.js", () => ({ fetchAndCacheCollectScope: async () => undefined }));
+vi.mock("../lib/commit-heartbeat.js", () => ({
+  clearHooksWired: () => undefined,
+  recordHooksWired: () => undefined,
+}));
+vi.mock("../lib/git-hooks.js", () => ({
+  MANAGED_GIT_HOOK_NAMES: ["post-commit"],
+  ensureEffectiveGitHook: () => ({ outcome: "unchanged" }),
+}));
+vi.mock("../lib/git.js", () => ({ gitToplevel: () => "/repo" }));
+vi.mock("../lib/repository-binding.js", () => ({ bindRepository: mocks.bind }));
+vi.mock("../lib/workspace-id.js", () => ({
+  getOrCreateWorkspaceId: () => ({ status: "not_git" }),
+}));
+
+import { processSessionStart } from "./session-start-core.js";
+
+const NOTICE = "Primitive is not connected in this Claude Code cloud session: test.";
+const envelope = JSON.stringify({
+  hook_event_name: "SessionStart",
+  session_id: "session-1",
+  cwd: "/repo",
+});
+
+type Output = { systemMessage?: string; hookSpecificOutput?: { additionalContext?: string } };
+
+beforeEach(() => {
+  mocks.diagnose.mockResolvedValue(NOTICE);
+  mocks.bind.mockRejectedValue(new Error("fetch failed"));
+  mocks.cloud.mockReturnValue(true);
+});
+afterEach(() => vi.clearAllMocks());
+
+describe("processSessionStart in a Claude Code cloud session", () => {
+  it("tells the user and the agent why an active repository could not connect", async () => {
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const result = output as Output;
+    expect(result.systemMessage).toBe(NOTICE);
+    expect(result.hookSpecificOutput?.additionalContext).toContain(NOTICE);
+  });
+
+  it("stays silent outside a cloud session", async () => {
+    mocks.cloud.mockReturnValue(false);
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBeUndefined();
+    expect(mocks.diagnose).not.toHaveBeenCalled();
+  });
+
+  it("does not diagnose a repository that connected", async () => {
+    mocks.bind.mockResolvedValue({
+      status: "connected",
+      repoSyncId: "sync",
+      repositoryFullName: "campus-ai/prim",
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBeUndefined();
+    expect(mocks.diagnose).not.toHaveBeenCalled();
+  });
+
+  it("stays fail-soft when the diagnosis itself throws", async () => {
+    mocks.diagnose.mockRejectedValue(new Error("boom"));
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBeUndefined();
+  });
+});
+
+describe("repository binding at SessionStart", () => {
+  // A bind that answers after 1.5 s, the way a cold cloud VM's first bind does.
+  function slowBind() {
+    mocks.bind.mockImplementation(
+      (_root: string, options: { signal: AbortSignal }) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              resolve({
+                status: "connected",
+                repoSyncId: "sync",
+                repositoryFullName: "campus-ai/prim",
+              }),
+            1_500,
+          );
+          options.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(options.signal.reason);
+          });
+        }),
+    );
+  }
+
+  it("gives a cold cloud session time to bind instead of reporting it disconnected", async () => {
+    slowBind();
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBeUndefined();
+    expect(mocks.diagnose).not.toHaveBeenCalled();
+    expect((output as Output).hookSpecificOutput?.additionalContext).toContain(
+      "GitHub repo connection is complete for campus-ai/prim",
+    );
+  });
+
+  it("sends an unbound cloud repository to the developer's machine, not a browser flow", async () => {
+    mocks.cloud.mockReturnValue(true);
+    mocks.bind.mockResolvedValue({ status: "unbound", repositoryFullName: "campus-ai/prim" });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const context = (output as Output).hookSpecificOutput?.additionalContext ?? "";
+    expect(context).toContain("cannot be completed from this Claude Code cloud session");
+    expect(context).not.toContain("drive the browser-based GitHub App workflow");
+  });
+
+  it("diagnoses a failed cloud bind against the session's repository", async () => {
+    mocks.cloud.mockReturnValue(true);
+    await processSessionStart(envelope, "claude_code");
+    expect(mocks.diagnose).toHaveBeenCalledWith({ cwd: "/repo" });
+  });
+
+  it("keeps the one-second bind budget on a developer machine", async () => {
+    mocks.cloud.mockReturnValue(false);
+    slowBind();
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).hookSpecificOutput?.additionalContext ?? "").not.toContain(
+      "connection is complete",
+    );
+  });
+});

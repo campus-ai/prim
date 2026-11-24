@@ -40,6 +40,7 @@ import {
 import { decisionIngestionStatus, repositoryBindingState } from "../lib/activation.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { binFile } from "../lib/bin-path.js";
+import { isClaudeCloudSession } from "../lib/cloud-env.js";
 import { deliveryBacklogState, deliveryBacklogSummary } from "../lib/delivery-backlog.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { type Teammate, formatTeammates } from "../lib/presence.js";
@@ -851,6 +852,17 @@ async function detachedDaemonStatus(): Promise<void> {
     : null;
 
   const { json, exitCode } = classifyStatus(pidAlive, responding, snapshot, pid?.pid);
+
+  // A Claude Code cloud VM opts out on purpose (`prim setup --cloud`): it
+  // pauses between messages, which would only kill a daemon, and capture
+  // delivers directly. Report the intended state, as doctor does.
+  if (!pidAlive && isClaudeCloudSession() && daemonExplicitlyDisabled()) {
+    process.stderr.write(
+      "[prim] daemon not used in Claude Code cloud sessions; capture delivers directly\n",
+    );
+    console.log(JSON.stringify({ ...json, disabled: true, cloudSession: true }, null, 2));
+    return;
+  }
 
   if (!pidAlive) {
     process.stderr.write("[prim] ✗ daemon down\n");

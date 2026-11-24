@@ -1,3 +1,4 @@
+import { isClaudeCloudSession } from "../lib/cloud-session.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { verifyAuthStatus } from "./auth.js";
 /**
@@ -257,6 +258,15 @@ export function classifyDaemonHealth(
   } & DoctorOptions = {},
 ): Check {
   if (options.disabled) {
+    // A Claude Code cloud VM pauses between messages, which would only kill a
+    // daemon; `prim setup --cloud` opts out on purpose and capture delivers
+    // directly. The opt-out there is the healthy state, not a fault.
+    if (isClaudeCloudSession())
+      return {
+        name: "daemon",
+        status: "ok",
+        detail: "not used in Claude Code cloud sessions; capture delivers directly",
+      };
     return {
       name: "daemon",
       status: "fail",

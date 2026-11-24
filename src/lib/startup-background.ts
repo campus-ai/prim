@@ -104,12 +104,14 @@ export function runStartupBackgroundWork(
   // would be redundant. A setup that starts the daemon, and its child steps,
   // leave the drain to that daemon: a background drain holding the drain lock
   // would make the daemon's sweeps bow out unrecorded, hiding delivery
-  // failures from setup's health check. `setup --no-daemon` starts no daemon,
-  // so it and its steps drain like any other command. Every other command
+  // failures from setup's health check. `setup --no-daemon` and
+  // `setup --cloud` start no daemon, so they and their steps drain like any
+  // other command. Every other command
   // only hands an overdue journal to a detached drain, so the drain can never
   // keep the command itself alive.
   const setupDaemonDrains =
-    (command === "setup" && !args.includes("--no-daemon")) || env[SETUP_DAEMON_DRAINS_ENV] === "1";
+    (command === "setup" && !args.includes("--no-daemon") && !args.includes("--cloud")) ||
+    env[SETUP_DAEMON_DRAINS_ENV] === "1";
   if (!setupDaemonDrains && (command !== "moves" || subcommand !== "flush")) work.flush();
   // The heal itself is a detached child and never delays the command.
   if (mayHealDaemon(argv, env)) work.healDaemon();
