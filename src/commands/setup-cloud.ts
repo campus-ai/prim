@@ -316,9 +316,12 @@ function sessionSteps(
   const auth = deps.parseAuthStatus(status);
   if (auth !== "valid") {
     const detail = authFailureDetail(status.stdout);
+    // A failure that already names Allowed domains names one host and the
+    // same fix; the remedy lists every host, so say it once.
+    const cause = detail && !detail.includes("Allowed domains") ? ` (${detail})` : "";
     remedy(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
+        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${cause}`
         : machine
           ? `credentials · ${detail ?? "rejected"}${
               // Guidance that already names the replacement needs no second copy.

@@ -429,6 +429,49 @@ describe("setupCloudSession", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("says the allowlist fix once, and that it reaches a session whose requests ride the proxy", () => {
+    const routed = {
+      CLAUDE_CODE_REMOTE: "true",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "secret",
+    };
+    const unreachable = (recoveryDetail: string, env: NodeJS.ProcessEnv) => {
+      const { deps, notes } = harness({
+        cwd: repo(true),
+        env,
+        parseAuthStatus: () => "unreachable",
+        run: () => ({ code: 1, stdout: JSON.stringify({ recoveryDetail }) }),
+      });
+      setupCloudSession(deps);
+      return notes.find((note) => note.startsWith("credentials · ")) ?? "";
+    };
+    const REMEDY =
+      "credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)";
+    const IN_SESSION = "; the change takes effect in this session within about a minute";
+    // The failure's own guidance names one host and the same fix.
+    expect(
+      unreachable(
+        `Machine authentication could not reach api.getprimitive.ai. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited)${IN_SESSION}.`,
+        routed,
+      ),
+    ).toBe(`${REMEDY}${IN_SESSION}`);
+    // Any other cause is still reported beside the remedy.
+    expect(
+      unreachable(
+        "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry.",
+        routed,
+      ),
+    ).toBe(
+      `${REMEDY}${IN_SESSION} (The request to Primitive through the cloud environment's proxy failed. Check the connection and retry)`,
+    );
+    // With no proxy to route through, prim connects directly and promises nothing.
+    const { HTTPS_PROXY: _proxy, ...direct } = routed;
+    expect(unreachable("Machine authentication is temporarily unavailable.", direct)).toBe(
+      `${REMEDY} (Machine authentication is temporarily unavailable)`,
+    );
+  });
+
   it("still activates but reports a repository without committed prim hooks", () => {
     const { deps, calls, notes, exit } = harness({ cwd: repo(false) });
     setupCloudSession(deps);

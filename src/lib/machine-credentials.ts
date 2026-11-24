@@ -15,8 +15,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AsyncEntry } from "@napi-rs/keyring";
 import { atomicWriteFile } from "./atomic-file.js";
+import { cloudProxyRouting } from "./cloud-env.js";
+import type { EgressReport } from "./egress-probe.js";
 import { withFileLock } from "./file-lock.js";
-import { acquireBrokerCredential, forwardBrokerRequest } from "./machine-broker.js";
+import {
+  acquireBrokerCredential,
+  forwardBrokerRequest,
+  probeBrokerEgress,
+} from "./machine-broker.js";
 import {
   MachineAuthError,
   type MachineConfiguration,
@@ -30,6 +36,7 @@ import {
   parseInjectedMachineIdentity,
   parseMachineConfiguration,
   parseMachineIdentity,
+  readMachineIdentity,
   rejectedCredentialsMessage,
   verifyInjectedMachineIdentity,
   verifyMachineIdentity,
@@ -57,6 +64,11 @@ export type MachineCredential = MachineConfiguration &
      * API requests; `accessToken` is empty and requests go through the broker.
      */
     tokenInjection?: "network";
+    /**
+     * Requests go through the broker, whose route is the cloud environment's
+     * proxy, and carry `accessToken` unless that proxy attaches the token.
+     */
+    routing?: "proxy";
   };
 type SecretEntry = Pick<AsyncEntry, "getPassword" | "setPassword" | "deletePassword">;
 export type MachineDependencies = {
@@ -312,7 +324,19 @@ export type EnvironmentCredentials = {
   generation: string;
   secretInjection?: "network";
   tokenInjection?: "network";
+  /**
+   * In a cloud session (see cloudProxyRouting) the broker is started routed
+   * through the environment's proxy and relays every request to Primitive.
+   */
+  routing?: "proxy";
 };
+
+/**
+ * Marks the generation of a broker that relays (routing above). It differs
+ * from every key an earlier version used in any mode, so a prim that relays
+ * never reuses a broker started without routing or without the relay.
+ */
+const RELAY_GENERATION = "cloud-relay";
 
 const brokerKeys = new Map<string, string>();
 
@@ -402,6 +426,13 @@ export function environmentCredentials(
       "incomplete_machine_credentials",
       `PRIM_M2M_CLIENT_AUTH accepts ${NETWORK_SECRET_AUTH} or ${NETWORK_TOKEN_AUTH}.`,
     );
+  // Part of the generation in every mode: a broker that does not relay, or was
+  // started without routing (by an earlier prim, or outside a cloud session),
+  // is never the one a relaying caller reaches. No other part of a key can
+  // hold the separator, so the longer key equals none of the shorter ones.
+  const routed = cloudProxyRouting(env);
+  const routing = routed ? ({ routing: "proxy" } as const) : {};
+  const relay = routed ? `\0${RELAY_GENERATION}` : "";
   if (auth !== undefined) {
     if (!clientId || !/^client_[\w-]+$/u.test(clientId))
       throw new MachineAuthError(
@@ -419,13 +450,14 @@ export function environmentCredentials(
     // marker differs from both, so an upgraded prim never reuses a broker
     // that an older one started without routing.
     // The mode is part of the key: the two modes' brokers do different work.
-    const generation = hash(`${apiUrlFor(deps)}\0${clientId}\0${auth}\0broker-proxy`);
+    const generation = hash(`${apiUrlFor(deps)}\0${clientId}\0${auth}\0broker-proxy${relay}`);
     const credentials = {
       clientId,
       generation,
       ...(auth === NETWORK_TOKEN_AUTH
         ? { tokenInjection: "network" }
         : { secretInjection: "network" }),
+      ...routing,
     } as EnvironmentCredentials;
     // Only paths that talk to the broker need its key; checking whether
     // credentials are configured must not write to disk.
@@ -449,7 +481,8 @@ export function environmentCredentials(
   return {
     clientId,
     clientSecret,
-    generation: hash(`${apiUrlFor(deps)}\0${clientId}\0${clientSecret}`),
+    generation: hash(`${apiUrlFor(deps)}\0${clientId}\0${clientSecret}${relay}`),
+    ...routing,
   };
 }
 
@@ -800,6 +833,7 @@ export async function acquireMachineCredential(
             generation: environment.generation,
             storage: "environment",
             ...(environment.tokenInjection ? { tokenInjection: "network" as const } : {}),
+            ...(environment.routing ? { routing: "proxy" as const } : {}),
           };
           writeEnvironmentContext(cached, deps);
           return cached;
@@ -925,10 +959,12 @@ export type MachineApiRequest = {
 };
 
 /**
- * Send one API request for a credential whose token the cloud environment's
- * proxy attaches (see NETWORK_TOKEN_AUTH). It goes through the broker, the
- * one prim process whose requests pass through that proxy, and carries no
- * Authorization header of prim's own.
+ * Send one API request through the broker, the one prim process whose
+ * requests pass through the cloud environment's proxy. Where that proxy
+ * attaches the token (see NETWORK_TOKEN_AUTH) the request carries no
+ * Authorization header of prim's own; where prim holds the token and the
+ * session's requests ride the proxy (see cloudProxyRouting), the broker
+ * carries the caller's.
  */
 export async function forwardMachineRequest(
   request: MachineApiRequest,
@@ -936,7 +972,7 @@ export async function forwardMachineRequest(
   deps: MachineDependencies = {},
 ): Promise<Response> {
   const environment = environmentCredentials(deps);
-  if (!environment?.tokenInjection)
+  if (!environment?.tokenInjection && !environment?.routing)
     throw new MachineAuthError(
       "identity_changed",
       "Machine identity changed; restart the operation.",
@@ -960,15 +996,45 @@ export async function verifyAcquiredMachineIdentity(
   machine: MachineCredential,
   deps: MachineDependencies = {},
 ): Promise<MachineIdentity> {
-  if (!machine.tokenInjection)
+  if (!machine.tokenInjection && !machine.routing)
     return verifyMachineIdentity(machine.apiUrl, machine.accessToken, machine.clientId);
   const response = await forwardMachineRequest(
-    { method: "GET", path: "/api/cli/auth/status" },
+    {
+      method: "GET",
+      path: "/api/cli/auth/status",
+      ...(machine.tokenInjection
+        ? {}
+        : { headers: { Authorization: `Bearer ${machine.accessToken}` } }),
+    },
     AbortSignal.timeout(10_000),
     deps,
   );
+  if (!machine.tokenInjection) return readMachineIdentity(response, machine.clientId);
   const value = response.ok ? await response.json().catch(() => undefined) : undefined;
   return parseInjectedMachineIdentity(response.status, value, machine.apiUrl, machine.clientId);
+}
+
+/**
+ * Ask the broker what it can reach of Primitive, in a session whose requests
+ * it relays (see cloudProxyRouting): a probe from this process would test a
+ * route prim does not use there.
+ */
+export async function probeMachineEgress(deps: MachineDependencies = {}): Promise<EgressReport> {
+  const environment = environmentCredentials(deps);
+  if (!environment?.routing)
+    throw new MachineAuthError(
+      "identity_changed",
+      "Machine identity changed; restart the operation.",
+    );
+  const directory = configurationDirectory(deps);
+  ensureDirectory(directory);
+  return probeBrokerEgress({
+    directory,
+    apiUrl: apiUrlFor(deps),
+    environment,
+    env: deps.env ?? process.env,
+    signal: AbortSignal.timeout(10_000),
+  });
 }
 
 export async function clearMachineCredentials(deps: MachineDependencies = {}): Promise<boolean> {

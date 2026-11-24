@@ -19,6 +19,22 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
     });
   });
 
+  it("says the allowlist edit reaches the session where its requests ride the proxy", async () => {
+    // As in the token broker of a cloud session with credentials in its variables.
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:3128");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    const failure = await discoverMachineConfiguration(
+      "https://api.example.com",
+      undefined,
+      unreachable,
+    ).catch((error: unknown) => error as Error);
+    expect(failure.message).toBe(
+      "Machine authentication could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited); the change takes effect in this session within about a minute.",
+    );
+    expect(failure.message).not.toMatch(/new (cloud )?session/u);
+  });
+
   it("keeps the connection advice on a developer machine", async () => {
     await expect(
       discoverMachineConfiguration("https://api.example.com", undefined, unreachable),

@@ -253,7 +253,11 @@ prepared stays prepared).
 
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
-checkout that does not identify its repository. The git pre-commit check is not wired
+checkout that does not identify its repository. A domain added under Allowed domains
+reaches a running session within about a minute, with no new session needed: with
+credentials from the environment's variables, prim sends every request to Primitive
+through the environment's proxy, which follows the list as it is edited. (A session's
+direct connections keep the list it was created with.) The git pre-commit check is not wired
 automatically; run `prim setup --cloud` in a session to verify it step by step and
 install it. Decisions captured in the environment belong to you; an organization admin
 can revoke the installation in Settings → Developer installations.

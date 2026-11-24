@@ -7,6 +7,36 @@ export function isClaudeCloudSession(env: NodeJS.ProcessEnv = process.env): bool
 }
 
 /**
+ * True where prim sends every request to Primitive through the environment's
+ * proxy: a cloud session whose credentials come from its variables, with a
+ * proxy configured. A cloud VM's direct connections resolve only the hosts
+ * that were under Allowed domains when the session was created; the proxy
+ * follows that list as it is edited. Node uses the proxy only when told to at
+ * startup, so prim routes the one process it starts itself, the token broker
+ * (see brokerEnvironment), and hands that broker its requests.
+ */
+export function cloudProxyRouting(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    isClaudeCloudSession(env) &&
+    Boolean(env.HTTPS_PROXY || env.https_proxy) &&
+    (env.PRIM_M2M_CLIENT_ID !== undefined ||
+      env.PRIM_M2M_CLIENT_SECRET !== undefined ||
+      env.PRIM_M2M_CLIENT_AUTH !== undefined)
+  );
+}
+
+/**
+ * What follows "add … to Allowed domains" where prim's requests ride the
+ * proxy: the edit reaches the running session. Elsewhere prim connects
+ * directly, and the message is left as it was.
+ */
+export function cloudDomainEditNote(env: NodeJS.ProcessEnv = process.env): string {
+  return cloudProxyRouting(env)
+    ? "; the change takes effect in this session within about a minute"
+    : "";
+}
+
+/**
  * True in a process Claude Code itself started (a tool call or a hook), which
  * is where it sets CLAUDECODE. A cloud environment's setup script runs before
  * Claude Code launches, so it is never true there, whatever else the VM's

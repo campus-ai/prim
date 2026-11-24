@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { once } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { request as httpRequest, createServer as httpServer } from "node:http";
@@ -25,11 +26,19 @@ let api;
 let provider;
 let proxy;
 let injectedApi;
+let cloudApi;
 // Set while the stand-in proxy plays an "OAuth 2.0 client credentials" network
 // secret: it attaches the token to API requests, which this models by handing
 // them to a face of the API that needs none.
 let injecting = false;
 const injectedPaths = [];
+const cloudRequests = [];
+// Hosts the stand-in proxy refuses, as the real one does a host that is not
+// under the environment's Allowed domains, and what it has open to each.
+const refused = new Set();
+const openTunnels = new Set();
+// The local port of each connection the proxy itself opened.
+const proxyPeers = new Set();
 const tunnels = [];
 let proxyConnections = 0;
 const pids = new Set();
@@ -53,13 +62,18 @@ try {
       "-subj",
       "/CN=localhost",
       "-addext",
-      "subjectAltName=DNS:localhost,IP:127.0.0.1",
+      "subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:api.prim.invalid,DNS:signin.prim.invalid",
     ],
     { stdio: "ignore" },
   );
   provider = httpsServer(
     { key: await readFile(join(root, "key.pem")), cert: await readFile(join(root, "cert.pem")) },
     async (req, res) => {
+      // A reachability probe: any answer says the host can be reached.
+      if (req.method === "GET") {
+        res.writeHead(404).end();
+        return;
+      }
       let body = "";
       for await (const chunk of req) body += chunk;
       assert.equal(req.url, "/oauth2/token");
@@ -74,7 +88,9 @@ try {
         return;
       }
       const claims = {
-        iss: issuer,
+        // The name the client reached it by: the address, or the name only
+        // the stand-in proxy resolves.
+        iss: `https://${req.headers.host}`,
         aud: "client_environment",
         sub: clientId,
         client_id: clientId,
@@ -94,10 +110,23 @@ try {
   provider.listen(0, "127.0.0.1");
   await once(provider, "listening");
   const issuer = `https://127.0.0.1:${provider.address().port}`;
-  const serveApi = (viaInjectingProxy) => (req, res) => {
+  // `face` is one way of reaching the API: the sign-in service it names, and
+  // a record of what arrived there and from which local port.
+  const serveApi = (viaInjectingProxy, face) => (req, res) => {
+    face?.requests.push({
+      url: req.url,
+      authorization: req.headers.authorization,
+      peer: req.socket.remotePort,
+    });
     res.setHeader("Content-Type", "application/json");
     if (req.url.endsWith("/m2m/config")) {
-      res.end(JSON.stringify({ protocol_version: 1, issuer, audience: "client_environment" }));
+      res.end(
+        JSON.stringify({
+          protocol_version: 1,
+          issuer: face?.issuer ?? issuer,
+          audience: "client_environment",
+        }),
+      );
       return;
     }
     if (viaInjectingProxy) {
@@ -142,6 +171,17 @@ try {
   injectedApi = httpServer(serveApi(true));
   injectedApi.listen(0, "127.0.0.1");
   await once(injectedApi, "listening");
+  // The API as a Claude Code cloud VM sees it: under a name its own DNS does
+  // not resolve, which only the stand-in proxy reaches.
+  cloudApi = httpsServer(
+    { key: await readFile(join(root, "key.pem")), cert: await readFile(join(root, "cert.pem")) },
+    serveApi(false, {
+      issuer: `https://signin.prim.invalid:${provider.address().port}`,
+      requests: cloudRequests,
+    }),
+  );
+  cloudApi.listen(0, "127.0.0.1");
+  await once(cloudApi, "listening");
   await mkdir(source);
   await cp(resolve("dist/hook-runtime"), join(source, "dist"), { recursive: true });
   const { writeFile } = await import("node:fs/promises");
@@ -249,14 +289,28 @@ try {
   });
   proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
-    tunnels.push(request.url);
     const [host, requested] = request.url.split(":");
+    if (refused.has(host)) {
+      tunnels.push(`refused ${request.url}`);
+      socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      return;
+    }
+    tunnels.push(request.url);
     const port = proxiedPort(requested);
-    const upstream = connect(port, host, () => {
+    // Names under prim.invalid exist only here, as an allowed host does only
+    // at the real proxy once a session's own DNS has gone stale.
+    const upstream = connect(port, host.endsWith(".prim.invalid") ? "127.0.0.1" : host, () => {
+      proxyPeers.add(upstream.localPort);
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       upstream.write(head);
       upstream.pipe(socket);
       socket.pipe(upstream);
+    });
+    const tunnel = { host, socket };
+    openTunnels.add(tunnel);
+    socket.on("close", () => {
+      openTunnels.delete(tunnel);
+      upstream.destroy();
     });
     upstream.on("error", (error) => {
       tunnels.push(`${request.url} upstream ${error.code ?? error.message}`);
@@ -359,6 +413,137 @@ try {
   assert.ok(!read.stdout.includes("Bearer") && !read.stderr.includes("Bearer"));
   injecting = false;
   reports.push("network-token mode requests no token and reaches the API only through the proxy");
+  // A Claude Code cloud session with the secret in its variables. Such a VM's
+  // own DNS resolves only the hosts allowed when the session was created,
+  // while its proxy follows the allowlist as it is edited: here the API and
+  // the sign-in service have names only the stand-in proxy resolves. Prim
+  // must reach both through the proxy alone, token included.
+  const cloudSecret = `${secret}-cloud`;
+  const cloudApiHost = `api.prim.invalid:${cloudApi.address().port}`;
+  const cloudSignInHost = `signin.prim.invalid:${provider.address().port}`;
+  await mkdir(join(root, "home"));
+  const cloudEnv = {
+    ...networkEnv,
+    HOME: join(root, "home"),
+    PRIM_API_URL: `https://${cloudApiHost}`,
+    PRIM_M2M_CLIENT_SECRET: cloudSecret,
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    NO_PROXY: "",
+  };
+  const cloudRun = (args, extra = {}) =>
+    promisify(execFile)(process.execPath, [join(copied, "dist/index.js"), ...args], {
+      env: { ...cloudEnv, ...extra },
+      timeout: 15000,
+    });
+  const cloudStatus = async (extra) => {
+    // A failing status exits non-zero and still prints its answer.
+    const result = await cloudRun(["auth", "status", "--json"], extra).catch((error) => error);
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(secret));
+    return JSON.parse(result.stdout);
+  };
+  const brokerDescriptors = async () =>
+    (await readdir(config)).filter((name) => name.startsWith("machine_broker_"));
+  // Control: outside a cloud session prim connects by itself, and cannot.
+  const unrouted = await cloudStatus({});
+  assert.equal(
+    unrouted.status,
+    "unreachable",
+    `a direct connection must not resolve the cloud API's name: ${JSON.stringify(unrouted)}`,
+  );
+  assert.deepEqual(cloudRequests, [], "nothing reaches the cloud API without the proxy");
+  const unroutedBrokers = await brokerDescriptors();
+  // As `prim setup --cloud` does: the failure above left a cooldown behind.
+  for (const name of await readdir(config))
+    if (name.startsWith("machine_retry_")) await rm(join(config, name));
+  const exchangesBeforeCloud = exchanges;
+  const inSession = { CLAUDE_CODE_REMOTE: "true" };
+  const cloudStatuses = await Promise.all(Array.from({ length: 4 }, () => cloudStatus(inSession)));
+  assert.ok(
+    cloudStatuses.every(
+      (value) => value.status === "valid" && value.machineId === "machine_runtime",
+    ),
+    `cloud status through the proxy: ${JSON.stringify(cloudStatuses)}; requests ${JSON.stringify(tunnels)}`,
+  );
+  assert.equal(exchanges, exchangesBeforeCloud + 1, "cloud processes share one routed exchange");
+  const routedBrokers = (await brokerDescriptors()).filter(
+    (name) => !unroutedBrokers.includes(name),
+  );
+  assert.equal(
+    routedBrokers.length,
+    1,
+    "a cloud session must start its own broker, never reuse one started without routing",
+  );
+  assert.ok(
+    tunnels.includes(cloudSignInHost) && tunnels.includes(cloudApiHost),
+    `the token exchange and the API requests must travel through the proxy: ${JSON.stringify(tunnels)}`,
+  );
+  await cloudRun(["decisions", "recent"], inSession);
+  const authenticated = cloudRequests.filter(({ url }) => !url.endsWith("/m2m/config"));
+  assert.ok(
+    authenticated.filter(({ url }) => url.endsWith("/auth/status")).length >= 2,
+    "the broker's identity check and the command's own must both reach the API",
+  );
+  assert.ok(
+    authenticated.some(({ url }) => url.includes("/decisions")),
+    `a forwarded API read must reach the API: ${JSON.stringify(authenticated.map(({ url }) => url))}`,
+  );
+  assert.ok(
+    authenticated.every(({ authorization }) => authorization?.startsWith("Bearer header.")),
+    "the API must receive prim's bearer token on every forwarded request",
+  );
+  assert.ok(
+    cloudRequests.every(({ peer }) => proxyPeers.has(peer)),
+    "no prim process may connect to the API except through the proxy",
+  );
+  reports.push(
+    "cloud session with the secret in variables exchanges and forwards only through the proxy",
+  );
+  // Loopback stays off the proxy even in a VM that routes every Node process.
+  const routedBroker = JSON.parse(await readFile(join(config, routedBrokers[0]), "utf8"));
+  const everywhere = await cloudStatus({ ...inSession, NODE_USE_ENV_PROXY: "1" });
+  assert.equal(everywhere.status, "valid", JSON.stringify(everywhere));
+  assert.ok(
+    !tunnels.some((entry) => entry.includes(`:${routedBroker.port}`)),
+    "a caller must reach the broker over loopback, never through the proxy",
+  );
+  reports.push("cloud callers reach the broker over loopback whatever NO_PROXY says");
+  // What the broker can reach is what prim can reach: ask it as the session
+  // diagnosis does, then take hosts off the stand-in proxy's allowlist.
+  const proof = (purpose, text) =>
+    createHmac("sha256", cloudSecret)
+      .update(`${routedBroker.nonce}\0${purpose}\0${text}`)
+      .digest("hex");
+  const brokerProbe = async () => {
+    const body = JSON.stringify({
+      generation: routedBrokers[0].slice("machine_broker_".length, -".json".length),
+      timestamp: Date.now(),
+    });
+    const response = await fetch(`http://127.0.0.1:${routedBroker.port}/probe`, {
+      method: "POST",
+      body,
+      headers: { "Content-Type": "application/json", "X-Prim-Proof": proof("probe-request", body) },
+    });
+    const envelope = await response.json();
+    assert.equal(envelope.proof, proof("probe-answer", envelope.body), "the answer is signed");
+    return JSON.parse(envelope.body);
+  };
+  const refuse = async (host) => {
+    refused.add(host);
+    // The proxy drops what it had open to a host it no longer allows.
+    for (const tunnel of openTunnels) if (tunnel.host === host) tunnel.socket.destroy();
+    await delay(200);
+  };
+  const signIn = (result) => ({ host: "signin.prim.invalid", result });
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
+  await refuse("signin.prim.invalid");
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("blocked") });
+  await refuse("api.prim.invalid");
+  assert.deepEqual(await brokerProbe(), { api: "blocked" });
+  refused.clear();
+  reports.push(
+    "the broker reports a host the proxy allows as reachable and one it refuses as blocked",
+  );
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);
@@ -402,6 +587,8 @@ try {
   proxy?.close();
   injectedApi?.closeAllConnections();
   injectedApi?.close();
+  cloudApi?.closeAllConnections();
+  cloudApi?.close();
   await delay(100);
   await rm(root, { recursive: true, force: true });
 }

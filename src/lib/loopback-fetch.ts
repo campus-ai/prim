@@ -3,8 +3,8 @@ import { Readable } from "node:stream";
 
 /**
  * `fetch` for prim's own loopback services. With NODE_USE_ENV_PROXY set
- * (prim sets it for its token broker in a Claude Code cloud environment's
- * network-secret mode, and an environment may set it for every process),
+ * (prim sets it for its token broker in a Claude Code cloud session and in
+ * the network modes, and an environment may set it for every process),
  * Node's fetch sends every request through the egress proxy unless NO_PROXY
  * names the exact loopback address; a fresh agent never proxies, so prim
  * reaches its broker however NO_PROXY is spelled.

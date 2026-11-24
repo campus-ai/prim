@@ -243,7 +243,161 @@ describe("diagnoseCloudSession", () => {
   });
 });
 
+describe("diagnoseCloudSession where prim's requests ride the environment's proxy", () => {
+  const PROXY = "http://127.0.0.1:3128";
+  const routedEnv = (extra: NodeJS.ProcessEnv = {}) => ({
+    ...machineEnv(),
+    HTTPS_PROXY: PROXY,
+    ...extra,
+  });
+  const IN_SESSION = "; the change takes effect in this session within about a minute";
+  // What this process's own connections do in a session created before the
+  // hosts were allowed: direct DNS never learns of the edit.
+  const directDns = vi.fn(egress(["api.getprimitive.ai", "signin.getprimitive.ai"]));
+
+  beforeEach(() => {
+    directDns.mockClear();
+    vi.stubGlobal("fetch", directDns);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("does not report a host as blocked that only direct DNS cannot resolve", async () => {
+    const brokerProbe = vi.fn(async () => ({
+      api: "ok",
+      signIn: { host: "signin.getprimitive.ai", result: "ok" },
+    }));
+    const env = routedEnv();
+    const notice = await diagnoseCloudSession({ env, brokerProbe, siteUrl: API });
+    expect(notice).toBe(
+      "Primitive is not connected in this Claude Code cloud session: the repository could not be connected. Run `prim setup --cloud` for details.",
+    );
+    expect(brokerProbe).toHaveBeenCalledExactlyOnceWith({ env });
+    expect(directDns).not.toHaveBeenCalled();
+  });
+
+  it("still reports a host the proxy refuses, and says the fix reaches this session", async () => {
+    const notice = await diagnoseCloudSession({
+      env: routedEnv(),
+      brokerProbe: async () => ({ api: "blocked" }),
+      siteUrl: API,
+    });
+    expect(notice).toBe(
+      `Primitive is not connected in this Claude Code cloud session: this environment cannot reach Primitive. To fix it, add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION}.`,
+    );
+    expect(notice).not.toMatch(/new (cloud )?session/u);
+    expect(directDns).not.toHaveBeenCalled();
+  });
+
+  it("names the sign-in host the proxy refuses", async () => {
+    const notice = await diagnoseCloudSession({
+      env: routedEnv(),
+      brokerProbe: async () => ({
+        api: "ok",
+        signIn: { host: "signin.example.com", result: "blocked" },
+      }),
+      siteUrl: API,
+    });
+    expect(notice).toContain("cannot reach Primitive's sign-in service.");
+    expect(notice).toContain(
+      `add api.getprimitive.ai and signin.example.com to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION}.`,
+    );
+  });
+
+  it("keeps a timeout and an outage apart from the allowlist", async () => {
+    const report = (api: string) =>
+      diagnoseCloudSession({ env: routedEnv(), brokerProbe: async () => ({ api }), siteUrl: API });
+    expect(await report("timeout")).toContain("Primitive did not answer in time.");
+    expect(await report("ECONNRESET")).toContain("Primitive could not be reached (ECONNRESET).");
+  });
+
+  it("asks the broker in every credential mode, and only for the API host when the proxy holds the token", async () => {
+    for (const auth of ["network-secret", "network-token"]) {
+      const brokerProbe = vi.fn(async () => ({ api: "blocked" }));
+      const notice = await diagnoseCloudSession({
+        env: cloudEnv({
+          PRIM_M2M_CLIENT_ID: "client_cloud",
+          PRIM_M2M_CLIENT_AUTH: auth,
+          HTTPS_PROXY: PROXY,
+        }),
+        brokerProbe,
+        siteUrl: API,
+      });
+      expect(brokerProbe).toHaveBeenCalledOnce();
+      expect(notice).toContain(
+        auth === "network-token"
+          ? `add api.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION}.`
+          : `add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION}.`,
+      );
+    }
+    expect(directDns).not.toHaveBeenCalled();
+  });
+
+  it("claims no blocked host when the broker cannot be asked", async () => {
+    const notice = await diagnoseCloudSession({
+      env: routedEnv(),
+      brokerProbe: async () => {
+        throw new Error("broker unavailable");
+      },
+      siteUrl: API,
+    });
+    expect(notice).toContain("Run `prim setup --cloud` for details.");
+    expect(notice).not.toContain("Allowed domains");
+    expect(directDns).not.toHaveBeenCalled();
+  });
+
+  it("probes from this process where prim connects directly: no proxy, or a credential that is not the environment's", async () => {
+    const brokerProbe = vi.fn(async () => ({ api: "ok" }));
+    const BLOCKED =
+      "Primitive is not connected in this Claude Code cloud session: this environment cannot reach Primitive. To fix it, add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited).";
+    // Machine credentials with no proxy to route through.
+    expect(await diagnoseCloudSession({ env: machineEnv(), brokerProbe, siteUrl: API })).toBe(
+      BLOCKED,
+    );
+    // PRIM_TOKEN and a stored sign-in still connect directly, proxy or not.
+    expect(
+      await diagnoseCloudSession({
+        env: cloudEnv({ PRIM_TOKEN: "human", HTTPS_PROXY: PROXY }),
+        brokerProbe,
+        siteUrl: API,
+      }),
+    ).toBe(BLOCKED);
+    writeFileSync(join(configDir, "token"), "human\n", { mode: 0o600 });
+    expect(
+      await diagnoseCloudSession({
+        env: cloudEnv({ HTTPS_PROXY: PROXY }),
+        brokerProbe,
+        siteUrl: API,
+      }),
+    ).toBe(BLOCKED);
+    expect(brokerProbe).not.toHaveBeenCalled();
+    expect(directDns).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("cloud egress guidance", () => {
+  it("says a domain edit reaches the running session only where prim's requests ride the proxy", () => {
+    const routed = {
+      CLAUDE_CODE_REMOTE: "true",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "secret",
+    };
+    const plain =
+      "add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)";
+    expect(cloudEgressRemedy(API, undefined, routed)).toBe(
+      `${plain}; the change takes effect in this session within about a minute`,
+    );
+    const { HTTPS_PROXY: _proxy, ...unproxied } = routed;
+    expect(cloudEgressRemedy(API, undefined, unproxied)).toBe(plain);
+    expect(
+      cloudEgressRemedy(API, undefined, {
+        CLAUDE_CODE_REMOTE: "true",
+        HTTPS_PROXY: "http://127.0.0.1:3128",
+        PRIM_TOKEN: "human",
+      }),
+    ).toBe(plain);
+  });
+
   it("names the API host and the sign-in host once each", () => {
     expect(cloudAllowedDomains(API)).toEqual(["api.getprimitive.ai", "signin.getprimitive.ai"]);
     expect(cloudAllowedDomains("https://staging.example.com", "signin.example.com")).toEqual([

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -8,17 +9,25 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { type Server, createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createBrokerServer } from "./machine-broker.js";
 import {
+  type MachineCredential,
   type MachineDependencies,
   acquireMachineCredential,
   clearMachineCredentials,
   configureMachine,
+  environmentCredentials,
+  forwardMachineRequest,
   hasMachineConfiguration,
   machineSessionEnded,
+  probeMachineEgress,
   readMachineProfile,
+  verifyAcquiredMachineIdentity,
 } from "./machine-credentials.js";
 import { exchangeMachineCredentials } from "./machine-protocol.js";
 
@@ -680,5 +689,236 @@ describe("network-token mode (PRIM_M2M_CLIENT_AUTH=network-token)", () => {
         env: tokenEnv({ PRIM_M2M_CLIENT_AUTH: "network-secret" }),
       }),
     ).rejects.toMatchObject({ code: "identity_changed" });
+  });
+});
+
+describe("proxy routing in a Claude Code cloud session", () => {
+  const PROXY = "http://127.0.0.1:3128";
+  const cloud = { CLAUDE_CODE_REMOTE: "true", HTTPS_PROXY: PROXY };
+  const modes = {
+    "secret in variables": { PRIM_M2M_CLIENT_SECRET: secret },
+    "network-secret": { PRIM_M2M_CLIENT_AUTH: "network-secret" },
+    "network-token": { PRIM_M2M_CLIENT_AUTH: "network-token" },
+  } as const;
+  type Mode = keyof typeof modes;
+  const names = Object.keys(modes) as Mode[];
+  const API = "https://api.example.com";
+  const envFor = (mode: Mode, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+    PRIM_API_URL: API,
+    PRIM_M2M_CLIENT_ID: clientId,
+    ...modes[mode],
+    ...extra,
+  });
+  const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+
+  it.each(names)("relays only in a cloud session with a proxy configured, in %s mode", (mode) => {
+    const routing = (extra: NodeJS.ProcessEnv) =>
+      environmentCredentials({ ...deps, env: envFor(mode, extra) })?.routing;
+    expect(routing(cloud)).toBe("proxy");
+    expect(routing({ CLAUDE_CODE_REMOTE: "true", https_proxy: PROXY })).toBe("proxy");
+    // Outside a cloud session, or with no proxy to route through, prim
+    // connects as it always has.
+    expect(routing({})).toBeUndefined();
+    expect(routing({ HTTPS_PROXY: PROXY })).toBeUndefined();
+    expect(routing({ CLAUDE_CODE_REMOTE: "true" })).toBeUndefined();
+    expect(routing({ CLAUDE_CODE_REMOTE: "true", HTTPS_PROXY: "" })).toBeUndefined();
+    expect(routing({ CLAUDE_CODE_REMOTE: "true", HTTP_PROXY: PROXY })).toBeUndefined();
+    expect(routing({ CLAUDE_CODE_REMOTE: "1", HTTPS_PROXY: PROXY })).toBeUndefined();
+  });
+
+  it.each(names)("never reuses a broker started without the relay, in %s mode", (mode) => {
+    const generation = (extra: NodeJS.ProcessEnv) =>
+      environmentCredentials({ ...deps, env: envFor(mode, extra) })?.generation;
+    const relayed = generation(cloud);
+    expect(relayed).toMatch(/^[a-f0-9]{64}$/u);
+    // The broker this prim starts where it does not relay.
+    expect(relayed).not.toBe(generation({}));
+    expect(relayed).not.toBe(generation({ HTTPS_PROXY: PROXY }));
+    expect(relayed).not.toBe(generation({ CLAUDE_CODE_REMOTE: "true" }));
+    // Every key an earlier prim used, in any mode: none of their brokers
+    // both rode the proxy and relayed in every mode.
+    for (const earlier of [
+      `${API}\0${clientId}\0${secret}`,
+      `${API}\0${clientId}\0network-secret\0broker-proxy`,
+      `${API}\0${clientId}\0network-token\0broker-proxy`,
+      `${API}\0${clientId}\0network-secret\0routed`,
+      `${API}\0${clientId}\0network-secret\0direct`,
+    ])
+      expect(relayed).not.toBe(sha256(earlier));
+    // Every prim process in the session reaches the same relaying broker,
+    // however its own Node is set up and however the proxy is spelled.
+    expect(generation({ ...cloud, NODE_USE_ENV_PROXY: "1" })).toBe(relayed);
+    expect(generation({ ...cloud, NODE_OPTIONS: "--use-env-proxy" })).toBe(relayed);
+    expect(generation({ CLAUDE_CODE_REMOTE: "true", https_proxy: "http://127.0.0.1:1" })).toBe(
+      relayed,
+    );
+  });
+
+  it("gives each mode its own relaying broker", () => {
+    const relayed = names.map(
+      (mode) => environmentCredentials({ ...deps, env: envFor(mode, cloud) })?.generation,
+    );
+    expect(new Set(relayed).size).toBe(names.length);
+  });
+
+  it("keeps the broker key of every mode where it does not relay", () => {
+    const generation = (mode: Mode) =>
+      environmentCredentials({ ...deps, env: envFor(mode) })?.generation;
+    expect(generation("secret in variables")).toBe(sha256(`${API}\0${clientId}\0${secret}`));
+    expect(generation("network-secret")).toBe(
+      sha256(`${API}\0${clientId}\0network-secret\0broker-proxy`),
+    );
+    expect(generation("network-token")).toBe(
+      sha256(`${API}\0${clientId}\0network-token\0broker-proxy`),
+    );
+  });
+
+  it("marks an acquired credential as relayed, with the token prim holds", async () => {
+    deps.env = envFor("secret in variables", {
+      ...cloud,
+      PRIM_API_URL: "https://api-routed.example.com",
+    });
+    const credential = await acquireMachineCredential({}, deps);
+    expect(credential).toMatchObject({ storage: "environment", routing: "proxy" });
+    expect(credential?.accessToken).toMatch(/^header\./u);
+    expect(credential).not.toHaveProperty("tokenInjection");
+
+    deps.env = envFor("network-token", { ...cloud, PRIM_API_URL: "https://api-held.example.com" });
+    expect(await acquireMachineCredential({}, deps)).toMatchObject({
+      routing: "proxy",
+      tokenInjection: "network",
+      accessToken: "",
+    });
+
+    deps.env = envFor("secret in variables", { PRIM_API_URL: "https://api-direct.example.com" });
+    expect(await acquireMachineCredential({}, deps)).not.toHaveProperty("routing");
+  });
+
+  describe("through a running broker", () => {
+    const NONCE = "b".repeat(64);
+    const BEARER = "Bearer header.payload.signature_1";
+    let api: Server;
+    let broker: Server | undefined;
+    let apiStatus: number;
+    let seen: Array<{ url?: string; authorization?: string }>;
+
+    const listen = (server: Server) =>
+      new Promise<number>((resolve) =>
+        server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port)),
+      );
+    const close = (server?: Server) =>
+      new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+
+    /** A caller's dependencies for `mode`, with that mode's broker running. */
+    async function session(mode: Mode, extra: NodeJS.ProcessEnv = cloud) {
+      const apiUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+      const caller = { directory, env: envFor(mode, { ...extra, PRIM_API_URL: apiUrl }) };
+      const environment = environmentCredentials(caller);
+      if (!environment) throw new Error("missing fixture credentials");
+      broker = createBrokerServer({ environment, apiUrl, nonce: NONCE });
+      writeFileSync(
+        join(directory, `machine_broker_${environment.generation}.json`),
+        JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
+        { mode: 0o600 },
+      );
+      const credential = (held: Partial<MachineCredential>): MachineCredential => ({
+        ...configuration,
+        machineId: "machine_local",
+        clientId,
+        organizationId: "organization_local",
+        workosOrganizationId: "org_workos",
+        displayName: "Build runner",
+        scopes: ["cli:read", "cli:capture"],
+        apiUrl,
+        generation: environment.generation,
+        storage: "environment",
+        accessToken: "header.payload.signature_1",
+        expiresAt: Date.now() + 3_600_000,
+        ...held,
+      });
+      return { caller, credential };
+    }
+
+    beforeEach(async () => {
+      seen = [];
+      apiStatus = 200;
+      broker = undefined;
+      api = createServer((request, response) => {
+        seen.push({ url: request.url, authorization: request.headers.authorization });
+        response.writeHead(apiStatus, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(status()));
+      });
+      await listen(api);
+    });
+    afterEach(async () => {
+      await close(broker);
+      await close(api);
+    });
+
+    it.each(["secret in variables", "network-secret"] as const)(
+      "carries the token prim holds to the API, in %s mode",
+      async (mode) => {
+        const { caller, credential } = await session(mode);
+        const response = await forwardMachineRequest(
+          { method: "GET", path: "/api/cli/decisions/recent", headers: { Authorization: BEARER } },
+          undefined,
+          caller,
+        );
+        expect(response.status).toBe(200);
+        expect(seen).toEqual([{ url: "/api/cli/decisions/recent", authorization: BEARER }]);
+
+        const identity = await verifyAcquiredMachineIdentity(
+          credential({ routing: "proxy" }),
+          caller,
+        );
+        expect(identity).toMatchObject({ machineId: "machine_local", clientId });
+        expect(seen[1]).toEqual({ url: "/api/cli/auth/status", authorization: BEARER });
+      },
+    );
+
+    it("reports the API's refusal of a relayed identity check as the direct check would", async () => {
+      const { caller, credential } = await session("secret in variables");
+      apiStatus = 401;
+      await expect(
+        verifyAcquiredMachineIdentity(credential({ routing: "proxy" }), caller),
+      ).rejects.toMatchObject({ code: "machine_access_rejected", terminal: true });
+      apiStatus = 503;
+      await expect(
+        verifyAcquiredMachineIdentity(credential({ routing: "proxy" }), caller),
+      ).rejects.toMatchObject({ code: "verification_unavailable", terminal: false });
+    });
+
+    it("never sends a credential where the proxy holds the token", async () => {
+      const { caller, credential } = await session("network-token");
+      await forwardMachineRequest(
+        { method: "GET", path: "/api/cli/decisions/recent", headers: { Authorization: BEARER } },
+        undefined,
+        caller,
+      );
+      await verifyAcquiredMachineIdentity(
+        credential({ routing: "proxy", tokenInjection: "network", accessToken: "" }),
+        caller,
+      );
+      expect(seen.map(({ url }) => url)).toEqual([
+        "/api/cli/decisions/recent",
+        "/api/cli/auth/status",
+      ]);
+      for (const request of seen) expect(request.authorization).toBeUndefined();
+    });
+
+    it("asks the broker what it can reach", async () => {
+      const { caller } = await session("secret in variables");
+      expect(await probeMachineEgress(caller)).toEqual({ api: "ok" });
+      expect(seen).toEqual([{ url: "/api/cli/auth/m2m/config", authorization: undefined }]);
+    });
+
+    it("has no relay to use outside a cloud session", async () => {
+      const { caller } = await session("secret in variables", {});
+      await expect(
+        forwardMachineRequest({ method: "GET", path: "/api/cli/auth/status" }, undefined, caller),
+      ).rejects.toMatchObject({ code: "identity_changed" });
+      await expect(probeMachineEgress(caller)).rejects.toMatchObject({ code: "identity_changed" });
+      expect(seen).toEqual([]);
+    });
   });
 });

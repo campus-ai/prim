@@ -1,4 +1,8 @@
-import { CLOUD_REJECTED_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
+import {
+  CLOUD_REJECTED_CREDENTIALS_REMEDY,
+  cloudDomainEditNote,
+  isClaudeCloudSession,
+} from "./cloud-env.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 export const MACHINE_SCOPES = [
@@ -144,7 +148,7 @@ async function fetchMachine(
       // A cloud VM reaches only the hosts its environment allows, and both of
       // Primitive's are blocked by default: name the one that failed.
       isClaudeCloudSession()
-        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).`
+        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited)${cloudDomainEditNote()}.`
         : "Machine authentication is temporarily unavailable. Check the connection and retry.",
     );
   }
@@ -338,6 +342,17 @@ export async function verifyMachineIdentity(
     },
     fetchImpl,
   );
+  return readMachineIdentity(response, clientId);
+}
+
+/**
+ * Read the API's answer to an identity check that carried prim's own token,
+ * however the request reached the API.
+ */
+export async function readMachineIdentity(
+  response: Response,
+  clientId: string,
+): Promise<MachineIdentity> {
   if (!response.ok) {
     const terminal = response.status === 401 || response.status === 403;
     throw new MachineAuthError(
