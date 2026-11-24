@@ -702,6 +702,15 @@ type EnrollOptions = {
   browser: boolean;
 };
 
+/** The host a cloud environment's network secret must name: where the secret is sent. */
+function signInHost(issuer: string): string {
+  try {
+    return new URL(issuer).hostname;
+  } catch {
+    return "the sign-in host";
+  }
+}
+
 /**
  * Credential output owns STDOUT, so a failure there must leave it empty: a
  * `--print-env >> .env` would otherwise append a JSON line to the file.
@@ -740,7 +749,11 @@ async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
     console.error(
       [
         `Installation "${stripControlChars(installation.displayName)}" is authorized for your account; its Decisions belong to you.`,
-        "Paste these lines into the environment's variables. The secret is shown only once and is not stored on this machine.",
+        "The secret is shown only once and is not stored on this machine.",
+        // Anyone who uses a cloud environment can read its variables; its
+        // network secrets cannot be read back, so say that way first.
+        `For a Claude Code cloud environment, keep the secret out of the variables: add a "Username and password" network secret for ${signInHost(enrollment.configuration.issuer)} (username: the client ID, password: the client secret). As its variables, set PRIM_M2M_CLIENT_AUTH=network-secret and every line printed above except PRIM_M2M_CLIENT_SECRET.`,
+        "Or paste every line above into the environment's variables, where anyone who uses the environment can read them.",
         "An organization admin can revoke the installation in Settings → Developer installations.",
       ].join("\n"),
     );
@@ -785,7 +798,7 @@ export function registerAuthCommands(program: Command) {
     )
     .option(
       "--print-env",
-      "Print the new installation's PRIM_M2M_* credentials to STDOUT for an environment's variables",
+      "Print the new installation's PRIM_M2M_* credentials to STDOUT as .env lines for an environment",
     )
     .option("--no-browser", "Print the sign-in URL without opening a browser")
     .action(async (options: EnrollOptions) => {

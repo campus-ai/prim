@@ -149,6 +149,8 @@ export const PRIM_CONFIG_SHELL_RESOLVER = [
   "fi; fi; ",
 ].join("");
 
+const LAUNCHER_EXEC = 'exec "$prim_launcher" "$@"';
+
 /**
  * Render the one machine-, config-root-, and package-version-independent hook
  * command stored in agent configuration. The inline POSIX resolver mirrors
@@ -172,10 +174,36 @@ export function stableHookCommand(bin: string, args = ""): string {
     PRIM_CONFIG_SHELL_RESOLVER,
     `case "$prim_config" in /) prim_launcher=/${STABLE_HOOK_LAUNCHER_NAME} ;; ` +
       `*) prim_launcher="$prim_config/${STABLE_HOOK_LAUNCHER_NAME}" ;; esac; `,
-    'exec "$prim_launcher" "$@"',
+    LAUNCHER_EXEC,
   ].join("");
   const suffix = args ? ` ${args}` : "";
   return `/bin/sh -c ${shellQuote(resolver)} ${STABLE_HOOK_LAUNCHER_NAME} ${bin}${suffix}`;
+}
+
+/**
+ * The form of a stable hook command, plain or detached, that a Claude Code
+ * project install writes. A repository commits that file, so its commands also
+ * run for collaborators and cloud sessions that never installed prim. No
+ * launcher exists there, and exec'ing the missing file prints "No such file or
+ * directory" and exits 126 on every hook event, so this form exits 0 without
+ * output instead.
+ *
+ * A launcher that cannot be seen counts as absent. That is a launcher that is
+ * not there, and also one hidden behind a config directory that cannot be
+ * searched or a regular file where that directory should be: both tests fail
+ * for those too, so they exit 0 just as quietly. A dangling symlink is a
+ * broken installation and still fails, as does a launcher that exists but
+ * cannot run.
+ *
+ * Every other install keeps `stableHookCommand`'s exact text: installers know
+ * their own entries by it, so changing it reads as drift on every machine.
+ */
+export function quietWithoutLauncher(command: string): string {
+  if (!command.includes(LAUNCHER_EXEC)) throw new Error("not a stable hook command");
+  return command.replace(
+    LAUNCHER_EXEC,
+    () => `[ -e "$prim_launcher" ] || [ -L "$prim_launcher" ] || exit 0; ${LAUNCHER_EXEC}`,
+  );
 }
 
 export function detachedHookShimCommand(bin: string, args = ""): string {

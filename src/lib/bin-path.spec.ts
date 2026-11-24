@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,6 +30,7 @@ import {
   pinnedHookCommand,
   pinnedNpxArgs,
   pinnedNpxCommand,
+  quietWithoutLauncher,
   stableHookCommand,
 } from "./bin-path.js";
 
@@ -182,6 +184,115 @@ describe("stableHookCommand", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("quietWithoutLauncher", () => {
+  const EXEC = 'exec "$prim_launcher" "$@"';
+  const GUARD = '[ -e "$prim_launcher" ] || [ -L "$prim_launcher" ] || exit 0; ';
+  const plain = stableHookCommand("prim-hook", "--agent codex");
+  const quiet = quietWithoutLauncher(plain);
+
+  type Outcome = { status: number | null; stdout: string; stderr: string };
+  function run(command: string, env: NodeJS.ProcessEnv): Outcome {
+    const result = spawnSync("/bin/sh", ["-c", command], {
+      env: { PATH: process.env.PATH, ...env },
+      input: "payload",
+      encoding: "utf8",
+    });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+  function withRoot(body: (root: string) => void): void {
+    const root = mkdtempSync(join(tmpdir(), "prim-quiet-"));
+    try {
+      body(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("adds one absence test before the exec, in the plain and the detached form", () => {
+    expect(plain.split(EXEC)).toHaveLength(2);
+    expect(quiet).toBe(plain.replace(EXEC, () => `${GUARD}${EXEC}`));
+    const detached = detachedHookShimCommand("prim-session-end");
+    expect(quietWithoutLauncher(detached)).toBe(detached.replace(EXEC, () => `${GUARD}${EXEC}`));
+
+    expect(commandMatchesBin(quiet, "prim-hook")).toBe(true);
+    expect(hookCommandResolution(quiet, "prim-hook")).toEqual({ kind: "stable_launcher" });
+    expect(quiet).not.toMatch(/\/\/|\/\*|\*\//u);
+    expect(() => quietWithoutLauncher("prim-hook --agent codex")).toThrow(
+      "not a stable hook command",
+    );
+  });
+
+  it("does nothing, silently, where no launcher exists", () => {
+    withRoot((root) => {
+      const home = join(root, "home");
+      const emptyConfig = join(root, "config");
+      const notADirectory = join(root, "file");
+      mkdirSync(home);
+      mkdirSync(emptyConfig);
+      writeFileSync(notADirectory, "");
+      for (const env of [
+        { HOME: home },
+        { HOME: home, PRIM_CONFIG_DIR: emptyConfig },
+        { HOME: home, XDG_CONFIG_HOME: join(root, "never-created") },
+        // A launcher that cannot be seen reads as absent too.
+        { HOME: home, PRIM_CONFIG_DIR: notADirectory },
+      ]) {
+        expect(run(quiet, env)).toEqual({ status: 0, stdout: "", stderr: "" });
+        // The plain command is what every hook event reported there.
+        const loud = run(plain, env);
+        expect(loud.status).not.toBe(0);
+        expect(loud.stderr).toContain("prim-hook-launcher-v1");
+      }
+    });
+  });
+
+  it("still fails closed without a canonical absolute config root", () => {
+    // HOME is set, to nothing, never left out: a `/bin/sh` that fills a
+    // missing HOME from the password database would go on to the developer's
+    // real launcher. The resolver reads the two alike (`${HOME:-}`).
+    expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "" } }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "relative" } }).status).toBe(78);
+    expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "/home//other" } }).status).toBe(78);
+  });
+
+  it("enters an installed launcher exactly as the plain command does", () => {
+    withRoot((root) => {
+      const home = join(root, "home");
+      const launcher = join(home, ".config", "prim", "prim-hook-launcher-v1");
+      mkdirSync(join(home, ".config", "prim"), { recursive: true });
+      writeFileSync(launcher, '#!/bin/sh\nprintf "%s|" "$0" "$@"\ncat\necho warned >&2\nexit 7\n', {
+        mode: 0o700,
+      });
+      const entered = run(quiet, { HOME: home });
+      expect(entered).toEqual({
+        status: 7,
+        stdout: `${launcher}|prim-hook|--agent|codex|payload`,
+        stderr: "warned\n",
+      });
+      expect(run(plain, { HOME: home })).toEqual(entered);
+    });
+  });
+
+  it("stays loud for a launcher that is there but broken", () => {
+    withRoot((root) => {
+      const home = join(root, "home");
+      const launcher = join(home, ".config", "prim", "prim-hook-launcher-v1");
+      mkdirSync(join(home, ".config", "prim"), { recursive: true });
+
+      symlinkSync(join(root, "gone"), launcher);
+      const dangling = run(quiet, { HOME: home });
+      expect(dangling.status).not.toBe(0);
+      expect(dangling).toEqual(run(plain, { HOME: home }));
+
+      rmSync(launcher);
+      writeFileSync(launcher, "#!/bin/sh\n", { mode: 0o600 });
+      const unusable = run(quiet, { HOME: home });
+      expect(unusable.status).not.toBe(0);
+      expect(unusable).toEqual(run(plain, { HOME: home }));
+    });
   });
 });
 
