@@ -738,8 +738,54 @@ describe("agent contract in cloud setup output", () => {
     setupCloudSession(deps);
     expect(printed[0]).toMatchObject({
       ok: false,
-      remedies: [expect.stringContaining("PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET")],
+      remedies: [
+        expect.stringContaining("PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET"),
+        expect.stringContaining("session hooks · none"),
+      ],
       instructions: expect.stringContaining("do not run prim auth login"),
+    });
+  });
+
+  it("reports every prerequisite it can judge in one pass, since each fix reaches only the next session", () => {
+    // No credentials, no setup script, and a checkout that names no repository.
+    const { deps, calls } = harness({
+      cwd: repo(false, ""),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: tempDir("prim-cloud-config-") },
+    });
+    setupCloudSession(deps);
+    expect(calls).toEqual([]);
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      results: { credentials: "missing", repository: "missing" },
+      failed: ["credentials", "repository"],
+      remedies: [
+        expect.stringMatching(
+          /^credentials · missing: .*the environment must also allow api\.getprimitive\.ai and signin\.getprimitive\.ai under Allowed domains \(blocked by default\)$/u,
+        ),
+        expect.stringContaining("does not identify its GitHub repository"),
+      ],
+    });
+  });
+
+  it("names the missing setup script alongside a rejected credential", () => {
+    const { deps, calls } = harness({
+      cwd: repo(false),
+      parseAuthStatus: () => "invalid",
+      run: (args) => {
+        calls.push(args);
+        return { code: 1, stdout: "{}" };
+      },
+    });
+    setupCloudSession(deps);
+    // Nothing is wired or activated on a credential the server rejects.
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      results: { credentials: "failed", session: "missing" },
+      failed: ["credentials", "session"],
+      remedies: [
+        expect.stringContaining("credentials · rejected"),
+        expect.stringContaining("session hooks · none: run `prim setup --cloud --prepare`"),
+      ],
     });
   });
 
