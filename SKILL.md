@@ -17,7 +17,7 @@ Low-level capture runs automatically in active repos through the session hooks i
 
 Run `npx --yes @primitive.ai/prim auth status` first. It exits **0 if authenticated, 1 if not** -- branch on the exit code, don't parse the message.
 
-**Claude Code cloud sessions** (`CLAUDE_CODE_REMOTE=true`): never run `auth login` or `auth enroll` there; prim authenticates cloud sessions only with credentials from the environment and refuses interactive sign-in. Use machine credentials (a fixed `PRIM_TOKEN` also works): `PRIM_M2M_CLIENT_ID` with `PRIM_M2M_CLIENT_SECRET`, or with `PRIM_M2M_CLIENT_AUTH=network-secret` when the secret is a network secret. When `auth status` fails, run `npx --yes @primitive.ai/prim setup --cloud` and relay each entry of its `remedies` to the user; the user mints credentials on their own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`.
+**Claude Code cloud sessions** (`CLAUDE_CODE_REMOTE=true`): never run `auth login` or `auth enroll` there; prim authenticates cloud sessions only with credentials from the environment and refuses interactive sign-in. Use machine credentials (a fixed `PRIM_TOKEN` also works): `PRIM_M2M_CLIENT_ID` with `PRIM_M2M_CLIENT_SECRET`, or with `PRIM_M2M_CLIENT_AUTH=network-secret` when the secret is a network secret, or `PRIM_M2M_CLIENT_AUTH=network-token` when the environment's proxy holds the tokens too (an OAuth 2.0 client credentials network secret). When `auth status` fails, run `npx --yes @primitive.ai/prim setup --cloud` and relay each entry of its `remedies` to the user; the user mints credentials on their own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`.
 
 Three ways to authenticate, in priority order:
 

@@ -46,8 +46,9 @@ import {
   hasMachineConfiguration,
   machineContext,
   readMachineProfile,
+  verifyAcquiredMachineIdentity,
 } from "../lib/machine-credentials.js";
-import { MachineAuthError, verifyMachineIdentity } from "../lib/machine-protocol.js";
+import { MachineAuthError } from "../lib/machine-protocol.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import {
   WorkosConnectProtocolError,
@@ -276,6 +277,8 @@ export type AuthStatusResult = {
   recoveryReason?: string;
   /** The machine credential failure's own guidance, safe to show. */
   recoveryDetail?: string;
+  /** The cloud environment's proxy holds the access token; prim never sees it. */
+  tokenHeldByProxy?: boolean;
 };
 
 function hasStoredRefreshToken(): boolean {
@@ -326,16 +329,16 @@ export async function verifyAuthStatus(): Promise<AuthStatusResult> {
         signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
       });
       if (!machine) throw new Error("missing machine");
-      machineMetadata = {
-        ...machineMetadata,
-        accessTokenExpiresInMs: machine.expiresAt - Date.now(),
-        accessTokenExpired: machine.expiresAt <= Date.now(),
-      };
-      const identity = await verifyMachineIdentity(
-        machine.apiUrl,
-        machine.accessToken,
-        machine.clientId,
-      );
+      // A proxy-held token (network-token) has no expiry prim can see; the
+      // credential's own timer there is only when the identity is re-checked.
+      const tokenExpiry = machine.tokenInjection
+        ? { accessTokenExpiresInMs: null, accessTokenExpired: false, tokenHeldByProxy: true }
+        : {
+            accessTokenExpiresInMs: machine.expiresAt - Date.now(),
+            accessTokenExpired: machine.expiresAt <= Date.now(),
+          };
+      machineMetadata = { ...machineMetadata, ...tokenExpiry };
+      const identity = await verifyAcquiredMachineIdentity(machine);
       return {
         ...authStatusResult("valid", "verified", "machine", false),
         principalKind: "machine",
@@ -345,8 +348,7 @@ export async function verifyAuthStatus(): Promise<AuthStatusResult> {
         effectiveScopes: identity.scopes,
         organizationId: machine.organizationId,
         storageBackend: machine.storage,
-        accessTokenExpiresInMs: machine.expiresAt - Date.now(),
-        accessTokenExpired: machine.expiresAt <= Date.now(),
+        ...tokenExpiry,
       };
     }
   } catch (error) {

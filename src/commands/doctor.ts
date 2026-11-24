@@ -221,7 +221,7 @@ async function checkAuth(): Promise<Check> {
         name: "auth",
         status: status.authenticated ? "ok" : "fail",
         detail: status.authenticated
-          ? `machine ${status.displayName ?? status.machineId} · ${status.storageBackend} · expires in ${Math.round((status.accessTokenExpiresInMs ?? 0) / 1000)}s`
+          ? `machine ${status.displayName ?? status.machineId} · ${status.storageBackend} · ${status.tokenHeldByProxy ? "token held by the environment's proxy" : `expires in ${Math.round((status.accessTokenExpiresInMs ?? 0) / 1000)}s`}`
           : `machine authentication: ${status.recoveryReason}. ${status.recoveryDetail ? stripControlChars(status.recoveryDetail) : "Unlock the credential store or run prim auth configure-machine."}`,
       };
     }

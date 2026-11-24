@@ -30,8 +30,10 @@ import {
 import { type FileLockOptions, withFileLock } from "./lib/file-lock.js";
 import { ingestUploaderHeaders } from "./lib/ingest-uploader.js";
 import {
+  type MachineCredential,
   acquireMachineCredential,
   cachedMachineCredential,
+  forwardMachineRequest,
   hasMachineConfiguration,
   machineContext,
   machineSessionEnded,
@@ -773,6 +775,14 @@ function selectedCredential(): AuthCredential | undefined {
   return _cachedCredential;
 }
 
+/** Every API request's headers apart from its credential. */
+async function requestHeaders(method: string, path: string): Promise<Record<string, string>> {
+  return {
+    "Content-Type": "application/json",
+    ...(method === "POST" && path === "/api/cli/moves/ingest" ? await ingestUploaderHeaders() : {}),
+  };
+}
+
 async function fetchWithToken(
   method: string,
   path: string,
@@ -783,17 +793,49 @@ async function fetchWithToken(
 ): Promise<Response> {
   return fetch(`${siteUrl}${path}`, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(method === "POST" && path === "/api/cli/moves/ingest"
-        ? await ingestUploaderHeaders()
-        : {}),
-    },
+    headers: { Authorization: `Bearer ${token}`, ...(await requestHeaders(method, path)) },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: options?.signal,
     redirect: options?.redirect,
   });
+}
+
+/**
+ * One API request as a machine. Normally prim holds the token and sends it.
+ * In network-token mode the cloud environment's proxy holds it, so the
+ * request goes through the broker, whose requests pass through that proxy,
+ * and carries no credential of prim's own.
+ */
+async function fetchAsMachine(
+  credential: MachineCredential,
+  method: string,
+  path: string,
+  body: unknown,
+  options: RequestOptions,
+): Promise<Response> {
+  if (!credential.tokenInjection)
+    return fetchWithToken(
+      method,
+      path,
+      body,
+      { ...options, redirect: "error" },
+      credential.accessToken,
+      credential.apiUrl,
+    );
+  try {
+    return await forwardMachineRequest(
+      {
+        method,
+        path,
+        headers: await requestHeaders(method, path),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+      options.signal,
+    );
+  } catch (error) {
+    if (!(error instanceof MachineAuthError)) throw error;
+    throw new HttpError(error.terminal ? 401 : 503, error.message, { error: error.code });
+  }
 }
 
 async function responseValue(response: Response): Promise<unknown> {
@@ -845,14 +887,7 @@ async function machineClient(
       current.organizationId !== selected.organizationId
     )
       throw new HttpError(409, "Machine identity changed; restart the operation.");
-    let response = await fetchWithToken(
-      method,
-      path,
-      body,
-      { ...requestOptions, redirect: "error" },
-      current.accessToken,
-      selected.apiUrl,
-    );
+    let response = await fetchAsMachine(current, method, path, body, requestOptions);
     if (response.status === 401) {
       const renewed = await acquireMachineCredential({
         force: true,
@@ -867,19 +902,14 @@ async function machineClient(
       ) {
         throw new HttpError(409, "Machine identity changed; restart the operation.");
       }
-      response = await fetchWithToken(
-        method,
-        path,
-        body,
-        { ...requestOptions, redirect: "error" },
-        renewed.accessToken,
-        renewed.apiUrl,
-      );
+      response = await fetchAsMachine(renewed, method, path, body, requestOptions);
     }
     if (response.status === 401)
       throw new HttpError(
         401,
-        "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
+        selected.tokenInjection
+          ? "Machine access was rejected. Check the cloud environment's OAuth 2.0 client credentials network secret, or mint a replacement credential if this one was revoked."
+          : "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
       );
     return parse(response);
   };

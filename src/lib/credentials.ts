@@ -67,7 +67,9 @@ export function resolveAuthCredential(
   // Legacy resolvers with explicit test/storage paths do not select the global profile.
   if (!options.tokenFilePath && hasMachineConfiguration({ env: options.env })) {
     const machine = cachedMachineCredential({ env: options.env });
-    return machine ? { token: machine.accessToken, source: "machine" } : undefined;
+    // In network-token mode the cloud environment's proxy holds the token;
+    // there is none in this process to hand out.
+    return machine?.accessToken ? { token: machine.accessToken, source: "machine" } : undefined;
   }
   const envToken = (options.env ?? process.env).PRIM_TOKEN?.trim();
   if (envToken) return { token: envToken, source: "environment" };
