@@ -216,15 +216,16 @@ that requests tokens, sends its own requests through that proxy; nothing else in
 has to. An environment set up for an earlier prim may still carry `NODE_USE_ENV_PROXY=1`
 (and `NODE_NO_WARNINGS=1`) in its variables: both are harmless and can be removed.
 
-To keep the tokens out of the VM as well, let the proxy request them. Where the
-environment's **Network secrets** form offers the **OAuth 2.0 client credentials** type,
-add one in place of the username-and-password secret:
+To keep the tokens out of the VM as well, let the proxy request them. In the settings
+of an existing environment (the New environment dialog offers only the simpler secret
+types), add a **Network secret** of type **OAuth 2.0 client credentials** in place of
+the username-and-password secret:
 
 - **Allowed websites**: `api.getprimitive.ai`
 - **Token URL**: `https://signin.getprimitive.ai/oauth2/token`
 - **Client ID** and **Client secret**: the `PRIM_M2M_CLIENT_ID` and
   `PRIM_M2M_CLIENT_SECRET` values step 1 printed
-- **Scopes**: leave empty
+- **Scopes**, **Resource** and **Audience**: leave empty
 
 and set the variables to:
 
@@ -239,8 +240,7 @@ hooks hand their API requests to prim's broker, the one process that sends throu
 proxy, and `prim auth status` verifies the identity the proxy authenticates as. No
 process in the session can read the secret or a token, though any process in it can
 still reach Primitive through the proxy as that installation, so keep the environment
-personal. Only `api.getprimitive.ai` has to be under Allowed domains in this mode. This
-mode has been exercised against a stand-in proxy, not yet against Claude Code's own;
+personal. Only `api.getprimitive.ai` has to be under Allowed domains in this mode, and
 `prim setup --cloud` names the network secret's fields if the proxy's token is refused.
 
 Running plain `prim setup` inside a cloud session (for example through the agent prompt
