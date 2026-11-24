@@ -1,7 +1,11 @@
 import { getSiteUrl as resolveApiUrl } from "./client.js";
 import { type CliClient, getPinnedClient } from "./client.js";
 import { type MoveIngestRequest, isMoveIngestRequest } from "./contract/cli-http-v1.js";
-import { machineJournalBucket } from "./lib/machine-credentials.js";
+import {
+  identityPending,
+  machineJournalBucket,
+  machinePendingBucket,
+} from "./lib/machine-credentials.js";
 import { machineApiUrl, parseMachineIdentity } from "./lib/machine-protocol.js";
 import { DECISION_LIFECYCLE_PROTOCOL_VERSION } from "./protocol/decision-lifecycle.js";
 import type { Move } from "./protocol/move.js";
@@ -144,14 +148,19 @@ export function classifyJournalBuckets(
       continue;
     }
     if (binding.captureAuthorityKind === "workos_m2m") {
+      const apiUrl = machineApiUrl(resolveApiUrl());
       if (
         binding.clientId &&
-        bucket ===
+        (bucket ===
           machineJournalBucket({
-            apiUrl: machineApiUrl(resolveApiUrl()),
+            apiUrl,
             clientId: binding.clientId,
             authorizedUserId: binding.authorizedUserId,
-          })
+          }) ||
+          // What this client captured before its identity was verified. Those
+          // belong to whoever the server says the client is, which is now
+          // known; no verified identity's bucket is opened this way.
+          bucket === machinePendingBucket({ apiUrl, clientId: binding.clientId }))
       )
         deliverableBuckets.add(bucket);
       else
@@ -199,10 +208,15 @@ export function buildOrganizationBoundMoveRequest(
         if (
           !captureActor ||
           captureActor.clientId !== binding.clientId ||
-          captureActor.authorizedUserId !== binding.authorizedUserId ||
           captureActor.apiUrl !== machineApiUrl(resolveApiUrl()) ||
-          (captureActor.machineId && captureActor.machineId !== binding.machineId) ||
-          (captureActor.organizationId && captureActor.organizationId !== binding.organizationId)
+          // An identity-pending actor names only its client and is bound to
+          // the identity verified for it. Any other actor is a claim about a
+          // verified identity and must match this one exactly.
+          (!identityPending(captureActor) &&
+            (captureActor.authorizedUserId !== binding.authorizedUserId ||
+              (captureActor.machineId && captureActor.machineId !== binding.machineId) ||
+              (captureActor.organizationId &&
+                captureActor.organizationId !== binding.organizationId)))
         )
           throw new InvalidJournalEnvelopeError();
       } else if (captureActor) throw new InvalidJournalEnvelopeError();

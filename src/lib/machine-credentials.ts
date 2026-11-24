@@ -1038,6 +1038,32 @@ export function machineJournalBucket(
   return `_machine_${hash(`${identity.apiUrl}\0${identity.clientId}${identity.authorizedUserId ? `\0${identity.authorizedUserId}` : ""}`)}`;
 }
 
+/**
+ * True for a capture actor made before its process knew who it was. With
+ * credentials from the environment a fresh VM has no verified identity until
+ * the first token exchange, and again each time the cached identity lapses,
+ * so the actor names the client alone. An actor that names a machine,
+ * organization, or user is a claim about a verified identity instead.
+ */
+export function identityPending(actor: MachineCaptureActor): boolean {
+  return (
+    actor.machineId === undefined &&
+    actor.organizationId === undefined &&
+    actor.authorizedUserId === undefined
+  );
+}
+
+/**
+ * Where a client's identity-pending captures wait. Kept apart from every
+ * verified identity's bucket, so whichever identity the server confirms for
+ * the client can take exactly these and nothing a verified identity wrote.
+ */
+export function machinePendingBucket(
+  identity: Pick<MachineCaptureActor, "apiUrl" | "clientId">,
+): string {
+  return `_machine_pending_${hash(`${identity.apiUrl}\0${identity.clientId}`)}`;
+}
+
 function readRetiredProfiles(directory: string): MachineProfile[] {
   const value = readPrivate(join(directory, "machine_retired.json"));
   if (value === undefined) return [];

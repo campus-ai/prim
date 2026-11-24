@@ -266,4 +266,114 @@ describe("machine journal authority", () => {
       ...classifyJournalBuckets([bucket, otherBucket], delegated).deliverableBuckets,
     ]).toEqual([bucket]);
   });
+
+  describe("captures journaled before the identity was verified", () => {
+    // What a fresh cloud VM's first hook writes: environment credentials name
+    // the client, and nothing has asked the server who it is yet.
+    const delegated = { ...machine, authorizedUserId: "user_alex" };
+    const pending: Move = {
+      ...move(),
+      captureActor: { kind: "machine", apiUrl, clientId: machine.clientId },
+    };
+
+    it("delivers the client's pending bucket to whichever identity is verified for it", async () => {
+      const { machineJournalBucket, machinePendingBucket } = await import(
+        "./lib/machine-credentials.js"
+      );
+      const own = machineJournalBucket({ apiUrl, ...delegated });
+      const pendingBucket = machinePendingBucket({ apiUrl, clientId: machine.clientId });
+      // A service identity's own bucket for the same client: verified captures.
+      const serviceBucket = machineJournalBucket({ apiUrl, clientId: machine.clientId });
+      const otherClientPending = machinePendingBucket({ apiUrl, clientId: "client_other" });
+      const otherUser = machineJournalBucket({
+        apiUrl,
+        ...delegated,
+        authorizedUserId: "user_sam",
+      });
+      expect(new Set([own, pendingBucket, serviceBucket]).size).toBe(3);
+
+      const asDelegated = classifyJournalBuckets(
+        [own, pendingBucket, serviceBucket, otherClientPending, otherUser],
+        delegated,
+      );
+      expect([...asDelegated.deliverableBuckets].sort()).toEqual([own, pendingBucket].sort());
+      // A service identity's captures are kept, never opened, as before.
+      expect(asDelegated.retainedBuckets).toEqual(
+        expect.arrayContaining([
+          { bucket: serviceBucket, reason: "machine_identity_mismatch" },
+          { bucket: otherClientPending, reason: "machine_identity_mismatch" },
+          { bucket: otherUser, reason: "machine_identity_mismatch" },
+        ]),
+      );
+      expect(asDelegated.retainedBuckets).toHaveLength(3);
+
+      const asService = classifyJournalBuckets([serviceBucket, pendingBucket, own], machine);
+      expect([...asService.deliverableBuckets].sort()).toEqual(
+        [serviceBucket, pendingBucket].sort(),
+      );
+      // A human sign-in opens neither.
+      expect([
+        ...classifyJournalBuckets([pendingBucket, serviceBucket], binding).deliverableBuckets,
+      ]).toEqual([]);
+    });
+
+    it("binds such a capture to the identity the server verifies for its client", () => {
+      const original = JSON.stringify(pending);
+      expect(buildOrganizationBoundMoveRequest([pending], delegated).batch[0]).toMatchObject({
+        envelopeVersion: 6,
+        capturedMachineId: machine.machineId,
+        capturedUserId: delegated.authorizedUserId,
+        capturedOrganizationId: machine.organizationId,
+        captureAuthorityKind: "workos_m2m",
+      });
+      // A service identity already delivered these; that stays as it was.
+      expect(buildOrganizationBoundMoveRequest([pending], machine).batch[0]).toMatchObject({
+        envelopeVersion: 5,
+        capturedMachineId: machine.machineId,
+      });
+      expect(JSON.stringify(pending)).toBe(original);
+    });
+
+    it("never extends that to another client, another deployment, or a human sign-in", () => {
+      const otherClient: Move = {
+        ...move(),
+        captureActor: { kind: "machine", apiUrl, clientId: "client_other" },
+      };
+      const otherDeployment: Move = {
+        ...move(),
+        captureActor: {
+          kind: "machine",
+          apiUrl: "https://staging.example.com",
+          clientId: machine.clientId,
+        },
+      };
+      for (const captured of [otherClient, otherDeployment]) {
+        expect(() => buildOrganizationBoundMoveRequest([captured], delegated)).toThrow(
+          InvalidJournalEnvelopeError,
+        );
+      }
+      expect(() => buildOrganizationBoundMoveRequest([pending], binding)).toThrow(
+        InvalidJournalEnvelopeError,
+      );
+    });
+
+    it("still refuses an actor that claims an identity the server does not confirm", () => {
+      // Naming any verified field makes the actor a claim, not a blank.
+      for (const claim of [
+        { machineId: "machine_other" },
+        { organizationId: "organization_other" },
+        { authorizedUserId: "user_sam" },
+        // A service identity's capture is not a delegated user's.
+        { machineId: machine.machineId, organizationId: machine.organizationId },
+      ]) {
+        const captured: Move = {
+          ...move(),
+          captureActor: { kind: "machine", apiUrl, clientId: machine.clientId, ...claim },
+        };
+        expect(() => buildOrganizationBoundMoveRequest([captured], delegated)).toThrow(
+          InvalidJournalEnvelopeError,
+        );
+      }
+    });
+  });
 });

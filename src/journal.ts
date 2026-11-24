@@ -1,4 +1,9 @@
-import { machineCaptureActor, machineJournalBucket } from "./lib/machine-credentials.js";
+import {
+  identityPending,
+  machineCaptureActor,
+  machineJournalBucket,
+  machinePendingBucket,
+} from "./lib/machine-credentials.js";
 /**
  * Decision Event Pipeline — local NDJSON journal.
  *
@@ -123,7 +128,16 @@ export function appendMove(move: Move, orgId: string | undefined): Move {
   // 0600 file mode / 0700 dir mode (the payloads are secret-bearing).
   const actor = machineCaptureActor();
   const captured = actor ? { ...move, captureActor: actor } : move;
-  appendMoveToPath(journalPath(actor ? machineJournalBucket(actor) : orgId), captured);
+  // A capture made before the machine's identity is verified waits in the
+  // client's pending bucket: it cannot name the user a delegated
+  // installation's own bucket is keyed by, and must not be mistaken for a
+  // service identity's capture, which carries a verified machine.
+  const bucket = actor
+    ? identityPending(actor)
+      ? machinePendingBucket(actor)
+      : machineJournalBucket(actor)
+    : orgId;
+  appendMoveToPath(journalPath(bucket), captured);
   return captured;
 }
 
