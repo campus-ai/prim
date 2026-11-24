@@ -1,3 +1,8 @@
+import {
+  CLOUD_CREDENTIALS_REMEDY,
+  CLOUD_REJECTED_CREDENTIALS_REMEDY,
+  isClaudeCloudSession,
+} from "../lib/cloud-env.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 /**
  * The terminal-auth notice surfaced at SessionStart.
@@ -26,11 +31,26 @@ export const REAUTH_NOTICE =
 export function reauthNoticeFields(
   agent: Agent,
 ): { systemMessage?: string; additionalContext?: string } | undefined {
-  if (agent === "claude_code")
+  if (agent === "claude_code") {
+    // A cloud session has no administrator at hand and cannot sign in: the
+    // person who configured the environment fixes it there. The web transcript
+    // shows no systemMessage, so the agent must be told to relay it.
+    if (isClaudeCloudSession()) {
+      const notice = `Primitive is not connected in this Claude Code cloud session: ${
+        hasMachineConfiguration()
+          ? `its credentials were rejected. To fix it, ${CLOUD_REJECTED_CREDENTIALS_REMEDY}`
+          : `its sign-in ended. To fix it, ${CLOUD_CREDENTIALS_REMEDY}`
+      }.`;
+      return {
+        systemMessage: notice,
+        additionalContext: `${notice} Tell the user this in one sentence before starting their task.`,
+      };
+    }
     return {
       systemMessage: hasMachineConfiguration()
         ? "[prim] machine delivery paused; local capture remains saved. Run `prim auth status` and ask your administrator to enable or rotate machine credentials."
         : REAUTH_NOTICE,
     };
+  }
   return;
 }

@@ -130,6 +130,25 @@ describe("prim github connect", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("names the owner's own machine in a Claude Code cloud session, where no browser can install the App", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const deps = dependencies();
+    vi.mocked(deps.bindRepositoryWithClient).mockResolvedValue(UNBOUND);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps);
+
+    // The machine credential is refused the installation: never start one.
+    expect(deps.createInstallIntent).not.toHaveBeenCalled();
+    expect(deps.openBrowser).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(
+      `[prim] GitHub repo connection is required for ${UNBOUND.repositoryFullName} and cannot be completed from a Claude Code cloud session: run \`prim github connect\` in a clone of it on your own machine, then start a new cloud session\n`,
+    );
+    expect(process.exitCode).toBe(2);
+    vi.unstubAllEnvs();
+  });
+
   it("runs the canonical intent, browser, poll, and final binding sequence on one pinned client", async () => {
     const deps = dependencies();
     vi.mocked(deps.bindRepositoryWithClient)

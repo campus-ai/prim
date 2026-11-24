@@ -6,6 +6,7 @@ import { relative } from "node:path";
 import { observeDemoInvocation } from "../demo/isolation.js";
 import { repoActiveFlag, repoSyncId } from "../lib/activation.js";
 import { packageVersion } from "../lib/bin-path.js";
+import { cloudSetupPointer } from "../lib/cloud-env.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { canonicalGitRoot, currentBranch, githubRepositoryFullName } from "../lib/git.js";
 import { parseAgent } from "./agent.js";
@@ -207,7 +208,9 @@ async function main(): Promise<void> {
   const callId = invocationId(envelope);
   if (!binding || typeof sessionId !== "string" || !sessionId || !callId) {
     await unverified(
-      !binding ? "GitHub repo connection is required" : "Session or tool identity is missing",
+      !binding
+        ? cloudSetupPointer("GitHub repo connection is required")
+        : "Session or tool identity is missing",
     );
     return;
   }

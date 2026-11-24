@@ -38,7 +38,7 @@ import {
   machineContext,
   machineSessionEnded,
 } from "./lib/machine-credentials.js";
-import { MachineAuthError } from "./lib/machine-protocol.js";
+import { MachineAuthError, rejectedCredentialsMessage } from "./lib/machine-protocol.js";
 import { terminalSafeLine } from "./lib/terminal-safe.js";
 import {
   WORKOS_CONNECT_RESPONSE_MAX_BYTES,
@@ -909,7 +909,9 @@ async function machineClient(
         401,
         selected.tokenInjection
           ? "Machine access was rejected. Check the cloud environment's OAuth 2.0 client credentials network secret, or mint a replacement credential if this one was revoked."
-          : "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
+          : rejectedCredentialsMessage(
+              "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
+            ),
       );
     return parse(response);
   };

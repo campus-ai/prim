@@ -18,3 +18,25 @@ export function insideClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean 
 
 export const CLOUD_CREDENTIALS_REMEDY =
   'set PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET in the cloud environment\'s variables; mint them on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`';
+
+/**
+ * A session reads its environment when it is created, so a fix made in the
+ * environment's settings reaches the next session, not this one.
+ */
+export const CLOUD_REJECTED_CREDENTIALS_REMEDY =
+  'correct the credentials in the cloud environment\'s settings, or if the installation was revoked mint a replacement on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`; then start a new cloud session';
+
+/** `prim github connect` drives a browser sign-in, which a cloud VM cannot. */
+export const CLOUD_GITHUB_CONNECT_REMEDY =
+  "run `prim github connect` in a clone of it on your own machine, then start a new cloud session";
+
+/**
+ * Where a cloud session's unconnected state has several possible causes
+ * (credentials, a blocked host, an unconnected repository), point at the one
+ * command that names which.
+ */
+export function cloudSetupPointer(message: string, env: NodeJS.ProcessEnv = process.env): string {
+  return isClaudeCloudSession(env)
+    ? `${message.replace(/[.;\s]+$/u, "")}; in this Claude Code cloud session, run \`prim setup --cloud\` for the fix`
+    : message;
+}

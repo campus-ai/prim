@@ -1,4 +1,8 @@
-import { isClaudeCloudSession } from "../lib/cloud-session.js";
+import {
+  CLOUD_CREDENTIALS_REMEDY,
+  CLOUD_GITHUB_CONNECT_REMEDY,
+  isClaudeCloudSession,
+} from "../lib/cloud-env.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { verifyAuthStatus } from "./auth.js";
 /**
@@ -189,7 +193,14 @@ export function classifyAuthCredential(
   hasRefresh: boolean,
 ): Check {
   if (!credential) {
-    return { name: "auth", status: "fail", detail: "no token — run `prim auth login`" };
+    return {
+      name: "auth",
+      status: "fail",
+      // `prim auth login` is refused in a cloud session; name what works there.
+      detail: isClaudeCloudSession()
+        ? `no credentials — ${CLOUD_CREDENTIALS_REMEDY}`
+        : "no token — run `prim auth login`",
+    };
   }
   if (credential.source !== "token_file") {
     return { name: "auth", status: "ok", detail: "valid fixed bearer credential" };
@@ -588,12 +599,14 @@ export function classifyRepositoryBinding(
 ): Check {
   const connectionCapabilities =
     "It enables repository-specific file attribution, Conflict Gate verification, and commit correlation.";
+  // The connection is made in a browser, which a cloud VM does not have.
+  const cloud = isClaudeCloudSession();
   if (current.status === "unbound") {
     if (!active) {
       return {
         name: "github-repo-connection",
         status: "fail",
-        detail: `GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} Run \`prim github connect\`, then \`prim enable\`.`,
+        detail: `GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} ${cloud ? `To complete it, ${CLOUD_GITHUB_CONNECT_REMEDY}.` : "Run `prim github connect`, then `prim enable`."}`,
       };
     }
     const localDetail =
@@ -605,7 +618,7 @@ export function classifyRepositoryBinding(
     return {
       name: "github-repo-connection",
       status: "warn",
-      detail: `${localDetail} — GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} Run \`prim github connect\` to complete it.`,
+      detail: `${localDetail} — GitHub repo connection is required before using Primitive in this repository. ${connectionCapabilities} ${cloud ? `To complete it, ${CLOUD_GITHUB_CONNECT_REMEDY}.` : "Run `prim github connect` to complete it."}`,
     };
   }
   if (!isValidRepoSyncId(value)) {

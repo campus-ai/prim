@@ -30,6 +30,7 @@ import {
   parseInjectedMachineIdentity,
   parseMachineConfiguration,
   parseMachineIdentity,
+  rejectedCredentialsMessage,
   verifyInjectedMachineIdentity,
   verifyMachineIdentity,
 } from "./machine-protocol.js";
@@ -719,7 +720,7 @@ export async function acquireMachineCredential(
         if (machineSessionEnded(deps))
           throw new MachineAuthError(
             "machine_credentials_rejected",
-            "Rotate the injected machine credentials.",
+            rejectedCredentialsMessage("Rotate the injected machine credentials.", deps.env),
             true,
           );
         if (

@@ -1,8 +1,26 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFile } from "./atomic-file.js";
+import { cloudSetupPointer } from "./cloud-env.js";
 import { MachineAuthError } from "./machine-protocol.js";
+
+/**
+ * Forget every cooldown, so an explicit check retries now and reports the
+ * failure itself. A cooldown outlives its cause: after the user allows a
+ * blocked host, "cooling down" would otherwise be all prim says for a minute.
+ */
+export function clearMachineCooldowns(directory: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return;
+  }
+  for (const name of names)
+    if (/^machine_retry_[0-9a-f]{64}\.json$/u.test(name))
+      rmSync(join(directory, name), { force: true });
+}
 
 /** Call while holding credentials.lock. This file contains no credentials or tokens. */
 export async function withMachineCooldown<T>(
@@ -36,7 +54,11 @@ export async function withMachineCooldown<T>(
   if (state.retryAt > Date.now())
     throw new MachineAuthError(
       "token_service_unavailable",
-      "Machine authentication is cooling down after a temporary failure. Retry later.",
+      // The cooldown hides the failure that started it; cloud setup retries
+      // at once and names the cause.
+      cloudSetupPointer(
+        "Machine authentication is cooling down after a temporary failure. Retry later.",
+      ),
       false,
       state.retryAt,
     );

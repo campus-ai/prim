@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { classifyDaemonHealth } from "./doctor.js";
+import {
+  classifyAuthCredential,
+  classifyDaemonHealth,
+  classifyRepositoryBinding,
+} from "./doctor.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -16,5 +20,43 @@ describe("doctor daemon check in Claude Code cloud sessions", () => {
   it("still fails an explicit stop on a developer machine", () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "");
     expect(classifyDaemonHealth(null, { disabled: true })).toMatchObject({ status: "fail" });
+  });
+});
+
+describe("doctor guidance in Claude Code cloud sessions", () => {
+  const unbound = { status: "unbound", repositoryFullName: "campus-ai/demo-app" } as const;
+
+  it("names the environment's credentials, not the sign-in a cloud session refuses", () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const check = classifyAuthCredential(undefined, undefined, false);
+    expect(check.status).toBe("fail");
+    expect(check.detail).toContain("PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET");
+    expect(check.detail).not.toContain("prim auth login");
+  });
+
+  it("still names `prim auth login` on a developer machine", () => {
+    expect(classifyAuthCredential(undefined, undefined, false).detail).toBe(
+      "no token — run `prim auth login`",
+    );
+  });
+
+  it("sends an unconnected repository's owner to their own machine", () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    for (const active of [true, false]) {
+      const detail = classifyRepositoryBinding(undefined, unbound, active).detail;
+      expect(detail).toContain(
+        "run `prim github connect` in a clone of it on your own machine, then start a new cloud session",
+      );
+      expect(detail).not.toContain("prim enable");
+    }
+  });
+
+  it("keeps the direct command on a developer machine", () => {
+    expect(classifyRepositoryBinding(undefined, unbound, true).detail).toContain(
+      "Run `prim github connect` to complete it.",
+    );
+    expect(classifyRepositoryBinding(undefined, unbound, false).detail).toContain(
+      "Run `prim github connect`, then `prim enable`.",
+    );
   });
 });

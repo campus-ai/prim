@@ -1,4 +1,5 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -17,6 +18,8 @@ import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
+import { clearMachineCooldowns } from "../lib/machine-retry.js";
+import { primConfigDirectory } from "../lib/paths.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 import {
@@ -306,6 +309,9 @@ function sessionSteps(
     results.credentials = "missing";
     return;
   }
+  // An explicit check retries now: a cooldown left by an earlier failure would
+  // report "cooling down" in place of the cause, or of the fix having worked.
+  clearMachineCooldowns(primConfigDirectory({ env }));
   const status = deps.run(["auth", "status", "--json"], true);
   const auth = deps.parseAuthStatus(status);
   if (auth !== "valid") {
@@ -314,7 +320,12 @@ function sessionSteps(
       auth === "unreachable"
         ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
         : machine
-          ? `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`
+          ? `credentials · ${detail ?? "rejected"}${
+              // Guidance that already names the replacement needs no second copy.
+              detail?.includes("prim auth enroll")
+                ? ""
+                : "; if the credential itself was revoked, mint a replacement with `prim auth enroll --new-installation` and revoke the old installation in Settings → Developer installations"
+            }`
           : // A fixed token or stored sign-in has no installation to revoke.
             `credentials · the sign-in was rejected: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
@@ -387,8 +398,34 @@ function sessionSteps(
   // Preparing in this session already recorded the daemon opt-out.
   if (results.daemon === undefined) step("daemon", "", ["daemon", "stop"]);
   step("hooks", "git hooks", ["hooks", "install"]);
-  // An unconnected repository fails here; the enable output names the GitHub connection.
-  step("enable", "activate this repo", ["enable", "--non-interactive"]);
+  // An unconnected repository fails here, and no command in a cloud session
+  // can connect it: name the fix rather than a command to run for the reason.
+  deps.note("activate this repo · installing…");
+  const enabled = deps.run(["enable", "--non-interactive"]);
+  results.enable = enabled.code === 0 ? "ok" : "failed";
+  if (results.enable === "failed") {
+    const unconnected = unconnectedRepository(enabled.stdout);
+    remedy(
+      unconnected
+        ? `repository · ${unconnected} is not connected to Primitive: ${CLOUD_GITHUB_CONNECT_REMEDY}`
+        : "activate this repo · failed; run `prim enable --non-interactive` to see why",
+    );
+  }
+}
+
+/** The repository `enable --non-interactive` reported as not connected, if that is why it failed. */
+function unconnectedRepository(stdout: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout || "{}") as {
+      bindingStatus?: unknown;
+      repositoryFullName?: unknown;
+    };
+    return parsed.bindingStatus === "unbound" && typeof parsed.repositoryFullName === "string"
+      ? stripControlChars(parsed.repositoryFullName)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `auth status --json` verified the sign-in for enrollment only. */

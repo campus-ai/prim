@@ -1,3 +1,4 @@
+import { CLOUD_REJECTED_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 export const MACHINE_SCOPES = [
@@ -101,10 +102,32 @@ export function parseMachineConfiguration(value: unknown): MachineConfiguration 
   };
 }
 
+/**
+ * A cloud session has no administrator at hand: the person who configured its
+ * environment corrects the credentials there, and a session reads them only
+ * when it is created.
+ */
+export function rejectedCredentialsMessage(
+  message: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return isClaudeCloudSession(env)
+    ? `The cloud environment's credentials were rejected. To fix it, ${CLOUD_REJECTED_CREDENTIALS_REMEDY}.`
+    : message;
+}
+
 export function machineSignal(signal?: AbortSignal): AbortSignal {
   return signal
     ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
     : AbortSignal.timeout(10_000);
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "Primitive";
+  }
 }
 
 async function fetchMachine(
@@ -118,7 +141,11 @@ async function fetchMachine(
     options.signal?.throwIfAborted();
     throw new MachineAuthError(
       "authentication_unavailable",
-      "Machine authentication is temporarily unavailable. Check the connection and retry.",
+      // A cloud VM reaches only the hosts its environment allows, and both of
+      // Primitive's are blocked by default: name the one that failed.
+      isClaudeCloudSession()
+        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).`
+        : "Machine authentication is temporarily unavailable. Check the connection and retry.",
     );
   }
 }
@@ -195,7 +222,9 @@ export async function exchangeMachineCredentials(
       terminal
         ? network
           ? `The token service rejected the request. Check the cloud environment's network secret for ${new URL(configuration.issuer).hostname}: username = the client ID, password = the client secret.`
-          : "Machine credentials were rejected. Ask your administrator to rotate or enable them."
+          : rejectedCredentialsMessage(
+              "Machine credentials were rejected. Ask your administrator to rotate or enable them.",
+            )
         : "The machine token service is temporarily unavailable.",
       terminal,
       terminal ? undefined : machineRetryAt(response),

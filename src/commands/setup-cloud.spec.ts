@@ -756,6 +756,42 @@ describe("agent contract in cloud setup output", () => {
     });
   });
 
+  it("names the fix for an unconnected repository, which no command in the session can make", () => {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      run: (args) =>
+        args[0] === "enable"
+          ? {
+              code: 1,
+              stdout: JSON.stringify({
+                active: false,
+                bindingStatus: "unbound",
+                repositoryFullName: "campus-ai/demo-app",
+              }),
+            }
+          : { code: 0, stdout: "{}" },
+    });
+    setupCloudSession(deps);
+    const remedy =
+      "repository · campus-ai/demo-app is not connected to Primitive: run `prim github connect` in a clone of it on your own machine, then start a new cloud session";
+    expect(notes).toContain(remedy);
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["enable"], remedies: [remedy] });
+  });
+
+  it("retries the credential check at once instead of reporting an earlier failure's cooldown", () => {
+    const { deps } = harness({ cwd: repo(true) });
+    const config = deps.env?.PRIM_CONFIG_DIR as string;
+    const cooldown = join(config, `machine_retry_${"a".repeat(64)}.json`);
+    writeFileSync(cooldown, JSON.stringify({ failures: 5, retryAt: Date.now() + 60_000 }));
+    let cooldownAtCheck: boolean | undefined;
+    deps.run = (args) => {
+      if (args[0] === "auth") cooldownAtCheck = existsSync(cooldown);
+      return { code: 0, stdout: "{}" };
+    };
+    setupCloudSession(deps);
+    expect(cooldownAtCheck).toBe(false);
+  });
+
   it("keeps the contract when it refuses outside a cloud session", () => {
     const { deps } = harness({ cwd: repo(true), env: {} });
     setupCloudSession(deps);

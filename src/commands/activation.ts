@@ -19,6 +19,7 @@ import {
   repoActiveFlag,
   setRepoActive,
 } from "../lib/activation.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY, isClaudeCloudSession } from "../lib/cloud-env.js";
 import { isPreparedCloudSession } from "../lib/cloud-prepared.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
@@ -40,7 +41,16 @@ import { refreshOwnedGlobalHooks, stageGitHookRuntime } from "./hooks.js";
 const CONNECT_PROMPT =
   "[prim] GitHub repo connection is required to enable repository-specific file attribution, Conflict Gate verification, and commit correlation. Start the GitHub App connection now?";
 const GITHUB_CONNECTION_REQUIRED =
-  "GitHub repo connection is required before using Primitive in this repository. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation. Run `prim github connect` to complete it.";
+  "GitHub repo connection is required before using Primitive in this repository. It enables repository-specific file attribution, Conflict Gate verification, and commit correlation.";
+
+/** The connection is made in a browser, which a cloud VM does not have. */
+function githubConnectionRequired(): string {
+  return `${GITHUB_CONNECTION_REQUIRED} ${
+    isClaudeCloudSession()
+      ? `It cannot be completed from a Claude Code cloud session: ${CLOUD_GITHUB_CONNECT_REMEDY}.`
+      : "Run `prim github connect` to complete it."
+  }`;
+}
 
 /**
  * Wire all three managed hooks where Git runs them for this repository. This
@@ -107,7 +117,7 @@ async function maybeConnectRepository(
   root: string,
   globals: OptionValues,
 ): Promise<RepositoryBindingResult | undefined> {
-  if (isNonInteractive(globals)) return undefined;
+  if (isNonInteractive(globals) || isClaudeCloudSession()) return undefined;
   const approved = Boolean(globals.yes) || (await askConfirmation(CONNECT_PROMPT, process.stderr));
   if (!approved) return undefined;
   const outcome = await runGithubConnect(undefined, { root, browser: true });
@@ -173,7 +183,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     if (active && binding?.status === "unbound") {
       const connected = await maybeConnectRepository(root, globals);
       if (!connected) {
-        process.stderr.write(`[prim] ${GITHUB_CONNECTION_REQUIRED}\n`);
+        process.stderr.write(`[prim] ${githubConnectionRequired()}\n`);
         printJson({
           active: false,
           repo: root,

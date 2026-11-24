@@ -577,6 +577,30 @@ describe("prim enable / disable", () => {
     errSpy.mockRestore();
   });
 
+  it("sends a cloud session's owner to their own machine instead of starting a browser connection", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    inRepo("/repo");
+    vi.mocked(bindRepository).mockResolvedValue({
+      status: "unbound",
+      repositoryFullName: "campus-ai/primitive",
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await buildProgram().parseAsync(["--yes", "enable"], { from: "user" });
+
+    expect(runGithubConnect).not.toHaveBeenCalled();
+    const stderr = errSpy.mock.calls.map(([m]) => String(m)).join("");
+    expect(stderr).toContain(
+      "It cannot be completed from a Claude Code cloud session: run `prim github connect` in a clone of it on your own machine, then start a new cloud session.",
+    );
+    expect(stderr).not.toContain("Run `prim github connect` to complete it.");
+    expect(process.exitCode).toBe(1);
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
   it("does not activate when an accepted GitHub connection does not complete", async () => {
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({

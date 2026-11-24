@@ -18,6 +18,7 @@
 import { type CliClient, getClient } from "../client.js";
 import { daemonOrDirectGet } from "../daemon/proxy.js";
 import { repoSyncId } from "../lib/activation.js";
+import { cloudSetupPointer, isClaudeCloudSession } from "../lib/cloud-env.js";
 import { canonicalGitRoot, canonicalRepositoryPath, currentBranch } from "../lib/git.js";
 import { terminalSafeLine } from "../lib/terminal-safe.js";
 
@@ -114,7 +115,9 @@ export async function checkAffectedDecisions(
     return {
       decisions: [],
       truncated: false,
-      unavailable: "this checkout has no current Primitive repository binding; run prim enable",
+      unavailable: isClaudeCloudSession()
+        ? cloudSetupPointer("this checkout has no current Primitive repository binding")
+        : "this checkout has no current Primitive repository binding; run prim enable",
     };
   }
   const canonical = filePaths.map((file) =>
