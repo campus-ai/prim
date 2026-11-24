@@ -210,6 +210,12 @@ try {
   // passes it on. The real one adds the client secret on the way. A client
   // may open a CONNECT tunnel, or hand a plain-HTTP request over whole with
   // the full URL on its request line; both are a request "through the proxy".
+  // While it plays a token-attaching secret, the proxy hands API requests to
+  // the face of the API that needs no token, whichever way they arrive.
+  const proxiedPort = (requested) =>
+    injecting && Number(requested) === api.address().port
+      ? injectedApi.address().port
+      : Number(requested);
   proxy = httpServer((request, response) => {
     let target;
     try {
@@ -220,11 +226,12 @@ try {
       return;
     }
     tunnels.push(target.host);
+    const port = proxiedPort(target.port || 80);
     const { "proxy-connection": _hop, "proxy-authorization": _auth, ...headers } = request.headers;
     const upstream = httpRequest(
       {
         host: target.hostname,
-        port: target.port || 80,
+        port,
         method: request.method,
         path: `${target.pathname}${target.search}`,
         headers,
@@ -244,10 +251,7 @@ try {
   proxy.on("connect", (request, socket, head) => {
     tunnels.push(request.url);
     const [host, requested] = request.url.split(":");
-    const port =
-      injecting && Number(requested) === api.address().port
-        ? injectedApi.address().port
-        : Number(requested);
+    const port = proxiedPort(requested);
     const upstream = connect(port, host, () => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       upstream.write(head);
