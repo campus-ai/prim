@@ -1,7 +1,7 @@
 import { hasProjectPrimInstall } from "../lib/activation.js";
-import { insideClaudeCode } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
+  insideClaudeCode,
   isPreparedCloudSession,
   markCloudPrepared,
   preparedInSession,
