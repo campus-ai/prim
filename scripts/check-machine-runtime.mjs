@@ -198,7 +198,10 @@ try {
       upstream.pipe(socket);
       socket.pipe(upstream);
     });
-    upstream.on("error", () => socket.destroy());
+    upstream.on("error", (error) => {
+      tunnels.push(`${request.url} upstream ${error.code ?? error.message}`);
+      socket.destroy();
+    });
     socket.on("error", () => upstream.destroy());
   });
   proxy.listen(0, "127.0.0.1");
@@ -232,8 +235,17 @@ try {
     );
     return JSON.parse(result.stdout);
   };
-  const networkStatuses = await Promise.all(Array.from({ length: 4 }, () => networkStatus()));
-  assert.ok(networkStatuses.every((value) => value.status === "valid"));
+  // A failing status exits non-zero; keep its answer so the assertion can say
+  // what the broker reached.
+  const networkStatuses = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      networkStatus().catch((error) => ({ failed: error.stdout || String(error) })),
+    ),
+  );
+  assert.ok(
+    networkStatuses.every((value) => value.status === "valid"),
+    `network-secret status through the proxy: ${JSON.stringify(networkStatuses)}; tunnels ${JSON.stringify(tunnels)}; credential-free exchanges ${networkExchanges}`,
+  );
   assert.equal(networkExchanges, 1, "network-secret processes must share one broker exchange");
   assert.ok(
     tunnels.includes(`127.0.0.1:${provider.address().port}`),
