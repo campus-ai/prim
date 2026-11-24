@@ -33,7 +33,10 @@ const status = {
 const persisted = { disposition: "persisted", acknowledged: 1, accepted: 1 };
 let uploaded: unknown[];
 let beforeUpload: (() => void) | undefined;
+/** Set to make the server report the installation as delegated to this user. */
+let delegatedUser: string | undefined;
 beforeEach(() => {
+  delegatedUser = undefined;
   vi.resetModules();
   directory = mkdtempSync(join(tmpdir(), "prim-post-tool-machine-"));
   vi.stubEnv("PRIM_CONFIG_DIR", directory);
@@ -66,7 +69,15 @@ beforeEach(() => {
       }
       if (String(url).endsWith("/auth/status")) {
         if (++statusCalls > 1) beforeUpload?.();
-        return Response.json(status);
+        return Response.json(
+          delegatedUser
+            ? {
+                ...status,
+                organizationBindingVersion: 3,
+                principal: { ...status.principal, authorizedUserId: delegatedUser },
+              }
+            : status,
+        );
       }
       if (String(url).endsWith("/moves/ingest")) {
         uploaded.push(JSON.parse(options.body));
@@ -118,6 +129,45 @@ it("sends the same machine-bound envelope directly and on a later journal drain"
   });
   expect(original).not.toHaveProperty("captureActor");
   expect(original.envelopeVersion).toBe(3);
+});
+
+it("delivers a cold delegated session's first capture, directly and on a later drain", async () => {
+  // The first hook of a fresh VM: credentials in the environment, identity
+  // not yet verified, and the server says the installation acts for a user.
+  delegatedUser = "user_alex";
+  const { deliverPostToolMove } = await import("./post-tool-delivery.js");
+  const { listBuckets, readMovesFromPath } = await import("../journal.js");
+  expect(await deliverPostToolMove(move(), undefined)).toEqual(persisted);
+  const [bucket] = listBuckets();
+  expect(bucket?.bucket).toMatch(/^_machine_pending_[a-f0-9]{64}$/u);
+  // Journaled before anything knew the user: the actor names only the client.
+  expect(readMovesFromPath(bucket?.path ?? "")[0]?.captureActor).toEqual({
+    kind: "machine",
+    apiUrl: "https://api.example.com",
+    clientId,
+  });
+  const delegatedEnvelope = {
+    batch: [
+      {
+        moveId: "move-one",
+        envelopeVersion: 6,
+        capturedMachineId: "machine_one",
+        capturedUserId: "user_alex",
+        capturedOrganizationId: "organization_one",
+        captureAuthorityKind: "workos_m2m",
+      },
+    ],
+  };
+  expect(uploaded).toHaveLength(1);
+  expect(uploaded[0]).toMatchObject(delegatedEnvelope);
+
+  // The journal copy is still there (write-ahead); a drain sends the same
+  // move again rather than leaving it stuck.
+  const { flush } = await import("../flusher.js");
+  await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
+  expect(uploaded).toHaveLength(2);
+  expect(uploaded[1]).toMatchObject(delegatedEnvelope);
+  expect(listBuckets()).toEqual([]);
 });
 
 it("retains capture without uploading when credentials change between status and delivery", async () => {

@@ -152,6 +152,11 @@ describe("credential-bound journal draining", () => {
         clientId: "client_cloud",
       });
 
+      // It waits apart from any verified identity's bucket.
+      expect(journal.listBuckets().map(({ bucket }) => bucket)).toEqual([
+        expect.stringMatching(/^_machine_pending_[a-f0-9]{64}$/u),
+      ]);
+
       await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
       expect(posted).toHaveLength(1);
       expect(posted[0]?.batch[0]).toMatchObject({
@@ -162,6 +167,72 @@ describe("credential-bound journal draining", () => {
         capturedOrganizationId: "org_local",
       });
       expect(journal.listBuckets()).toEqual([]);
+    } finally {
+      vi.doUnmock("./client.js");
+    }
+  });
+
+  it("keeps a service identity's captures in place when its client turns out to be delegated", async () => {
+    process.env = {
+      ...originalEnv,
+      PRIM_API_URL: "https://api.example.test",
+      PRIM_CONFIG_DIR: configDir,
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "environment-secret",
+    };
+    process.env.PRIM_TOKEN = undefined;
+    const post = vi.fn();
+    vi.doMock("./client.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("./client.js")>()),
+      getPinnedClient: async () => ({
+        get: async () => ({
+          authenticated: true,
+          organizationBindingVersion: 3,
+          captureAuthorityKind: "workos_m2m",
+          organizationId: "org_local",
+          workosOrganizationId: "org_workos",
+          principal: {
+            kind: "machine",
+            clientId: "client_cloud",
+            machineId: "machine_cloud",
+            displayName: "Claude Code cloud",
+            authorizedUserId: "user_alex",
+            scopes: ["cli:capture"],
+          },
+        }),
+        post,
+      }),
+    }));
+    try {
+      const journal = await import("./journal.js");
+      const { flush } = await import("./flusher.js");
+      const { machineJournalBucket } = await import("./lib/machine-credentials.js");
+      // Captured while the client was verified as a service identity: the
+      // actor names that machine and organization, and no user.
+      const serviceBucket = machineJournalBucket({
+        apiUrl: "https://api.example.test",
+        clientId: "client_cloud",
+      });
+      const path = journal.journalPath(serviceBucket);
+      journal.appendMoveToPath(path, {
+        ...move("service-era"),
+        captureActor: {
+          kind: "machine",
+          apiUrl: "https://api.example.test",
+          clientId: "client_cloud",
+          machineId: "machine_cloud",
+          organizationId: "org_local",
+        },
+      });
+
+      // Retained under its original authority: not uploaded, not dead-lettered.
+      await expect(flush()).resolves.toEqual({
+        flushed: 0,
+        quarantined: 0,
+        retained: [{ bucket: serviceBucket, reason: "machine_identity_mismatch" }],
+      });
+      expect(post).not.toHaveBeenCalled();
+      expect(journal.readMovesFromPath(path).map(({ moveId }) => moveId)).toEqual(["service-era"]);
     } finally {
       vi.doUnmock("./client.js");
     }

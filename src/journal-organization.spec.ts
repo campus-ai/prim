@@ -276,26 +276,45 @@ describe("machine journal authority", () => {
       captureActor: { kind: "machine", apiUrl, clientId: machine.clientId },
     };
 
-    it("delivers the client's own waiting bucket for a delegated installation", async () => {
-      const { machineJournalBucket } = await import("./lib/machine-credentials.js");
+    it("delivers the client's pending bucket to whichever identity is verified for it", async () => {
+      const { machineJournalBucket, machinePendingBucket } = await import(
+        "./lib/machine-credentials.js"
+      );
       const own = machineJournalBucket({ apiUrl, ...delegated });
-      const waiting = machineJournalBucket({ apiUrl, clientId: machine.clientId });
-      const otherClient = machineJournalBucket({ apiUrl, clientId: "client_other" });
+      const pendingBucket = machinePendingBucket({ apiUrl, clientId: machine.clientId });
+      // A service identity's own bucket for the same client: verified captures.
+      const serviceBucket = machineJournalBucket({ apiUrl, clientId: machine.clientId });
+      const otherClientPending = machinePendingBucket({ apiUrl, clientId: "client_other" });
       const otherUser = machineJournalBucket({
         apiUrl,
         ...delegated,
         authorizedUserId: "user_sam",
       });
-      expect(waiting).not.toBe(own);
-      const result = classifyJournalBuckets([own, waiting, otherClient, otherUser], delegated);
-      expect([...result.deliverableBuckets].sort()).toEqual([own, waiting].sort());
-      expect(result.retainedBuckets).toEqual(
+      expect(new Set([own, pendingBucket, serviceBucket]).size).toBe(3);
+
+      const asDelegated = classifyJournalBuckets(
+        [own, pendingBucket, serviceBucket, otherClientPending, otherUser],
+        delegated,
+      );
+      expect([...asDelegated.deliverableBuckets].sort()).toEqual([own, pendingBucket].sort());
+      // A service identity's captures are kept, never opened, as before.
+      expect(asDelegated.retainedBuckets).toEqual(
         expect.arrayContaining([
-          { bucket: otherClient, reason: "machine_identity_mismatch" },
+          { bucket: serviceBucket, reason: "machine_identity_mismatch" },
+          { bucket: otherClientPending, reason: "machine_identity_mismatch" },
           { bucket: otherUser, reason: "machine_identity_mismatch" },
         ]),
       );
-      expect(result.retainedBuckets).toHaveLength(2);
+      expect(asDelegated.retainedBuckets).toHaveLength(3);
+
+      const asService = classifyJournalBuckets([serviceBucket, pendingBucket, own], machine);
+      expect([...asService.deliverableBuckets].sort()).toEqual(
+        [serviceBucket, pendingBucket].sort(),
+      );
+      // A human sign-in opens neither.
+      expect([
+        ...classifyJournalBuckets([pendingBucket, serviceBucket], binding).deliverableBuckets,
+      ]).toEqual([]);
     });
 
     it("binds such a capture to the identity the server verifies for its client", () => {

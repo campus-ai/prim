@@ -1,7 +1,11 @@
 import { getSiteUrl as resolveApiUrl } from "./client.js";
 import { type CliClient, getPinnedClient } from "./client.js";
 import { type MoveIngestRequest, isMoveIngestRequest } from "./contract/cli-http-v1.js";
-import { type MachineCaptureActor, machineJournalBucket } from "./lib/machine-credentials.js";
+import {
+  identityPending,
+  machineJournalBucket,
+  machinePendingBucket,
+} from "./lib/machine-credentials.js";
 import { machineApiUrl, parseMachineIdentity } from "./lib/machine-protocol.js";
 import { DECISION_LIFECYCLE_PROTOCOL_VERSION } from "./protocol/decision-lifecycle.js";
 import type { Move } from "./protocol/move.js";
@@ -114,23 +118,6 @@ export function parseOrganizationBinding(value: unknown): ParsedOrganizationBind
 }
 
 /**
- * A capture journaled before its process knew who it was. With credentials
- * from the environment a fresh VM has no verified identity until the first
- * token exchange (and again each time the cached identity lapses), so the
- * actor names the client alone and the move lands in the client's own
- * bucket. Such a move belongs to whoever the server says that client is. An
- * actor that names a verified machine, organization, or user is a claim, and
- * must still match exactly.
- */
-function identityPending(actor: MachineCaptureActor): boolean {
-  return (
-    actor.machineId === undefined &&
-    actor.organizationId === undefined &&
-    actor.authorizedUserId === undefined
-  );
-}
-
-/**
  * Count retained buckets by reason as `reason:count`, sorted by reason, the
  * form doctor's journal-org check and the daemon's health record share.
  */
@@ -170,10 +157,10 @@ export function classifyJournalBuckets(
             clientId: binding.clientId,
             authorizedUserId: binding.authorizedUserId,
           }) ||
-          // Where this client's captures wait until its identity is verified.
-          // For a service identity it is the same bucket; a delegated one
-          // would otherwise never deliver them (see identityPending).
-          bucket === machineJournalBucket({ apiUrl, clientId: binding.clientId }))
+          // What this client captured before its identity was verified. Those
+          // belong to whoever the server says the client is, which is now
+          // known; no verified identity's bucket is opened this way.
+          bucket === machinePendingBucket({ apiUrl, clientId: binding.clientId }))
       )
         deliverableBuckets.add(bucket);
       else
@@ -222,6 +209,9 @@ export function buildOrganizationBoundMoveRequest(
           !captureActor ||
           captureActor.clientId !== binding.clientId ||
           captureActor.apiUrl !== machineApiUrl(resolveApiUrl()) ||
+          // An identity-pending actor names only its client and is bound to
+          // the identity verified for it. Any other actor is a claim about a
+          // verified identity and must match this one exactly.
           (!identityPending(captureActor) &&
             (captureActor.authorizedUserId !== binding.authorizedUserId ||
               (captureActor.machineId && captureActor.machineId !== binding.machineId) ||
