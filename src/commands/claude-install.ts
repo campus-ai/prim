@@ -25,10 +25,11 @@
  * (tmp + fsync + rename) so a crash can never leave a torn settings.json. AX
  * contract: STDOUT is the resulting JSON; STDERR is the human verdict.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
+import { PRIM_ACTIVE_DECLARATION } from "../lib/activation.js";
 import { atomicWriteFile } from "../lib/atomic-file.js";
 import {
   type HookCommandResolution,
@@ -637,6 +638,74 @@ export function removeRepositoryDeclaration(
   if (settings.env[PRIM_REPOSITORY_ENV] !== repository) return settings;
   const { [PRIM_REPOSITORY_ENV]: _removed, ...env } = settings.env;
   return { ...settings, env: Object.keys(env).length > 0 ? env : undefined };
+}
+
+/**
+ * Record or remove the repository's committed opt-out, `env.PRIM_ACTIVE=false`
+ * in its project settings (see declaresInactive). Only the value prim writes
+ * is removed; any other is not prim's and has no effect.
+ */
+export function applyInactiveDeclaration(
+  settings: ClaudeSettings,
+  inactive: boolean,
+): ClaudeSettings {
+  const env = isPlainObject(settings.env) ? settings.env : {};
+  const existing = env[PRIM_ACTIVE_DECLARATION];
+  const declared = typeof existing === "string" && existing.trim() === "false";
+  if (inactive)
+    return declared
+      ? settings
+      : { ...settings, env: { ...env, [PRIM_ACTIVE_DECLARATION]: "false" } };
+  if (!declared) return settings;
+  const { [PRIM_ACTIVE_DECLARATION]: _removed, ...rest } = env;
+  return { ...settings, env: Object.keys(rest).length > 0 ? rest : undefined };
+}
+
+/**
+ * Plan writing the opt-out into (or out of) the repository's
+ * `.claude/settings.json`. Everything that can refuse does so here, before
+ * the caller changes anything else; `apply` only writes. The caller commits
+ * the file.
+ */
+export function planProjectInactiveDeclaration(
+  root: string,
+  inactive: boolean,
+): { path: string; changed: boolean; apply: () => void } {
+  // At $HOME that file is the user-scope settings of every session, not a
+  // repository's own declaration, and prim never reads one from it.
+  if (root === homedir())
+    throw new Error(
+      "this repository's root is your home directory, whose .claude/settings.json is your user settings; it cannot carry a repository opt-out",
+    );
+  const directory = join(root, ".claude");
+  const path = join(directory, "settings.json");
+  // Prim reads the declaration only from a real directory and a regular file
+  // (see checkoutSettingsText); writing one it would then not read back
+  // would report an opt-out that holds nowhere.
+  const kind = (target: string) => {
+    try {
+      return lstatSync(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+  const directoryStat = kind(directory);
+  const fileStat = kind(path);
+  if ((directoryStat && !directoryStat.isDirectory()) || (fileStat && !fileStat.isFile()))
+    throw new Error(
+      `${path} must be a regular file in a real .claude directory (not a symbolic link) to carry the repository's opt-out`,
+    );
+  const before = readSettings(path);
+  const after = applyInactiveDeclaration(before, inactive);
+  const changed = JSON.stringify(before) !== JSON.stringify(after);
+  return {
+    path,
+    changed,
+    apply: () => {
+      if (changed) atomicWrite(path, after);
+    },
+  };
 }
 
 /** Project-scope settings after the repository declaration step of install. */

@@ -65,6 +65,9 @@ function harness(overrides: Partial<CloudSetupDependencies> = {}) {
 let printed: unknown[];
 beforeEach(() => {
   printed = [];
+  // Whether a clone is active must not depend on the host's own prim.active.
+  vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
+  vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   vi.spyOn(console, "log").mockImplementation((value: string) => {
     printed.push(JSON.parse(value));
   });
@@ -209,6 +212,70 @@ describe("setupCloudSession", () => {
     expect(notes.join("\n")).toContain("records PRIM_REPOSITORY in .claude/settings.json");
     expect(printed[0]).toMatchObject({ ok: false, results: { repository: "missing" } });
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("leaves a repository that commits its opt-out off, and says so instead of enabling it", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps, calls, notes, exit } = harness({ cwd: root });
+    setupCloudSession(deps);
+    // Credentials are still verified; nothing is wired or activated.
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      ok: true,
+      optedOut: true,
+      results: { credentials: "ok", repository: "ok" },
+      failed: [],
+      instructions: expect.stringContaining("opts out of Primitive"),
+    });
+    expect(notes.join("\n")).toContain("PRIM_ACTIVE=false");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("needs no repository identity from a repository that opts out", () => {
+    const root = repo(false, "");
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true });
+  });
+
+  it("sets up a clone someone explicitly enabled despite the committed opt-out", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: root });
+    const { deps, calls } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(calls.at(-1)).toEqual(["enable", "--non-interactive"]);
+    expect(printed[0]).not.toHaveProperty("optedOut");
+  });
+
+  it("treats an activation prim itself wrote down as no one's explicit choice", () => {
+    // An earlier session activated this clone implicitly; the opt-out came later.
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: root });
+    execFileSync("git", ["config", "--local", "prim.activeImplicit", "true"], { cwd: root });
+    const { deps, calls } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true });
   });
 
   it("does not suggest a declaration when origin is a non-GitHub remote", () => {
@@ -460,6 +527,25 @@ describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", ()
     setupCloudSession(deps);
     expect(calls[0]).toEqual(["auth", "status", "--json"]);
     expect(printed[0]).toMatchObject({ results: { credentials: "ok" } });
+  });
+
+  it("prepares nothing in an unprepared VM for a repository that opts out", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps, calls, exit } = harness({ cwd: root });
+    setupDetectedCloudSession(deps);
+    // No user-scope hooks, allow-rule, skill, daemon change, or marker: the
+    // VM stays as its environment's owner left it.
+    expect(deps.stage).not.toHaveBeenCalled();
+    expect(deps.installUserHooks).not.toHaveBeenCalled();
+    expect(deps.markPrepared).not.toHaveBeenCalled();
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true, failed: [] });
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("does not claim the hooks will load when preparing failed", () => {

@@ -1,4 +1,4 @@
-import { hasProjectPrimInstall } from "../lib/activation.js";
+import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
 import {
   clearCloudPrepared,
   isPreparedCloudSession,
@@ -127,8 +127,8 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "session")) return;
   const results: CloudResults = {};
   const remedies: string[] = [];
-  sessionSteps(deps, results, remedies);
-  finish(deps, "session", results, remedies);
+  const optedOut = sessionSteps(deps, results, remedies);
+  finish(deps, "session", results, remedies, optedOut);
 }
 
 /**
@@ -146,12 +146,26 @@ export function setupDetectedCloudSession(deps: CloudSetupDependencies): void {
   const remedies: string[] = [];
   const root = gitToplevel(deps.cwd);
   let preparedNow = false;
-  if (!isPreparedCloudSession(env) && !(root && hasProjectPrimInstall(root))) {
+  // A repository that opts out wants nothing set up, the VM included: an
+  // environment left unprepared may be how its owner keeps prim off elsewhere.
+  if (
+    !isPreparedCloudSession(env) &&
+    !(root && hasProjectPrimInstall(root)) &&
+    !(root && optsOut(root))
+  ) {
     prepareSteps(deps, results, remedies, "session");
     preparedNow = results.prepared === "ok";
   }
-  sessionSteps(deps, results, remedies, { preparedNow });
-  finish(deps, "session", results, remedies);
+  const optedOut = sessionSteps(deps, results, remedies, { preparedNow });
+  finish(deps, "session", results, remedies, optedOut);
+}
+
+/**
+ * The repository commits its opt-out and nobody turned this clone on. An
+ * activation prim itself wrote down for an implicit opt-in is not that.
+ */
+function optsOut(root: string): boolean {
+  return declaresInactive(root) && !explicitlyActive(root);
 }
 
 /**
@@ -221,13 +235,16 @@ function prepareSteps(
     );
 }
 
-/** The per-session steps; a missing prerequisite stops the rest. */
+/**
+ * The per-session steps; a missing prerequisite stops the rest. Returns true
+ * when the repository commits its own opt-out and nothing was activated.
+ */
 function sessionSteps(
   deps: CloudSetupDependencies,
   results: CloudResults,
   remedies: string[],
   options: { preparedNow?: boolean } = {},
-): void {
+): boolean {
   const remedy = (message: string): void => {
     deps.note(message);
     remedies.push(message);
@@ -239,14 +256,14 @@ function sessionSteps(
   } catch (error) {
     remedy(`credentials · ${error instanceof MachineAuthError ? error.message : String(error)}`);
     results.credentials = "failed";
-    return;
+    return false;
   }
   // A fixed bearer token also authenticates prim; only no credential at all
   // is missing.
   if (!machine && !env.PRIM_TOKEN?.trim()) {
     remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
     results.credentials = "missing";
-    return;
+    return false;
   }
   const status = deps.run(["auth", "status", "--json"], true);
   const auth = deps.parseAuthStatus(status);
@@ -258,7 +275,7 @@ function sessionSteps(
         : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
     );
     results.credentials = "failed";
-    return;
+    return false;
   }
   results.credentials = "ok";
 
@@ -266,12 +283,22 @@ function sessionSteps(
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
-    return;
+    return false;
+  }
+  // The repository's committed opt-out is its answer to a prepared environment
+  // (and to this command, which the documented agent prompt runs): leave it
+  // off. A clone someone explicitly enabled is theirs to keep on.
+  if (optsOut(root)) {
+    deps.note(
+      "repository · opted out: its .claude/settings.json declares PRIM_ACTIVE=false, so prim stays off here. `prim enable` turns it on for this session's clone; `prim enable --scope project` removes the opt-out",
+    );
+    results.repository = "ok";
+    return true;
   }
   if (!githubRepositoryFullName(root)) {
     remedy(`repository · ${repositoryIdentityRemedy(root)}`);
     results.repository = "missing";
-    return;
+    return false;
   }
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
@@ -308,6 +335,7 @@ function sessionSteps(
   step("hooks", "git hooks", ["hooks", "install"]);
   // An unconnected repository fails here; the enable output names the GitHub connection.
   step("enable", "activate this repo", ["enable", "--non-interactive"]);
+  return false;
 }
 
 /** The machine credential failure's own guidance from `auth status --json`, if any. */
@@ -327,6 +355,7 @@ function finish(
   mode: "prepare" | "session",
   results: CloudResults,
   remedies: string[],
+  optedOut = false,
 ): void {
   const failed = Object.keys(results).filter((key) => results[key] !== "ok");
   deps.note(
@@ -340,8 +369,18 @@ function finish(
     failed.length === 0
       ? mode === "prepare"
         ? "The cloud environment is prepared; sessions started from it load prim's hooks."
-        : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
+        : optedOut
+          ? "This repository opts out of Primitive (PRIM_ACTIVE=false in its .claude/settings.json), so nothing was activated. Tell the user in one sentence, then continue their task; do not run prim enable unless they ask."
+          : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
       : "Cloud setup is incomplete. Tell the user each remedy in one sentence before continuing; do not run prim auth login or prim auth enroll, which cannot work in a cloud session.";
-  printJson({ ok: failed.length === 0, cloud: mode, results, failed, remedies, instructions });
+  printJson({
+    ok: failed.length === 0,
+    cloud: mode,
+    results,
+    failed,
+    remedies,
+    instructions,
+    ...(optedOut ? { optedOut: true } : {}),
+  });
   if (failed.length) deps.exit(EXIT_INCOMPLETE);
 }

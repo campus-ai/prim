@@ -110,7 +110,10 @@ These questions share the interruption budget below; never ask separate question
 
 When passive capture is inactive for the current repo, do not silently turn a durable
 decision into a write. “Inactive” means Prim's effective repo-capture check is false;
-an explicit local `prim.active=false` is always inactive. Every
+an explicit local `prim.active=false` is always inactive, and so is a repository
+that commits its own opt-out (`PRIM_ACTIVE=false` under `env` in
+`.claude/settings.json`) unless the user turned prim on themselves (`prim enable`
+in that clone, or a global `prim.active=true`). Every
 `prim decisions create` invocation needs fresh user approval:
 
 - An explicit request to record or create that Decision is approval for that one

@@ -20,6 +20,7 @@ import {
   PRIM_AUTOMODE_TRUST,
   PRIM_PERMISSION_RULE,
   applyAutoModeTrust,
+  applyInactiveDeclaration,
   applyInstall,
   applyRepositoryDeclaration,
   applyUninstall,
@@ -775,6 +776,32 @@ describe("repository declaration (PRIM_REPOSITORY)", () => {
     const handWritten: ClaudeSettings = { env: { PRIM_REPOSITORY: "other/name" } };
     expect(removeRepositoryDeclaration(handWritten, "campus-ai/prim")).toBe(handWritten);
     expect(removeRepositoryDeclaration(handWritten, null)).toBe(handWritten);
+  });
+
+  it("records the repository's opt-out beside existing env, once", () => {
+    const out = applyInactiveDeclaration({ env: { PRIM_REPOSITORY: "campus-ai/prim" } }, true);
+    expect(out.env).toEqual({ PRIM_REPOSITORY: "campus-ai/prim", PRIM_ACTIVE: "false" });
+    expect(applyInactiveDeclaration(out, true)).toBe(out);
+    expect(applyInactiveDeclaration({}, true).env).toEqual({ PRIM_ACTIVE: "false" });
+  });
+
+  it("removes only the opt-out prim writes, dropping an emptied env", () => {
+    expect(
+      applyInactiveDeclaration({ env: { FOO: "1", PRIM_ACTIVE: "false" } }, false).env,
+    ).toEqual({ FOO: "1" });
+    expect(applyInactiveDeclaration({ env: { PRIM_ACTIVE: "false" } }, false).env).toBeUndefined();
+    const other: ClaudeSettings = { env: { PRIM_ACTIVE: "true" } };
+    expect(applyInactiveDeclaration(other, false)).toBe(other);
+    const none: ClaudeSettings = { hooks: {} };
+    expect(applyInactiveDeclaration(none, false)).toBe(none);
+  });
+
+  it("leaves the opt-out alone when prim's project install is removed", () => {
+    const root = repo("https://github.com/campus-ai/prim.git");
+    const settings: ClaudeSettings = {
+      env: { PRIM_REPOSITORY: "campus-ai/prim", PRIM_ACTIVE: "false" },
+    };
+    expect(projectSettingsAfterUninstall(settings, root).env).toEqual({ PRIM_ACTIVE: "false" });
   });
 
   it("install declares the repository origin names, never one from the environment", () => {
