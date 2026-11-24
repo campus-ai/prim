@@ -401,7 +401,9 @@ describe("network-secret mode (PRIM_M2M_CLIENT_AUTH=network-secret)", () => {
   }
 
   it("requests a token carrying no credential and writes nothing to answer whether it is configured", async () => {
-    deps.env = networkEnv({ HTTPS_PROXY: "http://127.0.0.1:3128", NODE_USE_ENV_PROXY: "1" });
+    // A proxy is configured and the caller's Node is not routed through it:
+    // that is the broker's business now, not a precondition here.
+    deps.env = networkEnv({ HTTPS_PROXY: "http://127.0.0.1:3128" });
     expect(hasMachineConfiguration(deps)).toBe(true);
     const credential = await acquireMachineCredential({}, deps);
     expect(credential?.storage).toBe("environment");
@@ -449,31 +451,31 @@ describe("network-secret mode (PRIM_M2M_CLIENT_AUTH=network-secret)", () => {
     },
   );
 
-  it("starts a fresh broker generation once proxy routing is fixed", async () => {
+  it("keys the broker on the deployment and client, never on the caller's Node settings", async () => {
     const { environmentCredentials } = await import("./machine-credentials.js");
-    const direct = environmentCredentials({ ...deps, env: networkEnv() })?.generation;
-    const routed = environmentCredentials({
-      ...deps,
-      env: networkEnv({ NODE_USE_ENV_PROXY: "1" }),
-    })?.generation;
-    const optioned = environmentCredentials({
-      ...deps,
-      env: networkEnv({ NODE_OPTIONS: "--use-env-proxy=true" }),
-    })?.generation;
-    expect(routed).not.toBe(direct);
-    expect(optioned).toBe(routed);
+    const generation = (env: NodeJS.ProcessEnv) =>
+      environmentCredentials({ ...deps, env })?.generation;
+    const plain = generation(networkEnv());
+    // Every prim process reaches the same broker however its own Node is set up.
+    expect(generation(networkEnv({ NODE_USE_ENV_PROXY: "1" }))).toBe(plain);
+    expect(generation(networkEnv({ NODE_OPTIONS: "--use-env-proxy" }))).toBe(plain);
+    expect(generation(networkEnv({ HTTPS_PROXY: "http://127.0.0.1:3128" }))).toBe(plain);
+    expect(generation(networkEnv({ PRIM_M2M_CLIENT_ID: "client_other" }))).not.toBe(plain);
+    expect(generation(networkEnv({ PRIM_API_URL: "https://other.example.com" }))).not.toBe(plain);
   });
 
-  it("names NODE_USE_ENV_PROXY before any request when Node would bypass the injecting proxy", async () => {
-    deps.env = networkEnv({
-      PRIM_API_URL: "https://api-routing.example.com",
-      HTTPS_PROXY: "http://127.0.0.1:3128",
-    });
-    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
-      code: "proxy_routing_required",
-      message: expect.stringContaining("NODE_USE_ENV_PROXY=1"),
-    });
-    expect(vi.mocked(deps.fetch as typeof fetch)).not.toHaveBeenCalled();
+  it("never reuses a broker an earlier version started on the caller's routing", async () => {
+    // Those versions keyed the generation on "routed" or "direct".
+    const { createHash } = await import("node:crypto");
+    const { environmentCredentials } = await import("./machine-credentials.js");
+    const earlier = (routing: string) =>
+      createHash("sha256")
+        .update(`https://api.example.com\0${clientId}\0network-secret\0${routing}`)
+        .digest("hex");
+    const generation = environmentCredentials({ ...deps, env: networkEnv() })?.generation;
+    expect(generation).toMatch(/^[a-f0-9]{64}$/u);
+    expect(generation).not.toBe(earlier("routed"));
+    expect(generation).not.toBe(earlier("direct"));
   });
 
   it("points a rejected token request at the network secret and pauses, not forever", async () => {

@@ -21,7 +21,12 @@ import { readBoundedJson } from "./workos-connect.js";
 const MAX_RESPONSE_BYTES = 96 * 1024;
 const IDLE_MS = 5 * 60_000;
 type Descriptor = { port: number; nonce: string; pid: number };
-type Environment = { clientId: string; clientSecret: string; generation: string };
+type Environment = {
+  clientId: string;
+  clientSecret: string;
+  generation: string;
+  secretInjection?: "network";
+};
 
 function descriptorPath(directory: string, generation: string): string {
   return join(directory, `machine_broker_${generation}.json`);
@@ -114,6 +119,28 @@ async function brokerRequest(
   return credential;
 }
 
+/**
+ * The broker's own environment. With a network secret, the cloud
+ * environment's proxy adds the client secret to the token request, and Node
+ * sends requests through that proxy only when told to at startup. The broker
+ * is the one process that exchanges tokens, so it is told here; no other
+ * process in the VM needs the setting, and the broker's "experimental"
+ * warning for it goes nowhere (its output is discarded).
+ */
+export function brokerEnvironment(options: {
+  directory: string;
+  apiUrl: string;
+  environment: Pick<Environment, "secretInjection">;
+  env: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  return {
+    ...options.env,
+    PRIM_API_URL: options.apiUrl,
+    PRIM_CONFIG_DIR: options.directory,
+    ...(options.environment.secretInjection === "network" ? { NODE_USE_ENV_PROXY: "1" } : {}),
+  };
+}
+
 /** Only descriptors and cooldown metadata are persisted. Secrets and tokens stay in memory. */
 export async function acquireBrokerCredential(options: {
   directory: string;
@@ -162,7 +189,7 @@ export async function acquireBrokerCredential(options: {
           detached: true,
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           windowsHide: true,
-          env: { ...options.env, PRIM_API_URL: options.apiUrl, PRIM_CONFIG_DIR: options.directory },
+          env: brokerEnvironment(options),
         });
         let settled = false;
         const finish = (error?: Error) => {

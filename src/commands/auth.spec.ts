@@ -933,7 +933,7 @@ describe("auth enroll --new-installation --print-env", () => {
 });
 
 describe("machine authentication failures carry their own guidance", () => {
-  it("reports a network-secret routing problem with what to set", async () => {
+  it("reports a network-secret misconfiguration with what to change", async () => {
     const { hasMachineConfiguration } = await import("../lib/machine-credentials.js");
     const { mkdtempSync, rmSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
     const { tmpdir } = await import("node:os");
@@ -943,14 +943,13 @@ describe("machine authentication failures carry their own guidance", () => {
     vi.stubEnv("PRIM_CONFIG_DIR", config);
     vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
     vi.stubEnv("PRIM_M2M_CLIENT_AUTH", "network-secret");
-    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:3128");
-    vi.stubEnv("NODE_USE_ENV_PROXY", "");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "left-in-the-variables");
     try {
       const result = await verifyAuthStatus();
       expect(result).toMatchObject({
         status: "invalid",
-        recoveryReason: "proxy_routing_required",
-        recoveryDetail: expect.stringContaining("NODE_USE_ENV_PROXY=1"),
+        recoveryReason: "conflicting_credentials",
+        recoveryDetail: expect.stringContaining("Unset PRIM_M2M_CLIENT_SECRET"),
       });
     } finally {
       vi.unstubAllEnvs();

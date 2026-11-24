@@ -2,7 +2,7 @@ import { getSiteUrl } from "../client.js";
 import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
 import { resolveAuthCredential } from "./credentials.js";
 import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
-import { hasMachineConfiguration, networkSecretRoutingProblem } from "./machine-credentials.js";
+import { hasMachineConfiguration } from "./machine-credentials.js";
 import { MachineAuthError, machineApiUrl } from "./machine-protocol.js";
 
 export { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession };
@@ -112,8 +112,6 @@ export async function diagnoseCloudSession(
   }
   if (!machine && !resolveAuthCredential({ env }))
     return `${prefix}: it has no credentials. To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`;
-  const routing = networkSecretRoutingProblem(env);
-  if (routing) return `${prefix}: ${routing}`;
   if (options.cwd !== undefined && !githubRepositoryFullName(options.cwd))
     return `${prefix}: ${repositoryIdentityRemedy(options.cwd)}.`;
 
