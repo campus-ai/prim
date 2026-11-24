@@ -254,7 +254,7 @@ function sessionSteps(
     const detail = authFailureDetail(status.stdout);
     remedy(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${detail ? ` (${detail})` : ""}`
+        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
         : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
     );
     results.credentials = "failed";
