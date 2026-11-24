@@ -124,6 +124,52 @@ function writeProjectFile(settings: unknown): void {
   writeFileSync(projectFile(), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
+/** Every command a Claude Code settings file runs: its hooks, then its statusline. */
+function everyCommand(settings: Nested & { statusLine?: { command?: string } }): string[] {
+  return [
+    ...nestedCommands(settings).map(([, command]) => command),
+    ...(settings.statusLine?.command ? [settings.statusLine.command] : []),
+  ];
+}
+
+/**
+ * Run one hook command as its host does and report that command's own exit
+ * status. A detached SessionEnd command returns before its body has run, so
+ * the body is waited for and its status reported instead; with nothing in the
+ * background, `$!` is empty and the command's status stands.
+ */
+function fire(
+  command: string,
+  env: { HOME: string; CLAUDE_PROJECT_DIR: string },
+): { status: number | null; stdout: string; stderr: string } {
+  const script = [
+    command,
+    "prim_status=$?",
+    "prim_job=$!",
+    '[ -z "$prim_job" ] || { wait "$prim_job"; prim_status=$?; }',
+    'exit "$prim_status"',
+  ].join("\n");
+  const result = spawnSync("/bin/sh", ["-c", script], {
+    env: { PATH: process.env.PATH, ...env },
+    input: '{"payload":true}',
+    encoding: "utf8",
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** A launcher under `home` that records the bin it was entered for, then exits `status`. */
+function recordingLauncher(status = 0): { entered: () => string[] } {
+  const launcher = join(home, ".config", "prim", "prim-hook-launcher-v1");
+  const record = join(home, "entered");
+  mkdirSync(dirname(launcher), { recursive: true });
+  writeFileSync(launcher, `#!/bin/sh\necho "$1" >> '${record}'\nexit ${status}\n`, {
+    mode: 0o700,
+  });
+  return {
+    entered: () => (existsSync(record) ? readFileSync(record, "utf8").trim().split("\n") : []),
+  };
+}
+
 describe("every install but a Claude Code project install writes the released text", () => {
   it("Claude Code at user scope, hooks and statusline", async () => {
     const claude = await import("./claude-install.js");
@@ -238,20 +284,40 @@ describe("a Claude Code project install", () => {
     const elsewhere = join(root, "another-home");
     mkdirSync(elsewhere);
 
-    const commands = [
-      ...nestedCommands(settings).map(([, command]) => command),
-      settings.statusLine.command as string,
-    ];
+    const commands = everyCommand(settings);
     expect(commands).toHaveLength(14);
     for (const command of commands) {
-      // `wait` lets a detached SessionEnd body finish inside the observed shell.
-      const result = spawnSync("/bin/sh", ["-c", `${command}\nwait`], {
-        env: { PATH: process.env.PATH, HOME: elsewhere, CLAUDE_PROJECT_DIR: repo },
-        input: '{"payload":true}',
-        encoding: "utf8",
+      expect(fire(command, { HOME: elsewhere, CLAUDE_PROJECT_DIR: repo }), command).toEqual({
+        status: 0,
+        stdout: "",
+        stderr: "",
       });
-      expect(result, command).toMatchObject({ status: 0, stdout: "", stderr: "" });
     }
+  });
+
+  it("enters an installed launcher once per command, and returns its status", async () => {
+    const claude = await import("./claude-install.js");
+    claude.performInstall("project", false);
+    const launcher = recordingLauncher(7);
+
+    const commands = everyCommand(readJson(projectFile()));
+    expect(commands).toHaveLength(14);
+    const expected: string[] = [];
+    for (const command of commands) {
+      expected.push(tail(command).bin);
+      expect(fire(command, { HOME: home, CLAUDE_PROJECT_DIR: repo }).status, command).toBe(7);
+      expect(launcher.entered()).toEqual(expected);
+    }
+    expect(new Set(expected)).toEqual(
+      new Set([
+        "prim-hook",
+        "prim-pre-tool-use",
+        "prim-post-tool-use",
+        "prim-session-start",
+        "prim-session-end",
+        "prim-statusline",
+      ]),
+    );
   });
 
   it("upgrades a committed file holding the released text, once and unforced", async () => {
@@ -261,6 +327,43 @@ describe("a Claude Code project install", () => {
     expect(claude.performInstall("project", false).changed).toBe(true);
     expect(readJson(projectFile())).toEqual(await claudeSettings(GUARD));
     expect(claude.performInstall("project", false).changed).toBe(false);
+  });
+
+  it("reads a file mixing both texts as complete, and upgrades it once", async () => {
+    const claude = await import("./claude-install.js");
+    const mixed = await claudeSettings("");
+    const guarded = everyCommand(await claudeSettings(GUARD));
+    let index = 0;
+    for (const entries of Object.values((mixed as Nested).hooks ?? {})) {
+      for (const entry of entries ?? []) {
+        for (const hook of entry.hooks ?? []) {
+          if (index % 2 === 0) hook.command = guarded[index];
+          index += 1;
+        }
+      }
+    }
+    const texts = everyCommand(mixed).map((command) => command.includes(GUARD));
+    expect(texts.filter(Boolean)).toHaveLength(7);
+    expect(texts.filter((isGuarded) => !isGuarded)).toHaveLength(7);
+    writeProjectFile(mixed);
+
+    expect(claude.performStatus().project.complete).toBe(true);
+    expect(claude.performInstall("project", false).changed).toBe(true);
+    // Every command is the guarded one, each exactly once. A replaced entry
+    // moves to the end of its event, so only the order may differ from a
+    // fresh install.
+    expect(everyCommand(readJson(projectFile())).sort()).toEqual([...guarded].sort());
+    expect(claude.performStatus().project.complete).toBe(true);
+    expect(claude.performInstall("project", false).changed).toBe(false);
+  });
+
+  it("leaves a guarded file alone under --force", async () => {
+    const claude = await import("./claude-install.js");
+    writeProjectFile(await claudeSettings(GUARD));
+    const before = readFileSync(projectFile(), "utf8");
+
+    expect(claude.performInstall("project", true).changed).toBe(false);
+    expect(readFileSync(projectFile(), "utf8")).toBe(before);
   });
 
   describe.each([
@@ -300,30 +403,30 @@ describe("a Claude Code project install", () => {
         {},
         { installStatusline: false, wrapCommand: claude.deferToProjectInstall },
       );
-      const launcher = join(home, ".config", "prim", "prim-hook-launcher-v1");
-      const ran = join(home, "ran");
-      mkdirSync(dirname(launcher), { recursive: true });
-      writeFileSync(launcher, `#!/bin/sh\necho "$1" >> '${ran}'\n`, { mode: 0o700 });
+      // The launcher's status tells a hook that ran (7) from one that stepped aside (0).
+      const launcher = recordingLauncher(7);
       const elsewhere = join(root, "elsewhere");
       mkdirSync(elsewhere);
+      const commands = everyCommand(wrapped);
+      expect(commands).toHaveLength(13);
 
-      /** The bins the launcher was entered for when every wrapped hook fires. */
-      const entered = (project: string): string[] => {
-        rmSync(ran, { force: true });
-        for (const [, command] of nestedCommands(wrapped)) {
-          // `wait` lets a detached SessionEnd body finish inside the observed shell.
-          const result = spawnSync("/bin/sh", ["-c", `${command}\nwait`], {
-            env: { PATH: process.env.PATH, HOME: home, CLAUDE_PROJECT_DIR: project },
-            input: "{}",
-            encoding: "utf8",
-          });
-          expect(result.status, result.stderr).toBe(0);
-        }
-        return existsSync(ran) ? readFileSync(ran, "utf8").trim().split("\n") : [];
-      };
+      // In a repository without prim's project install every wrapped hook runs.
+      for (const command of commands) {
+        expect(fire(command, { HOME: home, CLAUDE_PROJECT_DIR: elsewhere }).status, command).toBe(
+          7,
+        );
+      }
+      expect(launcher.entered()).toEqual(commands.map((command) => tail(command).bin));
 
-      expect(entered(elsewhere)).toHaveLength(13);
-      expect(entered(repo)).toEqual([]);
+      // In this one, none does.
+      for (const command of commands) {
+        expect(fire(command, { HOME: home, CLAUDE_PROJECT_DIR: repo }), command).toEqual({
+          status: 0,
+          stdout: "",
+          stderr: "",
+        });
+      }
+      expect(launcher.entered()).toHaveLength(13);
     });
 
     it("is removed by uninstall", async () => {

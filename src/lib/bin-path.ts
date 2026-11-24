@@ -188,9 +188,12 @@ export function stableHookCommand(bin: string, args = ""): string {
  * directory" and exits 126 on every hook event, so this form exits 0 without
  * output instead.
  *
- * Only a launcher that is not there at all counts as absent. A dangling
- * symlink is a broken installation and still fails, as does a launcher that
- * exists but cannot run.
+ * A launcher that cannot be seen counts as absent. That is a launcher that is
+ * not there, and also one hidden behind a config directory that cannot be
+ * searched or a regular file where that directory should be: both tests fail
+ * for those too, so they exit 0 just as quietly. A dangling symlink is a
+ * broken installation and still fails, as does a launcher that exists but
+ * cannot run.
  *
  * Every other install keeps `stableHookCommand`'s exact text: installers know
  * their own entries by it, so changing it reads as drift on every machine.

@@ -229,12 +229,16 @@ describe("quietWithoutLauncher", () => {
     withRoot((root) => {
       const home = join(root, "home");
       const emptyConfig = join(root, "config");
+      const notADirectory = join(root, "file");
       mkdirSync(home);
       mkdirSync(emptyConfig);
+      writeFileSync(notADirectory, "");
       for (const env of [
         { HOME: home },
         { HOME: home, PRIM_CONFIG_DIR: emptyConfig },
         { HOME: home, XDG_CONFIG_HOME: join(root, "never-created") },
+        // A launcher that cannot be seen reads as absent too.
+        { HOME: home, PRIM_CONFIG_DIR: notADirectory },
       ]) {
         expect(run(quiet, env)).toEqual({ status: 0, stdout: "", stderr: "" });
         // The plain command is what every hook event reported there.
@@ -246,7 +250,10 @@ describe("quietWithoutLauncher", () => {
   });
 
   it("still fails closed without a canonical absolute config root", () => {
-    expect(spawnSync("/bin/sh", ["-c", quiet], { env: {} }).status).toBe(78);
+    // HOME is set, to nothing, never left out: a `/bin/sh` that fills a
+    // missing HOME from the password database would go on to the developer's
+    // real launcher. The resolver reads the two alike (`${HOME:-}`).
+    expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "" } }).status).toBe(78);
     expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "relative" } }).status).toBe(78);
     expect(spawnSync("/bin/sh", ["-c", quiet], { env: { HOME: "/home//other" } }).status).toBe(78);
   });
