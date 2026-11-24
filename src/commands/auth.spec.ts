@@ -874,7 +874,9 @@ describe("auth enroll --new-installation --print-env", () => {
     );
     expect(networkSecret).toBeGreaterThan(-1);
     expect(stderr).toContain("PRIM_M2M_CLIENT_AUTH=network-secret");
-    expect(stderr.indexOf("Or paste both lines")).toBeGreaterThan(networkSecret);
+    // A non-default API prints a third line the environment needs either way.
+    expect(stderr).toContain("every line printed above except PRIM_M2M_CLIENT_SECRET");
+    expect(stderr.indexOf("Or paste every line above")).toBeGreaterThan(networkSecret);
     expect(stderr).not.toContain("s3cr3t");
     expect(process.exitCode).toBe(0);
   });
@@ -1039,7 +1041,9 @@ describe("enrollment and login outside the browser flow", () => {
     vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const { logs } = await run(["status"]);
     const text = logs.mock.calls.flat().join("\n");
-    expect(text).toContain("In a Claude Code cloud session, set PRIM_M2M_CLIENT_ID");
+    expect(text).toContain(
+      "In a Claude Code cloud session, give the cloud environment PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET, as variables or with the secret held as a network secret",
+    );
     expect(text).not.toContain("prim auth login");
   });
 

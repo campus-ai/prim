@@ -17,7 +17,7 @@ export function insideClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 export const CLOUD_CREDENTIALS_REMEDY =
-  'set PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET in the cloud environment\'s variables; mint them on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`, which also says how to keep the secret out of the variables';
+  'give the cloud environment PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET, as variables or with the secret held as a network secret; mint them on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`, which says where each value goes';
 
 /**
  * A session reads its environment when it is created, so a fix made in the

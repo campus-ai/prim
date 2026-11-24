@@ -694,7 +694,9 @@ describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", ()
     });
     setupCloudSession(deps);
     const text = notes.join("\n");
-    expect(text).toContain("the sign-in was rejected: set PRIM_M2M_CLIENT_ID");
+    expect(text).toContain(
+      "the sign-in was rejected: give the cloud environment PRIM_M2M_CLIENT_ID",
+    );
     expect(text).not.toContain("Developer installations");
   });
 

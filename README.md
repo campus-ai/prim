@@ -176,15 +176,15 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      read back. Under **Network secrets**, add a **Username and password** secret for host
      `signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the
      username, the `PRIM_M2M_CLIENT_SECRET` value as the password. Then set these
-     **Environment variables** (plus any other line step 1 printed, such as
-     `PRIM_API_URL`):
+     **Environment variables**, leaving the `PRIM_M2M_CLIENT_SECRET` line out and
+     keeping any other line step 1 printed, such as `PRIM_API_URL`:
 
      ```text
      PRIM_M2M_CLIENT_ID=client_...
      PRIM_M2M_CLIENT_AUTH=network-secret
      ```
 
-     The simpler alternative is to paste both lines step 1 printed into the variables.
+     The simpler alternative is to paste every line step 1 printed into the variables.
      Anyone who uses the environment can read its variables, so do that only in an
      environment you keep to yourself.
    - **Setup script**:
@@ -253,12 +253,13 @@ that VM and says the image was not prepared by that run (a VM the image had alre
 prepared stays prepared).
 
 Each session, prim's SessionStart hook activates the repository the session was started
-on and connects it to Primitive. A second repository the agent clones during the session
-is not activated; start a session on it instead. If it cannot, it says why: missing credentials, a blocked domain, or a
-checkout that does not identify its repository. The git pre-commit check is not wired
-automatically; run `prim setup --cloud` in a session to verify it step by step and
-install it. Decisions captured in the environment belong to you; an organization admin
-can revoke the installation in Settings → Developer installations.
+on and connects it to Primitive. If the hook cannot connect it, it says why: missing
+credentials, a blocked domain, or a checkout that does not identify its repository. The
+git pre-commit check is not wired automatically; run `prim setup --cloud` in a session to
+verify it step by step and install it. A second repository the agent clones during the
+session is not connected or given git hooks at session start; run `prim setup --cloud`
+from that clone to set it up. Decisions captured in the environment belong to you; an
+organization admin can revoke the installation in Settings → Developer installations.
 
 Prim identifies the repository from its GitHub origin. A session started with
 `claude --cloud` from a checkout the Claude GitHub App cannot clone receives an upload

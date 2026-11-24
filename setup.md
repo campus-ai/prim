@@ -331,7 +331,8 @@ is inactive.
 **Claude Code cloud sessions** (`CLAUDE_CODE_REMOTE=true`) take a different path:
 `prim setup` detects the session and runs cloud setup instead of the steps below
 (no browser sign-in, no daemon, no onboarding). Credentials come from the cloud
-environment's variables, and the environment's setup script should run
+environment (its variables, or a network secret for the client secret), and the
+environment's setup script should run
 `prim setup --cloud --prepare`; see the README's "Claude Code cloud environments".
 Do not run `--prepare` yourself inside a session: it wires only that VM, whose
 Claude Code has already loaded its hooks, and reports that it did not prepare
