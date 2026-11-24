@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { createServer as httpServer } from "node:http";
+import { request as httpRequest, createServer as httpServer } from "node:http";
 import { createServer as httpsServer } from "node:https";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ let api;
 let provider;
 let proxy;
 const tunnels = [];
+let proxyConnections = 0;
 const pids = new Set();
 const reports = [];
 try {
@@ -186,9 +187,41 @@ try {
   await status({ PRIM_M2M_CLIENT_SECRET: `${secret}-rotated` });
   assert.equal(exchanges, 2, "secret rotation must use a new broker generation");
   reports.push("secret rotation invalidates the token cache");
-  // Stands in for the cloud environment's proxy: it records each CONNECT and
-  // tunnels it. The real one adds the client secret inside the tunnel.
-  proxy = httpServer();
+  // Stands in for the cloud environment's proxy: it records each request and
+  // passes it on. The real one adds the client secret on the way. A client
+  // may open a CONNECT tunnel, or hand a plain-HTTP request over whole with
+  // the full URL on its request line; both are a request "through the proxy".
+  proxy = httpServer((request, response) => {
+    let target;
+    try {
+      target = new URL(request.url);
+    } catch {
+      tunnels.push(`unroutable ${request.method} ${request.url}`);
+      response.writeHead(400).end();
+      return;
+    }
+    tunnels.push(target.host);
+    const { "proxy-connection": _hop, "proxy-authorization": _auth, ...headers } = request.headers;
+    const upstream = httpRequest(
+      {
+        host: target.hostname,
+        port: target.port || 80,
+        method: request.method,
+        path: `${target.pathname}${target.search}`,
+        headers,
+      },
+      (answer) => {
+        response.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(response);
+      },
+    );
+    upstream.on("error", (error) => {
+      tunnels.push(`${target.host} upstream ${error.code ?? error.message}`);
+      response.writeHead(502).end();
+    });
+    request.pipe(upstream);
+  });
+  proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
     tunnels.push(request.url);
     const [host, port] = request.url.split(":");
@@ -244,7 +277,7 @@ try {
   );
   assert.ok(
     networkStatuses.every((value) => value.status === "valid"),
-    `network-secret status through the proxy: ${JSON.stringify(networkStatuses)}; tunnels ${JSON.stringify(tunnels)}; credential-free exchanges ${networkExchanges}`,
+    `network-secret status through the proxy: ${JSON.stringify(networkStatuses)}; proxy connections ${proxyConnections}, requests ${JSON.stringify(tunnels)}; credential-free exchanges ${networkExchanges}; brokers ${JSON.stringify((await readdir(config)).filter((name) => name.startsWith("machine_broker_")))}`,
   );
   assert.equal(networkExchanges, 1, "network-secret processes must share one broker exchange");
   assert.ok(
