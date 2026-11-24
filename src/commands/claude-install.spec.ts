@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 /**
@@ -23,7 +23,9 @@ import {
   applyInstall,
   applyRepositoryDeclaration,
   applyUninstall,
+  deferToProjectInstall,
   feedbackInstalled,
+  hasCompleteHookRegistration,
   isGateInstalled,
   projectSettingsAfterInstall,
   projectSettingsAfterUninstall,
@@ -31,6 +33,7 @@ import {
   resolveScope,
   statuslineState,
   userStatuslineBlocksProjectInstall,
+  usesProjectDeferral,
 } from "./claude-install.js";
 
 const CAPTURE_EVENTS = [
@@ -806,5 +809,98 @@ describe("repository declaration (PRIM_REPOSITORY)", () => {
     ).toEqual({
       PRIM_REPOSITORY: "other/name",
     });
+  });
+});
+
+describe("deferToProjectInstall (cloud user-scope hooks)", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    scratch.push(dir);
+    return dir;
+  }
+  function project(content?: string): string {
+    const dir = tempDir("prim-defer-");
+    if (content !== undefined) {
+      mkdirSync(join(dir, ".claude"));
+      writeFileSync(join(dir, ".claude", "settings.json"), content);
+    }
+    return dir;
+  }
+
+  /** Run a hook command to completion, detached body included (`wait`). */
+  function runHook(command: string, env: NodeJS.ProcessEnv): string {
+    const marker = join(tempDir("prim-defer-out-"), "ran");
+    execFileSync("/bin/sh", ["-c", `${command.replaceAll("MARKER", marker)}\nwait`], {
+      env: { PATH: process.env.PATH, ...env },
+      input: '{"payload":true}',
+    });
+    try {
+      return readFileSync(marker, "utf8").trim();
+    } catch {
+      return "skipped";
+    }
+  }
+
+  const sync = deferToProjectInstall('cat > "MARKER.in"; echo ran > MARKER', "prim-hook");
+  const detached = deferToProjectInstall("payload=$(cat); { echo ran > MARKER; } &", "prim-hook");
+  const committed = (bin: string) =>
+    JSON.stringify({ hooks: { Stop: [{ hooks: [{ command: `sh -c 'x' launcher ${bin}` }] }] } });
+
+  it.each([
+    ["no project settings", undefined, "ran"],
+    ["project settings without prim", '{"hooks":{}}', "ran"],
+    ["a prim permission rule only", '{"permissions":{"deny":["Bash(prim-hook*)"]}}', "ran"],
+    ["only prim's launcher name", '{"statusLine":{"command":"prim-hook-launcher-v1 x"}}', "ran"],
+    ["a committed install of another prim hook", committed("prim-pre-tool-use"), "ran"],
+    ["a committed install of this hook", committed("prim-hook"), "skipped"],
+  ])("with %s, both hook forms: %s", (_label, content, expected) => {
+    const env = { CLAUDE_PROJECT_DIR: project(content), HOME: "/nonexistent-home" };
+    expect(runHook(sync, env)).toBe(expected);
+    expect(runHook(detached, env)).toBe(expected);
+  });
+
+  it("passes the hook payload through to the body", () => {
+    const marker = join(tempDir("prim-defer-out-"), "ran");
+    execFileSync("/bin/sh", ["-c", sync.replaceAll("MARKER", marker)], {
+      env: { PATH: process.env.PATH, CLAUDE_PROJECT_DIR: project() },
+      input: '{"payload":true}',
+    });
+    expect(readFileSync(`${marker}.in`, "utf8")).toBe('{"payload":true}');
+  });
+
+  it("runs when Claude Code provides no project directory", () => {
+    expect(runHook(sync, {})).toBe("ran");
+  });
+
+  it.each([
+    ["the same path", ""],
+    ["a trailing slash", "/"],
+    ["a dot segment", "/."],
+  ])("never defers to the user-scope file itself when the project is $HOME (%s)", (_l, suffix) => {
+    const home = project(committed("prim-hook"));
+    expect(runHook(sync, { CLAUDE_PROJECT_DIR: `${home}${suffix}`, HOME: home })).toBe("ran");
+  });
+
+  it("keeps wrapped registrations recognizable as prim's own and complete", () => {
+    const wrapped = applyInstall(EMPTY, {
+      installStatusline: false,
+      wrapCommand: deferToProjectInstall,
+    });
+    expect(usesProjectDeferral(wrapped)).toBe(true);
+    expect(isGateInstalled(wrapped)).toBe(true);
+    expect(feedbackInstalled(wrapped)).toBe(true);
+    expect(hasCompleteHookRegistration(wrapped)).toBe(true);
+    expect(wrapped.statusLine).toBeUndefined();
+    const reinstalled = applyInstall(wrapped, {
+      installStatusline: false,
+      wrapCommand: deferToProjectInstall,
+    });
+    expect(reinstalled).toEqual(wrapped);
+    expect(hasBin(applyUninstall(wrapped), "PreToolUse", "prim-pre-tool-use")).toBe(false);
+    expect(usesProjectDeferral(applyInstall(EMPTY, {}))).toBe(false);
   });
 });

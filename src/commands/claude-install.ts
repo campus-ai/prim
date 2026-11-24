@@ -38,6 +38,7 @@ import {
   hookCommandResolutions,
   stableHookCommand,
 } from "../lib/bin-path.js";
+import { clearCloudPrepared } from "../lib/cloud-prepared.js";
 import { gitToplevel, originGithubRepository, parseGithubRepositoryName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { reportFailureProtection } from "../lib/preflight-host.js";
@@ -176,6 +177,36 @@ const REGISTRATIONS: Registration[] = [
   makeRegistration("SessionStart", "*", SESSION_START_BIN),
   makeDetachedRegistration("SessionEnd", "*", SESSION_END_BIN),
 ];
+
+/**
+ * A user-scope hook that steps aside when the repository's committed Claude
+ * project settings already run the same prim hook, so a cloud VM that wires
+ * prim at user scope never double-fires in a repository that also commits
+ * prim's project install. The bin must appear as a whole command word (not
+ * inside a permission rule or the shared launcher's name), and $HOME is
+ * excluded as in hasProjectPrimInstall: there the "project" file is the
+ * user-scope file itself. Claude Code sets CLAUDE_PROJECT_DIR for every hook;
+ * when it is absent the hook simply runs.
+ */
+const PROJECT_DEFERRAL_PREFIX =
+  'prim_project="$CLAUDE_PROJECT_DIR/.claude/settings.json"; [ -f "$prim_project" ] && [ "$(cd -- "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P)" != "$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P)" ] &&';
+
+export function deferToProjectInstall(command: string, bin: string): string {
+  if (!/^[a-z-]+$/u.test(bin)) throw new Error(`unexpected hook bin ${bin}`);
+  const trimmed = command.trimEnd();
+  // A detached shim already ends in `&`, which terminates the group itself.
+  const body = trimmed.endsWith("&") ? `{ ${trimmed} }` : `{ ${trimmed}; }`;
+  return `${PROJECT_DEFERRAL_PREFIX} grep -qsE -- "(^|[[:space:]\\"])${bin}([[:space:]\\"]|\\$)" "$prim_project" || ${body}`;
+}
+
+/** True when prim's user-scope hooks were installed with the project deferral. */
+export function usesProjectDeferral(settings: ClaudeSettings): boolean {
+  return Object.values(settings.hooks ?? {}).some((entries) =>
+    (entries ?? []).some((entry) =>
+      (entry.hooks ?? []).some((hook) => hook.command?.startsWith(PROJECT_DEFERRAL_PREFIX)),
+    ),
+  );
+}
 
 export type Scope = "user" | "project";
 
@@ -320,7 +351,9 @@ function entryMatchesRegistration(
     owned.entry.matcher === registration.matcher &&
     owned.entry.hooks?.length === 1 &&
     owned.entry.hooks[0].type === "command" &&
-    owned.entry.hooks[0].command === registration.command &&
+    (owned.entry.hooks[0].command === registration.command ||
+      owned.entry.hooks[0].command ===
+        deferToProjectInstall(registration.command, registration.bin)) &&
     owned.entry.hooks[0].timeout === registration.timeout &&
     owned.entry.hooks[0].onFailure === registration.onFailure &&
     (registration.bin !== GATE_BIN || owned.entry.hooks[0].async !== true)
@@ -629,10 +662,19 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 export function applyInstall(
   settings: ClaudeSettings,
-  options: { force?: boolean; statuslineCommand?: string; installStatusline?: boolean } = {},
+  options: {
+    force?: boolean;
+    statuslineCommand?: string;
+    installStatusline?: boolean;
+    /** Rewrites each hook command, e.g. deferToProjectInstall for a cloud VM. */
+    wrapCommand?: (command: string, bin: string) => string;
+  } = {},
 ): ClaudeSettings {
   const hooks: Record<string, HookEntry[] | undefined> = { ...(settings.hooks ?? {}) };
-  for (const reg of REGISTRATIONS) {
+  for (const registration of REGISTRATIONS) {
+    const reg = options.wrapCommand
+      ? { ...registration, command: options.wrapCommand(registration.command, registration.bin) }
+      : registration;
     hooks[reg.event] = ensureRegistration(hooks[reg.event] ?? [], reg, options.force ?? false);
   }
   return applyPermissions(
@@ -743,13 +785,21 @@ export function userStatuslineBlocksProjectInstall(
   return scope === "project" && statuslineState(userSettings) === "custom";
 }
 
-export function performInstall(scope: Scope, force: boolean): InstallResult {
+export function performInstall(
+  scope: Scope,
+  force: boolean,
+  options: { cloud?: boolean } = {},
+): InstallResult {
   // Prepare immutable exact runtime bytes before persisting any stable
   // launcher command. A failed preparation leaves the existing settings and
   // launcher selection untouched.
   stageHookRuntime();
   const path = settingsPathFor(scope);
   const before = readSettings(path);
+  // A cloud VM's user-scope hooks defer to a repository's committed install.
+  // A later plain user-scope reinstall keeps that deferral rather than
+  // silently bringing back double-firing hooks.
+  const cloud = scope === "user" && (options.cloud === true || usesProjectDeferral(before));
   const blockedByUserStatusline = userStatuslineBlocksProjectInstall(
     scope,
     scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
@@ -757,7 +807,9 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   const installed = applyInstall(before, {
     force,
     statuslineCommand: STATUSLINE_COMMAND,
-    installStatusline: !blockedByUserStatusline,
+    // Cloud sessions have no terminal footer to render a statusline.
+    installStatusline: !blockedByUserStatusline && !cloud,
+    wrapCommand: cloud ? deferToProjectInstall : undefined,
   });
   // User scope spans every repository, so only project scope may declare one.
   const after =
@@ -778,10 +830,53 @@ export function performInstall(scope: Scope, force: boolean): InstallResult {
   };
 }
 
+/**
+ * Wire prim at user scope inside a Claude Code cloud VM, from the environment's
+ * setup script. Claude Code reads the VM's ~/.claude/settings.json when it
+ * starts, so every repository a session opens gets prim's hooks without a
+ * commit; each hook defers to a repository's own committed install.
+ */
+export function performCloudUserInstall(): InstallResult {
+  return performInstall("user", false, { cloud: true });
+}
+
+/** True when the VM's user-scope settings carry prim's complete cloud wiring. */
+export function cloudUserInstallComplete(): boolean {
+  try {
+    const settings = readSettings(USER_SCOPE_PATH);
+    return usesProjectDeferral(settings) && hasCompleteHookRegistration(settings);
+  } catch {
+    // Unreadable settings carry no wiring; the session check reports it.
+    return false;
+  }
+}
+
+/**
+ * A developer's own user-scope prim install (plain hooks or prim's statusline)
+ * that preparing a cloud image would rewrite. Outside a cloud session that is
+ * a developer's machine, not an image.
+ */
+export function hasDeveloperUserInstall(): boolean {
+  let settings: ClaudeSettings;
+  try {
+    settings = readSettings(USER_SCOPE_PATH);
+  } catch {
+    // Unreadable settings: the install step itself fails and reports why.
+    return false;
+  }
+  return (
+    statuslineInstalled(settings) ||
+    (!usesProjectDeferral(settings) && (isGateInstalled(settings) || captureInstalled(settings)))
+  );
+}
+
 export function performUninstall(scope: Scope): InstallResult {
   const path = settingsPathFor(scope);
   const before = readSettings(path);
   const uninstalled = applyUninstall(before);
+  // Without its user-scope hooks a prepared cloud environment no longer opts
+  // repositories in.
+  if (scope === "user") clearCloudPrepared();
   const after =
     scope === "project" ? projectSettingsAfterUninstall(uninstalled, projectRoot()) : uninstalled;
   const changed = JSON.stringify(before) !== JSON.stringify(after);

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => ""),
@@ -7,6 +7,9 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ""),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  rmSync: vi.fn(),
 }));
 
 import { execFileSync } from "node:child_process";
@@ -363,6 +366,46 @@ describe("isRepoActiveForCapture (the agent-hook gate)", () => {
     mockedExistsSync.mockImplementation((p) => String(p) === "/home/jth/.claude/settings.json");
     mockedReadFileSync.mockReturnValue("prim-hook");
     expect(isRepoActiveForCapture("/home/jth/repo")).toBe(false);
+  });
+});
+
+describe("isRepoActiveForCapture in a prepared Claude Code cloud environment", () => {
+  const PREPARED = "/cfg/cloud-prepared";
+  beforeEach(() => {
+    vi.stubEnv("PRIM_CONFIG_DIR", "/cfg");
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("activates a repository without a committed install", () => {
+    gitMock({ flag: undefined, root: "/home/user/repo" });
+    mockedExistsSync.mockImplementation((p) => String(p) === PREPARED);
+    expect(isRepoActiveForCapture("/home/user/repo")).toBe(true);
+  });
+
+  it("never activates outside a git repository", () => {
+    gitMock({ flag: undefined, root: undefined });
+    mockedExistsSync.mockImplementation((p) => String(p) === PREPARED);
+    expect(isRepoActiveForCapture("/tmp")).toBe(false);
+  });
+
+  it("still honors an explicit prim disable", () => {
+    gitMock({ flag: "false", root: "/home/user/repo" });
+    mockedExistsSync.mockImplementation((p) => String(p) === PREPARED);
+    expect(isRepoActiveForCapture("/home/user/repo")).toBe(false);
+  });
+
+  it("ignores the marker outside a cloud session", () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "");
+    gitMock({ flag: undefined, root: "/home/user/repo" });
+    mockedExistsSync.mockImplementation((p) => String(p) === PREPARED);
+    expect(isRepoActiveForCapture("/home/user/repo")).toBe(false);
+  });
+
+  it("stays inactive in a cloud session whose environment was not prepared", () => {
+    gitMock({ flag: undefined, root: "/home/user/repo" });
+    mockedExistsSync.mockReturnValue(false);
+    expect(isRepoActiveForCapture("/home/user/repo")).toBe(false);
   });
 });
 

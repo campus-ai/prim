@@ -160,18 +160,7 @@ Prim runs in [Claude Code cloud sessions](https://code.claude.com/docs/en/claude
 Configure it once; each session then connects without manual steps. The repository must
 already be connected to Primitive (`prim github connect`, from your own machine).
 
-1. **Commit prim's project hooks** in each repository. A single-repository cloud session
-   loads hooks from the repository, not from your machine:
-
-   ```bash
-   prim claude install --scope project   # also records PRIM_REPOSITORY in .claude/settings.json
-   git add .claude/settings.json && git commit -m "chore: enable prim in Claude Code"
-   ```
-
-   The committed hooks run for everyone who opens the repository in Claude Code, so
-   collaborators need prim installed too.
-
-2. **Mint credentials for the environment** on your own machine. This signs you in once,
+1. **Mint credentials for the environment** on your own machine. This signs you in once,
    enrolls a separate installation in your name, and prints its credentials. Nothing is
    stored locally, and your machine's own credentials are untouched:
 
@@ -179,11 +168,11 @@ already be connected to Primitive (`prim github connect`, from your own machine)
    prim auth enroll --new-installation "Claude Code cloud" --print-env
    ```
 
-3. **Configure the [cloud environment](https://code.claude.com/docs/en/cloud-environments)**:
+2. **Configure the [cloud environment](https://code.claude.com/docs/en/cloud-environments)**:
    - **Network access**: Limited, with `api.getprimitive.ai` and `signin.getprimitive.ai`
      under Allowed domains (both are blocked by default), and **Allow package managers**
      left on so the setup script can install prim.
-   - **Environment variables**: paste the lines step 2 printed. Anyone who uses the
+   - **Environment variables**: paste the lines step 1 printed. Anyone who uses the
      environment can read them, so keep the environment personal.
    - **Setup script**:
 
@@ -191,11 +180,16 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      #!/bin/bash
      set -euo pipefail
      npm install -g @primitive.ai/prim@latest
-     prim setup --cloud --prepare   # stage the hook runtime; no credentials or network needed
+     prim setup --cloud --prepare
      ```
 
-     `--prepare` also turns the daemon off for the environment: the VM pauses between
-     messages, so capture delivers directly instead.
+     `--prepare` needs no credentials or network to Primitive. It wires prim into the
+     VM's user-scope Claude Code settings, which every session reads at startup, so
+     repositories need no commit. It marks the environment so sessions activate the
+     repositories they open, and turns the daemon off: the VM pauses between messages, so
+     capture delivers directly instead. `prim disable` opts a repository out for the rest of
+     that session only, because each session starts from a fresh clone; to keep prim out of
+     a repository, use an environment without `--prepare` for it.
 
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
@@ -203,6 +197,21 @@ checkout that does not identify its repository. The git pre-commit check is not 
 automatically; run `prim setup --cloud` in a session to verify it step by step and
 install it. Decisions captured in the environment belong to you; an organization admin
 can revoke the installation in Settings → Developer installations.
+
+Prim identifies the repository from its GitHub origin. A session started with
+`claude --cloud` from a checkout the Claude GitHub App cannot clone receives an upload
+with no origin. For those, commit prim's project install from a clone whose origin is on
+GitHub; besides the hooks, it records the repository declaration (`PRIM_REPOSITORY`) in
+`.claude/settings.json`:
+
+```bash
+prim claude install --scope project
+git add .claude/settings.json && git commit -m "chore: enable prim in Claude Code"
+```
+
+A repository that commits prim's project install keeps using it: the user-scope hooks
+step aside there, so nothing fires twice. Committed hooks run for everyone who opens the
+repository in Claude Code, so collaborators need prim installed too.
 
 ## Commands
 
