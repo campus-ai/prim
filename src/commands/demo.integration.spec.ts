@@ -15,10 +15,15 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { DEMO_ADHERE, DEMO_INITIAL, DEMO_SUPERSEDE } from "../demo/story.js";
 import { stableHookCommand } from "../lib/bin-path.js";
+
+// Every test here drives the packaged CLI through several child processes,
+// each allowed 10 seconds. Vitest's 5-second default is shorter than one of
+// them: on a slow CI runner a healthy test crosses it by tens of milliseconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 const exec = promisify(execFile);
 const cli = resolve("dist/index.js");
