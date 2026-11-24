@@ -37,6 +37,7 @@ import {
   resolveAuthCredential,
   setStoredToken,
 } from "../client.js";
+import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "../lib/cloud-session.js";
 import {
   type MachineStorage,
   acquireMachineCredential,
@@ -474,7 +475,11 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
         : result.reason === "access_rejected"
           ? "The selected access token was rejected."
           : "No credentials were found.";
-    console.log(`${detail} Run \`prim auth login\` to authenticate.`);
+    console.log(
+      isClaudeCloudSession()
+        ? `${detail} In a Claude Code cloud session, ${CLOUD_CREDENTIALS_REMEDY}.`
+        : `${detail} Run \`prim auth login\` to authenticate.`,
+    );
     return;
   }
   if (result.status === "unreachable") {
@@ -748,6 +753,24 @@ async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
   }
 }
 
+/**
+ * A Claude Code cloud session authenticates prim with the environment's
+ * machine credentials. An interactive sign-in there would bind a human session
+ * (or a fresh installation) to one disposable VM, and the browser callback
+ * flow cannot reach the VM's loopback at all: refuse at once and name the
+ * credential path that works there instead.
+ */
+function refuseCloudSignIn(
+  report: (error: string, detail?: string) => void = reportFailure,
+): boolean {
+  if (!isClaudeCloudSession()) return false;
+  report(
+    "cloud_session_sign_in_unavailable",
+    `Interactive sign-in is not used inside a Claude Code cloud session. ${CLOUD_CREDENTIALS_REMEDY.charAt(0).toUpperCase()}${CLOUD_CREDENTIALS_REMEDY.slice(1)}.`,
+  );
+  return true;
+}
+
 export function registerAuthCommands(program: Command) {
   const auth = program.command("auth").description("Manage CLI authentication");
   auth
@@ -765,10 +788,16 @@ export function registerAuthCommands(program: Command) {
     .option("--no-browser", "Print the sign-in URL without opening a browser")
     .action(async (options: EnrollOptions) => {
       if (options.newInstallation !== undefined || options.printEnv) {
+        // Credential output owns STDOUT here, so the refusal stays on STDERR.
+        if (refuseCloudSignIn(reportEnrollmentFailure)) return;
         await enrollNewInstallation(options);
         return;
       }
       try {
+        // Enrolling this installation needs a human sign-in unless machine
+        // credentials already exist (then enrollment just reuses them). Inside
+        // the try: a misconfiguration keeps its reported error contract.
+        if (isClaudeCloudSession() && !hasMachineConfiguration() && refuseCloudSignIn()) return;
         const result = await enrollDeveloperInstallation(options.ifSupported);
         if (result.enrolled)
           console.error(
@@ -884,7 +913,10 @@ export function registerAuthCommands(program: Command) {
     .description("Authenticate via browser (WorkOS OAuth)")
     .option("--no-browser", "Print the verification URL without opening a browser")
     .action(async (options: { browser: boolean }) => {
+      // Machine credentials already configured say so first; only a session
+      // with none is told where cloud credentials come from.
       if (!requiresLegacyAuthentication()) return;
+      if (refuseCloudSignIn()) return;
       const signIn = await signInInteractively(options);
       if (!signIn.ok) {
         reportFailure(signIn.error, signIn.detail);

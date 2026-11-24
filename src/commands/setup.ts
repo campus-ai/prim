@@ -1,5 +1,6 @@
+import { isClaudeCloudSession } from "../lib/cloud-session.js";
 import { hasMachineConfiguration, machineContext } from "../lib/machine-credentials.js";
-import { prepareCloudImage, setupCloudSession } from "./setup-cloud.js";
+import { prepareCloudImage, setupCloudSession, setupDetectedCloudSession } from "./setup-cloud.js";
 /**
  * `prim setup` — the whole install in one command.
  *
@@ -484,6 +485,9 @@ export function registerSetupCommand(
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
         return;
       }
+      // Inside a Claude Code cloud session plain `prim setup` is cloud setup,
+      // with the same flag rules and no daemon.
+      const cloudSetup = opts.cloud === true || isClaudeCloudSession();
       if (opts.prepare && !opts.cloud) {
         process.stderr.write("[prim] --prepare applies only with --cloud\n");
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
@@ -491,7 +495,7 @@ export function registerSetupCommand(
       }
       // Cloud setup wires Claude Code only, with its own daemon and scope
       // rules; an explicit flag it would ignore is a usage error, not a no-op.
-      const cloudConflicts = opts.cloud
+      const cloudConflicts = cloudSetup
         ? [
             opts.agent !== undefined && agentInput !== "claude" ? "--agent" : undefined,
             command.getOptionValueSource("scope") === "cli" ? "--scope" : undefined,
@@ -500,7 +504,9 @@ export function registerSetupCommand(
           ].filter((flag): flag is string => flag !== undefined)
         : [];
       if (cloudConflicts.length) {
-        process.stderr.write(`[prim] --cloud does not combine with ${cloudConflicts.join(", ")}\n`);
+        process.stderr.write(
+          `[prim] ${opts.cloud ? "--cloud" : "setup in a Claude Code cloud session"} does not combine with ${cloudConflicts.join(", ")}\n`,
+        );
         (dependencies.exit ?? process.exit)(EXIT_USAGE);
         return;
       }
@@ -531,7 +537,7 @@ export function registerSetupCommand(
           const r = spawnSync(process.execPath, [self, ...childArgs], {
             ...setupStepSpawnOptions(capture, process.env, {
               // Cloud setup stops the daemon, so its steps drain for themselves.
-              startsDaemon: opts.daemon && !opts.cloud,
+              startsDaemon: opts.daemon && !cloudSetup,
               compact: true,
             }),
             timeout: timeoutMs,
@@ -551,10 +557,11 @@ export function registerSetupCommand(
           process.stderr.write(`[prim] ${msg}\n`);
         });
       const exit = dependencies.exit ?? process.exit;
-      if (opts.cloud) {
+      if (cloudSetup) {
         const cloud = { run, note, exit, parseAuthStatus: parseSetupAuthStatus };
         if (opts.prepare) prepareCloudImage(cloud);
-        else setupCloudSession(cloud);
+        else if (opts.cloud) setupCloudSession(cloud);
+        else setupDetectedCloudSession(cloud);
         return;
       }
 

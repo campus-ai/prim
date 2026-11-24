@@ -213,6 +213,10 @@ requests through that proxy, and prim says so if it is missing. It applies to ev
 process in the VM; on Node 22 each also prints "EnvHttpProxyAgent is experimental", which
 `NODE_NO_WARNINGS=1` in the variables hides (along with all other Node warnings).
 
+Running plain `prim setup` inside a cloud session (for example through the agent prompt
+above) detects the session and does the cloud setup; browser sign-in, the daemon, and
+onboarding are skipped there, and `prim auth login` explains why it cannot run.
+
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
 checkout that does not identify its repository. The git pre-commit check is not wired

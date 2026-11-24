@@ -959,3 +959,95 @@ describe("machine authentication failures carry their own guidance", () => {
     }
   });
 });
+
+describe("browser sign-in inside a Claude Code cloud session", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it.each([
+    [["login", "--no-browser"], true],
+    [["enroll"], true],
+    // Credential output owns STDOUT there, so the refusal stays on STDERR.
+    [["enroll", "--new-installation", "cloud", "--print-env"], false],
+  ])("refuses `auth %j` at once and names the cloud credential path", async (args, json) => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+    await program.parseAsync(["auth", ...args], { from: "user" });
+    if (json)
+      expect(JSON.parse(String(logs.mock.calls[0]?.[0]))).toMatchObject({
+        error: "cloud_session_sign_in_unavailable",
+      });
+    else expect(logs).not.toHaveBeenCalled();
+    expect(stderr.mock.calls.flat().join("\n")).toContain("cloud_session_sign_in_unavailable");
+    expect(stderr.mock.calls.flat().join("\n")).toContain("PRIM_M2M_CLIENT_ID");
+    expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("enrollment and login outside the browser flow", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  async function run(args: string[]) {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const program = new Command();
+    registerAuthCommands(program);
+    await program.parseAsync(["auth", ...args], { from: "user" });
+    return { logs, stderr: stderr.mock.calls.flat().join("\n") };
+  }
+
+  it("keeps enroll's JSON error contract for a misconfiguration outside the cloud", async () => {
+    const { hasMachineConfiguration } = await import("../lib/machine-credentials.js");
+    const { MachineAuthError } = await import("../lib/machine-protocol.js");
+    vi.mocked(hasMachineConfiguration).mockImplementation(() => {
+      throw new MachineAuthError("conflicting_credentials", "Unset PRIM_TOKEN.");
+    });
+    try {
+      const { logs } = await run(["enroll"]);
+      expect(JSON.parse(String(logs.mock.calls[0]?.[0]))).toMatchObject({
+        error: "conflicting_credentials",
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      vi.mocked(hasMachineConfiguration).mockReset();
+      vi.mocked(hasMachineConfiguration).mockReturnValue(false);
+    }
+  });
+
+  it("points a cloud session without credentials at cloud credentials, not login", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.mocked(resolveAuthCredential).mockReturnValue(undefined);
+    vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const { logs } = await run(["status"]);
+    const text = logs.mock.calls.flat().join("\n");
+    expect(text).toContain("In a Claude Code cloud session, set PRIM_M2M_CLIENT_ID");
+    expect(text).not.toContain("prim auth login");
+  });
+
+  it("tells a cloud session with machine credentials that login is not for it", async () => {
+    const { hasMachineConfiguration } = await import("../lib/machine-credentials.js");
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.mocked(hasMachineConfiguration).mockReturnValue(true);
+    try {
+      const { logs } = await run(["login", "--no-browser"]);
+      expect(JSON.parse(String(logs.mock.calls[0]?.[0]))).toMatchObject({
+        error: "machine_operation_not_supported",
+      });
+      expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(hasMachineConfiguration).mockReturnValue(false);
+    }
+  });
+});

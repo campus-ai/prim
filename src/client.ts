@@ -1,4 +1,5 @@
 import { publicDecisionResponse } from "./decisions/identity.js";
+import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./lib/cloud-env.js";
 /** REST client and shared credential store for the prim CLI. */
 
 import { createHash } from "node:crypto";
@@ -51,6 +52,16 @@ const CREDENTIAL_FILE_MODE = 0o600;
 const REFRESH_THRESHOLD_MS = 60_000;
 export const DEFAULT_API_URL = "https://api.getprimitive.ai";
 const AUTH_EXPIRED_MESSAGE = "Authentication expired. Run `prim auth login` to re-authenticate.";
+
+/**
+ * A rejected or missing credential. Inside a Claude Code cloud session the
+ * usual remedy, `prim auth login`, cannot run, so name the one that works.
+ */
+function authExpiredMessage(): string {
+  return isClaudeCloudSession()
+    ? `Primitive credentials are missing or rejected in this Claude Code cloud session: ${CLOUD_CREDENTIALS_REMEDY}.`
+    : AUTH_EXPIRED_MESSAGE;
+}
 
 export {
   CREDENTIAL_FAMILY_PATH,
@@ -733,7 +744,7 @@ const CLI_MANAGEMENT_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 async function managementResponseValue(response: Response): Promise<unknown> {
   if (response.status === 401) {
-    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    throw new HttpError(401, authExpiredMessage());
   }
   let value: unknown;
   try {
@@ -788,7 +799,7 @@ async function fetchWithToken(
 async function responseValue(response: Response): Promise<unknown> {
   if (!response.ok) {
     if (response.status === 401) {
-      throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+      throw new HttpError(401, authExpiredMessage());
     }
     const errorBody: unknown = await response.json().catch(() => null);
     const errorRecord =
@@ -911,10 +922,10 @@ async function request(
   // Callers still receive the HttpError(401) they map to a re-auth prompt
   // (hooks fail open), just without the wasted round-trip.
   if (!credential) {
-    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    throw new HttpError(401, authExpiredMessage());
   }
   if (isTokenExpiringSoon(credential) && isSessionEnded()) {
-    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    throw new HttpError(401, authExpiredMessage());
   }
 
   const tokenUsed = credential.token;
@@ -966,7 +977,7 @@ export async function getPinnedClient(options: RequestOptions = {}): Promise<Cli
     if (token) credential = { token, source: "token_file" };
   }
   if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
-    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    throw new HttpError(401, authExpiredMessage());
   }
   const token = credential.token;
   const pinnedRequest = async (
@@ -1031,7 +1042,7 @@ export async function getPinnedManagementClient(
     if (token) credential = { token, source: "token_file" };
   }
   if (!credential || (isTokenExpiringSoon(credential) && isSessionEnded())) {
-    throw new HttpError(401, AUTH_EXPIRED_MESSAGE);
+    throw new HttpError(401, authExpiredMessage());
   }
   const token = credential.token;
   const pinnedRequest = async (
