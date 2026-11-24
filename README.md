@@ -271,7 +271,8 @@ git add .claude/settings.json && git commit -m "chore: enable prim in Claude Cod
 
 A repository that commits prim's project install keeps using it: the user-scope hooks
 step aside there, so nothing fires twice. Committed hooks run for everyone who opens the
-repository in Claude Code, so collaborators need prim installed too.
+repository in Claude Code; where prim is not installed they do nothing. Older prim
+releases, which required prim everywhere, report those hooks as drifted until upgraded.
 
 ## Commands
 
