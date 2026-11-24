@@ -74,6 +74,26 @@ try {
   ) {
     throw new Error("Installed Claude gate does not match Bash");
   }
+  // The persisted command enters the staged launcher, and does nothing on a
+  // machine that has these settings but no Primitive installation.
+  const sessionStart = settings.hooks.SessionStart.flatMap((entry) => entry.hooks)
+    .map((hook) => hook.command)
+    .find((command) => command.includes("prim-session-start"));
+  if (run("/bin/sh", ["-c", sessionStart], "{}").trim() !== "{}")
+    throw new Error("Installed Claude command did not enter the staged launcher");
+  const absent = join(root, "absent");
+  mkdirSync(absent);
+  const uninstalled = spawnSync("/bin/sh", ["-c", sessionStart], {
+    encoding: "utf8",
+    env: { ...env, HOME: absent, PRIM_CONFIG_DIR: absent },
+    input: "{}",
+    timeout: 5_000,
+  });
+  if (uninstalled.status !== 0 || uninstalled.stdout !== "" || uninstalled.stderr !== "") {
+    throw new Error(
+      `Installed Claude command is not silent without Primitive: ${JSON.stringify({ status: uninstalled.status, stdout: uninstalled.stdout, stderr: uninstalled.stderr })}`,
+    );
+  }
   const repo = join(root, "repo");
   mkdirSync(repo);
   run("git", ["init", "--quiet"], undefined, repo);
@@ -115,7 +135,7 @@ try {
     }
   }
   process.stdout.write(
-    `${JSON.stringify({ status: "pass", hookBundlesAndLauncher: 3, shellCases: cases.length, bashMatcher: "installed", sourceInstallationRemoved: true })}\n`,
+    `${JSON.stringify({ status: "pass", hookBundlesAndLauncher: 3, shellCases: cases.length, bashMatcher: "installed", absentLauncher: "silent", sourceInstallationRemoved: true })}\n`,
   );
 } finally {
   rmSync(root, { recursive: true, force: true });

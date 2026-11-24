@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,12 @@ import { join } from "node:path";
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { commandMatchesBin, detachedHookShimCommand, stableHookCommand } from "../lib/bin-path.js";
+import {
+  commandMatchesBin,
+  detachedHookShimCommand,
+  stableHookCommand,
+  unguardedStableHookCommand,
+} from "../lib/bin-path.js";
 import {
   type ClaudeSettings,
   PRIM_AUTOMODE_TRUST,
@@ -26,6 +31,7 @@ import {
   applyUninstall,
   deferToProjectInstall,
   feedbackInstalled,
+  hasAnyHookRegistration,
   hasCompleteHookRegistration,
   isGateInstalled,
   projectSettingsAfterInstall,
@@ -929,5 +935,98 @@ describe("deferToProjectInstall (cloud user-scope hooks)", () => {
     expect(reinstalled).toEqual(wrapped);
     expect(hasBin(applyUninstall(wrapped), "PreToolUse", "prim-pre-tool-use")).toBe(false);
     expect(usesProjectDeferral(applyInstall(EMPTY, {}))).toBe(false);
+  });
+});
+
+describe("where prim is not installed, and installs written before that was handled", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  function tempDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "prim-absent-"));
+    scratch.push(dir);
+    return dir;
+  }
+
+  const installs: [string, Parameters<typeof applyInstall>[1]][] = [
+    ["a committed project install", {}],
+    [
+      "the cloud user-scope wrapper",
+      { installStatusline: false, wrapCommand: deferToProjectInstall },
+    ],
+  ];
+
+  function allCommands(settings: ClaudeSettings): string[] {
+    return [
+      ...Object.keys(settings.hooks ?? {}).flatMap((event) => commandsFor(settings, event)),
+      ...(settings.statusLine?.command ? [settings.statusLine.command] : []),
+    ];
+  }
+
+  /** The same settings as the CLI wrote them before the missing-launcher guard. */
+  function writtenEarlier(settings: ClaudeSettings): ClaudeSettings {
+    return {
+      ...settings,
+      hooks: Object.fromEntries(
+        Object.entries(settings.hooks ?? {}).map(([event, entries]) => [
+          event,
+          (entries ?? []).map((entry) => ({
+            ...entry,
+            hooks: (entry.hooks ?? []).map((hook) => ({
+              ...hook,
+              command: unguardedStableHookCommand(hook.command ?? ""),
+            })),
+          })),
+        ]),
+      ),
+      ...(settings.statusLine
+        ? {
+            statusLine: {
+              ...settings.statusLine,
+              command: unguardedStableHookCommand(settings.statusLine.command ?? ""),
+            },
+          }
+        : {}),
+    };
+  }
+
+  it.each(installs)("%s runs every command to a silent exit 0", (_label, options) => {
+    const env = { PATH: process.env.PATH, HOME: tempDir(), CLAUDE_PROJECT_DIR: tempDir() };
+    const commands = allCommands(applyInstall(EMPTY, options));
+    expect(commands.length).toBeGreaterThanOrEqual(13);
+    for (const command of commands) {
+      // `wait` lets a detached SessionEnd body finish inside the observed shell.
+      const result = spawnSync("/bin/sh", ["-c", `${command}\nwait`], {
+        env,
+        input: '{"payload":true}',
+        encoding: "utf8",
+      });
+      expect(result, command).toMatchObject({ status: 0, stdout: "", stderr: "" });
+    }
+  });
+
+  it.each(installs)("%s written earlier is refreshed and removed", (_label, options) => {
+    const current = applyInstall(EMPTY, options);
+    const earlier = writtenEarlier(current);
+    for (const [index, command] of allCommands(current).entries()) {
+      expect(allCommands(earlier)[index]).not.toBe(command);
+    }
+
+    // Recognized as prim's own, and as drifted rather than complete.
+    expect(hasAnyHookRegistration(earlier)).toBe(true);
+    expect(isGateInstalled(earlier)).toBe(true);
+    expect(feedbackInstalled(earlier)).toBe(true);
+    expect(usesProjectDeferral(earlier)).toBe(usesProjectDeferral(current));
+    expect(statuslineState(earlier)).toBe(statuslineState(current));
+    expect(hasCompleteHookRegistration(earlier)).toBe(false);
+
+    // A plain reinstall replaces every command; nothing is left beside it.
+    expect(applyInstall(earlier, options)).toEqual(current);
+    expect(hasCompleteHookRegistration(applyInstall(earlier, options))).toBe(true);
+
+    const removed = applyUninstall(earlier);
+    expect(removed.hooks).toEqual({});
+    expect(removed.statusLine).toBeUndefined();
   });
 });

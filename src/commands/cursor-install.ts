@@ -8,6 +8,7 @@ import {
   type HookCommandResolution,
   hookCommandResolutions,
   stableHookCommand,
+  unguardedStableHookCommand,
 } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { reportFailureProtection } from "../lib/preflight-host.js";
@@ -140,6 +141,10 @@ const OWNED_COMMANDS = new Set(
   ),
 );
 
+// Commands written before the missing-launcher guard, recognized only to
+// migrate or uninstall them.
+const UNGUARDED_OWNED_COMMANDS = new Set([...OWNED_COMMANDS].map(unguardedStableHookCommand));
+
 function jsoncUnsafeCommand(command: string): string {
   return command
     .replace('case "$1" in [/]* ', 'case "$1" in /*')
@@ -154,12 +159,15 @@ function jsoncUnsafeCommand(command: string): string {
 // alpha.91 emitted shell glob tokens containing JSON comment delimiters.
 // Cursor's JSONC parser rewrites those tokens even inside a JSON string, so
 // recognize the exact historical commands only to migrate or uninstall them.
-const JSONC_UNSAFE_OWNED_COMMANDS = new Set([...OWNED_COMMANDS].map(jsoncUnsafeCommand));
+// They predate the missing-launcher guard.
+const JSONC_UNSAFE_OWNED_COMMANDS = new Set([...UNGUARDED_OWNED_COMMANDS].map(jsoncUnsafeCommand));
 
 export function isOwnedCursorHookCommand(command: unknown): command is string {
   return (
     typeof command === "string" &&
-    (OWNED_COMMANDS.has(command) || JSONC_UNSAFE_OWNED_COMMANDS.has(command))
+    (OWNED_COMMANDS.has(command) ||
+      UNGUARDED_OWNED_COMMANDS.has(command) ||
+      JSONC_UNSAFE_OWNED_COMMANDS.has(command))
   );
 }
 
@@ -252,17 +260,27 @@ const FOOTER = {
   timeoutMs: 2_000,
 } as const;
 
+const UNGUARDED_FOOTER = {
+  ...FOOTER,
+  command: unguardedStableHookCommand(FOOTER.command),
+} as const;
+
 const JSONC_UNSAFE_FOOTER = {
   ...FOOTER,
-  command: jsoncUnsafeCommand(FOOTER.command),
+  command: jsoncUnsafeCommand(UNGUARDED_FOOTER.command),
 } as const;
 
 function exactFooter(value: unknown): boolean {
   return plainObject(value) && JSON.stringify(value) === JSON.stringify(FOOTER);
 }
 
-function jsoncUnsafeFooter(value: unknown): boolean {
-  return plainObject(value) && JSON.stringify(value) === JSON.stringify(JSONC_UNSAFE_FOOTER);
+function legacyFooter(value: unknown): boolean {
+  return (
+    plainObject(value) &&
+    [UNGUARDED_FOOTER, JSONC_UNSAFE_FOOTER].some(
+      (footer) => JSON.stringify(value) === JSON.stringify(footer),
+    )
+  );
 }
 
 export function applyCursorFooterInstall(config: Record<string, unknown>): {
@@ -273,7 +291,7 @@ export function applyCursorFooterInstall(config: Record<string, unknown>): {
   if (config.statusLine === undefined)
     return { config: { ...config, statusLine: FOOTER }, installed: true, preservedCustom: false };
   if (exactFooter(config.statusLine)) return { config, installed: true, preservedCustom: false };
-  if (jsoncUnsafeFooter(config.statusLine)) {
+  if (legacyFooter(config.statusLine)) {
     return { config: { ...config, statusLine: FOOTER }, installed: true, preservedCustom: false };
   }
   return { config, installed: false, preservedCustom: true };
@@ -283,7 +301,7 @@ export function applyCursorFooterUninstall(config: Record<string, unknown>): {
   config: Record<string, unknown>;
   removed: boolean;
 } {
-  if (!exactFooter(config.statusLine) && !jsoncUnsafeFooter(config.statusLine)) {
+  if (!exactFooter(config.statusLine) && !legacyFooter(config.statusLine)) {
     return { config, removed: false };
   }
   return {

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseDocument } from "yaml";
-import { stableHookCommand } from "../lib/bin-path.js";
+import { stableHookCommand, unguardedStableHookCommand } from "../lib/bin-path.js";
 import {
   type HooksMap,
   applyInstall,
@@ -149,6 +149,24 @@ describe("applyInstall", () => {
       ],
     };
     expect(hookRuntimeResolutions(legacy)).toContainEqual({ kind: "legacy_path" });
+  });
+
+  it("replaces and removes the stable command written before the missing-launcher guard", () => {
+    const current = applyInstall({ pre_tool_call: [userHook] }, false);
+    const earlier: HooksMap = Object.fromEntries(
+      Object.entries(current).map(([event, entries]) => [
+        event,
+        entries.map((entry) => ({ ...entry, command: unguardedStableHookCommand(entry.command) })),
+      ]),
+    );
+    expect(earlier).not.toEqual(current);
+    expect(isGateInstalled(earlier)).toBe(true);
+    expect(isCaptureInstalled(earlier)).toBe(true);
+    expect(hasAnyHookRegistration(earlier)).toBe(true);
+    expect(hasCompleteHookRegistration(earlier)).toBe(false);
+    expect(hookRuntimeResolutions(earlier)).not.toContainEqual({ kind: "legacy_path" });
+    expect(applyInstall(earlier, false)).toEqual(current);
+    expect(applyUninstall(earlier)).toEqual({ pre_tool_call: [userHook] });
   });
 
   it("preserves a user's non-prim hook under a shared event", () => {

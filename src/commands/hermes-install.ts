@@ -35,6 +35,7 @@ import {
   commandMatchesBin,
   hookCommandResolutions,
   stableHookCommand,
+  unguardedStableHookCommand,
 } from "../lib/bin-path.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { reportFailureProtection } from "../lib/preflight-host.js";
@@ -73,9 +74,14 @@ function legacyCommandFor(bin: string): string {
 
 // Claim only exact stable or legacy commands for this config root. A shape or
 // suffix match could delete a user's unrelated shim under a different
-// agent-hooks directory.
+// agent-hooks directory. The stable command written before the
+// missing-launcher guard stays claimed so reinstall and uninstall replace it.
 function commandUsesBin(command: string, bin: string): boolean {
-  return command === commandFor(bin) || command === legacyCommandFor(bin);
+  return (
+    command === commandFor(bin) ||
+    command === unguardedStableHookCommand(commandFor(bin)) ||
+    command === legacyCommandFor(bin)
+  );
 }
 
 // The Hermes lifecycle events the capture hook rides — the Hermes-named

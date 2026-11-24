@@ -30,6 +30,7 @@ import {
   pinnedNpxArgs,
   pinnedNpxCommand,
   stableHookCommand,
+  unguardedStableHookCommand,
 } from "./bin-path.js";
 
 describe("binFile", () => {
@@ -112,6 +113,90 @@ describe("stableHookCommand", () => {
       c.includes(`command -v ${bin} `) || (c.includes("-p @primitive.ai/prim@") && exactBin.test(c))
     );
   };
+
+  // Frozen from the writer that preceded the missing-launcher guard, and
+  // deliberately not built from product code: these are the bytes already
+  // committed to repositories and stored in agent configuration.
+  const preGuardCommand = (bin: string, args = ""): string =>
+    `/bin/sh -c 'prim_legacy_reader='"'"'-p @primitive.ai/prim@stable prim-shim.sh ${bin} '"'"'; prim_absolute() { case "$1" in [/]* ) ;; *) return 1 ;; esac; case "$1" in [[:space:]]*|*[[:space:]]|*[/][/]*|*[/].[/]*|*[/]..[/]*|*[/].|*[/]..|?*[/]) return 1 ;; esac; }; prim_config=\${PRIM_CONFIG_DIR:-}; if ! prim_absolute "$prim_config"; then prim_config=\${XDG_CONFIG_HOME:-}; if prim_absolute "$prim_config"; then case "$prim_config" in /) prim_config=/prim ;; *) prim_config="$prim_config/prim" ;; esac; else prim_home=\${HOME:-}; prim_absolute "$prim_home" || exit 78; case "$prim_home" in /) prim_config=/.config/prim ;; *) prim_config="$prim_home/.config/prim" ;; esac; fi; fi; case "$prim_config" in /) prim_launcher=/prim-hook-launcher-v1 ;; *) prim_launcher="$prim_config/prim-hook-launcher-v1" ;; esac; exec "$prim_launcher" "$@"' prim-hook-launcher-v1 ${bin}${args ? ` ${args}` : ""}`;
+
+  it("still reads the command written before the missing-launcher guard", () => {
+    for (const [bin, args] of [
+      ["prim-hook", ""],
+      ["prim-pre-tool-use", "--agent codex"],
+      ["prim-statusline", ""],
+    ]) {
+      const current = stableHookCommand(bin, args);
+      const earlier = preGuardCommand(bin, args);
+      expect(current).not.toBe(earlier);
+      expect(unguardedStableHookCommand(current)).toBe(earlier);
+      expect(commandMatchesBin(earlier, bin)).toBe(true);
+      expect(hookCommandResolution(earlier, bin)).toEqual({ kind: "stable_launcher" });
+    }
+  });
+
+  it("does nothing, silently, where prim is not installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-stable-absent-"));
+    try {
+      const home = join(root, "home");
+      const emptyConfig = join(root, "config");
+      mkdirSync(home);
+      mkdirSync(emptyConfig);
+      for (const env of [{ HOME: home }, { HOME: home, PRIM_CONFIG_DIR: emptyConfig }]) {
+        const run = (command: string) =>
+          spawnSync("/bin/sh", ["-c", command], { env, input: "{}", encoding: "utf8" });
+        for (const command of [
+          stableHookCommand("prim-hook"),
+          stableHookCommand("prim-pre-tool-use", "--agent codex"),
+          stableHookCommand("prim-statusline"),
+        ]) {
+          expect(run(command)).toMatchObject({ status: 0, stdout: "", stderr: "" });
+        }
+        // The earlier command is what every hook event reported there.
+        const earlier = run(preGuardCommand("prim-hook"));
+        expect(earlier.status).not.toBe(0);
+        expect(earlier.stderr).toContain("prim-hook-launcher-v1");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("enters an installed launcher exactly as the earlier command did", () => {
+    const root = mkdtempSync(join(tmpdir(), "prim-stable-present-"));
+    try {
+      const home = join(root, "home");
+      const config = join(home, ".config", "prim");
+      const launcher = join(config, "prim-hook-launcher-v1");
+      mkdirSync(config, { recursive: true });
+      writeFileSync(launcher, '#!/bin/sh\nprintf "%s|" "$0" "$@"\ncat\necho warned >&2\nexit 7\n', {
+        mode: 0o700,
+      });
+      const run = (command: string) => {
+        const result = spawnSync("/bin/sh", ["-c", command], {
+          env: { HOME: home, PATH: process.env.PATH },
+          input: "payload",
+          encoding: "utf8",
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      };
+      const entered = run(stableHookCommand("prim-hook", "--agent codex"));
+      expect(entered).toEqual({
+        status: 7,
+        stdout: `${launcher}|prim-hook|--agent|codex|payload`,
+        stderr: "warned\n",
+      });
+      expect(run(preGuardCommand("prim-hook", "--agent codex"))).toEqual(entered);
+
+      // A launcher that is present but unusable is not "not installed".
+      chmodSync(launcher, 0o600);
+      const unusable = run(stableHookCommand("prim-hook"));
+      expect(unusable.status).not.toBe(0);
+      expect(unusable).toEqual(run(preGuardCommand("prim-hook")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("is byte-stable and contains no machine, version, PATH, or lifecycle-script resolver", () => {
     const command = stableHookCommand("prim-pre-tool-use", "--agent codex");

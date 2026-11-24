@@ -150,6 +150,15 @@ export const PRIM_CONFIG_SHELL_RESOLVER = [
 ].join("");
 
 /**
+ * A repository can commit these commands, so they also run for collaborators
+ * and cloud sessions that never installed prim. No launcher exists there, and
+ * exec'ing the missing file would print "No such file or directory" and exit
+ * 126 on every hook event, so the command leaves quietly instead. A launcher
+ * that exists but cannot run still fails as before.
+ */
+const MISSING_LAUNCHER_GUARD = '[ -e "$prim_launcher" ] || exit 0; ';
+
+/**
  * Render the one machine-, config-root-, and package-version-independent hook
  * command stored in agent configuration. The inline POSIX resolver mirrors
  * `primConfigDirectory`: only absolute PRIM_CONFIG_DIR/XDG_CONFIG_HOME values
@@ -172,10 +181,20 @@ export function stableHookCommand(bin: string, args = ""): string {
     PRIM_CONFIG_SHELL_RESOLVER,
     `case "$prim_config" in /) prim_launcher=/${STABLE_HOOK_LAUNCHER_NAME} ;; ` +
       `*) prim_launcher="$prim_config/${STABLE_HOOK_LAUNCHER_NAME}" ;; esac; `,
+    MISSING_LAUNCHER_GUARD,
     'exec "$prim_launcher" "$@"',
   ].join("");
   const suffix = args ? ` ${args}` : "";
   return `/bin/sh -c ${shellQuote(resolver)} ${STABLE_HOOK_LAUNCHER_NAME} ${bin}${suffix}`;
+}
+
+/**
+ * A stable hook command as it was written before the missing-launcher guard.
+ * Nothing writes this form; the hosts that claim commands by exact text
+ * (Cursor, Hermes) use it only to migrate or uninstall an earlier install.
+ */
+export function unguardedStableHookCommand(command: string): string {
+  return command.replace(MISSING_LAUNCHER_GUARD, "");
 }
 
 export function detachedHookShimCommand(bin: string, args = ""): string {

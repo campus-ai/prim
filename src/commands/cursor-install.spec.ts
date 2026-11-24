@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { stableHookCommand } from "../lib/bin-path.js";
+import { stableHookCommand, unguardedStableHookCommand } from "../lib/bin-path.js";
 import {
   type CursorHooksSettings,
   applyCursorFooterInstall,
@@ -17,8 +17,10 @@ import {
 } from "./cursor-install.js";
 
 describe("Cursor native hook configuration", () => {
+  // alpha.91 predates the missing-launcher guard, so its exact bytes carry
+  // neither the guard nor the JSONC-safe globs.
   const jsoncUnsafe = (command: string): string =>
-    command
+    unguardedStableHookCommand(command)
       .replace('case "$1" in [/]* ', 'case "$1" in /*')
       .replace("*[/][/]*", "*//*")
       .replace("*[/].[/]*", "*/./*")
@@ -94,6 +96,31 @@ describe("Cursor native hook configuration", () => {
     expect(applyCursorUninstall(legacy).hooks).toEqual({});
   });
 
+  it("migrates the exact registration written before the missing-launcher guard", () => {
+    for (const scope of ["project", "user"] as const) {
+      const current = applyCursorInstall({}, scope);
+      const earlier = {
+        ...current,
+        hooks: Object.fromEntries(
+          Object.entries(current.hooks ?? {}).map(([event, entries]) => [
+            event,
+            entries.map((entry) => ({
+              ...entry,
+              command: unguardedStableHookCommand(entry.command),
+            })),
+          ]),
+        ),
+      };
+      expect(earlier).not.toEqual(current);
+      for (const entries of Object.values(earlier.hooks)) {
+        for (const entry of entries) expect(isOwnedCursorHookCommand(entry.command)).toBe(true);
+      }
+      expect(hasExactCursorHandler(earlier, "preToolUse", "prim-pre-tool-use", scope)).toBe(false);
+      expect(applyCursorInstall(earlier, scope)).toEqual(current);
+      expect(applyCursorUninstall(earlier).hooks).toEqual({});
+    }
+  });
+
   it("is idempotent and uninstalls only exact owned commands", () => {
     const foreign = { command: "/usr/local/bin/foreign" };
     const installed = applyCursorInstall({ hooks: { stop: [foreign] } }, "user");
@@ -141,22 +168,25 @@ describe("Cursor native hook configuration", () => {
       removed: true,
     });
 
-    const legacyFooter = {
-      theme: "dark",
-      statusLine: {
-        ...(installed.config.statusLine as Record<string, unknown>),
-        command: jsoncUnsafe((installed.config.statusLine as Record<string, string>).command),
-      },
-    };
-    expect(applyCursorFooterInstall(legacyFooter)).toEqual({
-      config: installed.config,
-      installed: true,
-      preservedCustom: false,
-    });
-    expect(applyCursorFooterUninstall(legacyFooter)).toEqual({
-      config: { theme: "dark" },
-      removed: true,
-    });
+    for (const earlier of [jsoncUnsafe, unguardedStableHookCommand]) {
+      const legacyFooter = {
+        theme: "dark",
+        statusLine: {
+          ...(installed.config.statusLine as Record<string, unknown>),
+          command: earlier((installed.config.statusLine as Record<string, string>).command),
+        },
+      };
+      expect(legacyFooter).not.toEqual(installed.config);
+      expect(applyCursorFooterInstall(legacyFooter)).toEqual({
+        config: installed.config,
+        installed: true,
+        preservedCustom: false,
+      });
+      expect(applyCursorFooterUninstall(legacyFooter)).toEqual({
+        config: { theme: "dark" },
+        removed: true,
+      });
+    }
   });
 
   it("honors only absolute Cursor configuration overrides", () => {
