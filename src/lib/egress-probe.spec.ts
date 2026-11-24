@@ -79,6 +79,22 @@ describe("probeEgress through the cloud environment's proxy", () => {
     expect(inner).not.toHaveBeenCalled();
   });
 
+  it("asks the proxy first by default, in a process whose requests ride one", async () => {
+    const { asked, env } = await proxyAnswering({ "api.example.invalid": 502 });
+    vi.stubEnv("NODE_USE_ENV_PROXY", env.NODE_USE_ENV_PROXY);
+    vi.stubEnv("HTTPS_PROXY", env.HTTPS_PROXY);
+    vi.stubEnv("https_proxy", env.HTTPS_PROXY);
+    vi.stubEnv("NO_PROXY", "");
+    vi.stubEnv("no_proxy", "");
+    try {
+      // Plain fetch would give up on the name and call the host blocked.
+      expect(await probeEgress(API, true)).toEqual({ api: "PROXY_502" });
+      expect(asked).toEqual(["api.example.invalid"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("reports a proxy that says nothing as a timeout", async () => {
     const { env } = await proxyAnswering({ "api.example.invalid": "silent" });
     expect(await probeEgress(API, true, tunnelCheckedFetch({ env, timeoutMs: 150 }))).toEqual({

@@ -37,6 +37,14 @@ export function cloudDomainEditNote(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 /**
+ * The environment's proxy failed by itself: an answer of its own to a
+ * CONNECT, a hang-up, or silence. Said in place of the allowlist advice,
+ * which would send the user to add domains they have already allowed.
+ */
+export const CLOUD_PROXY_FAILING =
+  "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.";
+
+/**
  * True in a process Claude Code itself started (a tool call or a hook), which
  * is where it sets CLAUDECODE. A cloud environment's setup script runs before
  * Claude Code launches, so it is never true there, whatever else the VM's

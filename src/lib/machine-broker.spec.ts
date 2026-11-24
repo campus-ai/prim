@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { type IncomingMessage, type Server, createServer, request } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -14,9 +14,11 @@ import {
   forwardBrokerRequest,
   forwardToApi,
   probeBrokerEgress,
+  startMachineBroker,
 } from "./machine-broker.js";
-import type { MachineCredential } from "./machine-credentials.js";
+import { type MachineCredential, environmentCredentials } from "./machine-credentials.js";
 import { MachineAuthError } from "./machine-protocol.js";
+import { recordProxyFailure } from "./machine-retry.js";
 
 const base = { directory: "/config", apiUrl: "https://api.example.com" };
 
@@ -555,6 +557,266 @@ describe("forwarding through a running broker", () => {
     expect(acquire).toHaveBeenCalledExactlyOnceWith({
       force: false,
       signal: expect.any(AbortSignal),
+    });
+    acquire.mockClear();
+    const port = (broker.address() as AddressInfo).port;
+    expect(await raw(port, "/forward", envelope({ force: true }), "forward-request")).toBe(200);
+    expect(acquire).toHaveBeenCalledExactlyOnceWith({
+      force: false,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  describe("how the broker itself reaches Primitive", () => {
+    // What the API answers serves as its configuration and as an identity.
+    const configurationAndIdentity = () =>
+      JSON.stringify({
+        protocol_version: 1,
+        issuer: "https://auth.example.com",
+        audience: "client_environment",
+        authenticated: true,
+        organizationBindingVersion: 2,
+        captureAuthorityKind: "workos_m2m",
+        organizationId: "organization_local",
+        workosOrganizationId: "org_workos",
+        principal: {
+          kind: "machine",
+          machineId: "machine_local",
+          clientId: "client_cloud",
+          displayName: "Build runner",
+          scopes: ["cli:read"],
+        },
+      });
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("sends its own exchange, a forward, and a probe through the one fetch it is given", async () => {
+      // The broker's process, in a cloud session whose proxy holds the token.
+      vi.stubEnv("PRIM_CONFIG_DIR", directory);
+      vi.stubEnv("PRIM_API_URL", apiUrl);
+      vi.stubEnv("PRIM_TOKEN", "");
+      vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+      vi.stubEnv("PRIM_M2M_CLIENT_AUTH", "network-token");
+      vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+      vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+      const own = environmentCredentials({});
+      if (!own) throw new Error("missing fixture credentials");
+      answer = { status: 200, body: configurationAndIdentity() };
+      const through: string[] = [];
+      const given = ((input: string | URL | Request, init?: RequestInit) => {
+        through.push(new URL(String(input)).pathname);
+        return fetch(input, init);
+      }) as typeof fetch;
+      // No stand-in for its credential: the broker acquires its own.
+      broker = createBrokerServer({ environment: own, apiUrl, nonce: NONCE, fetch: given });
+      writeFileSync(
+        join(directory, `machine_broker_${own.generation}.json`),
+        JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
+        { mode: 0o600 },
+      );
+      const session = { directory, apiUrl, environment: own, env: process.env };
+      const signal = AbortSignal.timeout(5_000);
+      expect(await acquireBrokerCredential({ ...session, signal })).toMatchObject({
+        machineId: "machine_local",
+        tokenInjection: "network",
+      });
+      await forwardBrokerRequest({
+        ...session,
+        request: { method: "GET", path: "/api/cli/decisions/recent" },
+        signal,
+      });
+      await probeBrokerEgress({ ...session, signal });
+      expect(through).toEqual([
+        "/api/cli/auth/m2m/config",
+        "/api/cli/auth/status",
+        "/api/cli/decisions/recent",
+        "/api/cli/auth/m2m/config",
+      ]);
+      expect(received).toHaveLength(4);
+    });
+
+    it("asks the proxy before each request unless given another way", async () => {
+      const asked: string[] = [];
+      const proxy = createServer();
+      proxy.on("connect", (request, socket) => {
+        asked.push(request.url ?? "");
+        socket.end("HTTP/1.1 502 Answer\r\nContent-Length: 0\r\n\r\n");
+      });
+      const named = `http://127.0.0.1:${await listen(proxy)}`;
+      vi.stubEnv("NODE_USE_ENV_PROXY", "1");
+      vi.stubEnv("HTTPS_PROXY", named);
+      vi.stubEnv("https_proxy", named);
+      vi.stubEnv("NO_PROXY", "");
+      vi.stubEnv("no_proxy", "");
+      try {
+        apiUrl = "https://api.example.invalid";
+        await startBroker(routed);
+        // Plain fetch would give up on the name and call the host blocked.
+        expect(
+          await probeBrokerEgress({
+            directory,
+            apiUrl,
+            environment: routed,
+            env: {},
+            signal: AbortSignal.timeout(5_000),
+          }),
+        ).toEqual({ api: "PROXY_502" });
+        await expect(
+          forward({ method: "GET", path: "/api/cli/auth/status" }),
+        ).rejects.toMatchObject({ code: "authentication_unavailable" });
+        expect(asked).toEqual(["api.example.invalid:443", "api.example.invalid:443"]);
+      } finally {
+        await close(proxy);
+      }
+    });
+  });
+
+  describe("a broker that did not answer", () => {
+    /** Answers a health check as the broker would, then hangs up on everything else. */
+    async function vanished() {
+      broker = createServer((request, response) => {
+        if (request.method === "GET") response.end(NONCE);
+        else request.socket.destroy();
+      });
+      writeFileSync(
+        join(directory, `machine_broker_${GENERATION}.json`),
+        JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
+        { mode: 0o600 },
+      );
+    }
+    const asks = () => {
+      const session = { directory, apiUrl, environment: routed, env: {} };
+      const signal = AbortSignal.timeout(5_000);
+      return [
+        () => acquireBrokerCredential({ ...session, signal }),
+        () =>
+          forwardBrokerRequest({
+            ...session,
+            request: { method: "GET", path: "/api/cli/auth/status" },
+            signal,
+          }),
+        () => probeBrokerEgress({ ...session, signal }),
+      ];
+    };
+
+    it("is reported as unavailable", async () => {
+      await vanished();
+      for (const ask of asks())
+        await expect(ask()).rejects.toMatchObject({
+          code: "broker_unavailable",
+          message: "Machine credential broker is unavailable. Retry the command.",
+        });
+    });
+
+    it("is reported as the proxy failing when that is why it gave up", async () => {
+      await vanished();
+      recordProxyFailure(directory, apiUrl, routed.clientId);
+      for (const ask of asks())
+        await expect(ask()).rejects.toMatchObject({
+          code: "proxy_unavailable",
+          message:
+            "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+          retryAt: expect.any(Number),
+        });
+    });
+  });
+
+  describe("the broker process", () => {
+    let exit: ReturnType<typeof vi.fn<(code: number) => void>>;
+    let stop: ((code?: number) => void) | undefined;
+    let send: typeof process.send;
+    let own: NonNullable<ReturnType<typeof environmentCredentials>>;
+    const sockets: ReturnType<typeof connect>[] = [];
+    const descriptor = () => join(directory, `machine_broker_${own.generation}.json`);
+    const retryFiles = () =>
+      readdirSync(directory).filter((name) => name.startsWith("machine_retry_"));
+
+    beforeEach(async () => {
+      // A cloud session whose proxy holds the token: this process relays.
+      vi.stubEnv("PRIM_CONFIG_DIR", directory);
+      vi.stubEnv("PRIM_API_URL", apiUrl);
+      vi.stubEnv("PRIM_TOKEN", "");
+      vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+      vi.stubEnv("PRIM_M2M_CLIENT_AUTH", "network-token");
+      vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+      vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:9");
+      const credentials = environmentCredentials({});
+      if (!credentials) throw new Error("missing fixture credentials");
+      own = credentials;
+      exit = vi.fn();
+      // The broker tells its parent it is ready; this process's parent is the test runner.
+      send = process.send;
+      process.send = undefined;
+      stop = await startMachineBroker(exit);
+    });
+    afterEach(() => {
+      stop?.();
+      process.send = send;
+      for (const socket of sockets.splice(0)) socket.destroy();
+      vi.unstubAllEnvs();
+    });
+
+    const relay = (path: string, signal = AbortSignal.timeout(5_000)) =>
+      forwardBrokerRequest({
+        directory,
+        apiUrl,
+        environment: own,
+        env: process.env,
+        request: { method: "GET", path },
+        signal,
+      });
+
+    it("keeps running through slow answers, failing answers, and callers that give up", async () => {
+      expect(JSON.parse(readFileSync(descriptor(), "utf8"))).toMatchObject({ pid: process.pid });
+      // A slow upstream, several at once.
+      const prompt = api.listeners("request")[0] as (...args: unknown[]) => Promise<void>;
+      api.removeAllListeners("request");
+      api.on("request", (request, response) =>
+        // A caller that gave up takes its request with it; that is not an error here.
+        setTimeout(() => void prompt(request, response).catch(() => undefined), 300),
+      );
+      expect((await Promise.all(Array.from({ length: 8 }, () => relay("/slow")))).length).toBe(8);
+      // A caller that gives up part-way.
+      await expect(relay("/abandoned", AbortSignal.timeout(50))).rejects.toBeDefined();
+      // An upstream failing by itself.
+      answer = { status: 502, body: "{}" };
+      expect((await relay("/failing")).status).toBe(502);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(exit).not.toHaveBeenCalled();
+      expect(existsSync(descriptor())).toBe(true);
+      expect(retryFiles()).toEqual([]);
+    });
+
+    it("gives up only when its connections run away: a cooldown first, then its descriptor, then the process", () => {
+      // What the process had on disk at the moment it would have ended.
+      let atExit: { cooldown: unknown; descriptor: boolean } | undefined;
+      exit.mockImplementation(() => {
+        const [name] = retryFiles();
+        atExit = {
+          cooldown: name ? JSON.parse(readFileSync(join(directory, name), "utf8")) : undefined,
+          descriptor: existsSync(descriptor()),
+        };
+      });
+      // As a fetch retrying a closed CONNECT does: connections without end.
+      const { port } = api.address() as AddressInfo;
+      for (let index = 0; index < 700; index += 1) {
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", () => undefined);
+        sockets.push(socket);
+      }
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(atExit).toEqual({
+        cooldown: { failures: 1, retryAt: expect.any(Number), proxy: true },
+        descriptor: false,
+      });
+      stop = undefined;
+    });
+
+    it("ends the process when told to stop, withdrawing its descriptor", () => {
+      stop?.();
+      stop = undefined;
+      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+      expect(existsSync(descriptor())).toBe(false);
+      expect(retryFiles()).toEqual([]);
     });
   });
 

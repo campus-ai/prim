@@ -1,4 +1,5 @@
 import {
+  CLOUD_PROXY_FAILING,
   CLOUD_REJECTED_CREDENTIALS_REMEDY,
   cloudDomainEditNote,
   isClaudeCloudSession,
@@ -134,6 +135,31 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * The environment's proxy is failing by itself, which no edit to the
+ * allowlist repairs: it has the token broker reconnecting without end, or
+ * (see proxyFaultOf) it failed a request.
+ */
+export function proxyFault(retryAt?: number): MachineAuthError {
+  return new MachineAuthError("proxy_unavailable", CLOUD_PROXY_FAILING, false, retryAt);
+}
+
+/**
+ * A failed request as the proxy's own fault, in a cloud session, when that
+ * is what checkTunnel found: any answer to a CONNECT but 200 and 403, a
+ * hang-up, or silence. Its 403 is a host it refuses, and stays the
+ * allowlist's business.
+ */
+export function proxyFaultOf(error: unknown): MachineAuthError | undefined {
+  const code = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+  return typeof code === "string" &&
+    code.startsWith("PROXY_") &&
+    code !== "PROXY_BLOCKED" &&
+    isClaudeCloudSession()
+    ? proxyFault()
+    : undefined;
+}
+
 async function fetchMachine(
   url: string,
   options: RequestInit,
@@ -141,8 +167,10 @@ async function fetchMachine(
 ): Promise<Response> {
   try {
     return await fetchImpl(url, options);
-  } catch {
+  } catch (error) {
     options.signal?.throwIfAborted();
+    const fault = proxyFaultOf(error);
+    if (fault) throw fault;
     throw new MachineAuthError(
       "authentication_unavailable",
       // A cloud VM reaches only the hosts its environment allows, and both of

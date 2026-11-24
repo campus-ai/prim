@@ -15,9 +15,15 @@ import {
   cachedMachineCredential,
   environmentCredentials,
 } from "./machine-credentials.js";
-import { MachineAuthError, machineApiUrl, machineRecord } from "./machine-protocol.js";
+import {
+  MachineAuthError,
+  machineApiUrl,
+  machineRecord,
+  proxyFaultOf,
+} from "./machine-protocol.js";
+import { proxyCooldown, recordProxyFailure } from "./machine-retry.js";
 import { primConfigDirectory } from "./paths.js";
-import { tunnelCheckedFetch } from "./proxy-tunnel.js";
+import { onRunawayConnections, tunnelCheckedFetch } from "./proxy-tunnel.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 const MAX_RESPONSE_BYTES = 96 * 1024;
@@ -202,11 +208,26 @@ export async function acquireBrokerCredential(options: {
   } catch (error) {
     options.signal.throwIfAborted();
     if (error instanceof MachineAuthError) throw error;
-    throw new MachineAuthError(
+    throw brokerUnavailable(options);
+  }
+}
+
+/**
+ * Why a broker did not answer. One that gave up on a failing proxy left a
+ * cooldown that says so (see recordProxyFailure); otherwise it is just gone.
+ */
+function brokerUnavailable(options: {
+  directory: string;
+  apiUrl: string;
+  environment: Pick<Environment, "clientId">;
+}): MachineAuthError {
+  return (
+    proxyCooldown(options.directory, options.apiUrl, options.environment.clientId) ??
+    new MachineAuthError(
       "broker_unavailable",
       "Machine credential broker is unavailable. Retry the command.",
-    );
-  }
+    )
+  );
 }
 
 /** The running broker for this generation, started here if none answers. */
@@ -390,11 +411,7 @@ export async function forwardBrokerRequest(options: {
   signal: AbortSignal;
 }): Promise<Response> {
   const path = descriptorPath(options.directory, options.environment.generation);
-  const unavailable = () =>
-    new MachineAuthError(
-      "broker_unavailable",
-      "Machine credential broker is unavailable. Retry the command.",
-    );
+  const unavailable = () => brokerUnavailable(options);
   const existing = readDescriptor(path);
   if (existing) {
     try {
@@ -469,10 +486,7 @@ export async function probeBrokerEgress(options: {
   } catch (error) {
     options.signal.throwIfAborted();
     if (error instanceof MachineAuthError) throw error;
-    throw new MachineAuthError(
-      "broker_unavailable",
-      "Machine credential broker is unavailable. Retry the command.",
-    );
+    throw brokerUnavailable(options);
   }
 }
 
@@ -560,12 +574,14 @@ export async function forwardToApi(
   } catch (error) {
     // Never the failure's own text: a proxy may put anything in it.
     const timedOut = error instanceof Error && error.name === "TimeoutError";
+    const fault = proxyFaultOf(error);
     return {
       error: {
-        code: timedOut ? "request_timeout" : "authentication_unavailable",
+        code: timedOut ? "request_timeout" : (fault?.code ?? "authentication_unavailable"),
         message: timedOut
           ? "Primitive did not answer through the cloud environment's proxy in time. The request may or may not have been applied."
-          : "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry.",
+          : (fault?.message ??
+            "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry."),
         terminal: false,
       },
     };
@@ -749,8 +765,14 @@ export function createBrokerServer(options: {
   return server;
 }
 
-/** Entry mode of the already-packaged, immutable daemon bundle. */
-export async function startMachineBroker(): Promise<void> {
+/**
+ * Entry mode of the already-packaged, immutable daemon bundle. `exit` ends
+ * the process, and the answer is what shuts the broker down; a spec stands
+ * in for the one and uses the other.
+ */
+export async function startMachineBroker(
+  exit: (code: number) => void = (code) => process.exit(code),
+): Promise<(code?: number) => void> {
   const environment = environmentCredentials({});
   if (!environment) throw new Error("Machine broker requires injected credentials");
   const directory = primConfigDirectory();
@@ -762,19 +784,25 @@ export async function startMachineBroker(): Promise<void> {
     apiUrl,
     nonce,
     onRequest: () => idle.refresh(),
-    // A request handed to Node met a proxy that closes CONNECTs: Node 22 and
-    // 24 may retry it for as long as this process lives.
-    fetch: tunnelCheckedFetch({ onSilentProxy: () => close(1) }),
   });
   // Ends the process, not just the server: a request Node is still retrying
   // would otherwise keep it alive and busy, with no descriptor to find it by.
   const close = (code = 0) => {
     clearTimeout(idle);
+    stopWatching();
     server.closeAllConnections();
     server.close();
     if (readDescriptor(path)?.nonce === nonce) rmSync(path, { force: true });
-    process.exit(code);
+    exit(code);
   };
+  // A request met a proxy that answered the check and closed its CONNECT,
+  // and Node 22 or 24 is retrying it for as long as this process lives. The
+  // cooldown comes first: whatever starts next waits, and says the proxy is
+  // failing, instead of meeting the same proxy at once.
+  const stopWatching = onRunawayConnections(() => {
+    recordProxyFailure(directory, apiUrl, environment.clientId);
+    close(1);
+  });
   const idle = setTimeout(() => close(), IDLE_MS);
   process.once("SIGTERM", () => close());
   process.once("SIGINT", () => close());
@@ -788,4 +816,5 @@ export async function startMachineBroker(): Promise<void> {
     mode: 0o600,
   });
   process.send?.("ready");
+  return close;
 }

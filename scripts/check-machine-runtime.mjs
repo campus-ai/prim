@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { request as httpRequest, createServer as httpServer } from "node:http";
 import { createServer as httpsServer } from "node:https";
@@ -41,6 +42,10 @@ const openTunnels = new Set();
 // How many more CONNECTs the stand-in proxy answers before it closes each
 // one without a word, as a proxy that is failing may.
 let answerBudget = Number.POSITIVE_INFINITY;
+// Closes just the CONNECT this many from now: a single reset.
+let closeNth = 0;
+// How long the cloud API takes to answer, when it is being slow.
+let cloudApiDelayMs = 0;
 // The local port of each connection the proxy itself opened.
 const proxyPeers = new Set();
 const tunnels = [];
@@ -118,6 +123,11 @@ try {
   // `face` is one way of reaching the API: the sign-in service it names, and
   // a record of what arrived there and from which local port.
   const serveApi = (viaInjectingProxy, face) => (req, res) => {
+    if (face && cloudApiDelayMs && !req.delayed) {
+      req.delayed = true;
+      setTimeout(() => serveApi(viaInjectingProxy, face)(req, res), cloudApiDelayMs);
+      return;
+    }
     face?.requests.push({
       url: req.url,
       authorization: req.headers.authorization,
@@ -201,8 +211,10 @@ try {
   );
   await cp(source, copied, { recursive: true });
   await rm(source, { recursive: true });
+  await mkdir(join(root, "home"));
   const env = {
     ...process.env,
+    HOME: join(root, "home"),
     PRIM_TOKEN: "",
     PRIM_CONFIG_DIR: config,
     PRIM_API_URL: `http://127.0.0.1:${api.address().port}`,
@@ -301,6 +313,14 @@ try {
       return;
     }
     answerBudget -= 1;
+    if (closeNth > 0) {
+      closeNth -= 1;
+      if (closeNth === 0) {
+        tunnels.push(`reset ${request.url}`);
+        socket.destroy();
+        return;
+      }
+    }
     if (refused.has(host)) {
       const status = refused.get(host);
       tunnels.push(`refused ${request.url}`);
@@ -433,10 +453,8 @@ try {
   const cloudSecret = `${secret}-cloud`;
   const cloudApiHost = `api.prim.invalid:${cloudApi.address().port}`;
   const cloudSignInHost = `signin.prim.invalid:${provider.address().port}`;
-  await mkdir(join(root, "home"));
   const cloudEnv = {
     ...networkEnv,
-    HOME: join(root, "home"),
     PRIM_API_URL: `https://${cloudApiHost}`,
     PRIM_M2M_CLIENT_SECRET: cloudSecret,
     HTTP_PROXY: proxyUrl,
@@ -524,7 +542,7 @@ try {
   reports.push("cloud callers reach the broker over loopback whatever NO_PROXY says");
   // What the broker can reach is what prim can reach: ask it as the session
   // diagnosis does, then take hosts off the stand-in proxy's allowlist.
-  const brokerAsk = async (endpoint, fields = {}) => {
+  const brokerAsk = async (endpoint, fields = {}, signal = undefined) => {
     const broker = await routedBroker();
     const proof = (purpose, text) =>
       createHmac("sha256", cloudSecret)
@@ -538,6 +556,7 @@ try {
     const response = await fetch(`http://127.0.0.1:${broker.port}/${endpoint}`, {
       method: "POST",
       body,
+      signal,
       headers: { "Content-Type": "application/json", "X-Prim-Proof": proof("request", body) },
     });
     const envelope = await response.json();
@@ -597,6 +616,11 @@ try {
   );
   assert.deepEqual(unanswered, { api: "PROXY_CLOSED" }, "a silent proxy is not a blocked host");
   assert.equal(unansweredStatus.status, "unreachable", JSON.stringify(unansweredStatus));
+  assert.equal(
+    unansweredStatus.recoveryDetail,
+    "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+    "a command is told the proxy is failing, not to add domains",
+  );
   assert.ok(alive(steady.pid), "the broker asked nothing of a silent proxy and keeps running");
   // An outage the proxy reports itself is not the allowlist either.
   answerBudget = Number.POSITIVE_INFINITY;
@@ -606,52 +630,116 @@ try {
   assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
   assert.equal((await routedBroker()).pid, steady.pid, "the same broker serves on");
   reports.push("a proxy that closes or fails CONNECTs is reported as such and never retried");
-  // The proxy answers one CONNECT, then closes the rest: the broker's check
-  // passes and the request it hands to `fetch` meets a silent proxy. That
-  // `fetch` may never stop, so the broker must: it exits, and the next
-  // caller starts another.
+  // None of these is a broker reconnecting without end, and none may end it:
+  // one CONNECT the proxy resets, an upstream that is slow, a caller that
+  // gives up. (The proxy's own 502, above, is another.)
+  const forwardRead = (signal) =>
+    brokerAsk("forward", { method: "GET", path: "/api/cli/decisions/recent", headers: {} }, signal);
   await dropTunnels();
-  const connectionsBeforeRace = proxyConnections;
-  answerBudget = 1;
-  await brokerProbe().catch(() => undefined);
-  assert.ok(
-    await gone(steady.pid, 8000),
-    "a broker whose request met a silent proxy must exit rather than keep retrying",
-  );
-  const connectionsAtExit = proxyConnections;
-  await delay(1000);
-  assert.equal(proxyConnections, connectionsAtExit, "nothing retries after the broker exits");
-  assert.ok(
-    !(await brokerDescriptors()).includes(routedBrokers[0]),
-    "an exiting broker withdraws its descriptor",
-  );
-  answerBudget = Number.POSITIVE_INFINITY;
-  const restarted = await cloudStatus(inSession);
-  assert.equal(restarted.status, "valid", JSON.stringify(restarted));
-  const successor = await routedBroker();
-  pids.add(successor.pid);
-  assert.notEqual(successor.pid, steady.pid);
-  // Shutting down, as on idleness: a request still retrying must not keep
-  // the process alive past its descriptor.
-  await dropTunnels();
-  answerBudget = 1;
-  const retrying = brokerAsk("forward", {
-    method: "GET",
-    path: "/api/cli/decisions/recent",
-    headers: {},
-  }).catch(() => undefined);
+  let connectionsBefore = proxyConnections;
+  closeNth = 2;
+  const afterReset = await forwardRead().catch((error) => ({ failed: String(error) }));
   await delay(500);
-  try {
-    process.kill(successor.pid, "SIGTERM");
-  } catch {
-    // Node 26 fails such a request at once, and the broker has already exited.
+  // Node 22 and 24 retry the reset CONNECT and are answered; Node 26 fails the request.
+  assert.ok(
+    afterReset.status === 200 || afterReset.error || afterReset.failed,
+    JSON.stringify(afterReset),
+  );
+  assert.ok(proxyConnections - connectionsBefore < 10, "one reset is met with a few connections");
+  cloudApiDelayMs = 3000;
+  connectionsBefore = proxyConnections;
+  const slow = await Promise.all(Array.from({ length: 8 }, () => forwardRead()));
+  assert.ok(
+    slow.every((answer) => answer.status === 200),
+    JSON.stringify(slow[0]),
+  );
+  measured.proxyConnectionsForEightSlowRequests = proxyConnections - connectionsBefore;
+  assert.ok(
+    measured.proxyConnectionsForEightSlowRequests <= 16,
+    `a slow request costs its check and its tunnel, no more: ${measured.proxyConnectionsForEightSlowRequests}`,
+  );
+  const abandoned = await forwardRead(AbortSignal.timeout(300)).catch((error) => error.name);
+  assert.equal(abandoned, "TimeoutError", "the caller gave up on a slow request");
+  cloudApiDelayMs = 0;
+  await delay(500);
+  assert.ok(alive(steady.pid), "a reset, a slow upstream and an impatient caller end no broker");
+  assert.equal((await routedBroker()).pid, steady.pid);
+  assert.deepEqual(
+    (await readdir(config)).filter((name) => name.startsWith("machine_retry_")),
+    [],
+    "and none of them starts a cooldown",
+  );
+  assert.equal((await cloudStatus(inSession)).status, "valid");
+  reports.push("a reset, a slow upstream, an impatient caller and a proxy 502 end no broker");
+  // The proxy answers one CONNECT for each command, then closes the rest: the
+  // broker's check passes, and the request it hands to `fetch` meets a proxy
+  // that hangs up. Node 22 and 24 then reconnect without end. The broker
+  // must notice that for what it is, leave a cooldown that says the proxy is
+  // failing, and exit; and the commands that follow must wait that cooldown
+  // out rather than each start a broker to meet the same proxy.
+  process.kill(steady.pid, "SIGTERM");
+  assert.ok(await gone(steady.pid, 3000), "a broker told to stop ends its process");
+  const brokersSeen = new Set();
+  const sampler = setInterval(() => {
+    try {
+      brokersSeen.add(JSON.parse(readFileSync(join(config, routedBrokers[0]), "utf8")).pid);
+    } catch {
+      // No routed broker at this instant.
+    }
+  }, 5);
+  connectionsBefore = proxyConnections;
+  const racedSince = Date.now();
+  const raced = [];
+  for (let call = 0; call < 5; call += 1) {
+    await dropTunnels();
+    answerBudget = 1;
+    raced.push(await cloudStatus(inSession));
   }
-  assert.ok(await gone(successor.pid, 3000), "a broker told to stop must exit while retrying");
-  await retrying;
+  await delay(1000);
+  clearInterval(sampler);
   answerBudget = Number.POSITIVE_INFINITY;
+  const spinning = Number(process.versions.node.split(".")[0]) < 26;
+  const cooldowns = [];
+  for (const name of await readdir(config))
+    if (name.startsWith("machine_retry_"))
+      cooldowns.push(JSON.parse(await readFile(join(config, name), "utf8")));
+  measured.fiveCommandsThroughAProxyThatHangsUp = {
+    brokersStarted: brokersSeen.size,
+    proxyConnections: proxyConnections - connectionsBefore,
+    ms: Date.now() - racedSince - 1000,
+    answers: raced.map((answer) => answer.recoveryReason),
+    cooldown: cooldowns.map(({ failures, proxy }) => ({ failures, proxy })),
+  };
+  const told = JSON.stringify(measured.fiveCommandsThroughAProxyThatHangsUp);
+  assert.ok(
+    raced.every((answer) => answer.status === "unreachable"),
+    told,
+  );
+  assert.ok(proxyConnections - connectionsBefore < 5000, `reconnecting must be cut short: ${told}`);
+  if (spinning) {
+    assert.ok(
+      raced.every((answer) => answer.recoveryReason === "proxy_unavailable"),
+      `every command must be told the proxy is failing: ${told}`,
+    );
+    assert.ok(
+      raced.every((answer) => answer.recoveryDetail.includes("proxy is failing")),
+      JSON.stringify(raced[0]),
+    );
+    assert.ok(brokersSeen.size < 5, `a cooldown must stand between brokers: ${told}`);
+    assert.ok(
+      cooldowns.length === 1 && cooldowns[0].proxy === true && cooldowns[0].failures < 5,
+      `the broker must leave a cooldown that names the proxy: ${told}`,
+    );
+  }
+  for (const pid of brokersSeen) pids.add(pid);
+  // As `prim setup --cloud` does before it checks again; the proxy has recovered.
+  for (const name of await readdir(config))
+    if (name.startsWith("machine_retry_")) await rm(join(config, name));
+  const recovered = await cloudStatus(inSession);
+  assert.equal(recovered.status, "valid", JSON.stringify(recovered));
+  pids.add((await routedBroker()).pid);
   measured.proxyConnectionsWhileSilent = opened;
-  measured.proxyConnectionsBeforeExit = connectionsAtExit - connectionsBeforeRace;
-  reports.push("a broker never outlives a request that met a silent proxy");
+  reports.push("a broker reconnecting without end gives up behind a cooldown that names the proxy");
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);

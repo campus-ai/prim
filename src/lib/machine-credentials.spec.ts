@@ -895,6 +895,32 @@ describe("proxy routing in a Claude Code cloud session", () => {
       },
     );
 
+    it("hands the broker no credential for the identity check", async () => {
+      const { caller, credential } = await session("secret in variables");
+      await close(broker);
+      // Whatever now answers on the broker's port hears all a caller sends.
+      const heard: string[] = [];
+      broker = createServer(async (request, response) => {
+        let body = "";
+        for await (const chunk of request) body += chunk;
+        heard.push(`${JSON.stringify(request.headers)}\n${body}`);
+        response.end("{}");
+      });
+      const generation = environmentCredentials(caller)?.generation;
+      writeFileSync(
+        join(directory, `machine_broker_${generation}.json`),
+        JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
+        { mode: 0o600 },
+      );
+      await expect(
+        verifyAcquiredMachineIdentity(credential({ routing: "proxy" }), caller),
+      ).rejects.toMatchObject({ code: "broker_unavailable" });
+      expect(heard).toHaveLength(1);
+      expect(heard[0]).toContain("/api/cli/auth/status");
+      expect(heard[0]).not.toMatch(/authorization|bearer/iu);
+      expect(heard[0]).not.toContain(COPY);
+    });
+
     it("reports the API's refusal of a relayed identity check as the direct check would", async () => {
       const { caller, credential } = await session("secret in variables");
       apiStatus = 401;

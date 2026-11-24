@@ -1,5 +1,5 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY, CLOUD_PROXY_FAILING } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -316,6 +316,13 @@ function sessionSteps(
   const auth = deps.parseAuthStatus(status);
   if (auth !== "valid") {
     const detail = authFailureDetail(status.stdout);
+    // The proxy's own failure is not the allowlist's: say that, and nothing
+    // about domains the user may already have allowed.
+    if (auth === "unreachable" && detail && CLOUD_PROXY_FAILING.startsWith(detail)) {
+      remedy(`credentials · ${detail}`);
+      results.credentials = "failed";
+      return;
+    }
     // A failure that already names Allowed domains names one host and the
     // same fix; the remedy lists every host, so say it once.
     const cause = detail && !detail.includes("Allowed domains") ? ` (${detail})` : "";

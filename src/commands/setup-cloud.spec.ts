@@ -472,6 +472,28 @@ describe("setupCloudSession", () => {
     );
   });
 
+  it("blames the proxy, and asks for no domain, when the proxy itself is failing", () => {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      parseAuthStatus: () => "unreachable",
+      run: () => ({
+        code: 1,
+        stdout: JSON.stringify({
+          recoveryReason: "proxy_unavailable",
+          recoveryDetail:
+            "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+        }),
+      }),
+    });
+    setupCloudSession(deps);
+    const text = notes.join("\n");
+    expect(text).toContain(
+      "credentials · The cloud environment's proxy is failing (not the Allowed domains list); retry shortly",
+    );
+    expect(text).not.toContain("add api.getprimitive.ai");
+    expect(text).not.toContain("unreachable from this environment");
+  });
+
   it("still activates but reports a repository without committed prim hooks", () => {
     const { deps, calls, notes, exit } = harness({ cwd: repo(false) });
     setupCloudSession(deps);
