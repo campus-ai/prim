@@ -469,6 +469,25 @@ describe("prim setup --cloud flags", () => {
 });
 
 describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", () => {
+  it("prepares nothing in an unprepared VM for a repository that opts out", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps, calls, exit } = harness({ cwd: root });
+    setupDetectedCloudSession(deps);
+    // No user-scope hooks, allow-rule, skill, daemon change, or marker: the
+    // VM stays as its environment's owner left it.
+    expect(deps.stage).not.toHaveBeenCalled();
+    expect(deps.installUserHooks).not.toHaveBeenCalled();
+    expect(deps.markPrepared).not.toHaveBeenCalled();
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true, failed: [] });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
   it("prepares an unprepared VM, sets up the session, and says the hooks are not live yet", () => {
     const { deps, calls, exit } = harness({ cwd: repo(false) });
     setupDetectedCloudSession(deps);
@@ -527,25 +546,6 @@ describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", ()
     setupCloudSession(deps);
     expect(calls[0]).toEqual(["auth", "status", "--json"]);
     expect(printed[0]).toMatchObject({ results: { credentials: "ok" } });
-  });
-
-  it("prepares nothing in an unprepared VM for a repository that opts out", () => {
-    const root = repo(false);
-    mkdirSync(join(root, ".claude"));
-    writeFileSync(
-      join(root, ".claude", "settings.json"),
-      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
-    );
-    const { deps, calls, exit } = harness({ cwd: root });
-    setupDetectedCloudSession(deps);
-    // No user-scope hooks, allow-rule, skill, daemon change, or marker: the
-    // VM stays as its environment's owner left it.
-    expect(deps.stage).not.toHaveBeenCalled();
-    expect(deps.installUserHooks).not.toHaveBeenCalled();
-    expect(deps.markPrepared).not.toHaveBeenCalled();
-    expect(calls).toEqual([["auth", "status", "--json"]]);
-    expect(printed[0]).toMatchObject({ ok: true, optedOut: true, failed: [] });
-    expect(exit).not.toHaveBeenCalled();
   });
 
   it("does not claim the hooks will load when preparing failed", () => {
