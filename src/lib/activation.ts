@@ -12,8 +12,19 @@
  *   - `prim disable`   → `git config --local prim.active false` (mute this repo)
  *   - global opt-out   → `git config --global prim.active true` (every repo)
  *
- * Personal and per-clone — no files added to the repo tree. The global git-hook
- * shell reads the flag inline (`git config --get prim.active`) BEFORE spawning
+ * A repository can also commit its own default: `PRIM_ACTIVE=false` in its
+ * `.claude/settings.json` (`prim disable --scope project`). It cancels the
+ * implicit opt-ins for every clone, which is the only opt-out that outlives a
+ * Claude Code cloud session's fresh clone. A `prim.active=true` the user set
+ * (in the clone, or globally for every repo) still wins over it.
+ *
+ * SessionStart writes an implicit opt-in down as a local `prim.active=true`,
+ * because the shell git hooks can read nothing else. It marks that write
+ * (`prim.activeImplicit`), so the flag is not mistaken for the user's own
+ * `prim enable` and can be withdrawn when the repository later opts out.
+ *
+ * The flag itself is personal and per-clone — no files added to the repo
+ * tree. The global git-hook shell reads the flag inline (`git config --get prim.active`) BEFORE spawning
  * node, so an inactive repo costs one config read and never spawns node. The
  * agent content hooks are already node, so they check in-process and
  * short-circuit before doing any work.
@@ -24,9 +35,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { isPreparedCloudSession } from "./cloud-prepared.js";
 import { healDemoPause, readCaptureConfig } from "./demo-pause.js";
-import { gitToplevel, githubRepositoryFullName } from "./git.js";
+import {
+  checkoutDeclaration,
+  checkoutSettingsText,
+  gitToplevel,
+  githubRepositoryFullName,
+} from "./git.js";
 
 export const PRIM_ACTIVE_KEY = "prim.active";
+/** The committed counterpart of `prim.active=false`, under `env` in `.claude/settings.json`. */
+export const PRIM_ACTIVE_DECLARATION = "PRIM_ACTIVE";
+/** Marks a local `prim.active=true` that prim wrote for an implicit opt-in. */
+export const PRIM_ACTIVE_IMPLICIT_KEY = "prim.activeImplicit";
 export const PRIM_REPO_SYNC_ID_KEY = "prim.repoSyncId";
 export const PRIM_REPO_SYNC_REPOSITORY_KEY = "prim.repoSyncRepository";
 export const PRIM_REPO_BINDING_STATE_KEY = "prim.repoBindingState";
@@ -213,7 +233,10 @@ export function clearRepoSyncId(cwd: string): void {
  * mark EVERY repo under $HOME active — the very opt-in this gate protects.
  */
 export function hasProjectPrimInstall(cwd: string): boolean {
-  const root = gitToplevel(cwd);
+  return projectPrimInstallAt(gitToplevel(cwd));
+}
+
+function projectPrimInstallAt(root: string | null): boolean {
   // null → not a repo. root === homedir() → a dotfiles-as-repo whose
   // <root>/.claude/settings.json IS the machine-global user-scope file; treating
   // it as a project install would re-open the every-repo-under-$HOME hole.
@@ -232,13 +255,99 @@ export function hasProjectPrimInstall(cwd: string): boolean {
   return false;
 }
 
+// The opt-out as it appears in a settings file JSON.parse rejects.
+const UNPARSED_OPT_OUT = /"PRIM_ACTIVE"\s*:\s*"\s*false\s*"/u;
+
+/**
+ * True when the repository commits its own opt-out: `PRIM_ACTIVE=false` in the
+ * checkout's `.claude/settings.json`, read from that file and never from the
+ * environment (see checkoutDeclaration). A fresh clone carries it, so it is the
+ * one opt-out that survives a Claude Code cloud session, where the per-clone
+ * `prim.active` flag is gone with the VM. Bounded to the repo root like
+ * hasProjectPrimInstall: at $HOME that file is the user-scope config.
+ */
+export function declaresInactive(cwd: string): boolean {
+  return declaresInactiveAt(gitToplevel(cwd));
+}
+
+function declaresInactiveAt(root: string | null): boolean {
+  if (root === null || root === homedir()) return false;
+  if (checkoutDeclaration(root, PRIM_ACTIVE_DECLARATION)?.trim() === "false") return true;
+  // The opt-ins this cancels need no valid JSON (a project install is found
+  // by its hook names, a prepared environment by no file at all), so a file
+  // with a merge conflict or a stray comma must not read as "no opt-out".
+  const text = checkoutSettingsText(root);
+  if (text === null || !UNPARSED_OPT_OUT.test(text)) return false;
+  try {
+    JSON.parse(text);
+    return false; // Valid JSON was already read exactly, above.
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Record that the local `prim.active=true` in `cwd` is prim's own write for an
+ * implicit opt-in (see the header). Best effort: without the mark the flag
+ * reads as the user's, which only keeps capture on.
+ */
+export function markActivationImplicit(cwd: string): void {
+  try {
+    setLocalGitConfigValue(cwd, PRIM_ACTIVE_IMPLICIT_KEY, "true");
+  } catch {
+    // The flag itself is written; SessionStart is fail-soft.
+  }
+}
+
+/** `prim enable` / `prim disable` make the flag the user's own. */
+export function markActivationExplicit(cwd: string): void {
+  unsetLocalGitConfigValue(cwd, PRIM_ACTIVE_IMPLICIT_KEY);
+}
+
+/** True when the clone's `prim.active=true` is the user's, not prim's implicit write. */
+export function explicitlyActive(cwd: string): boolean {
+  return (
+    repoActiveFlag(cwd) === "true" &&
+    !(
+      localGitConfigValue(cwd, PRIM_ACTIVE_KEY) === "true" &&
+      localGitConfigValue(cwd, PRIM_ACTIVE_IMPLICIT_KEY) === "true"
+    )
+  );
+}
+
+/**
+ * Withdraw prim's own implicit activation once the repository commits its
+ * opt-out: a clone activated by an earlier session (a project install, a
+ * prepared cloud environment) must not stay on because prim wrote the flag
+ * the shell hooks need. Runs at SessionStart, so a newly pulled opt-out takes
+ * effect from the clone's next agent session. Returns true when it turned the
+ * clone off. A flag written before prim marked its own writes is
+ * indistinguishable from `prim enable` and is left alone.
+ */
+export function withdrawImplicitActivation(cwd: string): boolean {
+  try {
+    const root = gitToplevel(cwd);
+    if (root === null) return false;
+    if (localGitConfigValue(root, PRIM_ACTIVE_IMPLICIT_KEY) !== "true") return false;
+    if (localGitConfigValue(root, PRIM_ACTIVE_KEY) !== "true" || !declaresInactiveAt(root))
+      return false;
+    unsetLocalGitConfigValue(root, PRIM_ACTIVE_KEY);
+    unsetLocalGitConfigValue(root, PRIM_ACTIVE_IMPLICIT_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The gate the AGENT content hooks (capture, conflict gate, ingest) use:
  *   - "true"    → active
  *   - "false"   → inactive — `prim disable` is authoritative and is NOT
  *                 overridden by the back-fill, so a user can always mute a repo
- *   - unset     → back-fill: active iff a pre-existing project install is found,
- *                 or the session runs in a prepared Claude Code cloud environment
+ *   - unset     → inactive when the repository commits its opt-out (see
+ *                 declaresInactive); otherwise back-fill: active iff a
+ *                 pre-existing project install is found, or the session runs
+ *                 in a prepared Claude Code cloud environment
  * Checked only on the unset fallback, so an active/disabled repo pays just the
  * flag read.
  */
@@ -252,10 +361,14 @@ export function isRepoActiveForCapture(
   if (pause && healDemoPause(cwd, pause, options)) flag = repoActiveFlag(cwd);
   if (flag === "true") return true;
   if (flag === "false") return false;
+  const root = gitToplevel(cwd);
+  // The repository's own committed opt-out outranks every implicit opt-in
+  // below; only a `prim.active=true` the user set overrides it.
+  if (declaresInactiveAt(root)) return false;
   // A prepared Claude Code cloud environment opted every repository in, the
   // way a committed project install opts in one. Gated on the session so a
   // stale marker on a developer's machine never activates anything.
-  return hasProjectPrimInstall(cwd) || (isPreparedCloudSession() && gitToplevel(cwd) !== null);
+  return projectPrimInstallAt(root) || (isPreparedCloudSession() && root !== null);
 }
 
 /** Human-readable decision-ingestion state for the capture gate at `cwd`. */

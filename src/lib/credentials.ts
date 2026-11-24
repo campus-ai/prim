@@ -106,6 +106,26 @@ export function resolveAuthCredential(
   return { token: stored, source: "token_file" };
 }
 
+/**
+ * A credential that is not a machine credential: a fixed PRIM_TOKEN, or the
+ * sign-in stored in `env`'s own config directory. Callers decide machine
+ * credentials first; this answers "is there anything else to authenticate
+ * with" the same way for every check that asks.
+ */
+export function resolveStoredCredential(
+  env: NodeJS.ProcessEnv = process.env,
+): AuthCredential | undefined {
+  const directory = primConfigDirectory({ env });
+  return resolveAuthCredential({
+    env,
+    tokenFilePath: join(directory, "token"),
+    refreshTokenPath: join(directory, "refresh_token"),
+    metadataPath: join(directory, "credential_metadata.json"),
+    familyPath: join(directory, "credential_family.json"),
+    migrationPath: join(directory, "credential_migration.json"),
+  });
+}
+
 function credentialFingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }

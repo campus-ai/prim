@@ -1,6 +1,7 @@
-import { hasProjectPrimInstall } from "../lib/activation.js";
+import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
 import {
   clearCloudPrepared,
+  insideClaudeCode,
   isPreparedCloudSession,
   markCloudPrepared,
   preparedInSession,
@@ -11,6 +12,7 @@ import {
   isClaudeCloudSession,
   repositoryIdentityRemedy,
 } from "../lib/cloud-session.js";
+import { resolveStoredCredential } from "../lib/credentials.js";
 import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
@@ -38,7 +40,7 @@ export type CloudSetupDependencies = {
     | "unreachable";
   stage?: () => void;
   installUserHooks?: () => void;
-  markPrepared?: () => void;
+  markPrepared?: (origin: "image" | "session") => void;
   /** A developer's own user-scope prim install that preparing would rewrite. */
   developerInstall?: () => boolean;
   /** The VM's user-scope settings still carry prim's complete cloud wiring. */
@@ -94,6 +96,12 @@ type CloudResults = Record<string, CloudSetupStep>;
  * committed install. It marks the environment prepared, so sessions activate
  * the repositories they open, and records the daemon opt-out (a paused VM
  * would only kill the daemon; capture delivers directly instead).
+ *
+ * Run from inside a session instead, it wires a VM whose Claude Code has
+ * already read its settings, and new sessions start from the environment's
+ * image, not this VM. It then records that origin and reports that this run
+ * did not prepare the image, so neither it nor a later `prim setup --cloud`
+ * claims hooks that never loaded.
  */
 export function prepareCloudImage(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "prepare")) return;
@@ -110,8 +118,36 @@ export function prepareCloudImage(deps: CloudSetupDependencies): void {
   }
   const results: CloudResults = {};
   const remedies: string[] = [];
-  prepareSteps(deps, results, remedies);
+  const origin = prepareOrigin(deps);
+  prepareSteps(deps, results, remedies, origin);
+  if (origin === "session" && results.prepared === "ok") {
+    // This run cannot see the environment's setup script, only that it did
+    // not prepare this VM before Claude Code started.
+    const reason =
+      "image · not prepared by this run: it ran inside a running Claude Code session, so only this VM is wired. Claude Code loads the hooks when it next starts here, and new sessions start from the environment's image. If the environment's setup script does not run `prim setup --cloud --prepare` yet, add it there; sessions started after that load the hooks";
+    deps.note(reason);
+    remedies.push(reason);
+    results.image = "missing";
+  }
   finish(deps, "prepare", results, remedies);
+}
+
+/**
+ * Who is preparing: the environment's setup script, or a command inside a
+ * session. Claude Code reads its settings once, when it starts, and the setup
+ * script runs before that; anything Claude Code itself started runs after.
+ * The exception is a VM the image already prepared: its hooks were wired
+ * before Claude Code started, so re-running there leaves them live. Decided
+ * before the steps clear the earlier marker.
+ */
+function prepareOrigin(deps: CloudSetupDependencies): "image" | "session" {
+  const env = deps.env ?? process.env;
+  if (!insideClaudeCode(env)) return "image";
+  const live =
+    isPreparedCloudSession(env) &&
+    !preparedInSession(env) &&
+    (deps.userHooksComplete ?? cloudUserInstallComplete)();
+  return live ? "image" : "session";
 }
 
 /**
@@ -127,8 +163,9 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
   if (refuseOutsideCloud(deps, "session")) return;
   const results: CloudResults = {};
   const remedies: string[] = [];
-  sessionSteps(deps, results, remedies);
-  finish(deps, "session", results, remedies);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, {}, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
 }
 
 /**
@@ -146,12 +183,27 @@ export function setupDetectedCloudSession(deps: CloudSetupDependencies): void {
   const remedies: string[] = [];
   const root = gitToplevel(deps.cwd);
   let preparedNow = false;
-  if (!isPreparedCloudSession(env) && !(root && hasProjectPrimInstall(root))) {
+  // A repository that opts out wants nothing set up, the VM included: an
+  // environment left unprepared may be how its owner keeps prim off elsewhere.
+  if (
+    !isPreparedCloudSession(env) &&
+    !(root && hasProjectPrimInstall(root)) &&
+    !(root && optsOut(root))
+  ) {
     prepareSteps(deps, results, remedies, "session");
     preparedNow = results.prepared === "ok";
   }
-  sessionSteps(deps, results, remedies, { preparedNow });
-  finish(deps, "session", results, remedies);
+  const outcome: SessionOutcome = {};
+  sessionSteps(deps, results, remedies, { preparedNow }, outcome);
+  finish(deps, "session", results, remedies, outcome.optedOut);
+}
+
+/**
+ * The repository commits its opt-out and nobody turned this clone on. An
+ * activation prim itself wrote down for an implicit opt-in is not that.
+ */
+function optsOut(root: string): boolean {
+  return declaresInactive(root) && !explicitlyActive(root);
 }
 
 /**
@@ -214,12 +266,16 @@ function prepareSteps(
   // Activation needs only the runtime and the hooks; a missing skill or
   // allow-rule is reported but does not switch prim off everywhere.
   if (results.runtime === "ok" && results.userHooks === "ok")
-    attempt(
-      "prepared",
-      "cloud activation",
-      deps.markPrepared ?? (() => markCloudPrepared(env, origin)),
+    attempt("prepared", "cloud activation", () =>
+      (deps.markPrepared ?? ((from) => markCloudPrepared(env, from)))(origin),
     );
 }
+
+/** What the session steps found beyond each step's own result. */
+type SessionOutcome = {
+  /** The repository commits its own opt-out and nothing was activated. */
+  optedOut?: boolean;
+};
 
 /** The per-session steps; a missing prerequisite stops the rest. */
 function sessionSteps(
@@ -227,6 +283,7 @@ function sessionSteps(
   results: CloudResults,
   remedies: string[],
   options: { preparedNow?: boolean } = {},
+  outcome: SessionOutcome = {},
 ): void {
   const remedy = (message: string): void => {
     deps.note(message);
@@ -241,9 +298,10 @@ function sessionSteps(
     results.credentials = "failed";
     return;
   }
-  // A fixed bearer token also authenticates prim; only no credential at all
-  // is missing.
-  if (!machine && !env.PRIM_TOKEN?.trim()) {
+  // A fixed bearer token or a stored sign-in also authenticates prim; only no
+  // credential at all is missing. The SessionStart diagnosis asks the same
+  // question the same way, so the two never disagree.
+  if (!machine && !resolveStoredCredential(env)) {
     remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
     results.credentials = "missing";
     return;
@@ -255,7 +313,19 @@ function sessionSteps(
     remedy(
       auth === "unreachable"
         ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
-        : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
+        : machine
+          ? `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`
+          : // A fixed token or stored sign-in has no installation to revoke.
+            `credentials · the sign-in was rejected: ${CLOUD_CREDENTIALS_REMEDY}`,
+    );
+    results.credentials = "failed";
+    return;
+  }
+  // A human sign-in the server accepts only for enrolling an installation
+  // verifies, yet authorizes nothing else, and a cloud session cannot enroll.
+  if (enrollmentRequired(status.stdout)) {
+    remedy(
+      `credentials · this sign-in can only enroll an installation, which a cloud session cannot do: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
     return;
@@ -266,6 +336,17 @@ function sessionSteps(
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
+    return;
+  }
+  // The repository's committed opt-out is its answer to a prepared environment
+  // (and to this command, which the documented agent prompt runs): leave it
+  // off. A clone someone explicitly enabled is theirs to keep on.
+  if (optsOut(root)) {
+    deps.note(
+      "repository · opted out: its .claude/settings.json declares PRIM_ACTIVE=false, so prim stays off here. `prim enable` turns it on for this session's clone; `prim enable --scope project` removes the opt-out",
+    );
+    results.repository = "ok";
+    outcome.optedOut = true;
     return;
   }
   if (!githubRepositoryFullName(root)) {
@@ -310,6 +391,17 @@ function sessionSteps(
   step("enable", "activate this repo", ["enable", "--non-interactive"]);
 }
 
+/** `auth status --json` verified the sign-in for enrollment only. */
+function enrollmentRequired(stdout: string): boolean {
+  try {
+    return (
+      (JSON.parse(stdout || "{}") as { enrollmentRequired?: unknown }).enrollmentRequired === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** The machine credential failure's own guidance from `auth status --json`, if any. */
 function authFailureDetail(stdout: string): string | undefined {
   try {
@@ -327,6 +419,7 @@ function finish(
   mode: "prepare" | "session",
   results: CloudResults,
   remedies: string[],
+  optedOut = false,
 ): void {
   const failed = Object.keys(results).filter((key) => results[key] !== "ok");
   deps.note(
@@ -340,8 +433,18 @@ function finish(
     failed.length === 0
       ? mode === "prepare"
         ? "The cloud environment is prepared; sessions started from it load prim's hooks."
-        : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
+        : optedOut
+          ? "This repository opts out of Primitive (PRIM_ACTIVE=false in its .claude/settings.json), so nothing was activated. Tell the user in one sentence, then continue their task; do not run prim enable unless they ask."
+          : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
       : "Cloud setup is incomplete. Tell the user each remedy in one sentence before continuing; do not run prim auth login or prim auth enroll, which cannot work in a cloud session.";
-  printJson({ ok: failed.length === 0, cloud: mode, results, failed, remedies, instructions });
+  printJson({
+    ok: failed.length === 0,
+    cloud: mode,
+    results,
+    failed,
+    remedies,
+    instructions,
+    ...(optedOut ? { optedOut: true } : {}),
+  });
   if (failed.length) deps.exit(EXIT_INCOMPLETE);
 }

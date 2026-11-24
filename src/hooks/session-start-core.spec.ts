@@ -4,6 +4,11 @@ const mocks = vi.hoisted(() => ({
   bind: vi.fn(),
   diagnose: vi.fn(),
   cloud: vi.fn(),
+  gate: vi.fn(),
+  flag: vi.fn(),
+  setActive: vi.fn(),
+  markImplicit: vi.fn(),
+  withdraw: vi.fn(),
 }));
 
 vi.mock("../client.js", () => ({
@@ -20,9 +25,11 @@ vi.mock("../commands/skill.js", () => ({
 vi.mock("../daemon/client.js", () => ({ daemonRequest: async () => undefined }));
 vi.mock("../daemon/self-heal.js", () => ({ kickDaemonEnsure: () => undefined }));
 vi.mock("../lib/activation.js", () => ({
-  isRepoActiveForCapture: () => true,
-  repoActiveFlag: () => "true",
-  setRepoActive: () => undefined,
+  isRepoActiveForCapture: mocks.gate,
+  markActivationImplicit: mocks.markImplicit,
+  repoActiveFlag: mocks.flag,
+  setRepoActive: mocks.setActive,
+  withdrawImplicitActivation: mocks.withdraw,
 }));
 vi.mock("../lib/bin-cache.js", () => ({ warmBinCache: () => undefined }));
 vi.mock("../lib/cloud-session.js", () => ({
@@ -59,6 +66,9 @@ beforeEach(() => {
   mocks.diagnose.mockResolvedValue(NOTICE);
   mocks.bind.mockRejectedValue(new Error("fetch failed"));
   mocks.cloud.mockReturnValue(true);
+  mocks.gate.mockReturnValue(true);
+  mocks.flag.mockReturnValue("true");
+  mocks.withdraw.mockReturnValue(false);
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -91,6 +101,38 @@ describe("processSessionStart in a Claude Code cloud session", () => {
   it("stays fail-soft when the diagnosis itself throws", async () => {
     mocks.diagnose.mockRejectedValue(new Error("boom"));
     const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBeUndefined();
+  });
+});
+
+describe("implicit activation at SessionStart", () => {
+  it("marks the flag it writes for an implicit opt-in as prim's own", async () => {
+    // Active through a project install or a prepared environment, flag unset.
+    mocks.flag.mockReturnValue(undefined);
+    await processSessionStart(envelope, "claude_code");
+    expect(mocks.setActive).toHaveBeenCalledWith("/repo", true);
+    expect(mocks.markImplicit).toHaveBeenCalledWith("/repo");
+  });
+
+  it("leaves a flag that is already set alone", async () => {
+    await processSessionStart(envelope, "claude_code");
+    expect(mocks.setActive).not.toHaveBeenCalled();
+    expect(mocks.markImplicit).not.toHaveBeenCalled();
+  });
+
+  it("withdraws its own earlier activation before asking whether the repository is active", async () => {
+    // The repository has since committed its opt-out: withdrawing unsets the
+    // flag, and the gate then answers for the opt-out.
+    mocks.withdraw.mockImplementation(() => {
+      mocks.gate.mockReturnValue(false);
+      return true;
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect(mocks.withdraw).toHaveBeenCalledWith("/repo");
+    expect(mocks.withdraw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.gate.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.bind).not.toHaveBeenCalled();
     expect((output as Output).systemMessage).toBeUndefined();
   });
 });

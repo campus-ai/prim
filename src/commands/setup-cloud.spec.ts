@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -59,12 +59,17 @@ function harness(overrides: Partial<CloudSetupDependencies> = {}) {
     },
     ...overrides,
   };
+  // Never the real config directory: preparing clears and writes its marker.
+  deps.env = { PRIM_CONFIG_DIR: tempDir("prim-cloud-config-"), ...deps.env };
   return { deps, calls, notes, exit };
 }
 
 let printed: unknown[];
 beforeEach(() => {
   printed = [];
+  // Whether a clone is active must not depend on the host's own prim.active.
+  vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
+  vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   vi.spyOn(console, "log").mockImplementation((value: string) => {
     printed.push(JSON.parse(value));
   });
@@ -85,7 +90,7 @@ describe("prepareCloudImage", () => {
       ["skill", "install", "--agent", "claude", "--scope", "user"],
       ["daemon", "stop"],
     ]);
-    expect(deps.markPrepared).toHaveBeenCalledOnce();
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("image");
     expect(printed).toEqual([
       {
         ok: true,
@@ -150,6 +155,102 @@ describe("prepareCloudImage", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("is the image's prepare in a setup script, even where the VM already says cloud", () => {
+    // The setup script runs before Claude Code launches: no CLAUDECODE.
+    const { deps, exit } = harness({ env: { CLAUDE_CODE_REMOTE: "true" } });
+    prepareCloudImage(deps);
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("image");
+    expect(printed[0]).toMatchObject({ ok: true, results: { prepared: "ok" } });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("run inside a session, wires only this VM and says the image is still unprepared", () => {
+    const { deps, notes, exit } = harness({
+      env: {
+        CLAUDE_CODE_REMOTE: "true",
+        CLAUDECODE: "1",
+        PRIM_CONFIG_DIR: tempDir("prim-cloud-config-"),
+      },
+    });
+    prepareCloudImage(deps);
+    expect(deps.installUserHooks).toHaveBeenCalledOnce();
+    expect(deps.markPrepared).toHaveBeenCalledExactlyOnceWith("session");
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      cloud: "prepare",
+      results: { userHooks: "ok", prepared: "ok", image: "missing" },
+      failed: ["image"],
+      remedies: [expect.stringMatching(/not prepared by this run.*setup script/u)],
+      instructions: expect.stringContaining("Cloud setup is incomplete"),
+    });
+    expect(notes.join("\n")).toContain("inside a running Claude Code session");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("cannot turn hooks pending from an in-session setup back into a prepared report", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    const env = {
+      CLAUDE_CODE_REMOTE: "true",
+      CLAUDECODE: "1",
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "secret",
+      PRIM_CONFIG_DIR: configDir,
+    };
+    // Real marker writes, so each run sees what the one before left behind.
+    setupDetectedCloudSession(harness({ cwd: repo(false), env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+
+    prepareCloudImage(harness({ env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+    expect(printed[1]).toMatchObject({ ok: false, results: { image: "missing" } });
+
+    setupCloudSession(harness({ cwd: repo(false), env, markPrepared: undefined }).deps);
+    expect(printed[2]).toMatchObject({
+      ok: false,
+      results: { session: "missing" },
+      remedies: [expect.stringContaining("add `prim setup --cloud --prepare`")],
+    });
+  });
+
+  it("run inside a session on an unprepared VM, never records the image's origin", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    prepareCloudImage(harness({ env, markPrepared: undefined }).deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+  });
+
+  it("re-run inside a session the image prepared, leaves its live hooks reported as live", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    const { deps, exit } = harness({ env, markPrepared: undefined });
+    prepareCloudImage(deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1\n");
+    expect(printed[0]).toMatchObject({ ok: true, failed: [] });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("does not trust an image marker whose user-scope hooks are gone", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const env = { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1", PRIM_CONFIG_DIR: configDir };
+    const { deps } = harness({ env, markPrepared: undefined, userHooksComplete: () => false });
+    prepareCloudImage(deps);
+    expect(readFileSync(join(configDir, "cloud-prepared"), "utf8")).toBe("1 session\n");
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["image"] });
+  });
+
+  it("does not add the image remedy when the in-session wiring itself failed", () => {
+    const { deps } = harness({
+      env: { CLAUDE_CODE_REMOTE: "true", CLAUDECODE: "1" },
+      installUserHooks: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+    prepareCloudImage(deps);
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["userHooks"] });
+  });
+
   it("refuses on a developer's machine, where it would disable the daemon", () => {
     const { deps, calls, exit } = harness({ env: {}, platform: "darwin" });
     prepareCloudImage(deps);
@@ -209,6 +310,70 @@ describe("setupCloudSession", () => {
     expect(notes.join("\n")).toContain("records PRIM_REPOSITORY in .claude/settings.json");
     expect(printed[0]).toMatchObject({ ok: false, results: { repository: "missing" } });
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("leaves a repository that commits its opt-out off, and says so instead of enabling it", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps, calls, notes, exit } = harness({ cwd: root });
+    setupCloudSession(deps);
+    // Credentials are still verified; nothing is wired or activated.
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      ok: true,
+      optedOut: true,
+      results: { credentials: "ok", repository: "ok" },
+      failed: [],
+      instructions: expect.stringContaining("opts out of Primitive"),
+    });
+    expect(notes.join("\n")).toContain("PRIM_ACTIVE=false");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("needs no repository identity from a repository that opts out", () => {
+    const root = repo(false, "");
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true });
+  });
+
+  it("sets up a clone someone explicitly enabled despite the committed opt-out", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: root });
+    const { deps, calls } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(calls.at(-1)).toEqual(["enable", "--non-interactive"]);
+    expect(printed[0]).not.toHaveProperty("optedOut");
+  });
+
+  it("treats an activation prim itself wrote down as no one's explicit choice", () => {
+    // An earlier session activated this clone implicitly; the opt-out came later.
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    execFileSync("git", ["config", "--local", "prim.active", "true"], { cwd: root });
+    execFileSync("git", ["config", "--local", "prim.activeImplicit", "true"], { cwd: root });
+    const { deps, calls } = harness({ cwd: root });
+    setupCloudSession(deps);
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true });
   });
 
   it("does not suggest a declaration when origin is a non-GitHub remote", () => {
@@ -402,6 +567,25 @@ describe("prim setup --cloud flags", () => {
 });
 
 describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", () => {
+  it("prepares nothing in an unprepared VM for a repository that opts out", () => {
+    const root = repo(false);
+    mkdirSync(join(root, ".claude"));
+    writeFileSync(
+      join(root, ".claude", "settings.json"),
+      JSON.stringify({ env: { PRIM_ACTIVE: "false" } }),
+    );
+    const { deps, calls, exit } = harness({ cwd: root });
+    setupDetectedCloudSession(deps);
+    // No user-scope hooks, allow-rule, skill, daemon change, or marker: the
+    // VM stays as its environment's owner left it.
+    expect(deps.stage).not.toHaveBeenCalled();
+    expect(deps.installUserHooks).not.toHaveBeenCalled();
+    expect(deps.markPrepared).not.toHaveBeenCalled();
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({ ok: true, optedOut: true, failed: [] });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
   it("prepares an unprepared VM, sets up the session, and says the hooks are not live yet", () => {
     const { deps, calls, exit } = harness({ cwd: repo(false) });
     setupDetectedCloudSession(deps);
@@ -460,6 +644,58 @@ describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", ()
     setupCloudSession(deps);
     expect(calls[0]).toEqual(["auth", "status", "--json"]);
     expect(printed[0]).toMatchObject({ results: { credentials: "ok" } });
+  });
+
+  it("accepts a stored sign-in in place of machine credentials, as SessionStart does", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, calls } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+    });
+    setupCloudSession(deps);
+    expect(calls[0]).toEqual(["auth", "status", "--json"]);
+    expect(printed[0]).toMatchObject({ ok: true, results: { credentials: "ok" } });
+  });
+
+  it("does not accept a sign-in that can only enroll, which a cloud session cannot do", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, calls, exit } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+      run: (args) => {
+        calls.push(args);
+        return {
+          code: 0,
+          stdout: JSON.stringify({ status: "valid", enrollmentRequired: true }),
+        };
+      },
+    });
+    setupCloudSession(deps);
+    // Stops at credentials: nothing is wired or enabled on a sign-in that
+    // authorizes nothing here.
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      results: { credentials: "failed" },
+      remedies: [expect.stringMatching(/can only enroll.*PRIM_M2M_CLIENT_ID/u)],
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("points a rejected sign-in at cloud credentials, not at an installation to revoke", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+      parseAuthStatus: () => "invalid",
+    });
+    setupCloudSession(deps);
+    const text = notes.join("\n");
+    expect(text).toContain("the sign-in was rejected: set PRIM_M2M_CLIENT_ID");
+    expect(text).not.toContain("Developer installations");
   });
 
   it("does not claim the hooks will load when preparing failed", () => {

@@ -131,34 +131,71 @@ export function originGithubRepository(cwd: string): string | null {
 }
 
 /**
- * The GitHub repository a checkout declares for itself as `env.PRIM_REPOSITORY`
- * in its `.claude/settings.json` (the working-tree file, normally committed);
- * `prim claude install --scope project` records it from origin. It is read
- * from that file, never from the process environment, so a declaration
- * identifies only the checkout that carries it, the same for every process
- * that resolves the checkout.
+ * Whether git would leave `path` out of a commit because an ignore rule
+ * covers it. A file that is already tracked is not ignored, whatever the
+ * rules say. False when git cannot tell.
  */
-export function declaredGithubRepository(repoRoot: string): string | null {
-  const path = join(repoRoot, ".claude", "settings.json");
-  let parsed: unknown;
+export function isGitIgnored(cwd: string, path: string): boolean {
   try {
-    // A real directory and a regular file of settings size only: a symlink
-    // could borrow another checkout's identity, and a FIFO or device would
-    // hang the hook reading it.
+    execFileSync("git", ["check-ignore", "--quiet", "--", path], {
+      cwd,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The text of a checkout's own `.claude/settings.json` (the working-tree
+ * file, normally committed), or null when there is none prim will read. A
+ * real directory and a regular file of settings size only: a symlink could
+ * borrow another checkout's declaration, and a FIFO or device would hang the
+ * hook reading it.
+ */
+export function checkoutSettingsText(repoRoot: string): string | null {
+  const path = join(repoRoot, ".claude", "settings.json");
+  try {
     if (!lstatSync(join(repoRoot, ".claude")).isDirectory()) return null;
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return null;
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One string a checkout declares for itself under `env` in its
+ * `.claude/settings.json`. It is read from that file, never from the process
+ * environment, so a declaration speaks only for the checkout that carries
+ * it, the same for every process that resolves the checkout.
+ */
+export function checkoutDeclaration(repoRoot: string, name: string): string | null {
+  const text = checkoutSettingsText(repoRoot);
+  if (text === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
   } catch {
     return null;
   }
   const env =
     typeof parsed === "object" && parsed !== null ? (parsed as { env?: unknown }).env : undefined;
   const value =
-    typeof env === "object" && env !== null
-      ? (env as Record<string, unknown>).PRIM_REPOSITORY
-      : undefined;
-  return typeof value === "string" ? parseGithubRepositoryName(value.trim()) : null;
+    typeof env === "object" && env !== null ? (env as Record<string, unknown>)[name] : undefined;
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * The GitHub repository a checkout declares for itself as `env.PRIM_REPOSITORY`;
+ * `prim claude install --scope project` records it from origin.
+ */
+export function declaredGithubRepository(repoRoot: string): string | null {
+  const value = checkoutDeclaration(repoRoot, "PRIM_REPOSITORY");
+  return value === null ? null : parseGithubRepositoryName(value.trim());
 }
 
 /**

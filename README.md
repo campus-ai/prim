@@ -189,8 +189,12 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      repositories need no commit. It marks the environment so sessions activate the
      repositories they open, and turns the daemon off: the VM pauses between messages, so
      capture delivers directly instead. `prim disable` opts a repository out for the rest of
-     that session only, because each session starts from a fresh clone; to keep prim out of
-     a repository, use an environment without `--prepare` for it.
+     that session only, because each session starts from a fresh clone. To keep prim out of
+     a repository for good, run `prim disable --scope project` in it and commit
+     `.claude/settings.json` (with `git add -f` where the repository ignores `.claude`;
+     prim says so): that records `PRIM_ACTIVE=false` there, every clone carries
+     it, and prim then stays off in that repository unless someone turns it on themselves
+     (`prim enable` in their own clone). `prim enable --scope project` removes it again.
 
 To keep the client secret out of the VM's variables, give it to the environment's proxy.
 Under **Network secrets**, add a **Username and password** secret for host
@@ -242,6 +246,10 @@ mode has been exercised against a stand-in proxy, not yet against Claude Code's 
 Running plain `prim setup` inside a cloud session (for example through the agent prompt
 above) detects the session and does the cloud setup; browser sign-in, the daemon, and
 onboarding are skipped there, and `prim auth login` explains why it cannot run.
+`--prepare` belongs in the setup script: Claude Code reads its hooks when it starts, and
+new sessions start from the environment's image. Run inside a session, it wires only
+that VM and says the image was not prepared by that run (a VM the image had already
+prepared stays prepared).
 
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
@@ -377,7 +385,17 @@ but the edit gate sees the changed gameplan path.
 
 Passive capture is repo-scoped even when these integrations are installed at user
 scope. `prim enable` marks the current Git repo active; `prim disable` makes it
-inactive. A project-scoped install activates its repo automatically. In an inactive
+inactive. A project-scoped install activates its repo automatically. Both commands
+act on your clone alone. `prim disable --scope project` also records the repository's
+own opt-out, `PRIM_ACTIVE=false` under `env` in `.claude/settings.json`, for you to
+commit: prim reads it from that file (never from the environment), and it turns off
+automatic activation in every clone, including a project-scoped install's and a
+prepared Claude Code cloud environment's. A `prim.active=true` you set yourself still
+wins: `prim enable` in a clone, or the global flag for every repository. A clone that
+prim had already activated automatically is turned off at its next agent session
+after it receives the opt-out; one activated that way by an earlier prim version
+cannot be told apart from `prim enable` and stays on until `prim disable`.
+`prim enable --scope project` removes the opt-out. In an inactive
 repo, session content is not passively captured. Here “inactive” means Prim's normal
 effective capture check is false, including an explicit local `prim.active=false`.
 
