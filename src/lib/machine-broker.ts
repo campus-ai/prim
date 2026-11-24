@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWriteFile } from "./atomic-file.js";
 import { binFile } from "./bin-path.js";
+import { type EgressReport, probeEgress } from "./egress-probe.js";
 import { withFileLock } from "./file-lock.js";
 import { loopbackFetch } from "./loopback-fetch.js";
 import {
@@ -14,8 +15,15 @@ import {
   cachedMachineCredential,
   environmentCredentials,
 } from "./machine-credentials.js";
-import { MachineAuthError, machineApiUrl, machineRecord } from "./machine-protocol.js";
+import {
+  MachineAuthError,
+  machineApiUrl,
+  machineRecord,
+  proxyFaultOf,
+} from "./machine-protocol.js";
+import { proxyCooldown, recordProxyFailure } from "./machine-retry.js";
 import { primConfigDirectory } from "./paths.js";
+import { onRunawayConnections, tunnelCheckedFetch } from "./proxy-tunnel.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 const MAX_RESPONSE_BYTES = 96 * 1024;
@@ -27,10 +35,10 @@ const MAX_API_RESPONSE_BYTES = 8 * 1024 * 1024;
 // The answer travels as JSON inside the signed envelope's JSON string, so a
 // quote-heavy body grows up to fourfold on the wire.
 const MAX_FORWARD_RESPONSE_BYTES = 36 * 1024 * 1024;
-// A forwarded request and its answer are signed apart from a credential
-// request and from each other, so neither can stand in for another.
-const FORWARD_REQUEST_PROOF = "forward-request";
-const FORWARD_ANSWER_PROOF = "forward-answer";
+// A forwarded request, a probe, and their answers are each signed apart from
+// a credential request and from one another, so none can stand in for another.
+const FORWARD_PROOFS = { request: "forward-request", answer: "forward-answer" };
+const PROBE_PROOFS = { request: "probe-request", answer: "probe-answer" };
 const FORWARD_TIMEOUT_MS = 30_000;
 const FORWARD_METHODS = ["GET", "POST", "DELETE"];
 const IDLE_MS = 5 * 60_000;
@@ -41,6 +49,7 @@ type Environment = {
   generation: string;
   secretInjection?: "network";
   tokenInjection?: "network";
+  routing?: "proxy";
 };
 export type BrokerApiRequest = {
   method: string;
@@ -150,14 +159,21 @@ async function brokerRequest(
  * the one process that makes those requests, so it is told here; no other
  * process in the VM needs the setting, and the broker's "experimental"
  * warning for it goes nowhere (its output is discarded).
+ *
+ * In a cloud session the broker is routed whatever holds the secret (see
+ * cloudProxyRouting): only the proxy follows an edit to the environment's
+ * Allowed domains, so every request prim makes goes through this process.
  */
 export function brokerEnvironment(options: {
   directory: string;
   apiUrl: string;
-  environment: Pick<Environment, "secretInjection" | "tokenInjection">;
+  environment: Pick<Environment, "secretInjection" | "tokenInjection" | "routing">;
   env: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
-  const routed = options.environment.secretInjection || options.environment.tokenInjection;
+  const routed =
+    options.environment.secretInjection ||
+    options.environment.tokenInjection ||
+    options.environment.routing;
   return {
     ...options.env,
     PRIM_API_URL: options.apiUrl,
@@ -192,11 +208,26 @@ export async function acquireBrokerCredential(options: {
   } catch (error) {
     options.signal.throwIfAborted();
     if (error instanceof MachineAuthError) throw error;
-    throw new MachineAuthError(
+    throw brokerUnavailable(options);
+  }
+}
+
+/**
+ * Why a broker did not answer. One that gave up on a failing proxy left a
+ * cooldown that says so (see recordProxyFailure); otherwise it is just gone.
+ */
+function brokerUnavailable(options: {
+  directory: string;
+  apiUrl: string;
+  environment: Pick<Environment, "clientId">;
+}): MachineAuthError {
+  return (
+    proxyCooldown(options.directory, options.apiUrl, options.environment.clientId) ??
+    new MachineAuthError(
       "broker_unavailable",
       "Machine credential broker is unavailable. Retry the command.",
-    );
-  }
+    )
+  );
 }
 
 /** The running broker for this generation, started here if none answers. */
@@ -289,21 +320,20 @@ async function ensureBroker(options: {
   );
 }
 
-async function forwardOnce(
+/** One signed request to a broker endpoint, and its authenticated answer. */
+async function signedExchange(
   descriptor: Descriptor,
   environment: Environment,
-  request: BrokerApiRequest,
+  endpoint: { path: string; proofs: { request: string; answer: string }; maximumBytes: number },
+  fields: Record<string, unknown>,
   signal: AbortSignal,
-): Promise<Response> {
+): Promise<Record<string, unknown>> {
   const body = JSON.stringify({
     generation: environment.generation,
     timestamp: Date.now(),
-    method: request.method,
-    path: request.path,
-    headers: request.headers ?? {},
-    ...(request.body === undefined ? {} : { body: request.body }),
+    ...fields,
   });
-  const response = await loopbackFetch(`http://127.0.0.1:${descriptor.port}/forward`, {
+  const response = await loopbackFetch(`http://127.0.0.1:${descriptor.port}${endpoint.path}`, {
     method: "POST",
     body,
     signal,
@@ -313,15 +343,15 @@ async function forwardOnce(
         environment.clientSecret,
         descriptor.nonce,
         body,
-        FORWARD_REQUEST_PROOF,
+        endpoint.proofs.request,
       ),
     },
   });
-  const envelope = machineRecord(await readBoundedJson(response, MAX_FORWARD_RESPONSE_BYTES));
+  const envelope = machineRecord(await readBoundedJson(response, endpoint.maximumBytes));
   if (
     typeof envelope.body !== "string" ||
     !matches(
-      signature(environment.clientSecret, descriptor.nonce, envelope.body, FORWARD_ANSWER_PROOF),
+      signature(environment.clientSecret, descriptor.nonce, envelope.body, endpoint.proofs.answer),
       envelope.proof,
     )
   )
@@ -334,6 +364,27 @@ async function forwardOnce(
     const error = machineRecord(data.error);
     throw new MachineAuthError(String(error.code), String(error.message), error.terminal === true);
   }
+  return data;
+}
+
+async function forwardOnce(
+  descriptor: Descriptor,
+  environment: Environment,
+  request: BrokerApiRequest,
+  signal: AbortSignal,
+): Promise<Response> {
+  const data = await signedExchange(
+    descriptor,
+    environment,
+    { path: "/forward", proofs: FORWARD_PROOFS, maximumBytes: MAX_FORWARD_RESPONSE_BYTES },
+    {
+      method: request.method,
+      path: request.path,
+      headers: request.headers ?? {},
+      ...(request.body === undefined ? {} : { body: request.body }),
+    },
+    signal,
+  );
   const status = data.status;
   if (typeof status !== "number" || !Number.isInteger(status) || status < 200 || status > 599)
     throw new MachineAuthError("broker_unavailable", "Machine credential broker answered oddly.");
@@ -345,9 +396,11 @@ async function forwardOnce(
 }
 
 /**
- * Send one API request through the broker, for credentials whose token the
- * cloud environment's proxy attaches: only the broker's requests pass through
- * that proxy. The caller holds the same owner-only key as for credentials.
+ * Send one API request through the broker, the one prim process whose
+ * requests pass through the cloud environment's proxy: for credentials whose
+ * token that proxy attaches, and for every credential from the variables of
+ * a cloud session (see cloudProxyRouting). The caller holds the same
+ * owner-only key as for credentials.
  */
 export async function forwardBrokerRequest(options: {
   directory: string;
@@ -358,11 +411,7 @@ export async function forwardBrokerRequest(options: {
   signal: AbortSignal;
 }): Promise<Response> {
   const path = descriptorPath(options.directory, options.environment.generation);
-  const unavailable = () =>
-    new MachineAuthError(
-      "broker_unavailable",
-      "Machine credential broker is unavailable. Retry the command.",
-    );
+  const unavailable = () => brokerUnavailable(options);
   const existing = readDescriptor(path);
   if (existing) {
     try {
@@ -385,6 +434,62 @@ export async function forwardBrokerRequest(options: {
   }
 }
 
+/**
+ * Ask the broker what it can reach of Primitive (see probeEgress). In a
+ * cloud session the broker's requests ride the environment's proxy and the
+ * caller's own do not, so only the broker's answer says what prim can reach.
+ * The broker chooses what to probe; the caller names no address.
+ */
+export async function probeBrokerEgress(options: {
+  directory: string;
+  apiUrl: string;
+  environment: Environment;
+  env: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+}): Promise<EgressReport> {
+  const ask = async (descriptor: Descriptor): Promise<EgressReport> => {
+    const data = await signedExchange(
+      descriptor,
+      options.environment,
+      { path: "/probe", proofs: PROBE_PROOFS, maximumBytes: MAX_RESPONSE_BYTES },
+      {},
+      options.signal,
+    );
+    // Results reach a message the agent reads: only a short plain word or code.
+    const result = (value: unknown) =>
+      typeof value === "string" && /^[\w ]{1,64}$/u.test(value) ? value : "network error";
+    const signIn =
+      data.signIn && typeof data.signIn === "object"
+        ? (data.signIn as Record<string, unknown>)
+        : undefined;
+    return {
+      api: result(data.api),
+      ...(signIn && typeof signIn.host === "string" && /^[a-z0-9.-]{1,253}$/iu.test(signIn.host)
+        ? { signIn: { host: signIn.host, result: result(signIn.result) } }
+        : {}),
+    };
+  };
+  const existing = readDescriptor(
+    descriptorPath(options.directory, options.environment.generation),
+  );
+  if (existing) {
+    try {
+      return await ask(existing);
+    } catch (error) {
+      options.signal.throwIfAborted();
+      if (error instanceof MachineAuthError) throw error;
+    }
+  }
+  const descriptor = await ensureBroker(options);
+  try {
+    return await ask(descriptor);
+  } catch (error) {
+    options.signal.throwIfAborted();
+    if (error instanceof MachineAuthError) throw error;
+    throw brokerUnavailable(options);
+  }
+}
+
 /** Only what prim's own API client sends; never a credential header. */
 function forwardableHeaders(value: unknown): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -404,14 +509,18 @@ function forwardableHeaders(value: unknown): Record<string, string> {
 
 /**
  * The broker's half of a forwarded request: send it to the API origin this
- * broker was started for, with no Authorization header (the proxy attaches
- * the token), and return the answer as data. Runs only in the broker.
+ * broker was started for and return the answer as data. No credential comes
+ * from the caller. Where the proxy attaches the token the request carries no
+ * Authorization header; where prim holds it, the broker passes the token it
+ * holds as `accessToken`, so a caller never sends one to a listener it has
+ * not yet authenticated. Runs only in the broker.
  */
 export async function forwardToApi(
   apiUrl: string,
   data: Record<string, unknown>,
   signal: AbortSignal,
   fetchImpl: typeof fetch = fetch,
+  accessToken?: string,
 ): Promise<unknown> {
   const refuse = (message: string) => ({
     error: { code: "invalid_request", message, terminal: false },
@@ -432,7 +541,10 @@ export async function forwardToApi(
   try {
     const answer = await fetchImpl(target, {
       method: data.method,
-      headers: forwardableHeaders(data.headers),
+      headers: {
+        ...forwardableHeaders(data.headers),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       body: data.method === "GET" ? undefined : (data.body as string | undefined),
       redirect: "error",
       signal: AbortSignal.any([signal, AbortSignal.timeout(FORWARD_TIMEOUT_MS)]),
@@ -462,33 +574,41 @@ export async function forwardToApi(
   } catch (error) {
     // Never the failure's own text: a proxy may put anything in it.
     const timedOut = error instanceof Error && error.name === "TimeoutError";
+    const fault = proxyFaultOf(error);
     return {
       error: {
-        code: timedOut ? "request_timeout" : "authentication_unavailable",
+        code: timedOut ? "request_timeout" : (fault?.code ?? "authentication_unavailable"),
         message: timedOut
           ? "Primitive did not answer through the cloud environment's proxy in time. The request may or may not have been applied."
-          : "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry.",
+          : (fault?.message ??
+            "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry."),
         terminal: false,
       },
     };
   }
 }
 
+type AcquireCredential = (options: {
+  force: boolean;
+  signal: AbortSignal;
+}) => Promise<MachineCredential | undefined>;
+
 /** The broker's answer to a credential request: the credential, or why not. */
 async function credentialResult(
+  acquire: AcquireCredential,
   apiUrl: string,
   data: Record<string, unknown>,
   signal: AbortSignal,
-): Promise<unknown> {
+): Promise<
+  | { credential: MachineCredential }
+  | { error: { code: string; message: string; terminal: boolean; retryAt?: number } }
+> {
   try {
     const current = cachedMachineCredential();
     const force =
       data.force === true &&
       (!current || data.observedTokenHash === tokenHash(current.accessToken));
-    const credential = await acquireMachineCredential(
-      { force, signal },
-      { localEnvironment: true },
-    );
+    const credential = await acquire({ force, signal });
     if (!credential || credential.apiUrl !== apiUrl) throw new Error("Missing machine identity");
     return { credential };
   } catch (error) {
@@ -521,22 +641,58 @@ export function createBrokerServer(options: {
   nonce: string;
   /** Called for each authenticated request, to keep an idle broker alive. */
   onRequest?: () => void;
+  /** How this broker reaches Primitive (see tunnelCheckedFetch). */
+  fetch?: typeof fetch;
+  /** The credential this broker holds, exchanged or renewed when needed. */
+  acquire?: AcquireCredential;
 }): Server {
   const { environment, apiUrl, nonce } = options;
+  const reach = options.fetch ?? tunnelCheckedFetch();
+  const acquire: AcquireCredential =
+    options.acquire ??
+    ((request) => acquireMachineCredential(request, { localEnvironment: true, fetch: reach }));
   const server = createServer(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (request.method === "GET" && request.url === "/health") {
       response.end(nonce);
       return;
     }
-    // Forwarding exists only where the proxy attaches the token; elsewhere
-    // callers hold a token and make their own requests.
-    const forwarding = request.url === "/forward" && environment.tokenInjection === "network";
-    if (request.method !== "POST" || (request.url !== "/credential" && !forwarding)) {
-      response.writeHead(404).end();
+    // Forwarding exists only where the broker's route is the one that works:
+    // the proxy attaches the token, or prim's requests must ride the proxy.
+    // Elsewhere callers hold a token and make their own requests.
+    const routed = environment.routing === "proxy";
+    const proxyHoldsToken = environment.tokenInjection === "network";
+    const forwarding = request.url === "/forward" && (proxyHoldsToken || routed);
+    const probing = request.url === "/probe" && routed;
+    // Nothing a caller sends is held for a request this turns away: what
+    // arrives is discarded, and the connection ends with the answer.
+    const refuse = (status: number) => {
+      response.writeHead(status, { Connection: "close" }).end();
+      request.resume();
+    };
+    if (request.method !== "POST" || (request.url !== "/credential" && !forwarding && !probing)) {
+      refuse(404);
       return;
     }
+    const proofs = forwarding ? FORWARD_PROOFS : probing ? PROBE_PROOFS : undefined;
     const limit = forwarding ? MAX_FORWARD_REQUEST_BYTES : MAX_CREDENTIAL_REQUEST_BYTES;
+    // The proof binds the body, so it can only be checked with the body in
+    // hand. Before holding any of it: the caller must offer something shaped
+    // like a proof, and say how much it sends, within this endpoint's limit.
+    const offered = request.headers["x-prim-proof"];
+    if (typeof offered !== "string" || !/^[a-f0-9]{64}$/u.test(offered)) {
+      refuse(403);
+      return;
+    }
+    const declared = request.headers["content-length"];
+    if (declared === undefined || !/^\d{1,15}$/u.test(declared)) {
+      refuse(411);
+      return;
+    }
+    if (Number(declared) > limit) {
+      refuse(413);
+      return;
+    }
     try {
       const chunks: Buffer[] = [];
       let received = 0;
@@ -549,13 +705,8 @@ export function createBrokerServer(options: {
         chunks.push(chunk as Buffer);
       }
       const raw = Buffer.concat(chunks).toString("utf8");
-      const proof = signature(
-        environment.clientSecret,
-        nonce,
-        raw,
-        forwarding ? FORWARD_REQUEST_PROOF : undefined,
-      );
-      if (!matches(proof, request.headers["x-prim-proof"])) {
+      const proof = signature(environment.clientSecret, nonce, raw, proofs?.request);
+      if (!matches(proof, offered)) {
         response.writeHead(403).end();
         return;
       }
@@ -573,20 +724,35 @@ export function createBrokerServer(options: {
       response.once("close", () => {
         if (!response.writableFinished) controller.abort();
       });
-      const result = forwarding
-        ? await forwardToApi(apiUrl, data, controller.signal)
-        : await credentialResult(apiUrl, data, controller.signal);
+      let result: unknown;
+      if (forwarding) {
+        // Where prim holds the token, the broker attaches the one it holds:
+        // it issued every caller's copy, and a caller that sent its own
+        // would hand it to whatever answers on this port before knowing
+        // that is the broker.
+        const held = proxyHoldsToken
+          ? undefined
+          : await credentialResult(acquire, apiUrl, {}, controller.signal);
+        result =
+          held && "error" in held
+            ? held
+            : await forwardToApi(
+                apiUrl,
+                data,
+                controller.signal,
+                reach,
+                held?.credential.accessToken,
+              );
+      } else if (probing)
+        // The proxy reaches the sign-in service itself when it holds the token.
+        result = await probeEgress(apiUrl, !proxyHoldsToken, reach);
+      else result = await credentialResult(acquire, apiUrl, data, controller.signal);
       const body = JSON.stringify(result);
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({
           body,
-          proof: signature(
-            environment.clientSecret,
-            nonce,
-            body,
-            forwarding ? FORWARD_ANSWER_PROOF : undefined,
-          ),
+          proof: signature(environment.clientSecret, nonce, body, proofs?.answer),
         }),
       );
     } catch {
@@ -599,8 +765,14 @@ export function createBrokerServer(options: {
   return server;
 }
 
-/** Entry mode of the already-packaged, immutable daemon bundle. */
-export async function startMachineBroker(): Promise<void> {
+/**
+ * Entry mode of the already-packaged, immutable daemon bundle. `exit` ends
+ * the process, and the answer is what shuts the broker down; a spec stands
+ * in for the one and uses the other.
+ */
+export async function startMachineBroker(
+  exit: (code: number) => void = (code) => process.exit(code),
+): Promise<(code?: number) => void> {
   const environment = environmentCredentials({});
   if (!environment) throw new Error("Machine broker requires injected credentials");
   const directory = primConfigDirectory();
@@ -613,15 +785,27 @@ export async function startMachineBroker(): Promise<void> {
     nonce,
     onRequest: () => idle.refresh(),
   });
-  const close = () => {
+  // Ends the process, not just the server: a request Node is still retrying
+  // would otherwise keep it alive and busy, with no descriptor to find it by.
+  const close = (code = 0) => {
     clearTimeout(idle);
+    stopWatching();
     server.closeAllConnections();
     server.close();
     if (readDescriptor(path)?.nonce === nonce) rmSync(path, { force: true });
+    exit(code);
   };
-  const idle = setTimeout(close, IDLE_MS);
-  process.once("SIGTERM", close);
-  process.once("SIGINT", close);
+  // A request met a proxy that answered the check and closed its CONNECT,
+  // and Node 22 or 24 is retrying it for as long as this process lives. The
+  // cooldown comes first: whatever starts next waits, and says the proxy is
+  // failing, instead of meeting the same proxy at once.
+  const stopWatching = onRunawayConnections(() => {
+    recordProxyFailure(directory, apiUrl, environment.clientId);
+    close(1);
+  });
+  const idle = setTimeout(() => close(), IDLE_MS);
+  process.once("SIGTERM", () => close());
+  process.once("SIGINT", () => close());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -632,4 +816,5 @@ export async function startMachineBroker(): Promise<void> {
     mode: 0o600,
   });
   process.send?.("ready");
+  return close;
 }

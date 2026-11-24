@@ -65,6 +65,27 @@ it("sends every API request through the broker and none directly", async () => {
   expect(JSON.stringify([read, upload])).not.toMatch(/authorization|bearer/iu);
 });
 
+it("sends no token even if this process were handed one", async () => {
+  // The proxy holds the token in this mode, so there is none here; were a
+  // credential ever to carry one, it would still not be this process's to send.
+  vi.mocked(acquireMachineCredential).mockImplementation(async () => ({
+    ...machine,
+    accessToken: "token_that_must_stay_here",
+  }));
+  vi.mocked(forwardMachineRequest).mockImplementation(async () => Response.json({ decisions: [] }));
+  try {
+    await getClient().get("/api/cli/decisions/recent");
+    await getClient().post("/api/cli/moves/ingest", { moves: [] });
+    expect(forwardMachineRequest).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(vi.mocked(forwardMachineRequest).mock.calls)).not.toMatch(
+      /authorization|bearer|token_that_must_stay_here/iu,
+    );
+    expect(directFetch).not.toHaveBeenCalled();
+  } finally {
+    vi.mocked(acquireMachineCredential).mockImplementation(async () => ({ ...machine }));
+  }
+});
+
 it("verifies again after a 401 and retries once through the broker", async () => {
   vi.mocked(forwardMachineRequest)
     .mockResolvedValueOnce(Response.json({}, { status: 401 }))

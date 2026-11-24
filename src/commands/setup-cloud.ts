@@ -1,5 +1,9 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY, CLOUD_SETUP_POINTER } from "../lib/cloud-env.js";
+import {
+  CLOUD_GITHUB_CONNECT_REMEDY,
+  CLOUD_PROXY_FAILING,
+  CLOUD_SETUP_POINTER,
+} from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -471,14 +475,19 @@ function sessionSteps(
 /**
  * Why the credential check could not reach Primitive, said once. A wait the
  * sign-in service asked for is not a network fault, and no setting ends it.
- * A failure that names the host it could not reach keeps that host, which may
- * not be the default one, and adds the full list instead of repeating the fix.
+ * Nor does any setting repair the environment's proxy when it is the proxy
+ * that is failing: that is relayed as it is, with no word about domains the
+ * user may already have allowed. A failure that names the host it could not
+ * reach keeps that host, which may not be the default one, and adds the full
+ * list instead of repeating the fix. Where the fix is an edit to Allowed
+ * domains, the remedy itself says when that edit reaches this session.
  */
 function unreachableRemedy(detail: string | undefined, env: NodeJS.ProcessEnv): string {
   if (detail?.startsWith(SERVER_WAIT_PREFIX)) return `credentials · ${detail}`;
+  if (detail && CLOUD_PROXY_FAILING.startsWith(detail)) return `credentials · ${detail}`;
   if (detail?.includes("Allowed domains"))
     return `credentials · ${detail}; prim needs ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} allowed`;
-  return `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`;
+  return `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${detail ? ` (${detail})` : ""}`;
 }
 
 /** The repository `enable --non-interactive` reported as not connected, if that is why it failed. */

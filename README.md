@@ -254,7 +254,11 @@ prepared stays prepared).
 
 Each session, prim's SessionStart hook activates the repository the session was started
 on and connects it to Primitive. If the hook cannot connect it, it says why: missing
-credentials, a blocked domain, or a checkout that does not identify its repository. The
+credentials, a blocked domain, or a checkout that does not identify its repository. A
+domain added under Allowed domains reaches a running session within about a minute, with
+no new session needed: with the credentials set up above, prim sends every request to
+Primitive through the environment's proxy, which follows the list as it is edited. (A
+session's direct connections keep the list it was created with.) The
 git pre-commit check is not wired automatically; run `prim setup --cloud` in a session to
 verify it step by step and install it. A second repository the agent clones during the
 session is not connected or given git hooks at session start; run `prim setup --cloud`

@@ -1,4 +1,9 @@
-import { CLOUD_REJECTED_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
+import {
+  CLOUD_PROXY_FAILING,
+  CLOUD_REJECTED_CREDENTIALS_REMEDY,
+  cloudDomainEditNote,
+  isClaudeCloudSession,
+} from "./cloud-env.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 export const MACHINE_SCOPES = [
@@ -130,6 +135,31 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * The environment's proxy is failing by itself, which no edit to the
+ * allowlist repairs: it has the token broker reconnecting without end, or
+ * (see proxyFaultOf) it failed a request.
+ */
+export function proxyFault(retryAt?: number): MachineAuthError {
+  return new MachineAuthError("proxy_unavailable", CLOUD_PROXY_FAILING, false, retryAt);
+}
+
+/**
+ * A failed request as the proxy's own fault, in a cloud session, when that
+ * is what checkTunnel found: any answer to a CONNECT but 200 and 403, a
+ * hang-up, or silence. Its 403 is a host it refuses, and stays the
+ * allowlist's business.
+ */
+export function proxyFaultOf(error: unknown): MachineAuthError | undefined {
+  const code = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+  return typeof code === "string" &&
+    code.startsWith("PROXY_") &&
+    code !== "PROXY_BLOCKED" &&
+    isClaudeCloudSession()
+    ? proxyFault()
+    : undefined;
+}
+
 async function fetchMachine(
   url: string,
   options: RequestInit,
@@ -137,14 +167,16 @@ async function fetchMachine(
 ): Promise<Response> {
   try {
     return await fetchImpl(url, options);
-  } catch {
+  } catch (error) {
     options.signal?.throwIfAborted();
+    const fault = proxyFaultOf(error);
+    if (fault) throw fault;
     throw new MachineAuthError(
       "authentication_unavailable",
       // A cloud VM reaches only the hosts its environment allows, and both of
       // Primitive's are blocked by default: name the one that failed.
       isClaudeCloudSession()
-        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).`
+        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited)${cloudDomainEditNote()}.`
         : "Machine authentication is temporarily unavailable. Check the connection and retry.",
     );
   }
@@ -338,6 +370,17 @@ export async function verifyMachineIdentity(
     },
     fetchImpl,
   );
+  return readMachineIdentity(response, clientId);
+}
+
+/**
+ * Read the API's answer to an identity check that carried prim's own token,
+ * however the request reached the API.
+ */
+export async function readMachineIdentity(
+  response: Response,
+  clientId: string,
+): Promise<MachineIdentity> {
   if (!response.ok) {
     const terminal = response.status === 401 || response.status === 403;
     throw new MachineAuthError(

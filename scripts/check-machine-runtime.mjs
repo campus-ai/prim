@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { request as httpRequest, createServer as httpServer } from "node:http";
 import { createServer as httpsServer } from "node:https";
@@ -25,15 +27,32 @@ let api;
 let provider;
 let proxy;
 let injectedApi;
+let cloudApi;
 // Set while the stand-in proxy plays an "OAuth 2.0 client credentials" network
 // secret: it attaches the token to API requests, which this models by handing
 // them to a face of the API that needs none.
 let injecting = false;
 const injectedPaths = [];
+const cloudRequests = [];
+// Hosts the stand-in proxy refuses and the status it answers them with: 403,
+// as the real one does a host that is not under the environment's Allowed
+// domains, or a failure of its own. Then what it has open to each host.
+const refused = new Map();
+const openTunnels = new Set();
+// How many more CONNECTs the stand-in proxy answers before it closes each
+// one without a word, as a proxy that is failing may.
+let answerBudget = Number.POSITIVE_INFINITY;
+// Closes just the CONNECT this many from now: a single reset.
+let closeNth = 0;
+// How long the cloud API takes to answer, when it is being slow.
+let cloudApiDelayMs = 0;
+// The local port of each connection the proxy itself opened.
+const proxyPeers = new Set();
 const tunnels = [];
 let proxyConnections = 0;
 const pids = new Set();
 const reports = [];
+const measured = {};
 try {
   await mkdir(config, { mode: 0o700 });
   execFileSync(
@@ -53,13 +72,18 @@ try {
       "-subj",
       "/CN=localhost",
       "-addext",
-      "subjectAltName=DNS:localhost,IP:127.0.0.1",
+      "subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:api.prim.invalid,DNS:signin.prim.invalid",
     ],
     { stdio: "ignore" },
   );
   provider = httpsServer(
     { key: await readFile(join(root, "key.pem")), cert: await readFile(join(root, "cert.pem")) },
     async (req, res) => {
+      // A reachability probe: any answer says the host can be reached.
+      if (req.method === "GET") {
+        res.writeHead(404).end();
+        return;
+      }
       let body = "";
       for await (const chunk of req) body += chunk;
       assert.equal(req.url, "/oauth2/token");
@@ -74,7 +98,9 @@ try {
         return;
       }
       const claims = {
-        iss: issuer,
+        // The name the client reached it by: the address, or the name only
+        // the stand-in proxy resolves.
+        iss: `https://${req.headers.host}`,
         aud: "client_environment",
         sub: clientId,
         client_id: clientId,
@@ -94,10 +120,28 @@ try {
   provider.listen(0, "127.0.0.1");
   await once(provider, "listening");
   const issuer = `https://127.0.0.1:${provider.address().port}`;
-  const serveApi = (viaInjectingProxy) => (req, res) => {
+  // `face` is one way of reaching the API: the sign-in service it names, and
+  // a record of what arrived there and from which local port.
+  const serveApi = (viaInjectingProxy, face) => (req, res) => {
+    if (face && cloudApiDelayMs && !req.delayed) {
+      req.delayed = true;
+      setTimeout(() => serveApi(viaInjectingProxy, face)(req, res), cloudApiDelayMs);
+      return;
+    }
+    face?.requests.push({
+      url: req.url,
+      authorization: req.headers.authorization,
+      peer: req.socket.remotePort,
+    });
     res.setHeader("Content-Type", "application/json");
     if (req.url.endsWith("/m2m/config")) {
-      res.end(JSON.stringify({ protocol_version: 1, issuer, audience: "client_environment" }));
+      res.end(
+        JSON.stringify({
+          protocol_version: 1,
+          issuer: face?.issuer ?? issuer,
+          audience: "client_environment",
+        }),
+      );
       return;
     }
     if (viaInjectingProxy) {
@@ -142,6 +186,17 @@ try {
   injectedApi = httpServer(serveApi(true));
   injectedApi.listen(0, "127.0.0.1");
   await once(injectedApi, "listening");
+  // The API as a Claude Code cloud VM sees it: under a name its own DNS does
+  // not resolve, which only the stand-in proxy reaches.
+  cloudApi = httpsServer(
+    { key: await readFile(join(root, "key.pem")), cert: await readFile(join(root, "cert.pem")) },
+    serveApi(false, {
+      issuer: `https://signin.prim.invalid:${provider.address().port}`,
+      requests: cloudRequests,
+    }),
+  );
+  cloudApi.listen(0, "127.0.0.1");
+  await once(cloudApi, "listening");
   await mkdir(source);
   await cp(resolve("dist/hook-runtime"), join(source, "dist"), { recursive: true });
   const { writeFile } = await import("node:fs/promises");
@@ -156,8 +211,10 @@ try {
   );
   await cp(source, copied, { recursive: true });
   await rm(source, { recursive: true });
+  await mkdir(join(root, "home"));
   const env = {
     ...process.env,
+    HOME: join(root, "home"),
     PRIM_TOKEN: "",
     PRIM_CONFIG_DIR: config,
     PRIM_API_URL: `http://127.0.0.1:${api.address().port}`,
@@ -249,14 +306,43 @@ try {
   });
   proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
-    tunnels.push(request.url);
     const [host, requested] = request.url.split(":");
+    if (answerBudget <= 0) {
+      tunnels.push(`closed ${request.url}`);
+      socket.destroy();
+      return;
+    }
+    answerBudget -= 1;
+    if (closeNth > 0) {
+      closeNth -= 1;
+      if (closeNth === 0) {
+        tunnels.push(`reset ${request.url}`);
+        socket.destroy();
+        return;
+      }
+    }
+    if (refused.has(host)) {
+      const status = refused.get(host);
+      tunnels.push(`refused ${request.url}`);
+      socket.end(`HTTP/1.1 ${status} Refused\r\nContent-Length: 0\r\n\r\n`);
+      return;
+    }
+    tunnels.push(request.url);
     const port = proxiedPort(requested);
-    const upstream = connect(port, host, () => {
+    // Names under prim.invalid exist only here, as an allowed host does only
+    // at the real proxy once a session's own DNS has gone stale.
+    const upstream = connect(port, host.endsWith(".prim.invalid") ? "127.0.0.1" : host, () => {
+      proxyPeers.add(upstream.localPort);
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       upstream.write(head);
       upstream.pipe(socket);
       socket.pipe(upstream);
+    });
+    const tunnel = { host, socket };
+    openTunnels.add(tunnel);
+    socket.on("close", () => {
+      openTunnels.delete(tunnel);
+      upstream.destroy();
     });
     upstream.on("error", (error) => {
       tunnels.push(`${request.url} upstream ${error.code ?? error.message}`);
@@ -359,6 +445,341 @@ try {
   assert.ok(!read.stdout.includes("Bearer") && !read.stderr.includes("Bearer"));
   injecting = false;
   reports.push("network-token mode requests no token and reaches the API only through the proxy");
+  // A Claude Code cloud session with the secret in its variables. Such a VM's
+  // own DNS resolves only the hosts allowed when the session was created,
+  // while its proxy follows the allowlist as it is edited: here the API and
+  // the sign-in service have names only the stand-in proxy resolves. Prim
+  // must reach both through the proxy alone, token included.
+  const cloudSecret = `${secret}-cloud`;
+  const cloudApiHost = `api.prim.invalid:${cloudApi.address().port}`;
+  const cloudSignInHost = `signin.prim.invalid:${provider.address().port}`;
+  const cloudEnv = {
+    ...networkEnv,
+    PRIM_API_URL: `https://${cloudApiHost}`,
+    PRIM_M2M_CLIENT_SECRET: cloudSecret,
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    NO_PROXY: "",
+  };
+  const cloudRun = (args, extra = {}) =>
+    promisify(execFile)(process.execPath, [join(copied, "dist/index.js"), ...args], {
+      env: { ...cloudEnv, ...extra },
+      timeout: 15000,
+    });
+  const cloudStatus = async (extra) => {
+    // A failing status exits non-zero and still prints its answer.
+    const result = await cloudRun(["auth", "status", "--json"], extra).catch((error) => error);
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(secret));
+    return JSON.parse(result.stdout);
+  };
+  const brokerDescriptors = async () =>
+    (await readdir(config)).filter((name) => name.startsWith("machine_broker_"));
+  // Control: outside a cloud session prim connects by itself, and cannot.
+  const unrouted = await cloudStatus({});
+  assert.equal(
+    unrouted.status,
+    "unreachable",
+    `a direct connection must not resolve the cloud API's name: ${JSON.stringify(unrouted)}`,
+  );
+  assert.deepEqual(cloudRequests, [], "nothing reaches the cloud API without the proxy");
+  const unroutedBrokers = await brokerDescriptors();
+  // As `prim setup --cloud` does: the failure above left a cooldown behind.
+  for (const name of await readdir(config))
+    if (name.startsWith("machine_retry_")) await rm(join(config, name));
+  const exchangesBeforeCloud = exchanges;
+  const inSession = { CLAUDE_CODE_REMOTE: "true" };
+  const cloudStatuses = await Promise.all(Array.from({ length: 4 }, () => cloudStatus(inSession)));
+  assert.ok(
+    cloudStatuses.every(
+      (value) => value.status === "valid" && value.machineId === "machine_runtime",
+    ),
+    `cloud status through the proxy: ${JSON.stringify(cloudStatuses)}; requests ${JSON.stringify(tunnels)}`,
+  );
+  assert.equal(exchanges, exchangesBeforeCloud + 1, "cloud processes share one routed exchange");
+  const routedBrokers = (await brokerDescriptors()).filter(
+    (name) => !unroutedBrokers.includes(name),
+  );
+  assert.equal(
+    routedBrokers.length,
+    1,
+    "a cloud session must start its own broker, never reuse one started without routing",
+  );
+  assert.ok(
+    tunnels.includes(cloudSignInHost) && tunnels.includes(cloudApiHost),
+    `the token exchange and the API requests must travel through the proxy: ${JSON.stringify(tunnels)}`,
+  );
+  await cloudRun(["decisions", "recent"], inSession);
+  const authenticated = cloudRequests.filter(({ url }) => !url.endsWith("/m2m/config"));
+  assert.ok(
+    authenticated.filter(({ url }) => url.endsWith("/auth/status")).length >= 2,
+    "the broker's identity check and the command's own must both reach the API",
+  );
+  assert.ok(
+    authenticated.some(({ url }) => url.includes("/decisions")),
+    `a forwarded API read must reach the API: ${JSON.stringify(authenticated.map(({ url }) => url))}`,
+  );
+  assert.ok(
+    authenticated.every(({ authorization }) => authorization?.startsWith("Bearer header.")),
+    "the API must receive prim's bearer token on every forwarded request",
+  );
+  assert.ok(
+    cloudRequests.every(({ peer }) => proxyPeers.has(peer)),
+    "no prim process may connect to the API except through the proxy",
+  );
+  reports.push(
+    "cloud session with the secret in variables exchanges and forwards only through the proxy",
+  );
+  // Loopback stays off the proxy even in a VM that routes every Node process.
+  const routedBroker = async () =>
+    JSON.parse(await readFile(join(config, routedBrokers[0]), "utf8"));
+  const everywhere = await cloudStatus({ ...inSession, NODE_USE_ENV_PROXY: "1" });
+  assert.equal(everywhere.status, "valid", JSON.stringify(everywhere));
+  const brokerPort = (await routedBroker()).port;
+  assert.ok(
+    !tunnels.some((entry) => entry.includes(`:${brokerPort}`)),
+    "a caller must reach the broker over loopback, never through the proxy",
+  );
+  reports.push("cloud callers reach the broker over loopback whatever NO_PROXY says");
+  // What the broker can reach is what prim can reach: ask it as the session
+  // diagnosis does, then take hosts off the stand-in proxy's allowlist.
+  const brokerAsk = async (endpoint, fields = {}, signal = undefined) => {
+    const broker = await routedBroker();
+    const proof = (purpose, text) =>
+      createHmac("sha256", cloudSecret)
+        .update(`${broker.nonce}\0${endpoint}-${purpose}\0${text}`)
+        .digest("hex");
+    const body = JSON.stringify({
+      generation: routedBrokers[0].slice("machine_broker_".length, -".json".length),
+      timestamp: Date.now(),
+      ...fields,
+    });
+    const response = await fetch(`http://127.0.0.1:${broker.port}/${endpoint}`, {
+      method: "POST",
+      body,
+      signal,
+      headers: { "Content-Type": "application/json", "X-Prim-Proof": proof("request", body) },
+    });
+    const envelope = await response.json();
+    assert.equal(envelope.proof, proof("answer", envelope.body), "the answer is signed");
+    return JSON.parse(envelope.body);
+  };
+  const brokerProbe = () => brokerAsk("probe");
+  // The proxy drops what it had open to a host it stops serving.
+  const dropTunnels = async (host) => {
+    for (const tunnel of openTunnels)
+      if (host === undefined || tunnel.host === host) tunnel.socket.destroy();
+    await delay(200);
+  };
+  const refuse = async (host, status = 403) => {
+    refused.set(host, status);
+    await dropTunnels(host);
+  };
+  const signIn = (result) => ({ host: "signin.prim.invalid", result });
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
+  await refuse("signin.prim.invalid");
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("blocked") });
+  await refuse("api.prim.invalid");
+  assert.deepEqual(await brokerProbe(), { api: "blocked" });
+  refused.clear();
+  reports.push(
+    "the broker reports a host the proxy allows as reachable and one it refuses as blocked",
+  );
+  // A proxy that closes every CONNECT without answering. Node 22 and 24
+  // retry such a CONNECT without end, whatever aborts the request, so the
+  // broker must not hand `fetch` a request while the proxy does this.
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const gone = async (pid, withinMs) => {
+    for (let waited = 0; waited < withinMs && alive(pid); waited += 50) await delay(50);
+    return !alive(pid);
+  };
+  const steady = await routedBroker();
+  pids.add(steady.pid);
+  answerBudget = 0;
+  await dropTunnels();
+  const connectionsBeforeClosing = proxyConnections;
+  const silentSince = Date.now();
+  const unanswered = await brokerProbe();
+  const unansweredStatus = await cloudStatus(inSession);
+  await cloudRun(["decisions", "recent"], inSession).catch(() => undefined);
+  await delay(2000);
+  const opened = proxyConnections - connectionsBeforeClosing;
+  assert.ok(
+    opened < 40,
+    `a proxy that closes CONNECTs must not set the broker reconnecting: ${opened} proxy connections in ${Date.now() - silentSince} ms`,
+  );
+  assert.deepEqual(unanswered, { api: "PROXY_CLOSED" }, "a silent proxy is not a blocked host");
+  assert.equal(unansweredStatus.status, "unreachable", JSON.stringify(unansweredStatus));
+  assert.equal(
+    unansweredStatus.recoveryDetail,
+    "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+    "a command is told the proxy is failing, not to add domains",
+  );
+  assert.ok(alive(steady.pid), "the broker asked nothing of a silent proxy and keeps running");
+  // An outage the proxy reports itself is not the allowlist either.
+  answerBudget = Number.POSITIVE_INFINITY;
+  await refuse("api.prim.invalid", 502);
+  assert.deepEqual(await brokerProbe(), { api: "PROXY_502" });
+  refused.clear();
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
+  assert.equal((await routedBroker()).pid, steady.pid, "the same broker serves on");
+  reports.push("a proxy that closes or fails CONNECTs is reported as such and never retried");
+  // None of these is a broker reconnecting without end, and none may end it:
+  // one CONNECT the proxy resets, an upstream that is slow, a caller that
+  // gives up. (The proxy's own 502, above, is another.)
+  const forwardRead = (signal) =>
+    brokerAsk("forward", { method: "GET", path: "/api/cli/decisions/recent", headers: {} }, signal);
+  await dropTunnels();
+  let connectionsBefore = proxyConnections;
+  closeNth = 2;
+  const afterReset = await forwardRead().catch((error) => ({ failed: String(error) }));
+  await delay(500);
+  // Node 22 and 24 retry the reset CONNECT and are answered; Node 26 fails the request.
+  assert.ok(
+    afterReset.status === 200 || afterReset.error || afterReset.failed,
+    JSON.stringify(afterReset),
+  );
+  assert.ok(proxyConnections - connectionsBefore < 10, "one reset is met with a few connections");
+  cloudApiDelayMs = 3000;
+  connectionsBefore = proxyConnections;
+  const slow = await Promise.all(Array.from({ length: 8 }, () => forwardRead()));
+  assert.ok(
+    slow.every((answer) => answer.status === 200),
+    JSON.stringify(slow[0]),
+  );
+  measured.proxyConnectionsForEightSlowRequests = proxyConnections - connectionsBefore;
+  assert.ok(
+    measured.proxyConnectionsForEightSlowRequests <= 16,
+    `a slow request costs its check and its tunnel, no more: ${measured.proxyConnectionsForEightSlowRequests}`,
+  );
+  const abandoned = await forwardRead(AbortSignal.timeout(300)).catch((error) => error.name);
+  assert.equal(abandoned, "TimeoutError", "the caller gave up on a slow request");
+  cloudApiDelayMs = 0;
+  await delay(500);
+  assert.ok(alive(steady.pid), "a reset, a slow upstream and an impatient caller end no broker");
+  assert.equal((await routedBroker()).pid, steady.pid);
+  assert.deepEqual(
+    (await readdir(config)).filter((name) => name.startsWith("machine_retry_")),
+    [],
+    "and none of them starts a cooldown",
+  );
+  assert.equal((await cloudStatus(inSession)).status, "valid");
+  reports.push("a reset, a slow upstream, an impatient caller and a proxy 502 end no broker");
+  // The proxy answers one CONNECT for each command, then closes the rest: the
+  // broker's check passes, and the request it hands to `fetch` meets a proxy
+  // that hangs up. Node 22 and 24 then reconnect without end. The broker
+  // must notice that for what it is, leave a cooldown that says the proxy is
+  // failing, and exit; and the commands that follow must wait that cooldown
+  // out rather than each start a broker to meet the same proxy.
+  process.kill(steady.pid, "SIGTERM");
+  assert.ok(await gone(steady.pid, 3000), "a broker told to stop ends its process");
+  const brokersSeen = new Set();
+  const sampler = setInterval(() => {
+    try {
+      brokersSeen.add(JSON.parse(readFileSync(join(config, routedBrokers[0]), "utf8")).pid);
+    } catch {
+      // No routed broker at this instant.
+    }
+  }, 5);
+  connectionsBefore = proxyConnections;
+  const racedSince = Date.now();
+  const raced = [];
+  for (let call = 0; call < 5; call += 1) {
+    await dropTunnels();
+    answerBudget = 1;
+    raced.push(await cloudStatus(inSession));
+  }
+  await delay(1000);
+  clearInterval(sampler);
+  answerBudget = Number.POSITIVE_INFINITY;
+  const spinning = Number(process.versions.node.split(".")[0]) < 26;
+  const cooldowns = [];
+  for (const name of await readdir(config))
+    if (name.startsWith("machine_retry_"))
+      cooldowns.push(JSON.parse(await readFile(join(config, name), "utf8")));
+  measured.fiveCommandsThroughAProxyThatHangsUp = {
+    brokersStarted: brokersSeen.size,
+    proxyConnections: proxyConnections - connectionsBefore,
+    ms: Date.now() - racedSince - 1000,
+    answers: raced.map((answer) => answer.recoveryReason),
+    cooldown: cooldowns.map(({ failures, proxy }) => ({ failures, proxy })),
+  };
+  const told = JSON.stringify(measured.fiveCommandsThroughAProxyThatHangsUp);
+  assert.ok(
+    raced.every((answer) => answer.status === "unreachable"),
+    told,
+  );
+  assert.ok(proxyConnections - connectionsBefore < 5000, `reconnecting must be cut short: ${told}`);
+  if (spinning) {
+    assert.ok(
+      raced.every((answer) => answer.recoveryReason === "proxy_unavailable"),
+      `every command must be told the proxy is failing: ${told}`,
+    );
+    assert.ok(
+      raced.every((answer) => answer.recoveryDetail.includes("proxy is failing")),
+      JSON.stringify(raced[0]),
+    );
+    assert.ok(brokersSeen.size < 5, `a cooldown must stand between brokers: ${told}`);
+    assert.ok(
+      cooldowns.length === 1 && cooldowns[0].proxy === true && cooldowns[0].failures < 5,
+      `the broker must leave a cooldown that names the proxy: ${told}`,
+    );
+  }
+  for (const pid of brokersSeen) pids.add(pid);
+  // An explicit check, as `prim setup --cloud` makes it, lifts the proxy's
+  // cooldown without forgetting its count. Against a proxy still failing that
+  // costs one attempt, cut short, and leaves a longer wait than the last.
+  const liftCooldowns = async () => {
+    for (const name of await readdir(config)) {
+      if (!name.startsWith("machine_retry_")) continue;
+      const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
+      if (waiting.serverRetryAfter) continue;
+      if (!waiting.proxy) await rm(join(config, name));
+      else
+        await writeFile(
+          join(config, name),
+          JSON.stringify({ failures: waiting.failures, retryAt: 0, proxy: true }),
+        );
+    }
+  };
+  if (spinning) {
+    await liftCooldowns();
+    await dropTunnels();
+    answerBudget = 1;
+    connectionsBefore = proxyConnections;
+    const rechecked = await cloudStatus(inSession);
+    await delay(500);
+    answerBudget = Number.POSITIVE_INFINITY;
+    const [name] = (await readdir(config)).filter((file) => file.startsWith("machine_retry_"));
+    const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
+    measured.explicitCheckOfAProxyStillHangingUp = {
+      proxyConnections: proxyConnections - connectionsBefore,
+      failuresBefore: cooldowns[0].failures,
+      failuresAfter: waiting.failures,
+    };
+    assert.equal(rechecked.recoveryReason, "proxy_unavailable", JSON.stringify(rechecked));
+    assert.ok(
+      proxyConnections - connectionsBefore < 1500,
+      `an explicit check must not set the reconnecting loose again: ${JSON.stringify(measured.explicitCheckOfAProxyStillHangingUp)}`,
+    );
+    assert.ok(
+      waiting.proxy === true && waiting.failures === cooldowns[0].failures + 1,
+      `and the wait that follows it must be longer, not begun again: ${JSON.stringify(waiting)}`,
+    );
+  }
+  // The proxy has recovered, and the next explicit check finds it so.
+  await liftCooldowns();
+  const recovered = await cloudStatus(inSession);
+  assert.equal(recovered.status, "valid", JSON.stringify(recovered));
+  pids.add((await routedBroker()).pid);
+  measured.proxyConnectionsWhileSilent = opened;
+  reports.push("a broker reconnecting without end gives up behind a cooldown that names the proxy");
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);
@@ -380,7 +801,7 @@ try {
     }
   }
   reports.push("no injected secrets or tokens persisted");
-  process.stdout.write(`${JSON.stringify({ passed: true, cases: reports })}\n`);
+  process.stdout.write(`${JSON.stringify({ passed: true, cases: reports, measured })}\n`);
 } finally {
   daemon?.kill();
   for (const name of await readdir(config).catch(() => [])) {
@@ -402,6 +823,8 @@ try {
   proxy?.close();
   injectedApi?.closeAllConnections();
   injectedApi?.close();
+  cloudApi?.closeAllConnections();
+  cloudApi?.close();
   await delay(100);
   await rm(root, { recursive: true, force: true });
 }

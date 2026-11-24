@@ -1,9 +1,28 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forwardToApi } from "../lib/machine-broker.js";
+import {
+  MachineAuthError,
+  discoverMachineConfiguration,
+  exchangeMachineCredentials,
+} from "../lib/machine-protocol.js";
+import { recordProxyFailure, withMachineCooldown } from "../lib/machine-retry.js";
+import { tunnelCheckedFetch } from "../lib/proxy-tunnel.js";
 import {
   type CloudSetupDependencies,
   prepareCloudImage,
@@ -937,5 +956,242 @@ describe("agent contract in cloud setup output", () => {
       remedies: [expect.stringContaining("not a Claude Code cloud session")],
       instructions: expect.any(String),
     });
+  });
+});
+
+describe("each failure, as the command that met it says it and as `prim setup --cloud` relays it", () => {
+  const API = "https://api.getprimitive.ai";
+  const CLIENT = "client_cloud";
+  const configuration = {
+    issuer: "https://signin.getprimitive.ai",
+    audience: "client_environment",
+  };
+  // A cloud session with its credentials in the variables, without and with a
+  // proxy to send prim's requests through.
+  const unrouted = {
+    CLAUDE_CODE_REMOTE: "true",
+    PRIM_M2M_CLIENT_ID: CLIENT,
+    PRIM_M2M_CLIENT_SECRET: "secret",
+  };
+  const routed = { ...unrouted, HTTPS_PROXY: "http://127.0.0.1:3128" };
+  const session = (env: Record<string, string>) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  };
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** The failure itself, from the code that raises it. */
+  const failure = async (attempt: Promise<unknown>): Promise<MachineAuthError> => {
+    const error = await attempt.then(
+      () => undefined,
+      (raised: unknown) => raised,
+    );
+    expect(error).toBeInstanceOf(MachineAuthError);
+    return error as MachineAuthError;
+  };
+  /** Discovery through a stand-in proxy that answers every CONNECT with `answer`. */
+  async function throughProxy(answer: number): Promise<MachineAuthError> {
+    const proxy = createServer();
+    proxy.on("connect", (_request, socket: Duplex) => {
+      socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      return await failure(
+        discoverMachineConfiguration(
+          API,
+          undefined,
+          tunnelCheckedFetch({
+            env: {
+              NODE_USE_ENV_PROXY: "1",
+              HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+            },
+            fetch: (async () => new Response("unreached")) as typeof fetch,
+          }),
+        ),
+      );
+    } finally {
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+  }
+  /** A request that never resolves the host, as a session's own stale DNS does. */
+  const unresolved = (async () => {
+    throw new TypeError("fetch failed", {
+      cause: Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+    });
+  }) as typeof fetch;
+  const tokenService = (status: number, headers: Record<string, string> = {}) =>
+    (async () => new Response("{}", { status, headers })) as typeof fetch;
+
+  /**
+   * The line cloud setup prints for a failure, given what `auth status --json`
+   * reports of it: a failure that ends the credential is invalid, any other
+   * leaves Primitive unreachable.
+   */
+  function relayed(error: MachineAuthError, env: NodeJS.ProcessEnv, config = tempDir("prim-")) {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      env: { ...env, PRIM_CONFIG_DIR: config },
+      parseAuthStatus: () => (error.terminal ? "invalid" : "unreachable"),
+      run: () => ({
+        code: 1,
+        stdout: JSON.stringify({ recoveryReason: error.code, recoveryDetail: error.message }),
+      }),
+    });
+    setupCloudSession(deps);
+    return notes.find((note) => note.startsWith("credentials ·"));
+  }
+
+  const BLOCKED =
+    "Machine authentication could not reach api.getprimitive.ai. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited)";
+  const IN_SESSION = "; the change takes effect in this session within about a minute";
+  const BOTH = "; prim needs api.getprimitive.ai and signin.getprimitive.ai allowed";
+
+  it("a blocked host, where prim's requests ride the proxy", async () => {
+    session(routed);
+    const error = await throughProxy(403);
+    expect(error).toMatchObject({ code: "authentication_unavailable", terminal: false });
+    expect(error.message).toBe(`${BLOCKED}${IN_SESSION}.`);
+    expect(relayed(error, routed)).toBe(`credentials · ${BLOCKED}${IN_SESSION}${BOTH}`);
+  });
+
+  it("a blocked host, where prim connects by itself", async () => {
+    session(unrouted);
+    const error = await failure(discoverMachineConfiguration(API, undefined, unresolved));
+    expect(error).toMatchObject({ code: "authentication_unavailable", terminal: false });
+    // No promise about when the edit reaches this session: here it may not.
+    expect(error.message).toBe(`${BLOCKED}.`);
+    expect(relayed(error, unrouted)).toBe(`credentials · ${BLOCKED}${BOTH}`);
+  });
+
+  it("an outage of the proxy itself", async () => {
+    session(routed);
+    const error = await throughProxy(502);
+    expect(error).toMatchObject({ code: "proxy_unavailable", terminal: false });
+    expect(error.message).toBe(
+      "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+    );
+    // Relayed as it is: no domain to add, and nothing said twice.
+    expect(relayed(error, routed)).toBe(
+      "credentials · The cloud environment's proxy is failing (not the Allowed domains list); retry shortly",
+    );
+  });
+
+  it("a request through the broker that fails for no reason the proxy gave", async () => {
+    session(routed);
+    const answer = (await forwardToApi(
+      API,
+      { method: "GET", path: "/api/cli/auth/status" },
+      new AbortController().signal,
+      (async () => {
+        throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+      }) as typeof fetch,
+    )) as { error: { code: string; message: string } };
+    const error = new MachineAuthError(answer.error.code, answer.error.message);
+    expect(error.message).toBe(
+      "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry.",
+    );
+    // With nothing named, the whole remedy is given, with when it takes
+    // effect: judged from the session cloud setup was given, not its own.
+    vi.unstubAllEnvs();
+    expect(relayed(error, routed)).toBe(
+      `credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION} (The request to Primitive through the cloud environment's proxy failed. Check the connection and retry)`,
+    );
+  });
+
+  it("a wait the sign-in service asked for", async () => {
+    session(routed);
+    const config = tempDir("prim-cloud-wait-");
+    const exchange = () =>
+      failure(
+        withMachineCooldown(config, API, CLIENT, undefined, () =>
+          exchangeMachineCredentials(
+            configuration,
+            CLIENT,
+            "secret",
+            undefined,
+            tokenService(429, { "Retry-After": "120" }),
+          ),
+        ),
+      );
+    expect((await exchange()).message).toBe(
+      "The machine token service is temporarily unavailable.",
+    );
+    // From then on every command is told it is a wait, and for how long.
+    const waiting = await exchange();
+    expect(waiting).toMatchObject({ code: "token_service_unavailable", terminal: false });
+    expect(waiting.message).toMatch(
+      /^The sign-in service asked prim to wait; retry in about (119|120)s$/u,
+    );
+    // Cloud setup neither forgets the wait nor blames the network for it.
+    expect(relayed(waiting, routed, config)).toBe(`credentials · ${waiting.message}`);
+    expect((await exchange()).message).toMatch(/^The sign-in service asked prim to wait/u);
+  });
+
+  it("prim's own cooldown after a failure", async () => {
+    session(unrouted);
+    const config = tempDir("prim-cloud-cooldown-");
+    const discover = (fetchImpl: typeof fetch) =>
+      withMachineCooldown(config, API, CLIENT, undefined, () =>
+        discoverMachineConfiguration(API, undefined, fetchImpl),
+      );
+    expect((await failure(discover(unresolved))).message).toBe(`${BLOCKED}.`);
+    const cooling = await failure(discover(unresolved));
+    expect(cooling).toMatchObject({ code: "token_service_unavailable", terminal: false });
+    expect(cooling.message).toBe(
+      "Machine authentication is cooling down after a temporary failure; in this Claude Code cloud session, run `prim setup --cloud` for the fix",
+    );
+    // Cloud setup forgets the cooldown before it checks, so it reports the
+    // cause, or that the fix worked, and never points at itself.
+    const { deps } = harness({ cwd: repo(true), env: { ...unrouted, PRIM_CONFIG_DIR: config } });
+    let waitingAtCheck: string[] | undefined;
+    deps.run = (args) => {
+      if (args[0] === "auth") waitingAtCheck = readdirSync(config);
+      return { code: 0, stdout: "{}" };
+    };
+    setupCloudSession(deps);
+    expect(waitingAtCheck).toEqual([]);
+    expect(relayed(cooling, unrouted)).toBe(
+      "credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited) (Machine authentication is cooling down after a temporary failure)",
+    );
+  });
+
+  it("a cooldown the proxy's failure started", async () => {
+    session(routed);
+    const config = tempDir("prim-cloud-proxy-");
+    recordProxyFailure(config, API, CLIENT);
+    const request = vi.fn(async () => "token");
+    const cooling = await failure(withMachineCooldown(config, API, CLIENT, undefined, request));
+    expect(cooling).toMatchObject({ code: "proxy_unavailable", terminal: false });
+    expect(cooling.message).toBe(
+      "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+    );
+    expect(request).not.toHaveBeenCalled();
+    // Cloud setup asks again at once: by the check, the wait is lifted, and
+    // the count of failures kept, so a proxy still failing is waited out longer.
+    const { deps } = harness({ cwd: repo(true), env: { ...routed, PRIM_CONFIG_DIR: config } });
+    let stateAtCheck: unknown;
+    deps.run = (args) => {
+      if (args[0] === "auth")
+        stateAtCheck = JSON.parse(readFileSync(join(config, readdirSync(config)[0] ?? ""), "utf8"));
+      return { code: 0, stdout: "{}" };
+    };
+    setupCloudSession(deps);
+    expect(stateAtCheck).toEqual({ failures: 1, retryAt: 0, proxy: true });
+    expect(relayed(cooling, routed)).toBe(
+      "credentials · The cloud environment's proxy is failing (not the Allowed domains list); retry shortly",
+    );
+  });
+
+  it("credentials the sign-in service rejects", async () => {
+    session(routed);
+    const error = await failure(
+      exchangeMachineCredentials(configuration, CLIENT, "secret", undefined, tokenService(401)),
+    );
+    expect(error).toMatchObject({ code: "machine_credentials_rejected", terminal: true });
+    const REJECTED =
+      "The cloud environment's credentials were rejected. To fix it, correct the credentials in the cloud environment's settings, or if the installation was revoked mint a replacement on your own machine with `prim auth enroll --new-installation \"Claude Code cloud\" --print-env`; then start a new cloud session";
+    expect(error.message).toBe(`${REJECTED}.`);
+    // Nothing about the network, and the replacement named once.
+    expect(relayed(error, routed)).toBe(`credentials · ${REJECTED}`);
   });
 });

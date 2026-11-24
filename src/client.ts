@@ -802,9 +802,13 @@ async function fetchWithToken(
 
 /**
  * One API request as a machine. Normally prim holds the token and sends it.
- * In network-token mode the cloud environment's proxy holds it, so the
- * request goes through the broker, whose requests pass through that proxy,
- * and carries no credential of prim's own.
+ * Two cases go through the broker, whose requests pass through the cloud
+ * environment's proxy. In network-token mode that proxy holds the token, so
+ * the request carries no credential of prim's own. In a cloud session whose
+ * credentials come from its variables, only the proxy follows an edit to the
+ * environment's Allowed domains, so the broker carries the request and, where
+ * prim holds the token, attaches the one it holds. Either way this process
+ * sends the broker no credential.
  */
 async function fetchAsMachine(
   credential: MachineCredential,
@@ -813,7 +817,7 @@ async function fetchAsMachine(
   body: unknown,
   options: RequestOptions,
 ): Promise<Response> {
-  if (!credential.tokenInjection)
+  if (!credential.tokenInjection && !credential.routing)
     return fetchWithToken(
       method,
       path,

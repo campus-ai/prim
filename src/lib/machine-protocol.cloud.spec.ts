@@ -1,9 +1,13 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   discoverMachineConfiguration,
   rejectedCredentialsMessage,
   verifyMachineIdentity,
 } from "./machine-protocol.js";
+import { tunnelCheckedFetch } from "./proxy-tunnel.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -20,6 +24,77 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
       code: "authentication_unavailable",
       message:
         "Machine authentication could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).",
+    });
+  });
+
+  it("says the allowlist edit reaches the session where its requests ride the proxy", async () => {
+    // As in the token broker of a cloud session with credentials in its variables.
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:3128");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    const failure = await discoverMachineConfiguration(
+      "https://api.example.com",
+      undefined,
+      unreachable,
+    ).catch((error: unknown) => error as Error);
+    expect(failure.message).toBe(
+      "Machine authentication could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited); the change takes effect in this session within about a minute.",
+    );
+    expect(failure.message).not.toMatch(/new (cloud )?session/u);
+  });
+
+  /** Discovery through a stand-in proxy that answers every CONNECT with `answer`. */
+  async function discoverThroughProxy(answer: number | "close"): Promise<Error> {
+    const proxy = createServer();
+    proxy.on("connect", (_request, socket: Duplex) => {
+      if (answer === "close") socket.destroy();
+      else socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      return await discoverMachineConfiguration(
+        "https://api.example.com",
+        undefined,
+        tunnelCheckedFetch({
+          env: {
+            NODE_USE_ENV_PROXY: "1",
+            HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+          },
+          fetch: unreachable,
+        }),
+      ).catch((error: unknown) => error as Error);
+    } finally {
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+  }
+
+  it.each([502, 503, 407, "close"] as const)(
+    "blames the proxy, not the allowlist, when it answers a CONNECT with %s",
+    async (answer) => {
+      vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+      expect(await discoverThroughProxy(answer)).toMatchObject({
+        code: "proxy_unavailable",
+        terminal: false,
+        message:
+          "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+      });
+    },
+  );
+
+  it("keeps the allowlist advice for a host the proxy refuses", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    expect(await discoverThroughProxy(403)).toMatchObject({
+      code: "authentication_unavailable",
+      message: expect.stringContaining(
+        "could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains",
+      ),
+    });
+  });
+
+  it("says nothing of a cloud environment's proxy on a developer machine", async () => {
+    expect(await discoverThroughProxy(502)).toMatchObject({
+      code: "authentication_unavailable",
+      message: "Machine authentication is temporarily unavailable. Check the connection and retry.",
     });
   });
 
