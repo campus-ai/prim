@@ -9,6 +9,7 @@ import {
 } from "../lib/cloud-prepared.js";
 import {
   CLOUD_CREDENTIALS_REMEDY,
+  cloudAllowedDomains,
   cloudEgressRemedy,
   isClaudeCloudSession,
   repositoryIdentityRemedy,
@@ -280,34 +281,35 @@ type SessionOutcome = {
   optedOut?: boolean;
 };
 
-/** The per-session steps; a missing prerequisite stops the rest. */
-function sessionSteps(
-  deps: CloudSetupDependencies,
-  results: CloudResults,
-  remedies: string[],
-  options: { preparedNow?: boolean } = {},
-  outcome: SessionOutcome = {},
-): void {
-  const remedy = (message: string): void => {
-    deps.note(message);
-    remedies.push(message);
-  };
-  const env = deps.env ?? process.env;
+/** What each per-session check reads and reports through. */
+type SessionCheck = {
+  deps: CloudSetupDependencies;
+  results: CloudResults;
+  remedy: (message: string) => void;
+  env: NodeJS.ProcessEnv;
+};
+
+/** Whether the session has a credential Primitive accepts. */
+function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean {
   let machine: boolean;
   try {
     machine = hasMachineConfiguration({ env });
   } catch (error) {
     remedy(`credentials · ${error instanceof MachineAuthError ? error.message : String(error)}`);
     results.credentials = "failed";
-    return;
+    return false;
   }
   // A fixed bearer token or a stored sign-in also authenticates prim; only no
   // credential at all is missing. The SessionStart diagnosis asks the same
   // question the same way, so the two never disagree.
   if (!machine && !resolveStoredCredential(env)) {
-    remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
+    // Both hosts are blocked by default, and that fix is made in the same
+    // settings: name it now rather than in the next session.
+    remedy(
+      `credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}; the environment must also allow ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} under Allowed domains (blocked by default)`,
+    );
     results.credentials = "missing";
-    return;
+    return false;
   }
   // An explicit check retries now: a cooldown left by an earlier failure would
   // report "cooling down" in place of the cause, or of the fix having worked.
@@ -330,7 +332,7 @@ function sessionSteps(
             `credentials · the sign-in was rejected: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
-    return;
+    return false;
   }
   // A human sign-in the server accepts only for enrolling an installation
   // verifies, yet authorizes nothing else, and a cloud session cannot enroll.
@@ -339,15 +341,22 @@ function sessionSteps(
       `credentials · this sign-in can only enroll an installation, which a cloud session cannot do: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
-    return;
+    return false;
   }
   results.credentials = "ok";
+  return true;
+}
 
+/** The repository to set up, or undefined where there is none to activate. */
+function repositoryRoot(
+  { deps, results, remedy }: SessionCheck,
+  outcome: SessionOutcome,
+): string | undefined {
   const root = gitToplevel(deps.cwd);
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
-    return;
+    return undefined;
   }
   // The repository's committed opt-out is its answer to a prepared environment
   // (and to this command, which the documented agent prompt runs): leave it
@@ -358,13 +367,22 @@ function sessionSteps(
     );
     results.repository = "ok";
     outcome.optedOut = true;
-    return;
+    return undefined;
   }
   if (!githubRepositoryFullName(root)) {
     remedy(`repository · ${repositoryIdentityRemedy(root)}`);
     results.repository = "missing";
-    return;
+    return undefined;
   }
+  return root;
+}
+
+/** Whether Claude Code has prim's hooks loaded for this repository. */
+function sessionHooks(
+  { deps, results, remedy, env }: SessionCheck,
+  root: string,
+  options: { preparedNow?: boolean },
+): void {
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
   const pendingHooks = options.preparedNow === true || preparedInSession(env);
@@ -388,6 +406,30 @@ function sessionSteps(
     );
     results.session = "missing";
   }
+}
+
+/**
+ * The per-session steps. Every prerequisite is fixed in the environment's
+ * settings (or the repository) and reaches only the next session, so each one
+ * that can be judged now is reported together: a user told only about
+ * credentials would learn about the setup script a session later.
+ */
+function sessionSteps(
+  deps: CloudSetupDependencies,
+  results: CloudResults,
+  remedies: string[],
+  options: { preparedNow?: boolean } = {},
+  outcome: SessionOutcome = {},
+): void {
+  const remedy = (message: string): void => {
+    deps.note(message);
+    remedies.push(message);
+  };
+  const check: SessionCheck = { deps, results, remedy, env: deps.env ?? process.env };
+  const credentials = credentialsReady(check);
+  const root = repositoryRoot(check, outcome);
+  if (root) sessionHooks(check, root, options);
+  if (!credentials || !root) return;
 
   const step = (key: string, label: string, args: string[]): void => {
     if (label) deps.note(`${label} · installing…`);
