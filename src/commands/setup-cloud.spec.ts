@@ -229,6 +229,25 @@ describe("setupCloudSession", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("passes the credential's own guidance through instead of advising revocation", () => {
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      parseAuthStatus: () => "invalid",
+      run: (args) => ({
+        code: args[0] === "auth" ? 1 : 0,
+        stdout: JSON.stringify({
+          recoveryDetail: "Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables.",
+        }),
+      }),
+    });
+    setupCloudSession(deps);
+    const text = notes.join("\n");
+    expect(text).toContain(
+      "credentials · Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables;",
+    );
+    expect(text.indexOf("NODE_USE_ENV_PROXY")).toBeLessThan(text.indexOf("revoke"));
+  });
+
   it("names the allowed domains when Primitive is unreachable", () => {
     const { deps, calls, notes, exit } = harness({
       cwd: repo(true),

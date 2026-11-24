@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { atomicWriteFile } from "./atomic-file.js";
 import { binFile } from "./bin-path.js";
 import { withFileLock } from "./file-lock.js";
+import { loopbackFetch } from "./loopback-fetch.js";
 import {
   type MachineCredential,
   acquireMachineCredential,
@@ -72,10 +73,9 @@ async function brokerRequest(
     observedTokenHash: tokenHash(options.observedToken),
     timestamp: Date.now(),
   });
-  const response = await fetch(`http://127.0.0.1:${descriptor.port}/credential`, {
+  const response = await loopbackFetch(`http://127.0.0.1:${descriptor.port}/credential`, {
     method: "POST",
     body,
-    redirect: "error",
     signal: options.signal,
     headers: {
       "Content-Type": "application/json",
@@ -141,9 +141,8 @@ export async function acquireBrokerCredential(options: {
       if (current) {
         try {
           // Probe only; do not exchange while holding the broker startup lock.
-          const response = await fetch(`http://127.0.0.1:${current.port}/health`, {
+          const response = await loopbackFetch(`http://127.0.0.1:${current.port}/health`, {
             signal: AbortSignal.any([options.signal, AbortSignal.timeout(500)]),
-            redirect: "error",
           });
           if (response.ok && (await response.text()) === current.nonce) return current;
         } catch {

@@ -273,6 +273,8 @@ export type AuthStatusResult = {
   organizationId?: string;
   storageBackend?: MachineStorage;
   recoveryReason?: string;
+  /** The machine credential failure's own guidance, safe to show. */
+  recoveryDetail?: string;
 };
 
 function hasStoredRefreshToken(): boolean {
@@ -366,6 +368,7 @@ export async function verifyAuthStatus(): Promise<AuthStatusResult> {
       ...machineMetadata,
       principalKind: "machine",
       recoveryReason: error instanceof MachineAuthError ? error.code : "verification_unavailable",
+      ...(error instanceof MachineAuthError ? { recoveryDetail: error.message } : {}),
     };
   }
   const credential = resolveAuthCredential();
@@ -460,7 +463,7 @@ function writeHumanAuthStatus(result: AuthStatusResult): void {
     console.error(
       result.authenticated
         ? `Installation ${result.machineId}: verified (${result.storageBackend}); organization ${result.organizationId}${result.authorizedUserId ? `; acting for user ${result.authorizedUserId}` : "; service identity"}.`
-        : `Machine authentication ${result.status}: ${result.recoveryReason}. Check the credential store or run prim auth configure-machine with credentials from your administrator.`,
+        : `Machine authentication ${result.status}: ${result.recoveryReason}. ${result.recoveryDetail ? stripControlChars(result.recoveryDetail) : "Check the credential store or run prim auth configure-machine with credentials from your administrator."}`,
     );
     return;
   }

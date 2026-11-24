@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -373,5 +381,153 @@ describe("machine credentials", () => {
     };
     await expect(configureMachine(clientId, secret, deps, controller.signal)).rejects.toBeDefined();
     expect(readdirSync(directory)).toEqual([]);
+  });
+});
+
+describe("network-secret mode (PRIM_M2M_CLIENT_AUTH=network-secret)", () => {
+  function networkEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    return {
+      PRIM_API_URL: "https://api.example.com",
+      PRIM_M2M_CLIENT_ID: clientId,
+      PRIM_M2M_CLIENT_AUTH: "network-secret",
+      ...extra,
+    };
+  }
+  function tokenRequests() {
+    return vi
+      .mocked(deps.fetch as typeof fetch)
+      .mock.calls.filter(([url]) => String(url).endsWith("/oauth2/token"))
+      .map(([, init]) => init as RequestInit);
+  }
+
+  it("requests a token carrying no credential and writes nothing to answer whether it is configured", async () => {
+    deps.env = networkEnv({ HTTPS_PROXY: "http://127.0.0.1:3128", NODE_USE_ENV_PROXY: "1" });
+    expect(hasMachineConfiguration(deps)).toBe(true);
+    const credential = await acquireMachineCredential({}, deps);
+    expect(credential?.storage).toBe("environment");
+    expect(credential?.machineId).toBe("machine_local");
+    const [request] = tokenRequests();
+    expect(String(request?.body)).toBe("grant_type=client_credentials");
+    expect(JSON.stringify(request?.headers ?? {})).not.toMatch(/authorization/iu);
+    expect(readdirSync(directory).filter((name) => name.endsWith(".key"))).toEqual([]);
+  });
+
+  it("creates one owner-only broker key on demand and agrees on it", async () => {
+    deps.env = networkEnv({ PRIM_API_URL: "https://api-key.example.com" });
+    const { environmentCredentials } = await import("./machine-credentials.js");
+    const key = environmentCredentials(deps)?.clientSecret;
+    expect(key).toMatch(/^[a-f0-9]{64}$/u);
+    expect(environmentCredentials(deps)?.clientSecret).toBe(key);
+    const keyFiles = readdirSync(directory).filter((name) => name.endsWith(".key"));
+    expect(keyFiles).toHaveLength(1);
+    expect(readdirSync(directory).filter((name) => name.includes(".key."))).toEqual([]);
+    if (process.platform !== "win32")
+      expect(statSync(join(directory, keyFiles[0] ?? "")).mode & 0o777).toBe(0o600);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a damaged or readable key rather than racing to replace it",
+    async () => {
+      const { environmentCredentials } = await import("./machine-credentials.js");
+      deps.env = networkEnv({ PRIM_API_URL: "https://api-damaged.example.com" });
+      environmentCredentials(deps)?.clientSecret;
+      const [name] = readdirSync(directory).filter((file) => file.endsWith(".key"));
+      const path = join(directory, name ?? "");
+      writeFileSync(path, "", { mode: 0o600 });
+      // A fresh process (no in-memory key) sees the damaged file.
+      vi.resetModules();
+      const fresh = await import("./machine-credentials.js");
+      expect(() => fresh.environmentCredentials(deps)?.clientSecret).toThrow(
+        /damaged\. Delete it and retry/u,
+      );
+      expect(readFileSync(path, "utf8")).toBe("");
+      rmSync(path);
+      writeFileSync(path, `${"a".repeat(64)}\n`, { mode: 0o644 });
+      vi.resetModules();
+      const exposed = await import("./machine-credentials.js");
+      expect(() => exposed.environmentCredentials(deps)?.clientSecret).toThrow(/owner-only/u);
+    },
+  );
+
+  it("starts a fresh broker generation once proxy routing is fixed", async () => {
+    const { environmentCredentials } = await import("./machine-credentials.js");
+    const direct = environmentCredentials({ ...deps, env: networkEnv() })?.generation;
+    const routed = environmentCredentials({
+      ...deps,
+      env: networkEnv({ NODE_USE_ENV_PROXY: "1" }),
+    })?.generation;
+    const optioned = environmentCredentials({
+      ...deps,
+      env: networkEnv({ NODE_OPTIONS: "--use-env-proxy=true" }),
+    })?.generation;
+    expect(routed).not.toBe(direct);
+    expect(optioned).toBe(routed);
+  });
+
+  it("names NODE_USE_ENV_PROXY before any request when Node would bypass the injecting proxy", async () => {
+    deps.env = networkEnv({
+      PRIM_API_URL: "https://api-routing.example.com",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+    });
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "proxy_routing_required",
+      message: expect.stringContaining("NODE_USE_ENV_PROXY=1"),
+    });
+    expect(vi.mocked(deps.fetch as typeof fetch)).not.toHaveBeenCalled();
+  });
+
+  it("points a rejected token request at the network secret and pauses, not forever", async () => {
+    deps.env = networkEnv({ PRIM_API_URL: "https://api-rejected.example.com" });
+    tokenStatus = 401;
+    await expect(acquireMachineCredential({}, deps)).rejects.toThrow(
+      "network secret for auth.example.com: username = the client ID, password = the client secret",
+    );
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "machine_credentials_rejected",
+    });
+    expect(tokenRequests()).toHaveLength(1);
+    tokenStatus = 200;
+    vi.useFakeTimers({ now: Date.now() + 31_000, toFake: ["Date"] });
+    try {
+      expect((await acquireMachineCredential({}, deps))?.machineId).toBe("machine_local");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not blame the username for a token that fails other checks", async () => {
+    deps.env = networkEnv({ PRIM_API_URL: "https://api-audience.example.com" });
+    const fetcher = deps.fetch as ReturnType<typeof vi.fn>;
+    const original = fetcher.getMockImplementation();
+    fetcher.mockImplementation(async (url: string, options: RequestInit) =>
+      String(url).endsWith("/oauth2/token")
+        ? Response.json({ access_token: token(clientId), token_type: "bearer", expires_in: 3600 })
+        : original?.(url, options),
+    );
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "token_identity_mismatch",
+    });
+  });
+
+  it("names the network secret's username when it issues a token for another client", async () => {
+    deps.env = networkEnv({
+      PRIM_API_URL: "https://api-mismatch.example.com",
+      PRIM_M2M_CLIENT_ID: "client_typed_differently",
+    });
+    await expect(acquireMachineCredential({}, deps)).rejects.toMatchObject({
+      code: "network_secret_mismatch",
+      message: expect.stringContaining("client_typed_differently"),
+    });
+  });
+
+  it.each([
+    [{ PRIM_M2M_CLIENT_SECRET: "also-set" }, "conflicting_credentials"],
+    [{ PRIM_M2M_CLIENT_ID: undefined }, "incomplete_machine_credentials"],
+    [{ PRIM_M2M_CLIENT_AUTH: "basic" }, "incomplete_machine_credentials"],
+    [{ PRIM_M2M_CLIENT_SECRET: "" }, "conflicting_credentials"],
+  ])("rejects the inconsistent environment %j", (extra, code) => {
+    expect(() => hasMachineConfiguration({ ...deps, env: networkEnv(extra) })).toThrow(
+      expect.objectContaining({ code }),
+    );
   });
 });

@@ -173,7 +173,8 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      under Allowed domains (both are blocked by default), and **Allow package managers**
      left on so the setup script can install prim.
    - **Environment variables**: paste the lines step 1 printed. Anyone who uses the
-     environment can read them, so keep the environment personal.
+     environment can read them, so keep the environment personal. To keep the secret
+     itself out of the VM, see the network-secret option below.
    - **Setup script**:
 
      ```bash
@@ -190,6 +191,27 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      capture delivers directly instead. `prim disable` opts a repository out for the rest of
      that session only, because each session starts from a fresh clone; to keep prim out of
      a repository, use an environment without `--prepare` for it.
+
+To keep the client secret out of the VM's variables, give it to the environment's proxy.
+Under **Network secrets**, add a **Username and password** secret for host
+`signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the
+username, the `PRIM_M2M_CLIENT_SECRET` value as the password. Then replace the
+`PRIM_M2M_CLIENT_SECRET` line in the variables with the last two of these (keep any
+other line step 1 printed, such as `PRIM_API_URL`):
+
+```text
+PRIM_M2M_CLIENT_ID=client_...
+PRIM_M2M_CLIENT_AUTH=network-secret
+NODE_USE_ENV_PROXY=1
+```
+
+The proxy adds the secret to prim's token request as HTTP Basic authentication, so no
+process in the session can read the secret or carry it out of the VM; processes in the
+session can still obtain short-lived tokens through the proxy, as prim does. Keep
+`signin.getprimitive.ai` under Allowed domains. `NODE_USE_ENV_PROXY=1` routes prim's
+requests through that proxy, and prim says so if it is missing. It applies to every Node
+process in the VM; on Node 22 each also prints "EnvHttpProxyAgent is experimental", which
+`NODE_NO_WARNINGS=1` in the variables hides (along with all other Node warnings).
 
 Each session, prim's SessionStart hook activates the repository and connects it to
 Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
