@@ -459,7 +459,7 @@ export function registerSetupCommand(
     )
     .option(
       "--prepare",
-      "with --cloud, stage the hook runtime from the environment's setup script (no credentials or network)",
+      "with --cloud, prepare the environment's image from its setup script: hook runtime, user-scope Claude hooks, activation (no credentials or network)",
     )
     .action((opts: SetupCommandOptions, command: Command) => {
       const setupAt = Date.now();

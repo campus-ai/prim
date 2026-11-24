@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -45,6 +45,10 @@ function harness(overrides: Partial<CloudSetupDependencies> = {}) {
     exit,
     parseAuthStatus: () => "valid",
     stage: vi.fn(),
+    installUserHooks: vi.fn(),
+    markPrepared: vi.fn(),
+    developerInstall: () => false,
+    userHooksComplete: () => true,
     platform: "linux",
     env: {
       CLAUDE_CODE_REMOTE: "true",
@@ -70,15 +74,76 @@ afterEach(() => {
 });
 
 describe("prepareCloudImage", () => {
-  it("stages the hook runtime and records the daemon opt-out without auth or a repository", () => {
+  it("wires user-scope prim and marks the environment prepared, without auth or a repository", () => {
     const { deps, calls, exit } = harness({ env: {} });
     prepareCloudImage(deps);
     expect(deps.stage).toHaveBeenCalledOnce();
-    expect(calls).toEqual([["daemon", "stop"]]);
+    expect(deps.installUserHooks).toHaveBeenCalledOnce();
+    expect(calls).toEqual([
+      ["claude", "preauth", "--scope", "user"],
+      ["skill", "install", "--agent", "claude", "--scope", "user"],
+      ["daemon", "stop"],
+    ]);
+    expect(deps.markPrepared).toHaveBeenCalledOnce();
     expect(printed).toEqual([
-      { ok: true, cloud: "prepare", results: { runtime: "ok", daemon: "ok" }, failed: [] },
+      {
+        ok: true,
+        cloud: "prepare",
+        results: {
+          runtime: "ok",
+          session: "ok",
+          preauth: "ok",
+          skill: "ok",
+          daemon: "ok",
+          prepared: "ok",
+        },
+        failed: [],
+      },
     ]);
     expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("refuses to rewrite a Linux developer's own user-scope install", () => {
+    const { deps, calls, exit } = harness({ env: {}, developerInstall: () => true });
+    prepareCloudImage(deps);
+    expect(deps.installUserHooks).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("still activates when only the skill or allow-rule step failed", () => {
+    const { deps, exit } = harness({
+      run: (args) => ({ code: args[0] === "skill" ? 1 : 0, stdout: "{}" }),
+    });
+    prepareCloudImage(deps);
+    expect(deps.markPrepared).toHaveBeenCalledOnce();
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["skill"] });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("clears an earlier run's opt-in before a failing re-run", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const { deps } = harness({
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+      installUserHooks: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+    prepareCloudImage(deps);
+    expect(existsSync(join(configDir, "cloud-prepared"))).toBe(false);
+  });
+
+  it("does not mark an environment prepared when wiring failed", () => {
+    const { deps, exit } = harness({
+      installUserHooks: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+    prepareCloudImage(deps);
+    expect(deps.markPrepared).not.toHaveBeenCalled();
+    expect(printed[0]).toMatchObject({ ok: false, failed: ["session"] });
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("refuses on a developer's machine, where it would disable the daemon", () => {
@@ -98,6 +163,7 @@ describe("prepareCloudImage", () => {
     });
     prepareCloudImage(deps);
     expect(printed[0]).toMatchObject({ ok: false, failed: ["runtime"] });
+    expect(deps.markPrepared).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
   });
 });
@@ -179,9 +245,44 @@ describe("setupCloudSession", () => {
     const { deps, calls, notes, exit } = harness({ cwd: repo(false) });
     setupCloudSession(deps);
     expect(calls.at(-1)).toEqual(["enable", "--non-interactive"]);
+    expect(notes.join("\n")).toContain("prim setup --cloud --prepare");
     expect(notes.join("\n")).toContain("prim claude install --scope project");
     expect(printed[0]).toMatchObject({ ok: false, failed: ["session"] });
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("accepts a prepared environment in place of a committed install", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "now\n");
+    const { deps, exit } = harness({
+      cwd: repo(false),
+      env: {
+        CLAUDE_CODE_REMOTE: "true",
+        PRIM_M2M_CLIENT_ID: "client_cloud",
+        PRIM_M2M_CLIENT_SECRET: "secret",
+        PRIM_CONFIG_DIR: configDir,
+      },
+    });
+    setupCloudSession(deps);
+    expect(printed[0]).toMatchObject({ ok: true, results: { session: "ok" } });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("does not trust the marker once the user-scope hooks are gone", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "cloud-prepared"), "1\n");
+    const { deps } = harness({
+      cwd: repo(false),
+      userHooksComplete: () => false,
+      env: {
+        CLAUDE_CODE_REMOTE: "true",
+        PRIM_M2M_CLIENT_ID: "client_cloud",
+        PRIM_M2M_CLIENT_SECRET: "secret",
+        PRIM_CONFIG_DIR: configDir,
+      },
+    });
+    setupCloudSession(deps);
+    expect(printed[0]).toMatchObject({ results: { session: "missing" } });
   });
 
   it("fails a failed activation", () => {

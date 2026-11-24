@@ -5,7 +5,9 @@
  * only *act* where prim is activated. The signal is a git config flag,
  * `prim.active`, read merged so repo-local overrides global:
  *
- *   - unset            → inactive everywhere (opt-in default)
+ *   - unset            → inactive (opt-in default), unless a committed project
+ *                        install or a prepared Claude Code cloud environment
+ *                        opts the repository in (see isRepoActiveForCapture)
  *   - `prim enable`    → `git config --local prim.active true`  (this repo)
  *   - `prim disable`   → `git config --local prim.active false` (mute this repo)
  *   - global opt-out   → `git config --global prim.active true` (every repo)
@@ -20,6 +22,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isPreparedCloudSession } from "./cloud-prepared.js";
 import { healDemoPause, readCaptureConfig } from "./demo-pause.js";
 import { gitToplevel, githubRepositoryFullName } from "./git.js";
 
@@ -234,7 +237,8 @@ export function hasProjectPrimInstall(cwd: string): boolean {
  *   - "true"    → active
  *   - "false"   → inactive — `prim disable` is authoritative and is NOT
  *                 overridden by the back-fill, so a user can always mute a repo
- *   - unset     → back-fill: active iff a pre-existing project install is found
+ *   - unset     → back-fill: active iff a pre-existing project install is found,
+ *                 or the session runs in a prepared Claude Code cloud environment
  * Checked only on the unset fallback, so an active/disabled repo pays just the
  * flag read.
  */
@@ -248,7 +252,10 @@ export function isRepoActiveForCapture(
   if (pause && healDemoPause(cwd, pause, options)) flag = repoActiveFlag(cwd);
   if (flag === "true") return true;
   if (flag === "false") return false;
-  return hasProjectPrimInstall(cwd);
+  // A prepared Claude Code cloud environment opted every repository in, the
+  // way a committed project install opts in one. Gated on the session so a
+  // stale marker on a developer's machine never activates anything.
+  return hasProjectPrimInstall(cwd) || (isPreparedCloudSession() && gitToplevel(cwd) !== null);
 }
 
 /** Human-readable decision-ingestion state for the capture gate at `cwd`. */
