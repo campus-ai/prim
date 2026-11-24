@@ -14,6 +14,7 @@ import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
+import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 import {
   cloudUserInstallComplete,
@@ -157,12 +158,14 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
     finish(deps, "session", results);
     return;
   }
-  const auth = deps.parseAuthStatus(deps.run(["auth", "status", "--json"], true));
+  const status = deps.run(["auth", "status", "--json"], true);
+  const auth = deps.parseAuthStatus(status);
   if (auth !== "valid") {
+    const detail = authFailureDetail(status.stdout);
     deps.note(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}`
-        : "credentials · rejected; mint a replacement with `prim auth enroll --new-installation` and revoke the old installation in Settings → Developer installations",
+        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
+        : `credentials · ${detail ?? "rejected"}; if the credential itself was revoked, mint a replacement with \`prim auth enroll --new-installation\` and revoke the old installation in Settings → Developer installations`,
     );
     results.credentials = "failed";
     finish(deps, "session", results);
@@ -201,6 +204,18 @@ export function setupCloudSession(deps: CloudSetupDependencies): void {
   deps.note("activate this repo · installing…");
   results.enable = deps.run(["enable", "--non-interactive"]).code === 0 ? "ok" : "failed";
   finish(deps, "session", results);
+}
+
+/** The machine credential failure's own guidance from `auth status --json`, if any. */
+function authFailureDetail(stdout: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout || "{}") as { recoveryDetail?: unknown };
+    return typeof parsed.recoveryDetail === "string"
+      ? stripControlChars(parsed.recoveryDetail).replace(/\.$/u, "")
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function finish(

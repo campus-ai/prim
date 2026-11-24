@@ -160,8 +160,10 @@ export async function exchangeMachineCredentials(
   clientSecret: string,
   signal?: AbortSignal,
   fetchImpl: typeof fetch = fetch,
+  options: { secretInjection?: "network" } = {},
 ): Promise<MachineTokens> {
-  if (!/^client_[\w-]+$/u.test(clientId) || !machineString(clientSecret)) {
+  const network = options.secretInjection === "network";
+  if (!/^client_[\w-]+$/u.test(clientId) || (!network && !machineString(clientSecret))) {
     throw new MachineAuthError(
       "invalid_credentials",
       "A machine client ID and secret are required.",
@@ -175,11 +177,13 @@ export async function exchangeMachineCredentials(
       redirect: "error",
       signal: machineSignal(signal),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
+      // With a network secret the agent proxy authenticates the client with
+      // HTTP Basic (client_secret_basic); the body carries no credential.
+      body: new URLSearchParams(
+        network
+          ? { grant_type: "client_credentials" }
+          : { grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret },
+      ),
     },
     fetchImpl,
   );
@@ -189,7 +193,9 @@ export async function exchangeMachineCredentials(
     throw new MachineAuthError(
       terminal ? "machine_credentials_rejected" : "token_service_unavailable",
       terminal
-        ? "Machine credentials were rejected. Ask your administrator to rotate or enable them."
+        ? network
+          ? `The token service rejected the request. Check the cloud environment's network secret for ${new URL(configuration.issuer).hostname}: username = the client ID, password = the client secret.`
+          : "Machine credentials were rejected. Ask your administrator to rotate or enable them."
         : "The machine token service is temporarily unavailable.",
       terminal,
       terminal ? undefined : machineRetryAt(response),
@@ -218,6 +224,16 @@ export async function exchangeMachineCredentials(
   } catch {
     throw new MachineAuthError("invalid_response", "The token service returned an invalid JWT.");
   }
+  // A well-formed token for another client: the caller may know why.
+  if (
+    claims.iss === configuration.issuer &&
+    claims.aud === configuration.audience &&
+    (claims.sub !== clientId || claims.client_id !== clientId)
+  )
+    throw new MachineAuthError(
+      "token_client_mismatch",
+      "The token service issued a token for another machine client.",
+    );
   if (
     claims.iss !== configuration.issuer ||
     claims.aud !== configuration.audience ||

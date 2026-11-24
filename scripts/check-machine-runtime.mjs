@@ -16,6 +16,7 @@ const copied = join(root, "copied");
 const secret = "synthetic-machine-secret";
 const clientId = "client_runtime";
 let exchanges = 0;
+let networkExchanges = 0;
 let heartbeats = 0;
 let tokenStatus = 200;
 let daemon;
@@ -52,7 +53,10 @@ try {
       let body = "";
       for await (const chunk of req) body += chunk;
       assert.equal(req.url, "/oauth2/token");
-      assert.ok(new URLSearchParams(body).get("client_secret")?.startsWith(secret));
+      // Network-secret mode: the proxy (absent here) would add HTTP Basic, and
+      // the body must carry no credential at all.
+      if (body === "grant_type=client_credentials") networkExchanges++;
+      else assert.ok(new URLSearchParams(body).get("client_secret")?.startsWith(secret));
       exchanges++;
       if (tokenStatus !== 200) {
         res.writeHead(tokenStatus, { "Retry-After": "120" });
@@ -179,6 +183,29 @@ try {
   await status({ PRIM_M2M_CLIENT_SECRET: `${secret}-rotated` });
   assert.equal(exchanges, 2, "secret rotation must use a new broker generation");
   reports.push("secret rotation invalidates the token cache");
+  const { PRIM_M2M_CLIENT_SECRET: _secret, ...networkEnv } = env;
+  const networkStatus = async () => {
+    const result = await promisify(execFile)(
+      process.execPath,
+      [join(copied, "dist/index.js"), "auth", "status", "--json"],
+      {
+        env: {
+          ...networkEnv,
+          PRIM_M2M_CLIENT_AUTH: "network-secret",
+          HTTPS_PROXY: "",
+          https_proxy: "",
+        },
+        timeout: 15000,
+      },
+    );
+    return JSON.parse(result.stdout);
+  };
+  const networkStatuses = await Promise.all(Array.from({ length: 4 }, () => networkStatus()));
+  assert.ok(networkStatuses.every((value) => value.status === "valid"));
+  assert.equal(networkExchanges, 1, "network-secret processes must share one broker exchange");
+  const keys = (await readdir(config)).filter((name) => name.endsWith(".key"));
+  assert.equal(keys.length, 1, "network-secret processes must agree on one broker key");
+  reports.push("network-secret processes share one key and one credential-free exchange");
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);

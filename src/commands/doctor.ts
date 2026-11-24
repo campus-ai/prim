@@ -83,6 +83,7 @@ import {
   resolveRepositoryBinding,
 } from "../lib/repository-binding.js";
 import { compareSemver } from "../lib/semver.js";
+import { stripControlChars } from "../lib/terminal-safe.js";
 import {
   inspectHookRuntimeResolutions as claudeHookRuntimeResolutions,
   performStatus as claudeStatus,
@@ -221,7 +222,7 @@ async function checkAuth(): Promise<Check> {
         status: status.authenticated ? "ok" : "fail",
         detail: status.authenticated
           ? `machine ${status.displayName ?? status.machineId} · ${status.storageBackend} · expires in ${Math.round((status.accessTokenExpiresInMs ?? 0) / 1000)}s`
-          : `machine authentication: ${status.recoveryReason}; unlock the credential store or run prim auth configure-machine`,
+          : `machine authentication: ${status.recoveryReason}. ${status.recoveryDetail ? stripControlChars(status.recoveryDetail) : "Unlock the credential store or run prim auth configure-machine."}`,
       };
     }
   } catch {

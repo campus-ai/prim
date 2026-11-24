@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -274,12 +283,161 @@ export function readMachineProfile(deps: MachineDependencies = {}): MachineProfi
   return value === undefined ? undefined : parseProfile(value);
 }
 
+/** The secret reaches the token service through the cloud environment's network secret. */
+export const NETWORK_SECRET_AUTH = "network-secret";
+
+export type EnvironmentCredentials = {
+  clientId: string;
+  /**
+   * The client secret, or in network-secret mode a local random key: the
+   * broker authenticates its peers with it and the token request never
+   * carries it.
+   */
+  clientSecret: string;
+  generation: string;
+  secretInjection?: "network";
+};
+
+const brokerKeys = new Map<string, string>();
+
+/**
+ * The broker's peer-authentication key when no client secret is in the
+ * process. Random, owner-only, and per API and client, so every prim process
+ * in the VM agrees on it without the secret ever entering the VM. Created
+ * whole (written aside, then linked into place) so a concurrent reader never
+ * sees a partial key, and read with the same ownership checks as every other
+ * credential file. An absent key is only ever created, never removed, so
+ * processes starting together always settle on the same one.
+ */
+function networkSecretBrokerKey(deps: MachineDependencies, clientId: string): string {
+  const directory = configurationDirectory(deps);
+  const path = join(directory, `machine_network_${hash(`${apiUrlFor(deps)}\0${clientId}`)}.key`);
+  const known = brokerKeys.get(path);
+  if (known) return known;
+  ensureDirectory(directory);
+  // undefined: absent; without key: present but not a key.
+  const read = (): { key?: string } | undefined => {
+    try {
+      const stat = lstatSync(path);
+      if (
+        !stat.isFile() ||
+        (process.platform !== "win32" &&
+          ((stat.mode & 0o077) !== 0 ||
+            (typeof process.getuid === "function" && stat.uid !== process.getuid())))
+      )
+        throw new MachineAuthError(
+          "unsafe_storage",
+          `The machine broker key at ${path} is not an owner-only file. Delete it and retry.`,
+          true,
+        );
+      const value = readFileSync(path, "utf8").trim();
+      return { key: /^[a-f0-9]{64}$/u.test(value) ? value : undefined };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existing = read();
+    if (existing?.key) {
+      brokerKeys.set(path, existing.key);
+      return existing.key;
+    }
+    // Keys are only ever linked into place whole, so a file here that is not
+    // a key was damaged from outside. Replacing it would race other processes
+    // creating theirs; refuse it as unsafe instead.
+    if (existing)
+      throw new MachineAuthError(
+        "unsafe_storage",
+        `The machine broker key at ${path} is damaged. Delete it and retry.`,
+        true,
+      );
+    const staged = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
+    try {
+      writeFileSync(staged, `${randomBytes(32).toString("hex")}\n`, { mode: 0o600, flag: "wx" });
+      // POSIX modes do not protect a file on Windows; owner-only ACLs do.
+      protectPath(staged, false);
+      linkSync(staged, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    } finally {
+      rmSync(staged, { force: true });
+    }
+  }
+  const key = read()?.key;
+  if (!key)
+    throw new MachineAuthError("unsafe_storage", "The machine broker key is unreadable.", true);
+  brokerKeys.set(path, key);
+  return key;
+}
+
+/** Whether this Node process sends its requests through the environment's proxy. */
+export function proxyRouted(env: NodeJS.ProcessEnv): boolean {
+  // Only what the environment carries counts: the broker is spawned with this
+  // environment, not this process's command-line flags.
+  const flag = (value: string) => value === "--use-env-proxy" || value === "--use-env-proxy=true";
+  return env.NODE_USE_ENV_PROXY === "1" || (env.NODE_OPTIONS ?? "").split(/\s+/u).some(flag);
+}
+
+/**
+ * Network-secret mode depends on the agent proxy adding the secret, and Node
+ * sends traffic through that proxy only when told to. Without it the token
+ * request goes out bare and is rejected. Purely local, so it runs before any
+ * network call and before contacting the broker.
+ */
+export function networkSecretRoutingProblem(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.PRIM_M2M_CLIENT_AUTH !== NETWORK_SECRET_AUTH) return undefined;
+  const proxied = Boolean(env.HTTPS_PROXY || env.https_proxy);
+  return proxied && !proxyRouted(env)
+    ? "Set NODE_USE_ENV_PROXY=1 in the cloud environment's variables so prim's token request passes through the proxy that adds the network secret."
+    : undefined;
+}
+
 export function environmentCredentials(
   deps: MachineDependencies,
-): { clientId: string; clientSecret: string; generation: string } | undefined {
+): EnvironmentCredentials | undefined {
   const env = deps.env ?? process.env;
-  const { PRIM_M2M_CLIENT_ID: clientId, PRIM_M2M_CLIENT_SECRET: clientSecret } = env;
-  if (clientId === undefined && clientSecret === undefined) return undefined;
+  const {
+    PRIM_M2M_CLIENT_ID: clientId,
+    PRIM_M2M_CLIENT_SECRET: clientSecret,
+    PRIM_M2M_CLIENT_AUTH: auth,
+  } = env;
+  if (clientId === undefined && clientSecret === undefined && auth === undefined) return undefined;
+  if (auth !== undefined && auth !== NETWORK_SECRET_AUTH)
+    throw new MachineAuthError(
+      "incomplete_machine_credentials",
+      `PRIM_M2M_CLIENT_AUTH accepts only ${NETWORK_SECRET_AUTH}.`,
+    );
+  if (auth === NETWORK_SECRET_AUTH) {
+    if (!clientId || !/^client_[\w-]+$/u.test(clientId))
+      throw new MachineAuthError(
+        "incomplete_machine_credentials",
+        "Set PRIM_M2M_CLIENT_ID with PRIM_M2M_CLIENT_AUTH=network-secret.",
+      );
+    if (clientSecret !== undefined)
+      throw new MachineAuthError(
+        "conflicting_credentials",
+        "Unset PRIM_M2M_CLIENT_SECRET: with PRIM_M2M_CLIENT_AUTH=network-secret the environment's network secret supplies it.",
+      );
+    // Routing is part of the generation: a broker started before
+    // NODE_USE_ENV_PROXY was set keeps its environment, so the fixed
+    // environment must reach a fresh broker rather than the stale one.
+    const generation = hash(
+      `${apiUrlFor(deps)}\0${clientId}\0${NETWORK_SECRET_AUTH}\0${proxyRouted(env) ? "routed" : "direct"}`,
+    );
+    const credentials = {
+      clientId,
+      generation,
+      secretInjection: "network",
+    } as EnvironmentCredentials;
+    // Only paths that talk to the broker need its key; checking whether
+    // credentials are configured must not write to disk.
+    Object.defineProperty(credentials, "clientSecret", {
+      enumerable: true,
+      get: () => networkSecretBrokerKey(deps, clientId),
+    });
+    return credentials;
+  }
   if (
     !clientId ||
     !clientSecret ||
@@ -303,6 +461,7 @@ export function hasMachineConfiguration(deps: MachineDependencies = {}): boolean
   const configured =
     env.PRIM_M2M_CLIENT_ID !== undefined ||
     env.PRIM_M2M_CLIENT_SECRET !== undefined ||
+    env.PRIM_M2M_CLIENT_AUTH !== undefined ||
     existsSync(join(configurationDirectory(deps), PROFILE_FILE));
   if (configured && env.PRIM_TOKEN?.trim()) {
     throw new MachineAuthError(
@@ -354,6 +513,8 @@ export function machineSessionEnded(deps: MachineDependencies = {}): boolean {
   return readPrivate(join(configurationDirectory(deps), "machine_terminal.json")) === generation;
 }
 let environmentTerminal: string | undefined;
+const NETWORK_REJECTION_PAUSE_MS = 30_000;
+let networkRejection: { generation: string; until: number; error: MachineAuthError } | undefined;
 
 async function loadRecord(
   profile: MachineProfile,
@@ -530,6 +691,10 @@ export async function acquireMachineCredential(
   const apiUrl = apiUrlFor(deps);
   const environment = environmentCredentials(deps);
   if (environment) {
+    if (environment.secretInjection) {
+      const routing = networkSecretRoutingProblem(deps.env ?? process.env);
+      if (routing) throw new MachineAuthError("proxy_routing_required", routing, true);
+    }
     const observedToken =
       cached?.generation === environment.generation ? cached.accessToken : undefined;
     const directory = configurationDirectory(deps);
@@ -548,7 +713,7 @@ export async function acquireMachineCredential(
         writeEnvironmentContext(cached, deps);
         return cached;
       } catch (error) {
-        if (error instanceof MachineAuthError && error.terminal)
+        if (error instanceof MachineAuthError && error.terminal && !environment.secretInjection)
           environmentTerminal = environment.generation;
         throw error;
       }
@@ -568,6 +733,12 @@ export async function acquireMachineCredential(
           cached.expiresAt > Date.now() + RENEW_BEFORE_MS
         )
           return cached;
+        if (
+          environment.secretInjection &&
+          networkRejection?.generation === environment.generation &&
+          networkRejection.until > Date.now()
+        )
+          throw networkRejection.error;
         try {
           const { configuration, tokens, identity } = await withMachineCooldown(
             directory,
@@ -579,10 +750,27 @@ export async function acquireMachineCredential(
               const tokens = await exchangeMachineCredentials(
                 configuration,
                 environment.clientId,
-                environment.clientSecret,
+                // The broker key is not a client secret; the proxy supplies that.
+                environment.secretInjection ? "" : environment.clientSecret,
                 signal,
                 deps.fetch,
-              );
+                { secretInjection: environment.secretInjection },
+              ).catch((error: unknown) => {
+                // The client ID is typed twice in network-secret mode: here and
+                // as the network secret's username. A token for another client
+                // means those two differ.
+                if (
+                  environment.secretInjection &&
+                  error instanceof MachineAuthError &&
+                  error.code === "token_client_mismatch"
+                )
+                  throw new MachineAuthError(
+                    "network_secret_mismatch",
+                    `The token service issued a token for another machine. Check that the network secret's username equals PRIM_M2M_CLIENT_ID (${environment.clientId}).`,
+                    true,
+                  );
+                throw error;
+              });
               const identity = await verifyMachineIdentity(
                 apiUrl,
                 tokens.accessToken,
@@ -604,6 +792,17 @@ export async function acquireMachineCredential(
           writeEnvironmentContext(cached, deps);
           return cached;
         } catch (error) {
+          // A rejected network secret is fixed in the environment's settings,
+          // which this process cannot see change: retry after a short pause
+          // rather than for the life of a long-running broker.
+          if (environment.secretInjection && error instanceof MachineAuthError && error.terminal) {
+            networkRejection = {
+              generation: environment.generation,
+              until: Date.now() + NETWORK_REJECTION_PAUSE_MS,
+              error,
+            };
+            throw error;
+          }
           if (error instanceof MachineAuthError && error.terminal) {
             environmentTerminal = environment.generation;
             const contextPath = environmentContextPath(deps, environment.clientId);

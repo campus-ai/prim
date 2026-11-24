@@ -84,6 +84,7 @@ import {
   parseAuthBrokerConfig,
   registerAuthCommands,
   resolveCallbackPage,
+  verifyAuthStatus,
 } from "./auth.js";
 
 beforeEach(() => {
@@ -928,5 +929,33 @@ describe("auth enroll --new-installation --print-env", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("Enrollment failed: enrollment_failed");
     expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("machine authentication failures carry their own guidance", () => {
+  it("reports a network-secret routing problem with what to set", async () => {
+    const { hasMachineConfiguration } = await import("../lib/machine-credentials.js");
+    const { mkdtempSync, rmSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const config = mkdtempSync(join(tmpdir(), "prim-auth-network-"));
+    vi.mocked(hasMachineConfiguration).mockReturnValue(true);
+    vi.stubEnv("PRIM_CONFIG_DIR", config);
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    vi.stubEnv("PRIM_M2M_CLIENT_AUTH", "network-secret");
+    vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:3128");
+    vi.stubEnv("NODE_USE_ENV_PROXY", "");
+    try {
+      const result = await verifyAuthStatus();
+      expect(result).toMatchObject({
+        status: "invalid",
+        recoveryReason: "proxy_routing_required",
+        recoveryDetail: expect.stringContaining("NODE_USE_ENV_PROXY=1"),
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.mocked(hasMachineConfiguration).mockReturnValue(false);
+      rmSync(config, { recursive: true, force: true });
+    }
   });
 });

@@ -123,6 +123,31 @@ describe("diagnoseCloudSession", () => {
     expect(notice).toContain("could not be reached");
   });
 
+  it("names NODE_USE_ENV_PROXY in network-secret mode before probing", async () => {
+    const fetchSpy = vi.fn(egress([]));
+    const notice = await diagnoseCloudSession({
+      env: cloudEnv({
+        PRIM_M2M_CLIENT_ID: "client_cloud",
+        PRIM_M2M_CLIENT_AUTH: "network-secret",
+        HTTPS_PROXY: "http://127.0.0.1:3128",
+      }),
+      fetch: fetchSpy,
+      siteUrl: API,
+    });
+    expect(notice).toContain("NODE_USE_ENV_PROXY=1");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("never adds the generic credential remedy to a network-secret configuration error", async () => {
+    const notice = await diagnoseCloudSession({
+      env: cloudEnv({ PRIM_M2M_CLIENT_AUTH: "network-secret" }),
+      fetch: egress([]),
+      siteUrl: API,
+    });
+    expect(notice).toContain("PRIM_M2M_CLIENT_AUTH=network-secret");
+    expect(notice).not.toContain("PRIM_M2M_CLIENT_SECRET in the cloud environment");
+  });
+
   it("reads a refused proxy tunnel as a blocked host", async () => {
     const notice = await diagnoseCloudSession({
       env: machineEnv(),

@@ -2,7 +2,7 @@ import { getSiteUrl } from "../client.js";
 import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
 import { resolveAuthCredential } from "./credentials.js";
 import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
-import { hasMachineConfiguration } from "./machine-credentials.js";
+import { hasMachineConfiguration, networkSecretRoutingProblem } from "./machine-credentials.js";
 import { MachineAuthError, machineApiUrl } from "./machine-protocol.js";
 
 export { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession };
@@ -101,12 +101,19 @@ export async function diagnoseCloudSession(
     machine = hasMachineConfiguration({ env });
   } catch (error) {
     // Conflicting credentials are fixed by removing one, not by setting more.
-    if (error instanceof MachineAuthError && error.code === "conflicting_credentials")
+    // Conflicting or network-secret credentials are fixed as their own message
+    // says; the generic "set the ID and secret" would contradict it.
+    if (
+      error instanceof MachineAuthError &&
+      (error.code === "conflicting_credentials" || env.PRIM_M2M_CLIENT_AUTH !== undefined)
+    )
       return `${prefix}: ${error.message}`;
     return `${prefix}: ${error instanceof MachineAuthError ? error.message : "its machine credentials are incomplete."} To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`;
   }
   if (!machine && !resolveAuthCredential({ env }))
     return `${prefix}: it has no credentials. To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`;
+  const routing = networkSecretRoutingProblem(env);
+  if (routing) return `${prefix}: ${routing}`;
   if (options.cwd !== undefined && !githubRepositoryFullName(options.cwd))
     return `${prefix}: ${repositoryIdentityRemedy(options.cwd)}.`;
 
