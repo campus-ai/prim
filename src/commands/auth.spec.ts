@@ -867,6 +867,14 @@ describe("auth enroll --new-installation --print-env", () => {
     expect(execFile).not.toHaveBeenCalled();
     expect(stderr).toContain("ABCD-EFGH");
     expect(stderr).toContain("Developer installations");
+    // The way that keeps the secret unreadable comes first, and names the
+    // host the secret is actually sent to.
+    const networkSecret = stderr.indexOf(
+      'add a "Username and password" network secret for auth.example.com',
+    );
+    expect(networkSecret).toBeGreaterThan(-1);
+    expect(stderr).toContain("PRIM_M2M_CLIENT_AUTH=network-secret");
+    expect(stderr.indexOf("Or paste both lines")).toBeGreaterThan(networkSecret);
     expect(stderr).not.toContain("s3cr3t");
     expect(process.exitCode).toBe(0);
   });

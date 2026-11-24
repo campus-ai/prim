@@ -172,9 +172,21 @@ already be connected to Primitive (`prim github connect`, from your own machine)
    - **Network access**: Limited, with `api.getprimitive.ai` and `signin.getprimitive.ai`
      under Allowed domains (both are blocked by default), and **Allow package managers**
      left on so the setup script can install prim.
-   - **Environment variables**: paste the lines step 1 printed. Anyone who uses the
-     environment can read them, so keep the environment personal. To keep the secret
-     itself out of the VM, see the network-secret option below.
+   - **Credentials**: give the secret to the environment's proxy, which no session can
+     read back. Under **Network secrets**, add a **Username and password** secret for host
+     `signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the
+     username, the `PRIM_M2M_CLIENT_SECRET` value as the password. Then set these
+     **Environment variables** (plus any other line step 1 printed, such as
+     `PRIM_API_URL`):
+
+     ```text
+     PRIM_M2M_CLIENT_ID=client_...
+     PRIM_M2M_CLIENT_AUTH=network-secret
+     ```
+
+     The simpler alternative is to paste both lines step 1 printed into the variables.
+     Anyone who uses the environment can read its variables, so do that only in an
+     environment you keep to yourself.
    - **Setup script**:
 
      ```bash
@@ -196,20 +208,9 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      it, and prim then stays off in that repository unless someone turns it on themselves
      (`prim enable` in their own clone). `prim enable --scope project` removes it again.
 
-To keep the client secret out of the VM's variables, give it to the environment's proxy.
-Under **Network secrets**, add a **Username and password** secret for host
-`signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the
-username, the `PRIM_M2M_CLIENT_SECRET` value as the password. Then replace the
-`PRIM_M2M_CLIENT_SECRET` line in the variables with the second of these (keep any
-other line step 1 printed, such as `PRIM_API_URL`):
-
-```text
-PRIM_M2M_CLIENT_ID=client_...
-PRIM_M2M_CLIENT_AUTH=network-secret
-```
-
-The proxy adds the secret to prim's token request as HTTP Basic authentication, so no
-process in the session can read the secret or carry it out of the VM; processes in the
+With the network secret, the proxy adds the secret to prim's token request as HTTP Basic
+authentication, so no process in the session can read the secret or carry it out of the
+VM; processes in the
 session can still obtain short-lived tokens through the proxy, as prim does. Keep
 `signin.getprimitive.ai` under Allowed domains. Prim's token broker, the one process
 that requests tokens, sends its own requests through that proxy; nothing else in the VM
@@ -251,8 +252,9 @@ new sessions start from the environment's image. Run inside a session, it wires 
 that VM and says the image was not prepared by that run (a VM the image had already
 prepared stays prepared).
 
-Each session, prim's SessionStart hook activates the repository and connects it to
-Primitive. If it cannot, it says why: missing credentials, a blocked domain, or a
+Each session, prim's SessionStart hook activates the repository the session was started
+on and connects it to Primitive. A second repository the agent clones during the session
+is not activated; start a session on it instead. If it cannot, it says why: missing credentials, a blocked domain, or a
 checkout that does not identify its repository. The git pre-commit check is not wired
 automatically; run `prim setup --cloud` in a session to verify it step by step and
 install it. Decisions captured in the environment belong to you; an organization admin
