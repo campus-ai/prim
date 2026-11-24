@@ -328,6 +328,14 @@ precisely to collapse those shell permission prompts to one. That is separate fr
 the per-Decision approval required for each `decisions create` while passive capture
 is inactive.
 
+**Claude Code cloud sessions** (`CLAUDE_CODE_REMOTE=true`) take a different path:
+`prim setup` detects the session and runs cloud setup instead of the steps below
+(no browser sign-in, no daemon, no onboarding). Credentials come from the cloud
+environment's variables, and the environment's setup script should run
+`prim setup --cloud --prepare`; see the README's "Claude Code cloud environments".
+Cloud setup returns no `welcomeSkill` or `nextAction`: follow its `instructions`,
+and relay each entry of `remedies` to the user when it is incomplete.
+
 `setup` defaults to `--scope user` (install once, for every repo) and activates
 the current repo. The commands below show the machine-wide flow: add `--scope
 user` where noted, then `prim enable` in each repo you want captured. Setup

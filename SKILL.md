@@ -17,6 +17,8 @@ Low-level capture runs automatically in active repos through the session hooks i
 
 Run `npx --yes @primitive.ai/prim auth status` first. It exits **0 if authenticated, 1 if not** -- branch on the exit code, don't parse the message.
 
+**Claude Code cloud sessions** (`CLAUDE_CODE_REMOTE=true`): never run `auth login` or `auth enroll` there; prim authenticates cloud sessions only with credentials from the environment and refuses interactive sign-in. Use machine credentials (a fixed `PRIM_TOKEN` also works): `PRIM_M2M_CLIENT_ID` with `PRIM_M2M_CLIENT_SECRET`, or with `PRIM_M2M_CLIENT_AUTH=network-secret` and `NODE_USE_ENV_PROXY=1` when the secret is a network secret. When `auth status` fails, run `npx --yes @primitive.ai/prim setup --cloud` and relay each entry of its `remedies` to the user; the user mints credentials on their own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`.
+
 Three ways to authenticate, in priority order:
 
 1. **`PRIM_TOKEN` environment variable** -- preferred for agents and CI. Set it before invoking prim and you're done; no interactive flow, no token files.

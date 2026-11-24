@@ -1,5 +1,6 @@
 import { SETUP_DAEMON_DRAINS_ENV, SETUP_ORCHESTRATOR_ENV } from "../commands/setup.js";
 import { UNINSTALL_ORCHESTRATOR_ENV } from "../commands/uninstall.js";
+import { isClaudeCloudSession } from "./cloud-env.js";
 import { isUnattended } from "./unattended.js";
 
 const ROOT_OPTIONS = new Set(["-y", "--yes", "--non-interactive"]);
@@ -110,7 +111,10 @@ export function runStartupBackgroundWork(
   // only hands an overdue journal to a detached drain, so the drain can never
   // keep the command itself alive.
   const setupDaemonDrains =
-    (command === "setup" && !args.includes("--no-daemon") && !args.includes("--cloud")) ||
+    (command === "setup" &&
+      !args.includes("--no-daemon") &&
+      !args.includes("--cloud") &&
+      !isClaudeCloudSession(env)) ||
     env[SETUP_DAEMON_DRAINS_ENV] === "1";
   if (!setupDaemonDrains && (command !== "moves" || subcommand !== "flush")) work.flush();
   // The heal itself is a detached child and never delays the command.
