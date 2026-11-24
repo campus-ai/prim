@@ -462,6 +462,58 @@ describe("setupDetectedCloudSession (plain `prim setup` in a cloud session)", ()
     expect(printed[0]).toMatchObject({ results: { credentials: "ok" } });
   });
 
+  it("accepts a stored sign-in in place of machine credentials, as SessionStart does", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, calls } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+    });
+    setupCloudSession(deps);
+    expect(calls[0]).toEqual(["auth", "status", "--json"]);
+    expect(printed[0]).toMatchObject({ ok: true, results: { credentials: "ok" } });
+  });
+
+  it("does not accept a sign-in that can only enroll, which a cloud session cannot do", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, calls, exit } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+      run: (args) => {
+        calls.push(args);
+        return {
+          code: 0,
+          stdout: JSON.stringify({ status: "valid", enrollmentRequired: true }),
+        };
+      },
+    });
+    setupCloudSession(deps);
+    // Stops at credentials: nothing is wired or enabled on a sign-in that
+    // authorizes nothing here.
+    expect(calls).toEqual([["auth", "status", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      results: { credentials: "failed" },
+      remedies: [expect.stringMatching(/can only enroll.*PRIM_M2M_CLIENT_ID/u)],
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("points a rejected sign-in at cloud credentials, not at an installation to revoke", () => {
+    const configDir = tempDir("prim-cloud-config-");
+    writeFileSync(join(configDir, "token"), "stored\n", { mode: 0o600 });
+    const { deps, notes } = harness({
+      cwd: repo(true),
+      env: { CLAUDE_CODE_REMOTE: "true", PRIM_CONFIG_DIR: configDir },
+      parseAuthStatus: () => "invalid",
+    });
+    setupCloudSession(deps);
+    const text = notes.join("\n");
+    expect(text).toContain("the sign-in was rejected: set PRIM_M2M_CLIENT_ID");
+    expect(text).not.toContain("Developer installations");
+  });
+
   it("does not claim the hooks will load when preparing failed", () => {
     const { deps } = harness({
       cwd: repo(false),

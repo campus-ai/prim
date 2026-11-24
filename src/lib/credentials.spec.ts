@@ -8,6 +8,7 @@ import {
   jwtExpiresAt,
   jwtOrganizationId,
   resolveAuthCredential,
+  resolveStoredCredential,
 } from "./credentials.js";
 
 const temporaryDirectories: string[] = [];
@@ -111,6 +112,33 @@ describe("credential resolution", () => {
 
     writeFileSync(migrationPath, "not-json\n");
     expect(resolveAuthCredential(options)).toBeUndefined();
+  });
+});
+
+describe("stored credential resolution", () => {
+  it("reads the sign-in stored in the given environment's own config directory", () => {
+    const directory = temporaryDirectory();
+    expect(resolveStoredCredential({ PRIM_CONFIG_DIR: directory })).toBeUndefined();
+
+    writeFileSync(join(directory, "token"), "stored-token\n");
+    expect(resolveStoredCredential({ PRIM_CONFIG_DIR: directory })).toEqual({
+      token: "stored-token",
+      source: "token_file",
+    });
+    // Another environment's directory holds nothing.
+    expect(resolveStoredCredential({ PRIM_CONFIG_DIR: temporaryDirectory() })).toBeUndefined();
+  });
+
+  it("prefers a fixed PRIM_TOKEN and withholds a sign-in whose generation is invalid", () => {
+    const directory = temporaryDirectory();
+    writeFileSync(join(directory, "token"), "stored-token\n");
+    expect(resolveStoredCredential({ PRIM_CONFIG_DIR: directory, PRIM_TOKEN: " fixed " })).toEqual({
+      token: "fixed",
+      source: "environment",
+    });
+
+    writeFileSync(join(directory, "credential_metadata.json"), "{");
+    expect(resolveStoredCredential({ PRIM_CONFIG_DIR: directory })).toBeUndefined();
   });
 });
 
