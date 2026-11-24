@@ -130,8 +130,11 @@ describe("prim github connect", () => {
     expect(process.exitCode).toBe(0);
   });
 
-  it("names the owner's own machine in a Claude Code cloud session, where no browser can install the App", async () => {
+  it("names the owner's own machine in a cloud session signed in as a machine, which is refused the installation", async () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
+    vi.stubEnv("PRIM_TOKEN", undefined);
     const deps = dependencies();
     vi.mocked(deps.bindRepositoryWithClient).mockResolvedValue(UNBOUND);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -146,6 +149,27 @@ describe("prim github connect", () => {
       `[prim] GitHub repo connection is required for ${UNBOUND.repositoryFullName} and cannot be completed from a Claude Code cloud session: run \`prim github connect\` in a clone of it on your own machine, then start a new cloud session\n`,
     );
     expect(process.exitCode).toBe(2);
+    vi.unstubAllEnvs();
+  });
+
+  it("still offers the installation to a cloud session carrying a person's own token", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_CONFIG_DIR", "/nonexistent/prim-config");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", undefined);
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", undefined);
+    vi.stubEnv("PRIM_M2M_CLIENT_AUTH", undefined);
+    vi.stubEnv("PRIM_TOKEN", "person-token");
+    const deps = dependencies();
+    vi.mocked(deps.bindRepositoryWithClient)
+      .mockResolvedValueOnce(UNBOUND)
+      .mockResolvedValueOnce(CONNECTED);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await performGithubConnect(deps, { browser: false });
+
+    expect(deps.createInstallIntent).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(0);
     vi.unstubAllEnvs();
   });
 

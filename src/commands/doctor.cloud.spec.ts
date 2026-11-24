@@ -42,6 +42,9 @@ describe("doctor guidance in Claude Code cloud sessions", () => {
 
   it("sends an unconnected repository's owner to their own machine", () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
+    vi.stubEnv("PRIM_TOKEN", undefined);
     for (const active of [true, false]) {
       const detail = classifyRepositoryBinding(undefined, unbound, active).detail;
       expect(detail).toContain(

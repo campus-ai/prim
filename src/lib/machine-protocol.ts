@@ -343,7 +343,9 @@ export async function verifyMachineIdentity(
     throw new MachineAuthError(
       terminal ? "machine_access_rejected" : "verification_unavailable",
       terminal
-        ? "The API rejected this machine. Ask your administrator to check its registration and scopes."
+        ? rejectedCredentialsMessage(
+            "The API rejected this machine. Ask your administrator to check its registration and scopes.",
+          )
         : "Machine verification is temporarily unavailable.",
       terminal,
     );

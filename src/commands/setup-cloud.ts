@@ -1,5 +1,5 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY, CLOUD_SETUP_POINTER } from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -320,7 +320,8 @@ function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean
     const detail = authFailureDetail(status.stdout);
     remedy(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail ? ` (${detail})` : ""}`
+        ? // A failure that already names Allowed domains adds nothing in brackets.
+          `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy()}${detail && !detail.includes("Allowed domains") ? ` (${detail})` : ""}`
         : machine
           ? `credentials · ${detail ?? "rejected"}${
               // Guidance that already names the replacement needs no second copy.
@@ -380,14 +381,14 @@ function repositoryRoot(
 /** Whether Claude Code has prim's hooks loaded for this repository. */
 function sessionHooks(
   { deps, results, remedy, env }: SessionCheck,
-  root: string,
+  root: string | undefined,
   options: { preparedNow?: boolean },
 ): void {
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
   const pendingHooks = options.preparedNow === true || preparedInSession(env);
   if (
-    hasProjectPrimInstall(root) ||
+    (root !== undefined && hasProjectPrimInstall(root)) ||
     (!pendingHooks &&
       isPreparedCloudSession(env) &&
       (deps.userHooksComplete ?? cloudUserInstallComplete)())
@@ -428,7 +429,9 @@ function sessionSteps(
   const check: SessionCheck = { deps, results, remedy, env: deps.env ?? process.env };
   const credentials = credentialsReady(check);
   const root = repositoryRoot(check, outcome);
-  if (root) sessionHooks(check, root, options);
+  // Whether the environment's image carries the hooks needs no repository; a
+  // repository that opts out wants nothing set up, so nothing is judged for it.
+  if (!outcome.optedOut) sessionHooks(check, root ?? gitToplevel(deps.cwd) ?? undefined, options);
   if (!credentials || !root) return;
 
   const step = (key: string, label: string, args: string[]): void => {
@@ -485,8 +488,12 @@ function enrollmentRequired(stdout: string): boolean {
 function authFailureDetail(stdout: string): string | undefined {
   try {
     const parsed = JSON.parse(stdout || "{}") as { recoveryDetail?: unknown };
+    // A message that points at cloud setup is relayed without the pointer:
+    // this is cloud setup.
     return typeof parsed.recoveryDetail === "string"
-      ? stripControlChars(parsed.recoveryDetail).replace(/\.$/u, "")
+      ? stripControlChars(parsed.recoveryDetail)
+          .replace(CLOUD_SETUP_POINTER, "")
+          .replace(/\.$/u, "")
       : undefined;
   } catch {
     return undefined;

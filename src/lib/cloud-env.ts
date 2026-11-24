@@ -37,6 +37,10 @@ export const CLOUD_GITHUB_CONNECT_REMEDY =
  */
 export function cloudSetupPointer(message: string, env: NodeJS.ProcessEnv = process.env): string {
   return isClaudeCloudSession(env)
-    ? `${message.replace(/[.;\s]+$/u, "")}; in this Claude Code cloud session, run \`prim setup --cloud\` for the fix`
+    ? `${message.replace(/[.;\s]+$/u, "")}${CLOUD_SETUP_POINTER}`
     : message;
 }
+
+/** Cloud setup removes this from a message it relays: it is that command. */
+export const CLOUD_SETUP_POINTER =
+  "; in this Claude Code cloud session, run `prim setup --cloud` for the fix";
