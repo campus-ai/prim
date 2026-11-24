@@ -104,6 +104,69 @@ describe("credential-bound journal draining", () => {
     expect(calls.every((call) => call.url.startsWith("https://api.example.test/"))).toBe(true);
   });
 
+  it("delivers what a cold machine session captured before it knew its identity", async () => {
+    // A fresh Claude Code cloud VM: credentials in the environment, and no
+    // verified identity until something first asks the server.
+    process.env = {
+      ...originalEnv,
+      PRIM_API_URL: "https://api.example.test",
+      PRIM_CONFIG_DIR: configDir,
+      PRIM_M2M_CLIENT_ID: "client_cloud",
+      PRIM_M2M_CLIENT_SECRET: "environment-secret",
+    };
+    process.env.PRIM_TOKEN = undefined;
+    const posted: Array<{ batch: Array<Record<string, unknown>> }> = [];
+    vi.doMock("./client.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("./client.js")>()),
+      getPinnedClient: async () => ({
+        // The installation is delegated: the server names the user it acts for.
+        get: async () => ({
+          authenticated: true,
+          organizationBindingVersion: 3,
+          captureAuthorityKind: "workos_m2m",
+          organizationId: "org_local",
+          workosOrganizationId: "org_workos",
+          principal: {
+            kind: "machine",
+            clientId: "client_cloud",
+            machineId: "machine_cloud",
+            displayName: "Claude Code cloud",
+            authorizedUserId: "user_alex",
+            scopes: ["cli:capture"],
+          },
+        }),
+        post: async (_path: string, body: unknown) => {
+          posted.push(body as { batch: Array<Record<string, unknown>> });
+          return { disposition: "persisted", acknowledged: 1, accepted: 1 };
+        },
+      }),
+    }));
+    try {
+      const journal = await import("./journal.js");
+      const { flush } = await import("./flusher.js");
+      const captured = journal.appendMove(move("cold-start"), undefined);
+      // Nothing but the client: the session start hook ran before any sign-in.
+      expect(captured.captureActor).toEqual({
+        kind: "machine",
+        apiUrl: "https://api.example.test",
+        clientId: "client_cloud",
+      });
+
+      await expect(flush()).resolves.toEqual({ flushed: 1, quarantined: 0 });
+      expect(posted).toHaveLength(1);
+      expect(posted[0]?.batch[0]).toMatchObject({
+        moveId: "cold-start",
+        envelopeVersion: 6,
+        capturedMachineId: "machine_cloud",
+        capturedUserId: "user_alex",
+        capturedOrganizationId: "org_local",
+      });
+      expect(journal.listBuckets()).toEqual([]);
+    } finally {
+      vi.doUnmock("./client.js");
+    }
+  });
+
   it("retains every bucket without a POST when the server lacks the binding tuple", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(response({ authenticated: true })));
     vi.stubGlobal("fetch", fetchMock);
