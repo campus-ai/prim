@@ -198,7 +198,9 @@ export function applyCursorUninstall(settings: CursorHooksSettings): CursorHooks
     const retained = entries.filter((entry) => !isOwnedCursorHookCommand(entry.command));
     if (retained.length > 0) hooks[event] = retained;
   }
-  return { ...settings, hooks };
+  // Settings with no `hooks` key gain none. An added empty one reads as a
+  // change, so uninstall would create an absent file or rewrite a foreign one.
+  return settings.hooks === undefined ? settings : { ...settings, hooks };
 }
 
 function ownedEntries(settings: CursorHooksSettings): Array<{ event: string; entry: CursorHook }> {

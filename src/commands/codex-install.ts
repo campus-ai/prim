@@ -131,7 +131,9 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
       hooks[event] = list;
     }
   }
-  return { ...settings, hooks };
+  // Settings with no `hooks` key gain none. An added empty one reads as a
+  // change, so uninstall would create an absent file or rewrite a foreign one.
+  return settings.hooks === undefined ? settings : { ...settings, hooks };
 }
 
 function captureInstalled(settings: ClaudeSettings): boolean {
