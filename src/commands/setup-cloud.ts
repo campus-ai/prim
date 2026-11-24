@@ -1,5 +1,9 @@
 import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY, CLOUD_PROXY_FAILING } from "../lib/cloud-env.js";
+import {
+  CLOUD_GITHUB_CONNECT_REMEDY,
+  CLOUD_PROXY_FAILING,
+  CLOUD_SETUP_POINTER,
+} from "../lib/cloud-env.js";
 import {
   clearCloudPrepared,
   insideClaudeCode,
@@ -9,8 +13,10 @@ import {
 } from "../lib/cloud-prepared.js";
 import {
   CLOUD_CREDENTIALS_REMEDY,
+  cloudAllowedDomains,
   cloudEgressRemedy,
   isClaudeCloudSession,
+  isCloudMachineSession,
   repositoryIdentityRemedy,
 } from "../lib/cloud-session.js";
 import { resolveStoredCredential } from "../lib/credentials.js";
@@ -18,7 +24,7 @@ import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
-import { clearMachineCooldowns } from "../lib/machine-retry.js";
+import { SERVER_WAIT_PREFIX, clearMachineCooldowns } from "../lib/machine-retry.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
@@ -280,34 +286,35 @@ type SessionOutcome = {
   optedOut?: boolean;
 };
 
-/** The per-session steps; a missing prerequisite stops the rest. */
-function sessionSteps(
-  deps: CloudSetupDependencies,
-  results: CloudResults,
-  remedies: string[],
-  options: { preparedNow?: boolean } = {},
-  outcome: SessionOutcome = {},
-): void {
-  const remedy = (message: string): void => {
-    deps.note(message);
-    remedies.push(message);
-  };
-  const env = deps.env ?? process.env;
+/** What each per-session check reads and reports through. */
+type SessionCheck = {
+  deps: CloudSetupDependencies;
+  results: CloudResults;
+  remedy: (message: string) => void;
+  env: NodeJS.ProcessEnv;
+};
+
+/** Whether the session has a credential Primitive accepts. */
+function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean {
   let machine: boolean;
   try {
     machine = hasMachineConfiguration({ env });
   } catch (error) {
     remedy(`credentials · ${error instanceof MachineAuthError ? error.message : String(error)}`);
     results.credentials = "failed";
-    return;
+    return false;
   }
   // A fixed bearer token or a stored sign-in also authenticates prim; only no
   // credential at all is missing. The SessionStart diagnosis asks the same
   // question the same way, so the two never disagree.
   if (!machine && !resolveStoredCredential(env)) {
-    remedy(`credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}`);
+    // Both hosts are blocked by default, and that fix is made in the same
+    // settings: name it now rather than in the next session.
+    remedy(
+      `credentials · missing: ${CLOUD_CREDENTIALS_REMEDY}; the environment must also allow ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} under Allowed domains (blocked by default)`,
+    );
     results.credentials = "missing";
-    return;
+    return false;
   }
   // An explicit check retries now: a cooldown left by an earlier failure would
   // report "cooling down" in place of the cause, or of the fix having worked.
@@ -316,19 +323,9 @@ function sessionSteps(
   const auth = deps.parseAuthStatus(status);
   if (auth !== "valid") {
     const detail = authFailureDetail(status.stdout);
-    // The proxy's own failure is not the allowlist's: say that, and nothing
-    // about domains the user may already have allowed.
-    if (auth === "unreachable" && detail && CLOUD_PROXY_FAILING.startsWith(detail)) {
-      remedy(`credentials · ${detail}`);
-      results.credentials = "failed";
-      return;
-    }
-    // A failure that already names Allowed domains names one host and the
-    // same fix; the remedy lists every host, so say it once.
-    const cause = detail && !detail.includes("Allowed domains") ? ` (${detail})` : "";
     remedy(
       auth === "unreachable"
-        ? `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${cause}`
+        ? unreachableRemedy(detail, env)
         : machine
           ? `credentials · ${detail ?? "rejected"}${
               // Guidance that already names the replacement needs no second copy.
@@ -340,7 +337,7 @@ function sessionSteps(
             `credentials · the sign-in was rejected: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
-    return;
+    return false;
   }
   // A human sign-in the server accepts only for enrolling an installation
   // verifies, yet authorizes nothing else, and a cloud session cannot enroll.
@@ -349,15 +346,22 @@ function sessionSteps(
       `credentials · this sign-in can only enroll an installation, which a cloud session cannot do: ${CLOUD_CREDENTIALS_REMEDY}`,
     );
     results.credentials = "failed";
-    return;
+    return false;
   }
   results.credentials = "ok";
+  return true;
+}
 
+/** The repository to set up, or undefined where there is none to activate. */
+function repositoryRoot(
+  { deps, results, remedy }: SessionCheck,
+  outcome: SessionOutcome,
+): string | undefined {
   const root = gitToplevel(deps.cwd);
   if (!root) {
     remedy("repository · not a git repository; run from the cloned repository");
     results.repository = "missing";
-    return;
+    return undefined;
   }
   // The repository's committed opt-out is its answer to a prepared environment
   // (and to this command, which the documented agent prompt runs): leave it
@@ -368,18 +372,27 @@ function sessionSteps(
     );
     results.repository = "ok";
     outcome.optedOut = true;
-    return;
+    return undefined;
   }
   if (!githubRepositoryFullName(root)) {
     remedy(`repository · ${repositoryIdentityRemedy(root)}`);
     results.repository = "missing";
-    return;
+    return undefined;
   }
+  return root;
+}
+
+/** Whether Claude Code has prim's hooks loaded for this repository. */
+function sessionHooks(
+  { deps, results, remedy, env }: SessionCheck,
+  root: string | undefined,
+  options: { preparedNow?: boolean },
+): void {
   // Prepared from inside a session (now or by an earlier run in it): the
   // hooks are wired in this VM but Claude Code has not loaded them.
   const pendingHooks = options.preparedNow === true || preparedInSession(env);
   if (
-    hasProjectPrimInstall(root) ||
+    (root !== undefined && hasProjectPrimInstall(root)) ||
     (!pendingHooks &&
       isPreparedCloudSession(env) &&
       (deps.userHooksComplete ?? cloudUserInstallComplete)())
@@ -394,10 +407,41 @@ function sessionSteps(
     results.session = "missing";
   } else {
     remedy(
-      "session hooks · none: run `prim setup --cloud --prepare` in the environment's setup script, or commit `prim claude install --scope project` in this repository",
+      `session hooks · none: run \`prim setup --cloud --prepare\` in the environment's setup script${
+        // Outside a repository there is nothing to commit an install to.
+        root === undefined
+          ? ""
+          : ", or commit `prim claude install --scope project` in this repository"
+      }`,
     );
     results.session = "missing";
   }
+}
+
+/**
+ * The per-session steps. Every prerequisite is fixed in the environment's
+ * settings (or the repository) and reaches only the next session, so each one
+ * that can be judged now is reported together: a user told only about
+ * credentials would learn about the setup script a session later.
+ */
+function sessionSteps(
+  deps: CloudSetupDependencies,
+  results: CloudResults,
+  remedies: string[],
+  options: { preparedNow?: boolean } = {},
+  outcome: SessionOutcome = {},
+): void {
+  const remedy = (message: string): void => {
+    deps.note(message);
+    remedies.push(message);
+  };
+  const check: SessionCheck = { deps, results, remedy, env: deps.env ?? process.env };
+  const credentials = credentialsReady(check);
+  const root = repositoryRoot(check, outcome);
+  // Whether the environment's image carries the hooks needs no repository; a
+  // repository that opts out wants nothing set up, so nothing is judged for it.
+  if (!outcome.optedOut) sessionHooks(check, root ?? gitToplevel(deps.cwd) ?? undefined, options);
+  if (!credentials || !root) return;
 
   const step = (key: string, label: string, args: string[]): void => {
     if (label) deps.note(`${label} · installing…`);
@@ -408,8 +452,9 @@ function sessionSteps(
   // Preparing in this session already recorded the daemon opt-out.
   if (results.daemon === undefined) step("daemon", "", ["daemon", "stop"]);
   step("hooks", "git hooks", ["hooks", "install"]);
-  // An unconnected repository fails here, and no command in a cloud session
-  // can connect it: name the fix rather than a command to run for the reason.
+  // An unconnected repository fails here. A machine cannot connect it from
+  // the session, and a person's sign-in can only print the link: name the fix
+  // either way rather than a command to run for the reason.
   deps.note("activate this repo · installing…");
   const enabled = deps.run(["enable", "--non-interactive"]);
   results.enable = enabled.code === 0 ? "ok" : "failed";
@@ -417,10 +462,32 @@ function sessionSteps(
     const unconnected = unconnectedRepository(enabled.stdout);
     remedy(
       unconnected
-        ? `repository · ${unconnected} is not connected to Primitive: ${CLOUD_GITHUB_CONNECT_REMEDY}`
+        ? `repository · ${unconnected} is not connected to Primitive: ${
+            isCloudMachineSession(deps.env ?? process.env)
+              ? CLOUD_GITHUB_CONNECT_REMEDY
+              : "run `prim github connect --no-browser` and open the link it prints"
+          }`
         : "activate this repo · failed; run `prim enable --non-interactive` to see why",
     );
   }
+}
+
+/**
+ * Why the credential check could not reach Primitive, said once. A wait the
+ * sign-in service asked for is not a network fault, and no setting ends it.
+ * Nor does any setting repair the environment's proxy when it is the proxy
+ * that is failing: that is relayed as it is, with no word about domains the
+ * user may already have allowed. A failure that names the host it could not
+ * reach keeps that host, which may not be the default one, and adds the full
+ * list instead of repeating the fix. Where the fix is an edit to Allowed
+ * domains, the remedy itself says when that edit reaches this session.
+ */
+function unreachableRemedy(detail: string | undefined, env: NodeJS.ProcessEnv): string {
+  if (detail?.startsWith(SERVER_WAIT_PREFIX)) return `credentials · ${detail}`;
+  if (detail && CLOUD_PROXY_FAILING.startsWith(detail)) return `credentials · ${detail}`;
+  if (detail?.includes("Allowed domains"))
+    return `credentials · ${detail}; prim needs ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} allowed`;
+  return `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${detail ? ` (${detail})` : ""}`;
 }
 
 /** The repository `enable --non-interactive` reported as not connected, if that is why it failed. */
@@ -453,8 +520,12 @@ function enrollmentRequired(stdout: string): boolean {
 function authFailureDetail(stdout: string): string | undefined {
   try {
     const parsed = JSON.parse(stdout || "{}") as { recoveryDetail?: unknown };
+    // A message that points at cloud setup is relayed without the pointer:
+    // this is cloud setup.
     return typeof parsed.recoveryDetail === "string"
-      ? stripControlChars(parsed.recoveryDetail).replace(/\.$/u, "")
+      ? stripControlChars(parsed.recoveryDetail)
+          .replace(CLOUD_SETUP_POINTER, "")
+          .replace(/\.$/u, "")
       : undefined;
   } catch {
     return undefined;

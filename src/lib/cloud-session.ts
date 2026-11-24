@@ -17,6 +17,21 @@ import { MachineAuthError } from "./machine-protocol.js";
 
 export { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession };
 
+/**
+ * A cloud session authenticated as a machine. A machine credential is refused
+ * the GitHub App installation, which a person completes in a browser; a
+ * session carrying a person's own sign-in can still print the link.
+ */
+export function isCloudMachineSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isClaudeCloudSession(env)) return false;
+  try {
+    return hasMachineConfiguration({ env });
+  } catch {
+    // Misconfigured machine credentials are still machine credentials.
+    return true;
+  }
+}
+
 /** The sign-in host machine credentials exchange tokens with in production. */
 export const PRODUCTION_SIGN_IN_HOST = "signin.getprimitive.ai";
 

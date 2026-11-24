@@ -37,6 +37,7 @@ import {
   detachedHookShimCommand,
   hookCommandResolution,
   hookCommandResolutions,
+  quietWithoutLauncher,
   stableHookCommand,
 } from "../lib/bin-path.js";
 import { clearCloudPrepared } from "../lib/cloud-prepared.js";
@@ -352,7 +353,10 @@ function entryMatchesRegistration(
     owned.entry.matcher === registration.matcher &&
     owned.entry.hooks?.length === 1 &&
     owned.entry.hooks[0].type === "command" &&
+    // A project install is complete in either text: plain, as releases wrote
+    // it before a project install went quiet without a launcher, or quiet.
     (owned.entry.hooks[0].command === registration.command ||
+      owned.entry.hooks[0].command === quietWithoutLauncher(registration.command) ||
       owned.entry.hooks[0].command ===
         deferToProjectInstall(registration.command, registration.bin)) &&
     owned.entry.hooks[0].timeout === registration.timeout &&
@@ -769,7 +773,13 @@ export function applyUninstall(settings: ClaudeSettings): ClaudeSettings {
       hooks[event] = list;
     }
   }
-  const next: ClaudeSettings = { ...settings, hooks };
+  // Settings with no `hooks` key gain none. An added empty one reads as a
+  // change, so uninstall would create an absent file or rewrite a foreign one.
+  // Both arms copy, because the statusline is cleared on `next` below. Cleared
+  // on `settings` itself it would vanish from the caller's "before" as well, so
+  // a file holding only prim's statusline would compare unchanged and keep it.
+  const next: ClaudeSettings =
+    settings.hooks === undefined ? { ...settings } : { ...settings, hooks };
   // Remove our statusline; leave a user-defined one untouched.
   if (isPrimStatusLine(next)) {
     next.statusLine = undefined;
@@ -873,12 +883,16 @@ export function performInstall(
     scope,
     scope === "project" ? readSettings(USER_SCOPE_PATH) : {},
   );
+  // A project install is the file a repository commits, so its commands also
+  // run where prim was never installed and must do nothing there. User scope
+  // keeps the plain text: prim wrote it on this machine.
+  const committed = scope === "project";
   const installed = applyInstall(before, {
     force,
-    statuslineCommand: STATUSLINE_COMMAND,
+    statuslineCommand: committed ? quietWithoutLauncher(STATUSLINE_COMMAND) : STATUSLINE_COMMAND,
     // Cloud sessions have no terminal footer to render a statusline.
     installStatusline: !blockedByUserStatusline && !cloud,
-    wrapCommand: cloud ? deferToProjectInstall : undefined,
+    wrapCommand: cloud ? deferToProjectInstall : committed ? quietWithoutLauncher : undefined,
   });
   // User scope spans every repository, so only project scope may declare one.
   const after =

@@ -19,8 +19,9 @@ import {
   repoActiveFlag,
   setRepoActive,
 } from "../lib/activation.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY, isClaudeCloudSession } from "../lib/cloud-env.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
 import { isPreparedCloudSession } from "../lib/cloud-prepared.js";
+import { isCloudMachineSession } from "../lib/cloud-session.js";
 import { fetchAndCacheCollectScope } from "../lib/collect-scope.js";
 import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { askConfirmation, isNonInteractive } from "../lib/confirmation.js";
@@ -46,7 +47,7 @@ const GITHUB_CONNECTION_REQUIRED =
 /** The connection is made in a browser, which a cloud VM does not have. */
 function githubConnectionRequired(): string {
   return `${GITHUB_CONNECTION_REQUIRED} ${
-    isClaudeCloudSession()
+    isCloudMachineSession()
       ? `It cannot be completed from a Claude Code cloud session: ${CLOUD_GITHUB_CONNECT_REMEDY}.`
       : "Run `prim github connect` to complete it."
   }`;
@@ -117,7 +118,7 @@ async function maybeConnectRepository(
   root: string,
   globals: OptionValues,
 ): Promise<RepositoryBindingResult | undefined> {
-  if (isNonInteractive(globals) || isClaudeCloudSession()) return undefined;
+  if (isNonInteractive(globals) || isCloudMachineSession()) return undefined;
   const approved = Boolean(globals.yes) || (await askConfirmation(CONNECT_PROMPT, process.stderr));
   if (!approved) return undefined;
   const outcome = await runGithubConnect(undefined, { root, browser: true });

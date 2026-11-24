@@ -55,7 +55,7 @@ export function insideClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 export const CLOUD_CREDENTIALS_REMEDY =
-  'set PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET in the cloud environment\'s variables; mint them on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`';
+  'give the cloud environment PRIM_M2M_CLIENT_ID and PRIM_M2M_CLIENT_SECRET, as variables or with the secret held as a network secret; mint them on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`, which says where each value goes';
 
 /**
  * A session reads its environment when it is created, so a fix made in the
@@ -75,6 +75,10 @@ export const CLOUD_GITHUB_CONNECT_REMEDY =
  */
 export function cloudSetupPointer(message: string, env: NodeJS.ProcessEnv = process.env): string {
   return isClaudeCloudSession(env)
-    ? `${message.replace(/[.;\s]+$/u, "")}; in this Claude Code cloud session, run \`prim setup --cloud\` for the fix`
+    ? `${message.replace(/[.;\s]+$/u, "")}${CLOUD_SETUP_POINTER}`
     : message;
 }
+
+/** Cloud setup removes this from a message it relays: it is that command. */
+export const CLOUD_SETUP_POINTER =
+  "; in this Claude Code cloud session, run `prim setup --cloud` for the fix";

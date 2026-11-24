@@ -6,7 +6,8 @@
 import type { Command } from "commander";
 import { type CliClient, HttpError, getPinnedClient } from "../client.js";
 import { boundedHealthError } from "../lib/ansi.js";
-import { CLOUD_GITHUB_CONNECT_REMEDY, isClaudeCloudSession } from "../lib/cloud-env.js";
+import { CLOUD_GITHUB_CONNECT_REMEDY } from "../lib/cloud-env.js";
+import { isCloudMachineSession } from "../lib/cloud-session.js";
 import { gitToplevel } from "../lib/git.js";
 import {
   GitHubInstallIntentRateLimitedError,
@@ -102,7 +103,7 @@ function reportBinding(binding: RepositoryBindingResult, installAttempted = fals
   process.stderr.write(
     installAttempted
       ? `[prim] GitHub repo connection could not be completed for ${binding.repositoryFullName}; the GitHub App was not granted admin access to that repository\n`
-      : isClaudeCloudSession()
+      : isCloudMachineSession()
         ? `[prim] GitHub repo connection is required for ${binding.repositoryFullName} and cannot be completed from a Claude Code cloud session: ${CLOUD_GITHUB_CONNECT_REMEDY}\n`
         : `[prim] GitHub repo connection is required for ${binding.repositoryFullName}; it enables repository-specific file attribution, Conflict Gate verification, and commit correlation. Starting GitHub App installation…\n`,
   );
@@ -169,9 +170,9 @@ export async function runGithubConnect(
     if (existing.status === "connected") {
       return { kind: "connected", binding: existing };
     }
-    // The GitHub App is installed in a browser, as a person. A cloud VM has
-    // neither, and its machine credential is refused the installation.
-    if (isClaudeCloudSession())
+    // The GitHub App is installed in a browser, as a person, and a machine
+    // credential is refused the installation: do not start one.
+    if (isCloudMachineSession())
       return { kind: "unbound", binding: existing, installAttempted: false };
 
     const start = await dependencies.createInstallIntent(client, {

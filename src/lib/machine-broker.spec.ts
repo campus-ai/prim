@@ -671,6 +671,8 @@ describe("forwarding through a running broker", () => {
   });
 
   describe("a broker that did not answer", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
     /** Answers a health check as the broker would, then hangs up on everything else. */
     async function vanished() {
       broker = createServer((request, response) => {
@@ -710,6 +712,10 @@ describe("forwarding through a running broker", () => {
     it("is reported as the proxy failing when that is why it gave up", async () => {
       await vanished();
       recordProxyFailure(directory, apiUrl, routed.clientId);
+      // Outside a cloud session there is no cloud environment's proxy to name.
+      for (const ask of asks())
+        await expect(ask()).rejects.toMatchObject({ code: "broker_unavailable" });
+      vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
       for (const ask of asks())
         await expect(ask()).rejects.toMatchObject({
           code: "proxy_unavailable",

@@ -579,6 +579,9 @@ describe("prim enable / disable", () => {
 
   it("sends a cloud session's owner to their own machine instead of starting a browser connection", async () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
+    vi.stubEnv("PRIM_TOKEN", undefined);
     inRepo("/repo");
     vi.mocked(bindRepository).mockResolvedValue({
       status: "unbound",

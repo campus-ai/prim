@@ -732,9 +732,49 @@ try {
     );
   }
   for (const pid of brokersSeen) pids.add(pid);
-  // As `prim setup --cloud` does before it checks again; the proxy has recovered.
-  for (const name of await readdir(config))
-    if (name.startsWith("machine_retry_")) await rm(join(config, name));
+  // An explicit check, as `prim setup --cloud` makes it, lifts the proxy's
+  // cooldown without forgetting its count. Against a proxy still failing that
+  // costs one attempt, cut short, and leaves a longer wait than the last.
+  const liftCooldowns = async () => {
+    for (const name of await readdir(config)) {
+      if (!name.startsWith("machine_retry_")) continue;
+      const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
+      if (waiting.serverRetryAfter) continue;
+      if (!waiting.proxy) await rm(join(config, name));
+      else
+        await writeFile(
+          join(config, name),
+          JSON.stringify({ failures: waiting.failures, retryAt: 0, proxy: true }),
+        );
+    }
+  };
+  if (spinning) {
+    await liftCooldowns();
+    await dropTunnels();
+    answerBudget = 1;
+    connectionsBefore = proxyConnections;
+    const rechecked = await cloudStatus(inSession);
+    await delay(500);
+    answerBudget = Number.POSITIVE_INFINITY;
+    const [name] = (await readdir(config)).filter((file) => file.startsWith("machine_retry_"));
+    const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
+    measured.explicitCheckOfAProxyStillHangingUp = {
+      proxyConnections: proxyConnections - connectionsBefore,
+      failuresBefore: cooldowns[0].failures,
+      failuresAfter: waiting.failures,
+    };
+    assert.equal(rechecked.recoveryReason, "proxy_unavailable", JSON.stringify(rechecked));
+    assert.ok(
+      proxyConnections - connectionsBefore < 1500,
+      `an explicit check must not set the reconnecting loose again: ${JSON.stringify(measured.explicitCheckOfAProxyStillHangingUp)}`,
+    );
+    assert.ok(
+      waiting.proxy === true && waiting.failures === cooldowns[0].failures + 1,
+      `and the wait that follows it must be longer, not begun again: ${JSON.stringify(waiting)}`,
+    );
+  }
+  // The proxy has recovered, and the next explicit check finds it so.
+  await liftCooldowns();
   const recovered = await cloudStatus(inSession);
   assert.equal(recovered.status, "valid", JSON.stringify(recovered));
   pids.add((await routedBroker()).pid);
