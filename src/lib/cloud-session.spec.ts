@@ -1,9 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cloudAllowedDomains, cloudEgressRemedy, diagnoseCloudSession } from "./cloud-session.js";
+import { tunnelCheckedFetch } from "./proxy-tunnel.js";
 
 const API = "https://api.getprimitive.ai";
 let configDir: string;
@@ -27,6 +31,37 @@ function egress(blocked: string[]): typeof fetch {
       });
     return new Response(JSON.stringify({ issuer: "https://signin.getprimitive.ai" }));
   }) as typeof fetch;
+}
+
+/**
+ * Diagnose from a process whose requests ride a proxy, as one started with
+ * NODE_USE_ENV_PROXY=1 does, against a stand-in proxy that answers every
+ * CONNECT with `answer`. `reached` is the request itself, were one sent.
+ */
+async function diagnoseThroughProxy(answer: number | "close") {
+  const proxy = createServer();
+  proxy.on("connect", (_request, socket: Duplex) => {
+    if (answer === "close") socket.destroy();
+    else socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const reached = vi.fn(egress([]));
+  try {
+    const notice = await diagnoseCloudSession({
+      env: machineEnv(),
+      fetch: tunnelCheckedFetch({
+        env: {
+          NODE_USE_ENV_PROXY: "1",
+          HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+        },
+        fetch: reached,
+      }),
+      siteUrl: API,
+    });
+    return { notice, reached };
+  } finally {
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  }
 }
 
 beforeEach(() => {
@@ -101,19 +136,24 @@ describe("diagnoseCloudSession", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("blames an outage, not the allowlist, for a proxy's own 5xx", async () => {
-    const notice = await diagnoseCloudSession({
-      env: machineEnv(),
-      fetch: (async () =>
-        Promise.reject(
-          new TypeError("fetch failed", {
-            cause: new Error("Proxy response (502) !== 200 when HTTP Tunneling"),
-          }),
-        )) as typeof fetch,
-      siteUrl: API,
-    });
-    expect(notice).toContain("could not be reached");
-  });
+  it.each([
+    ["its own 502", 502, "(502)"],
+    ["its own 503", 503, "(503)"],
+    ["a demand for credentials", 407, "(407)"],
+    ["hanging up without an answer", "close", "(closed)"],
+  ] as const)(
+    "blames the proxy, not the allowlist, for %s to a CONNECT",
+    async (_name, answer, detail) => {
+      const { notice, reached } = await diagnoseThroughProxy(answer);
+      expect(notice).toBe(
+        `Primitive is not connected in this Claude Code cloud session: the cloud environment's proxy could not open a connection to Primitive ${detail}. That is a fault in the proxy, not the Allowed domains list; retry shortly.`,
+      );
+      // No instruction to add a domain the user may already have allowed.
+      expect(notice).not.toContain("add api.getprimitive.ai");
+      expect(notice).not.toContain("cannot reach");
+      expect(reached).not.toHaveBeenCalled();
+    },
+  );
 
   it("never probes the sign-in service when the proxy holds the token", async () => {
     // In network-token mode the proxy requests tokens from outside the VM, so
@@ -167,16 +207,27 @@ describe("diagnoseCloudSession", () => {
     expect(notice).not.toContain("PRIM_M2M_CLIENT_SECRET in the cloud environment");
   });
 
-  it("reads a refused proxy tunnel as a blocked host", async () => {
+  it("reads the proxy's 403 to a CONNECT as a blocked host", async () => {
+    const { notice, reached } = await diagnoseThroughProxy(403);
+    expect(notice).toContain("cannot reach Primitive.");
+    expect(notice).toContain(
+      "add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains",
+    );
+    expect(reached).not.toHaveBeenCalled();
+  });
+
+  it("does not take the text of a failed request for the proxy's verdict", async () => {
+    // Node's fetch says this of every CONNECT answer but 200, outage or refusal.
     const notice = await diagnoseCloudSession({
       env: machineEnv(),
       fetch: (async () =>
         Promise.reject(
-          new TypeError("fetch failed", { cause: new Error("Request was cancelled") }),
+          new TypeError("fetch failed", { cause: new Error("Request was cancelled.") }),
         )) as typeof fetch,
       siteUrl: API,
     });
-    expect(notice).toContain("cannot reach Primitive.");
+    expect(notice).toContain("could not be reached (network error)");
+    expect(notice).not.toContain("cannot reach");
   });
 
   it("names the committed declaration before probing when the checkout has no identity", async () => {
@@ -308,6 +359,23 @@ describe("diagnoseCloudSession where prim's requests ride the environment's prox
       diagnoseCloudSession({ env: routedEnv(), brokerProbe: async () => ({ api }), siteUrl: API });
     expect(await report("timeout")).toContain("Primitive did not answer in time.");
     expect(await report("ECONNRESET")).toContain("Primitive could not be reached (ECONNRESET).");
+    // What the broker reports when the proxy itself fails a CONNECT.
+    for (const failure of ["PROXY_502", "PROXY_CLOSED"]) {
+      const notice = await report(failure);
+      expect(notice).toContain("That is a fault in the proxy, not the Allowed domains list");
+      expect(notice).not.toContain("add api.getprimitive.ai");
+    }
+    const signInFailure = await diagnoseCloudSession({
+      env: routedEnv(),
+      brokerProbe: async () => ({
+        api: "ok",
+        signIn: { host: "signin.getprimitive.ai", result: "PROXY_503" },
+      }),
+      siteUrl: API,
+    });
+    expect(signInFailure).toContain(
+      "the cloud environment's proxy could not open a connection to Primitive's sign-in service (503).",
+    );
   });
 
   it("asks the broker in every credential mode, and only for the API host when the proxy holds the token", async () => {

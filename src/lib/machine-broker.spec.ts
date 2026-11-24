@@ -1,20 +1,22 @@
 import { execFile } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { type IncomingMessage, type Server, createServer } from "node:http";
+import { type IncomingMessage, type Server, createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { probeEgress } from "./egress-probe.js";
 import {
+  acquireBrokerCredential,
   brokerEnvironment,
   createBrokerServer,
   forwardBrokerRequest,
   forwardToApi,
   probeBrokerEgress,
 } from "./machine-broker.js";
+import type { MachineCredential } from "./machine-credentials.js";
+import { MachineAuthError } from "./machine-protocol.js";
 
 const base = { directory: "/config", apiUrl: "https://api.example.com" };
 
@@ -161,76 +163,6 @@ describe("a Node process started with the broker's environment", () => {
   });
 });
 
-describe("what a routed broker can reach", () => {
-  /** A proxy that refuses every host, as the environment's does one off its allowlist. */
-  async function refusingProxy(asked: string[]): Promise<Server> {
-    const proxy = createServer((_request, response) => {
-      response.writeHead(403).end();
-    });
-    proxy.on("connect", (request, socket) => {
-      asked.push(request.url ?? "");
-      socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
-    });
-    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
-    return proxy;
-  }
-
-  /** How this Node's fetch fails for an HTTPS host under `env`, as the probe sees it. */
-  async function failureFrom(env: NodeJS.ProcessEnv): Promise<Error> {
-    const script = `
-      const failure = await fetch("https://api.blocked.invalid/api/cli/auth/m2m/config").then(
-        () => ({ reached: true }),
-        (error) => ({
-          name: error.name,
-          code: error.cause?.code,
-          message: error.cause?.message,
-        }),
-      );
-      console.log(JSON.stringify(failure));
-    `;
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      ["--input-type=module", "-e", script],
-      { env, encoding: "utf8", timeout: 20_000 },
-    );
-    const seen = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
-    expect(seen.reached).toBeUndefined();
-    const error = new TypeError("fetch failed", {
-      cause: Object.assign(new Error(seen.message), { code: seen.code }),
-    });
-    error.name = seen.name;
-    return error;
-  }
-
-  it("reads the proxy's refusal, as this Node reports it, as a blocked host", async () => {
-    const asked: string[] = [];
-    const proxy = await refusingProxy(asked);
-    try {
-      const address = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-      const failure = await failureFrom(
-        brokerEnvironment({
-          ...base,
-          env: {
-            PATH: process.env.PATH,
-            HTTPS_PROXY: address,
-            NO_PROXY: "",
-            NODE_NO_WARNINGS: "1",
-          },
-          environment: { routing: "proxy" },
-        }),
-      );
-      // The refusal is the proxy's own, not this machine's DNS giving up.
-      expect(asked).toEqual(["api.blocked.invalid:443"]);
-      const report = await probeEgress("https://api.blocked.invalid", true, (async () => {
-        throw failure;
-      }) as typeof fetch);
-      expect(report).toEqual({ api: "blocked" });
-    } finally {
-      await new Promise<void>((resolve) => proxy.close(() => resolve()));
-    }
-  });
-});
-
 describe("forwardToApi (the broker's half of a forwarded request)", () => {
   const API = "https://api.example.com";
   const signal = () => new AbortController().signal;
@@ -276,7 +208,7 @@ describe("forwardToApi (the broker's half of a forwarded request)", () => {
     });
   });
 
-  it("carries the caller's bearer token, and no other credential, where callers hold the token", async () => {
+  it("attaches the token the broker holds, and nothing a caller sent as a credential", async () => {
     const fetcher = answering();
     await forwardToApi(
       API,
@@ -284,7 +216,8 @@ describe("forwardToApi (the broker's half of a forwarded request)", () => {
         method: "GET",
         path: "/api/cli/auth/status",
         headers: {
-          authorization: "Bearer header.payload.signature_1",
+          Authorization: "Bearer sent-by-the-caller",
+          authorization: "Bearer sent-in-lower-case",
           Cookie: "a=b",
           "Proxy-Authorization": "Basic c2VjcmV0",
           "X-Prim-Uploader-Version": "1.2.3",
@@ -292,32 +225,13 @@ describe("forwardToApi (the broker's half of a forwarded request)", () => {
       },
       signal(),
       fetcher as typeof fetch,
-      true,
+      "header.payload.held_by_the_broker",
     );
     expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({
-      Authorization: "Bearer header.payload.signature_1",
+      Authorization: "Bearer header.payload.held_by_the_broker",
       "X-Prim-Uploader-Version": "1.2.3",
     });
     expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
-  });
-
-  it.each([
-    ["another scheme", "Basic Y2xpZW50OnNlY3JldA=="],
-    ["a second value", "Bearer one, Bearer two"],
-    ["a header split", "Bearer one\r\nX-Injected: 1"],
-    ["no token", "Bearer "],
-    ["an oversized token", `Bearer ${"a".repeat(61_441)}`],
-    ["a value that is not text", 7],
-  ])("never carries %s as the credential", async (_name, authorization) => {
-    const fetcher = answering();
-    await forwardToApi(
-      API,
-      { method: "GET", path: "/api", headers: { Authorization: authorization } },
-      signal(),
-      fetcher as typeof fetch,
-      true,
-    );
-    expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual({});
   });
 
   it("passes an API refusal through as the API's answer", async () => {
@@ -436,9 +350,34 @@ describe("forwarding through a running broker", () => {
   // and the broker relays every request.
   const routed: Mode = { ...holdsToken, routing: "proxy" };
 
+  // The token the broker holds, as its own exchange would have left it.
+  const HELD = "header.payload.held_by_the_broker";
+  let acquire: ReturnType<
+    typeof vi.fn<
+      (options: { force: boolean; signal: AbortSignal }) => Promise<MachineCredential | undefined>
+    >
+  >;
+  const hmac = (key: string, purpose: string | undefined, body: string) =>
+    createHmac("sha256", key)
+      .update(purpose ? `${NONCE}\0${purpose}\0${body}` : `${NONCE}\0${body}`)
+      .digest("hex");
+  /** Something other than the broker, answering on the port its descriptor names. */
+  async function impostor(answer: (body: string) => { body: string; proof?: string }) {
+    broker = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      response.end(JSON.stringify(answer(body)));
+    });
+    writeFileSync(
+      join(directory, `machine_broker_${GENERATION}.json`),
+      JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
+      { mode: 0o600 },
+    );
+  }
+
   /** Start a broker for `mode` and publish its descriptor where callers look. */
   async function startBroker(mode: Mode) {
-    broker = createBrokerServer({ environment: mode, apiUrl, nonce: NONCE });
+    broker = createBrokerServer({ environment: mode, apiUrl, nonce: NONCE, acquire });
     const port = await listen(broker);
     writeFileSync(
       join(directory, `machine_broker_${GENERATION}.json`),
@@ -496,12 +435,33 @@ describe("forwarding through a running broker", () => {
       response.end(answer.body);
     });
     apiUrl = `http://127.0.0.1:${await listen(api)}`;
+    acquire = vi.fn(
+      async () => ({ apiUrl, accessToken: HELD, storage: "environment" }) as MachineCredential,
+    );
   });
   afterEach(async () => {
     await close(broker);
     await close(api);
     rmSync(directory, { recursive: true, force: true });
   });
+
+  /**
+   * Open a request and send only its head, as a caller would that has not
+   * shown it may speak: the status the broker answers with before any body.
+   */
+  function head(port: number, path: string, headers: Record<string, string>): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const outgoing = request(
+        { host: "127.0.0.1", port, path, method: "POST", agent: false, headers },
+        (incoming) => {
+          resolve(incoming.statusCode ?? 0);
+          outgoing.destroy();
+        },
+      );
+      outgoing.once("error", reject);
+      outgoing.flushHeaders();
+    });
+  }
 
   it("carries a request to the API and its answer back, with no credential added", async () => {
     await startBroker(environment);
@@ -573,13 +533,14 @@ describe("forwarding through a running broker", () => {
     expect(received).toEqual([]);
   });
 
-  it("carries the caller's token to the API where prim holds it and the session is routed", async () => {
+  it("attaches the token it holds where prim holds one and the session is routed", async () => {
     await startBroker(routed);
     const response = await forward({
       method: "POST",
       path: "/api/cli/moves/ingest",
       headers: {
-        Authorization: "Bearer header.payload.signature_1",
+        // A caller sends no credential; one that did would not be heard.
+        Authorization: "Bearer sent-by-the-caller",
         "Content-Type": "application/json",
         Cookie: "a=b",
       },
@@ -588,8 +549,34 @@ describe("forwarding through a running broker", () => {
     expect(response.status).toBe(200);
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ method: "POST", url: "/api/cli/moves/ingest" });
-    expect(received[0]?.headers.authorization).toBe("Bearer header.payload.signature_1");
+    expect(received[0]?.headers.authorization).toBe(`Bearer ${HELD}`);
     expect(received[0]?.headers.cookie).toBeUndefined();
+    // Its own credential, as it stands: never a forced renewal on a caller's word.
+    expect(acquire).toHaveBeenCalledExactlyOnceWith({
+      force: false,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("answers with why it holds no token, and sends the API nothing", async () => {
+    await startBroker(routed);
+    acquire.mockRejectedValueOnce(
+      new MachineAuthError("machine_credentials_rejected", "Rotate the credentials.", true),
+    );
+    await expect(forward({ method: "GET", path: "/api/cli/auth/status" })).rejects.toMatchObject({
+      code: "machine_credentials_rejected",
+      message: "Rotate the credentials.",
+      terminal: true,
+    });
+    // A credential for another deployment is not this broker's to attach.
+    acquire.mockResolvedValueOnce({
+      apiUrl: "https://elsewhere.example.com",
+      accessToken: HELD,
+    } as MachineCredential);
+    await expect(forward({ method: "GET", path: "/api/cli/auth/status" })).rejects.toMatchObject({
+      code: "broker_unavailable",
+    });
+    expect(received).toEqual([]);
   });
 
   it("sends no credential where the proxy holds the token, routed or not", async () => {
@@ -598,12 +585,114 @@ describe("forwarding through a running broker", () => {
       await forward({
         method: "GET",
         path: "/api/cli/auth/status",
-        headers: { Authorization: "Bearer header.payload.signature_1" },
+        headers: { Authorization: "Bearer sent-by-the-caller" },
       });
       await close(broker);
     }
     expect(received).toHaveLength(2);
     for (const request of received) expect(request.headers.authorization).toBeUndefined();
+    // There is no token of prim's to hold: the proxy attaches its own.
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no proof", () => undefined],
+    ["a proof under another key", (body: string) => hmac("d".repeat(64), "forward-answer", body)],
+    ["the request's proof", (body: string) => hmac(KEY, "forward-request", body)],
+    ["a credential answer's proof", (body: string) => hmac(KEY, undefined, body)],
+    ["a probe answer's proof", (body: string) => hmac(KEY, "probe-answer", body)],
+  ])("trusts no forwarded answer that carries %s", async (_name, sign) => {
+    // Whatever answers on the descriptor's port must prove it is the broker.
+    const body = JSON.stringify({ status: 200, headers: {}, body: '{"forged":true}' });
+    await impostor(() => ({ body, proof: sign(body) }));
+    await expect(forward({ method: "GET", path: "/api/cli/auth/status" })).rejects.toMatchObject({
+      code: "broker_unavailable",
+      message: expect.stringContaining("could not be authenticated"),
+    });
+  });
+
+  it("shows an unproven listener no credential, and takes none from it", async () => {
+    const heard: string[] = [];
+    // It answers everything, with a well-formed credential it cannot sign.
+    await impostor((body) => {
+      heard.push(body);
+      const forged = JSON.stringify({
+        credential: {
+          generation: GENERATION,
+          clientId: environment.clientId,
+          storage: "environment",
+          accessToken: "header.payload.forged",
+        },
+      });
+      return { body: forged, proof: hmac("d".repeat(64), undefined, forged) };
+    });
+    const { tokenInjection: _held, ...secretInVariables } = environment;
+    await expect(
+      forwardBrokerRequest({
+        directory,
+        apiUrl,
+        environment: { ...secretInVariables, routing: "proxy" },
+        env: {},
+        request: {
+          method: "POST",
+          path: "/api/cli/moves/ingest",
+          headers: { "Content-Type": "application/json" },
+          body: '{"moves":[]}',
+        },
+        signal: AbortSignal.timeout(5_000),
+      }),
+    ).rejects.toMatchObject({ code: "broker_unavailable" });
+    await expect(
+      acquireBrokerCredential({
+        directory,
+        apiUrl,
+        environment: secretInVariables,
+        env: {},
+        observedToken: HELD,
+        signal: AbortSignal.timeout(5_000),
+      }),
+    ).rejects.toMatchObject({
+      code: "broker_unavailable",
+      message: expect.stringContaining("could not be authenticated"),
+    });
+    // What it heard names no token: the forward carries none, and a
+    // credential request only a hash of the one the caller last saw.
+    expect(heard).toHaveLength(2);
+    expect(heard.join("\n")).not.toMatch(/bearer|authorization|header\.payload/iu);
+  });
+
+  it("holds nothing for a caller that offers no proof or no bounded length", async () => {
+    const port = await startBroker(routed);
+    const proof = "f".repeat(64);
+    const json = { "Content-Type": "application/json" };
+    for (const path of ["/credential", "/forward", "/probe"]) {
+      // Each is answered on the head alone: no body was sent to read.
+      expect(await head(port, path, { ...json, "Content-Length": "64" })).toBe(403);
+      expect(await head(port, path, { ...json, "Content-Length": "64", "X-Prim-Proof": "x" })).toBe(
+        403,
+      );
+      // A body of no stated length could be of any length.
+      expect(
+        await head(port, path, { ...json, "Transfer-Encoding": "chunked", "X-Prim-Proof": proof }),
+      ).toBe(411);
+    }
+    expect(received).toEqual([]);
+  });
+
+  it("refuses more than each endpoint accepts before reading it", async () => {
+    const port = await startBroker(routed);
+    const offer = (path: string, bytes: number) =>
+      head(port, path, { "Content-Length": String(bytes), "X-Prim-Proof": "f".repeat(64) });
+    // A credential request and a probe are a few fields; a forward wraps an upload.
+    expect(await offer("/credential", 2049)).toBe(413);
+    expect(await offer("/probe", 2049)).toBe(413);
+    expect(await offer("/forward", 12 * 1024 * 1024 + 1)).toBe(413);
+    // Within the limit the body is awaited, then judged by its proof.
+    const padded = envelope({ padding: "x".repeat(4096) });
+    expect(await raw(port, "/forward", padded, "forward-request")).toBe(200);
+    expect(await raw(port, "/probe", padded, "probe-request")).toBe(413);
+    expect(await raw(port, "/credential", padded)).toBe(413);
+    expect(received).toHaveLength(1);
   });
 
   it("keeps the relay's refusals in a routed session", async () => {
@@ -697,6 +786,20 @@ describe("forwarding through a running broker", () => {
       const port = await startBroker(environment);
       expect(await raw(port, "/probe", envelope(), "probe-request")).toBe(404);
       expect(received).toEqual([]);
+    });
+
+    it.each([
+      ["no proof", () => undefined],
+      ["a proof under another key", (body: string) => hmac("d".repeat(64), "probe-answer", body)],
+      ["the request's proof", (body: string) => hmac(KEY, "probe-request", body)],
+      ["a forwarded answer's proof", (body: string) => hmac(KEY, "forward-answer", body)],
+    ])("trusts no report that carries %s", async (_name, sign) => {
+      const body = JSON.stringify({ api: "blocked" });
+      await impostor(() => ({ body, proof: sign(body) }));
+      await expect(probe()).rejects.toMatchObject({
+        code: "broker_unavailable",
+        message: expect.stringContaining("could not be authenticated"),
+      });
     });
 
     it("lets nothing but a plain result into the report", async () => {

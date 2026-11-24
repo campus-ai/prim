@@ -807,7 +807,8 @@ async function fetchWithToken(
  * the request carries no credential of prim's own. In a cloud session whose
  * credentials come from its variables, only the proxy follows an edit to the
  * environment's Allowed domains, so the broker carries the request and, where
- * prim holds the token, the token with it.
+ * prim holds the token, attaches the one it holds. Either way this process
+ * sends the broker no credential.
  */
 async function fetchAsMachine(
   credential: MachineCredential,
@@ -830,12 +831,7 @@ async function fetchAsMachine(
       {
         method,
         path,
-        headers: {
-          ...(credential.tokenInjection
-            ? {}
-            : { Authorization: `Bearer ${credential.accessToken}` }),
-          ...(await requestHeaders(method, path)),
-        },
+        headers: await requestHeaders(method, path),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
       options.signal,

@@ -17,6 +17,7 @@ import {
 } from "./machine-credentials.js";
 import { MachineAuthError, machineApiUrl, machineRecord } from "./machine-protocol.js";
 import { primConfigDirectory } from "./paths.js";
+import { tunnelCheckedFetch } from "./proxy-tunnel.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 const MAX_RESPONSE_BYTES = 96 * 1024;
@@ -34,8 +35,6 @@ const FORWARD_PROOFS = { request: "forward-request", answer: "forward-answer" };
 const PROBE_PROOFS = { request: "probe-request", answer: "probe-answer" };
 const FORWARD_TIMEOUT_MS = 30_000;
 const FORWARD_METHODS = ["GET", "POST", "DELETE"];
-// One visible-ASCII token, no longer than any access token prim accepts.
-const BEARER = /^Bearer [\x21-\x7e]{1,61440}$/u;
 const IDLE_MS = 5 * 60_000;
 type Descriptor = { port: number; nonce: string; pid: number };
 type Environment = {
@@ -477,20 +476,14 @@ export async function probeBrokerEgress(options: {
   }
 }
 
-/**
- * Only what prim's own API client sends. A credential travels only when this
- * broker's callers hold the token (`bearer`), and then only as one bearer
- * token; where the proxy attaches the token, none ever does.
- */
-function forwardableHeaders(value: unknown, bearer: boolean): Record<string, string> {
+/** Only what prim's own API client sends; never a credential header. */
+function forwardableHeaders(value: unknown): Record<string, string> {
   const headers: Record<string, string> = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return headers;
   for (const [name, content] of Object.entries(value)) {
     const lower = name.toLowerCase();
-    if (typeof content !== "string") continue;
-    if (lower === "authorization") {
-      if (bearer && BEARER.test(content)) headers.Authorization = content;
-    } else if (
+    if (
+      typeof content === "string" &&
       content.length <= 256 &&
       !/[\p{Cc}]/u.test(content) &&
       (lower === "content-type" || /^x-prim-[a-z0-9-]+$/u.test(lower))
@@ -502,17 +495,18 @@ function forwardableHeaders(value: unknown, bearer: boolean): Record<string, str
 
 /**
  * The broker's half of a forwarded request: send it to the API origin this
- * broker was started for and return the answer as data. Where the proxy
- * attaches the token the request carries no Authorization header; where the
- * caller holds it (`bearer`), the caller's own and nothing else. Runs only in
- * the broker.
+ * broker was started for and return the answer as data. No credential comes
+ * from the caller. Where the proxy attaches the token the request carries no
+ * Authorization header; where prim holds it, the broker passes the token it
+ * holds as `accessToken`, so a caller never sends one to a listener it has
+ * not yet authenticated. Runs only in the broker.
  */
 export async function forwardToApi(
   apiUrl: string,
   data: Record<string, unknown>,
   signal: AbortSignal,
   fetchImpl: typeof fetch = fetch,
-  bearer = false,
+  accessToken?: string,
 ): Promise<unknown> {
   const refuse = (message: string) => ({
     error: { code: "invalid_request", message, terminal: false },
@@ -533,7 +527,10 @@ export async function forwardToApi(
   try {
     const answer = await fetchImpl(target, {
       method: data.method,
-      headers: forwardableHeaders(data.headers, bearer),
+      headers: {
+        ...forwardableHeaders(data.headers),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       body: data.method === "GET" ? undefined : (data.body as string | undefined),
       redirect: "error",
       signal: AbortSignal.any([signal, AbortSignal.timeout(FORWARD_TIMEOUT_MS)]),
@@ -575,21 +572,27 @@ export async function forwardToApi(
   }
 }
 
+type AcquireCredential = (options: {
+  force: boolean;
+  signal: AbortSignal;
+}) => Promise<MachineCredential | undefined>;
+
 /** The broker's answer to a credential request: the credential, or why not. */
 async function credentialResult(
+  acquire: AcquireCredential,
   apiUrl: string,
   data: Record<string, unknown>,
   signal: AbortSignal,
-): Promise<unknown> {
+): Promise<
+  | { credential: MachineCredential }
+  | { error: { code: string; message: string; terminal: boolean; retryAt?: number } }
+> {
   try {
     const current = cachedMachineCredential();
     const force =
       data.force === true &&
       (!current || data.observedTokenHash === tokenHash(current.accessToken));
-    const credential = await acquireMachineCredential(
-      { force, signal },
-      { localEnvironment: true },
-    );
+    const credential = await acquire({ force, signal });
     if (!credential || credential.apiUrl !== apiUrl) throw new Error("Missing machine identity");
     return { credential };
   } catch (error) {
@@ -622,8 +625,16 @@ export function createBrokerServer(options: {
   nonce: string;
   /** Called for each authenticated request, to keep an idle broker alive. */
   onRequest?: () => void;
+  /** How this broker reaches Primitive (see tunnelCheckedFetch). */
+  fetch?: typeof fetch;
+  /** The credential this broker holds, exchanged or renewed when needed. */
+  acquire?: AcquireCredential;
 }): Server {
   const { environment, apiUrl, nonce } = options;
+  const reach = options.fetch ?? tunnelCheckedFetch();
+  const acquire: AcquireCredential =
+    options.acquire ??
+    ((request) => acquireMachineCredential(request, { localEnvironment: true, fetch: reach }));
   const server = createServer(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (request.method === "GET" && request.url === "/health") {
@@ -637,12 +648,35 @@ export function createBrokerServer(options: {
     const proxyHoldsToken = environment.tokenInjection === "network";
     const forwarding = request.url === "/forward" && (proxyHoldsToken || routed);
     const probing = request.url === "/probe" && routed;
+    // Nothing a caller sends is held for a request this turns away: what
+    // arrives is discarded, and the connection ends with the answer.
+    const refuse = (status: number) => {
+      response.writeHead(status, { Connection: "close" }).end();
+      request.resume();
+    };
     if (request.method !== "POST" || (request.url !== "/credential" && !forwarding && !probing)) {
-      response.writeHead(404).end();
+      refuse(404);
       return;
     }
     const proofs = forwarding ? FORWARD_PROOFS : probing ? PROBE_PROOFS : undefined;
     const limit = forwarding ? MAX_FORWARD_REQUEST_BYTES : MAX_CREDENTIAL_REQUEST_BYTES;
+    // The proof binds the body, so it can only be checked with the body in
+    // hand. Before holding any of it: the caller must offer something shaped
+    // like a proof, and say how much it sends, within this endpoint's limit.
+    const offered = request.headers["x-prim-proof"];
+    if (typeof offered !== "string" || !/^[a-f0-9]{64}$/u.test(offered)) {
+      refuse(403);
+      return;
+    }
+    const declared = request.headers["content-length"];
+    if (declared === undefined || !/^\d{1,15}$/u.test(declared)) {
+      refuse(411);
+      return;
+    }
+    if (Number(declared) > limit) {
+      refuse(413);
+      return;
+    }
     try {
       const chunks: Buffer[] = [];
       let received = 0;
@@ -656,7 +690,7 @@ export function createBrokerServer(options: {
       }
       const raw = Buffer.concat(chunks).toString("utf8");
       const proof = signature(environment.clientSecret, nonce, raw, proofs?.request);
-      if (!matches(proof, request.headers["x-prim-proof"])) {
+      if (!matches(proof, offered)) {
         response.writeHead(403).end();
         return;
       }
@@ -674,12 +708,29 @@ export function createBrokerServer(options: {
       response.once("close", () => {
         if (!response.writableFinished) controller.abort();
       });
-      const result = forwarding
-        ? await forwardToApi(apiUrl, data, controller.signal, fetch, !proxyHoldsToken)
-        : probing
-          ? // The proxy reaches the sign-in service itself when it holds the token.
-            await probeEgress(apiUrl, !proxyHoldsToken)
-          : await credentialResult(apiUrl, data, controller.signal);
+      let result: unknown;
+      if (forwarding) {
+        // Where prim holds the token, the broker attaches the one it holds:
+        // it issued every caller's copy, and a caller that sent its own
+        // would hand it to whatever answers on this port before knowing
+        // that is the broker.
+        const held = proxyHoldsToken
+          ? undefined
+          : await credentialResult(acquire, apiUrl, {}, controller.signal);
+        result =
+          held && "error" in held
+            ? held
+            : await forwardToApi(
+                apiUrl,
+                data,
+                controller.signal,
+                reach,
+                held?.credential.accessToken,
+              );
+      } else if (probing)
+        // The proxy reaches the sign-in service itself when it holds the token.
+        result = await probeEgress(apiUrl, !proxyHoldsToken, reach);
+      else result = await credentialResult(acquire, apiUrl, data, controller.signal);
       const body = JSON.stringify(result);
       response.setHeader("Content-Type", "application/json");
       response.end(
@@ -711,16 +762,22 @@ export async function startMachineBroker(): Promise<void> {
     apiUrl,
     nonce,
     onRequest: () => idle.refresh(),
+    // A request handed to Node met a proxy that closes CONNECTs: Node 22 and
+    // 24 may retry it for as long as this process lives.
+    fetch: tunnelCheckedFetch({ onSilentProxy: () => close(1) }),
   });
-  const close = () => {
+  // Ends the process, not just the server: a request Node is still retrying
+  // would otherwise keep it alive and busy, with no descriptor to find it by.
+  const close = (code = 0) => {
     clearTimeout(idle);
     server.closeAllConnections();
     server.close();
     if (readDescriptor(path)?.nonce === nonce) rmSync(path, { force: true });
+    process.exit(code);
   };
-  const idle = setTimeout(close, IDLE_MS);
-  process.once("SIGTERM", close);
-  process.once("SIGINT", close);
+  const idle = setTimeout(() => close(), IDLE_MS);
+  process.once("SIGTERM", () => close());
+  process.once("SIGINT", () => close());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);

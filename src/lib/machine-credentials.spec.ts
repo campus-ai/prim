@@ -796,7 +796,11 @@ describe("proxy routing in a Claude Code cloud session", () => {
 
   describe("through a running broker", () => {
     const NONCE = "b".repeat(64);
-    const BEARER = "Bearer header.payload.signature_1";
+    // The broker's own token, and the copy of one a caller was handed.
+    const HELD = "header.payload.held_by_the_broker";
+    const COPY = "header.payload.callers_copy";
+    // Where a caller that connected by itself would go: nowhere.
+    const DIRECT = "https://api.only-the-broker-reaches.invalid";
     let api: Server;
     let broker: Server | undefined;
     let apiStatus: number;
@@ -815,7 +819,12 @@ describe("proxy routing in a Claude Code cloud session", () => {
       const caller = { directory, env: envFor(mode, { ...extra, PRIM_API_URL: apiUrl }) };
       const environment = environmentCredentials(caller);
       if (!environment) throw new Error("missing fixture credentials");
-      broker = createBrokerServer({ environment, apiUrl, nonce: NONCE });
+      broker = createBrokerServer({
+        environment,
+        apiUrl,
+        nonce: NONCE,
+        acquire: async () => credential({ apiUrl, accessToken: HELD }),
+      });
       writeFileSync(
         join(directory, `machine_broker_${environment.generation}.json`),
         JSON.stringify({ port: await listen(broker), pid: process.pid, nonce: NONCE }),
@@ -829,10 +838,10 @@ describe("proxy routing in a Claude Code cloud session", () => {
         workosOrganizationId: "org_workos",
         displayName: "Build runner",
         scopes: ["cli:read", "cli:capture"],
-        apiUrl,
+        apiUrl: DIRECT,
         generation: environment.generation,
         storage: "environment",
-        accessToken: "header.payload.signature_1",
+        accessToken: COPY,
         expiresAt: Date.now() + 3_600_000,
         ...held,
       });
@@ -856,23 +865,33 @@ describe("proxy routing in a Claude Code cloud session", () => {
     });
 
     it.each(["secret in variables", "network-secret"] as const)(
-      "carries the token prim holds to the API, in %s mode",
+      "reaches the API only through the broker, with the broker's token, in %s mode",
       async (mode) => {
         const { caller, credential } = await session(mode);
         const response = await forwardMachineRequest(
-          { method: "GET", path: "/api/cli/decisions/recent", headers: { Authorization: BEARER } },
+          {
+            method: "GET",
+            path: "/api/cli/decisions/recent",
+            // A caller sends no credential; one it did send is not passed on.
+            headers: { Authorization: `Bearer ${COPY}` },
+          },
           undefined,
           caller,
         );
         expect(response.status).toBe(200);
-        expect(seen).toEqual([{ url: "/api/cli/decisions/recent", authorization: BEARER }]);
+        expect(seen).toEqual([
+          { url: "/api/cli/decisions/recent", authorization: `Bearer ${HELD}` },
+        ]);
 
+        // The identity check too: by itself this process could not reach the
+        // API the credential names, and its copy of the token goes nowhere.
         const identity = await verifyAcquiredMachineIdentity(
           credential({ routing: "proxy" }),
           caller,
         );
         expect(identity).toMatchObject({ machineId: "machine_local", clientId });
-        expect(seen[1]).toEqual({ url: "/api/cli/auth/status", authorization: BEARER });
+        expect(seen[1]).toEqual({ url: "/api/cli/auth/status", authorization: `Bearer ${HELD}` });
+        expect(JSON.stringify(seen)).not.toContain(COPY);
       },
     );
 
@@ -891,7 +910,11 @@ describe("proxy routing in a Claude Code cloud session", () => {
     it("never sends a credential where the proxy holds the token", async () => {
       const { caller, credential } = await session("network-token");
       await forwardMachineRequest(
-        { method: "GET", path: "/api/cli/decisions/recent", headers: { Authorization: BEARER } },
+        {
+          method: "GET",
+          path: "/api/cli/decisions/recent",
+          headers: { Authorization: `Bearer ${COPY}` },
+        },
         undefined,
         caller,
       );

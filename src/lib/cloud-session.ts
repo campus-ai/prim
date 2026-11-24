@@ -65,6 +65,10 @@ function unreachable(what: string, failure: string, remedy: string): string {
   if (failure === "blocked") return `this environment cannot reach ${what}. To fix it, ${remedy}.`;
   if (failure === "timeout")
     return `${what} did not answer in time. If this persists, check that you ${remedy.replace(/^add /u, "added ")}.`;
+  // The proxy answered with a failure of its own, or hung up (see
+  // checkTunnel): an outage, which no edit to the allowlist repairs.
+  if (failure.startsWith("PROXY_"))
+    return `the cloud environment's proxy could not open a connection to ${what} (${failure.slice("PROXY_".length).toLowerCase()}). That is a fault in the proxy, not the Allowed domains list; retry shortly.`;
   return `${what} could not be reached (${failure}). Check the environment's network access: ${remedy}.`;
 }
 
@@ -129,7 +133,7 @@ export async function diagnoseCloudSession(
     egress = await probeEgress(
       siteUrl,
       machine && env.PRIM_M2M_CLIENT_AUTH !== NETWORK_TOKEN_AUTH,
-      options.fetch ?? fetch,
+      options.fetch,
     );
   if (egress.api !== "ok")
     return `${prefix}: ${unreachable("Primitive", egress.api, cloudEgressRemedy(siteUrl, undefined, env))}`;

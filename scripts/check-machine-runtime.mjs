@@ -33,16 +33,21 @@ let cloudApi;
 let injecting = false;
 const injectedPaths = [];
 const cloudRequests = [];
-// Hosts the stand-in proxy refuses, as the real one does a host that is not
-// under the environment's Allowed domains, and what it has open to each.
-const refused = new Set();
+// Hosts the stand-in proxy refuses and the status it answers them with: 403,
+// as the real one does a host that is not under the environment's Allowed
+// domains, or a failure of its own. Then what it has open to each host.
+const refused = new Map();
 const openTunnels = new Set();
+// How many more CONNECTs the stand-in proxy answers before it closes each
+// one without a word, as a proxy that is failing may.
+let answerBudget = Number.POSITIVE_INFINITY;
 // The local port of each connection the proxy itself opened.
 const proxyPeers = new Set();
 const tunnels = [];
 let proxyConnections = 0;
 const pids = new Set();
 const reports = [];
+const measured = {};
 try {
   await mkdir(config, { mode: 0o700 });
   execFileSync(
@@ -290,9 +295,16 @@ try {
   proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
     const [host, requested] = request.url.split(":");
+    if (answerBudget <= 0) {
+      tunnels.push(`closed ${request.url}`);
+      socket.destroy();
+      return;
+    }
+    answerBudget -= 1;
     if (refused.has(host)) {
+      const status = refused.get(host);
       tunnels.push(`refused ${request.url}`);
-      socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      socket.end(`HTTP/1.1 ${status} Refused\r\nContent-Length: 0\r\n\r\n`);
       return;
     }
     tunnels.push(request.url);
@@ -500,39 +512,48 @@ try {
     "cloud session with the secret in variables exchanges and forwards only through the proxy",
   );
   // Loopback stays off the proxy even in a VM that routes every Node process.
-  const routedBroker = JSON.parse(await readFile(join(config, routedBrokers[0]), "utf8"));
+  const routedBroker = async () =>
+    JSON.parse(await readFile(join(config, routedBrokers[0]), "utf8"));
   const everywhere = await cloudStatus({ ...inSession, NODE_USE_ENV_PROXY: "1" });
   assert.equal(everywhere.status, "valid", JSON.stringify(everywhere));
+  const brokerPort = (await routedBroker()).port;
   assert.ok(
-    !tunnels.some((entry) => entry.includes(`:${routedBroker.port}`)),
+    !tunnels.some((entry) => entry.includes(`:${brokerPort}`)),
     "a caller must reach the broker over loopback, never through the proxy",
   );
   reports.push("cloud callers reach the broker over loopback whatever NO_PROXY says");
   // What the broker can reach is what prim can reach: ask it as the session
   // diagnosis does, then take hosts off the stand-in proxy's allowlist.
-  const proof = (purpose, text) =>
-    createHmac("sha256", cloudSecret)
-      .update(`${routedBroker.nonce}\0${purpose}\0${text}`)
-      .digest("hex");
-  const brokerProbe = async () => {
+  const brokerAsk = async (endpoint, fields = {}) => {
+    const broker = await routedBroker();
+    const proof = (purpose, text) =>
+      createHmac("sha256", cloudSecret)
+        .update(`${broker.nonce}\0${endpoint}-${purpose}\0${text}`)
+        .digest("hex");
     const body = JSON.stringify({
       generation: routedBrokers[0].slice("machine_broker_".length, -".json".length),
       timestamp: Date.now(),
+      ...fields,
     });
-    const response = await fetch(`http://127.0.0.1:${routedBroker.port}/probe`, {
+    const response = await fetch(`http://127.0.0.1:${broker.port}/${endpoint}`, {
       method: "POST",
       body,
-      headers: { "Content-Type": "application/json", "X-Prim-Proof": proof("probe-request", body) },
+      headers: { "Content-Type": "application/json", "X-Prim-Proof": proof("request", body) },
     });
     const envelope = await response.json();
-    assert.equal(envelope.proof, proof("probe-answer", envelope.body), "the answer is signed");
+    assert.equal(envelope.proof, proof("answer", envelope.body), "the answer is signed");
     return JSON.parse(envelope.body);
   };
-  const refuse = async (host) => {
-    refused.add(host);
-    // The proxy drops what it had open to a host it no longer allows.
-    for (const tunnel of openTunnels) if (tunnel.host === host) tunnel.socket.destroy();
+  const brokerProbe = () => brokerAsk("probe");
+  // The proxy drops what it had open to a host it stops serving.
+  const dropTunnels = async (host) => {
+    for (const tunnel of openTunnels)
+      if (host === undefined || tunnel.host === host) tunnel.socket.destroy();
     await delay(200);
+  };
+  const refuse = async (host, status = 403) => {
+    refused.set(host, status);
+    await dropTunnels(host);
   };
   const signIn = (result) => ({ host: "signin.prim.invalid", result });
   assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
@@ -544,6 +565,93 @@ try {
   reports.push(
     "the broker reports a host the proxy allows as reachable and one it refuses as blocked",
   );
+  // A proxy that closes every CONNECT without answering. Node 22 and 24
+  // retry such a CONNECT without end, whatever aborts the request, so the
+  // broker must not hand `fetch` a request while the proxy does this.
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const gone = async (pid, withinMs) => {
+    for (let waited = 0; waited < withinMs && alive(pid); waited += 50) await delay(50);
+    return !alive(pid);
+  };
+  const steady = await routedBroker();
+  pids.add(steady.pid);
+  answerBudget = 0;
+  await dropTunnels();
+  const connectionsBeforeClosing = proxyConnections;
+  const silentSince = Date.now();
+  const unanswered = await brokerProbe();
+  const unansweredStatus = await cloudStatus(inSession);
+  await cloudRun(["decisions", "recent"], inSession).catch(() => undefined);
+  await delay(2000);
+  const opened = proxyConnections - connectionsBeforeClosing;
+  assert.ok(
+    opened < 40,
+    `a proxy that closes CONNECTs must not set the broker reconnecting: ${opened} proxy connections in ${Date.now() - silentSince} ms`,
+  );
+  assert.deepEqual(unanswered, { api: "PROXY_CLOSED" }, "a silent proxy is not a blocked host");
+  assert.equal(unansweredStatus.status, "unreachable", JSON.stringify(unansweredStatus));
+  assert.ok(alive(steady.pid), "the broker asked nothing of a silent proxy and keeps running");
+  // An outage the proxy reports itself is not the allowlist either.
+  answerBudget = Number.POSITIVE_INFINITY;
+  await refuse("api.prim.invalid", 502);
+  assert.deepEqual(await brokerProbe(), { api: "PROXY_502" });
+  refused.clear();
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
+  assert.equal((await routedBroker()).pid, steady.pid, "the same broker serves on");
+  reports.push("a proxy that closes or fails CONNECTs is reported as such and never retried");
+  // The proxy answers one CONNECT, then closes the rest: the broker's check
+  // passes and the request it hands to `fetch` meets a silent proxy. That
+  // `fetch` may never stop, so the broker must: it exits, and the next
+  // caller starts another.
+  await dropTunnels();
+  const connectionsBeforeRace = proxyConnections;
+  answerBudget = 1;
+  await brokerProbe().catch(() => undefined);
+  assert.ok(
+    await gone(steady.pid, 8000),
+    "a broker whose request met a silent proxy must exit rather than keep retrying",
+  );
+  const connectionsAtExit = proxyConnections;
+  await delay(1000);
+  assert.equal(proxyConnections, connectionsAtExit, "nothing retries after the broker exits");
+  assert.ok(
+    !(await brokerDescriptors()).includes(routedBrokers[0]),
+    "an exiting broker withdraws its descriptor",
+  );
+  answerBudget = Number.POSITIVE_INFINITY;
+  const restarted = await cloudStatus(inSession);
+  assert.equal(restarted.status, "valid", JSON.stringify(restarted));
+  const successor = await routedBroker();
+  pids.add(successor.pid);
+  assert.notEqual(successor.pid, steady.pid);
+  // Shutting down, as on idleness: a request still retrying must not keep
+  // the process alive past its descriptor.
+  await dropTunnels();
+  answerBudget = 1;
+  const retrying = brokerAsk("forward", {
+    method: "GET",
+    path: "/api/cli/decisions/recent",
+    headers: {},
+  }).catch(() => undefined);
+  await delay(500);
+  try {
+    process.kill(successor.pid, "SIGTERM");
+  } catch {
+    // Node 26 fails such a request at once, and the broker has already exited.
+  }
+  assert.ok(await gone(successor.pid, 3000), "a broker told to stop must exit while retrying");
+  await retrying;
+  answerBudget = Number.POSITIVE_INFINITY;
+  measured.proxyConnectionsWhileSilent = opened;
+  measured.proxyConnectionsBeforeExit = connectionsAtExit - connectionsBeforeRace;
+  reports.push("a broker never outlives a request that met a silent proxy");
   tokenStatus = 429;
   const limited = { PRIM_M2M_CLIENT_SECRET: `${secret}-limited` };
   await status(limited).catch(() => undefined);
@@ -565,7 +673,7 @@ try {
     }
   }
   reports.push("no injected secrets or tokens persisted");
-  process.stdout.write(`${JSON.stringify({ passed: true, cases: reports })}\n`);
+  process.stdout.write(`${JSON.stringify({ passed: true, cases: reports, measured })}\n`);
 } finally {
   daemon?.kill();
   for (const name of await readdir(config).catch(() => [])) {

@@ -66,7 +66,8 @@ export type MachineCredential = MachineConfiguration &
     tokenInjection?: "network";
     /**
      * Requests go through the broker, whose route is the cloud environment's
-     * proxy, and carry `accessToken` unless that proxy attaches the token.
+     * proxy. The broker attaches the token it holds, unless that proxy does;
+     * `accessToken` here is never sent.
      */
     routing?: "proxy";
   };
@@ -960,11 +961,11 @@ export type MachineApiRequest = {
 
 /**
  * Send one API request through the broker, the one prim process whose
- * requests pass through the cloud environment's proxy. Where that proxy
- * attaches the token (see NETWORK_TOKEN_AUTH) the request carries no
- * Authorization header of prim's own; where prim holds the token and the
- * session's requests ride the proxy (see cloudProxyRouting), the broker
- * carries the caller's.
+ * requests pass through the cloud environment's proxy. The caller sends no
+ * credential. Where that proxy attaches the token (see NETWORK_TOKEN_AUTH)
+ * the request reaches the API with no Authorization header of prim's own;
+ * where prim holds the token and the session's requests ride the proxy (see
+ * cloudProxyRouting), the broker attaches the token it holds.
  */
 export async function forwardMachineRequest(
   request: MachineApiRequest,
@@ -999,13 +1000,7 @@ export async function verifyAcquiredMachineIdentity(
   if (!machine.tokenInjection && !machine.routing)
     return verifyMachineIdentity(machine.apiUrl, machine.accessToken, machine.clientId);
   const response = await forwardMachineRequest(
-    {
-      method: "GET",
-      path: "/api/cli/auth/status",
-      ...(machine.tokenInjection
-        ? {}
-        : { headers: { Authorization: `Bearer ${machine.accessToken}` } }),
-    },
+    { method: "GET", path: "/api/cli/auth/status" },
     AbortSignal.timeout(10_000),
     deps,
   );

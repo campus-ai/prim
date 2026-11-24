@@ -3,7 +3,8 @@ import { getClient, getPinnedClient, getPinnedManagementClient } from "./client.
 import { acquireMachineCredential, forwardMachineRequest } from "./lib/machine-credentials.js";
 
 // A cloud session's credential from its variables: prim holds the token, and
-// its requests go through the broker to ride the environment's proxy.
+// its requests go through the broker to ride the environment's proxy. The
+// broker attaches the token it holds; this process's copy is never sent.
 const machine = vi.hoisted(() => ({
   issuer: "https://auth.example.com",
   audience: "client_environment",
@@ -49,7 +50,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it("sends every API request through the broker with prim's token, and none directly", async () => {
+it("sends every API request through the broker, none directly, and no credential with any", async () => {
   vi.mocked(forwardMachineRequest).mockImplementation(async () => Response.json({ decisions: [] }));
   const client = getClient();
   expect(await client.get("/api/cli/decisions/recent")).toEqual({ decisions: [] });
@@ -58,40 +59,39 @@ it("sends every API request through the broker with prim's token, and none direc
   await management.delete("/api/cli/auth/api-keys/key_1");
 
   expect(directFetch).not.toHaveBeenCalled();
-  const [read, upload, removal] = vi
-    .mocked(forwardMachineRequest)
-    .mock.calls.map(([request]) => request);
+  const requests = vi.mocked(forwardMachineRequest).mock.calls.map(([request]) => request);
+  const [read, upload, removal] = requests;
   expect(read).toEqual({
     method: "GET",
     path: "/api/cli/decisions/recent",
-    headers: { Authorization: "Bearer token_one", "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   });
   expect(upload).toEqual({
     method: "POST",
     path: "/api/cli/moves/ingest",
-    headers: {
-      Authorization: "Bearer token_one",
-      "Content-Type": "application/json",
-      "X-Prim-Uploader-Version": "1.2.3",
-    },
+    headers: { "Content-Type": "application/json", "X-Prim-Uploader-Version": "1.2.3" },
     body: '{"moves":[]}',
   });
-  expect(removal).toMatchObject({
-    method: "DELETE",
-    path: "/api/cli/auth/api-keys/key_1",
-    headers: { Authorization: "Bearer token_one" },
-  });
+  expect(removal).toMatchObject({ method: "DELETE", path: "/api/cli/auth/api-keys/key_1" });
+  // What answers on the broker's port is not yet known to be the broker
+  // when the request is written: the token this process holds stays here.
+  expect(JSON.stringify(requests)).not.toMatch(/authorization|bearer|token_one/iu);
 });
 
-it("renews after a 401 and retries through the broker with the new token", async () => {
+it("renews after a 401 and retries through the broker, still sending no token", async () => {
   vi.mocked(forwardMachineRequest)
     .mockResolvedValueOnce(Response.json({}, { status: 401 }))
     .mockResolvedValueOnce(Response.json({ authenticated: true }));
   const client = await getPinnedClient();
   expect(await client.get("/api/cli/auth/status")).toEqual({ authenticated: true });
-  expect(
-    vi.mocked(forwardMachineRequest).mock.calls.map(([request]) => request.headers?.Authorization),
-  ).toEqual(["Bearer token_one", "Bearer token_renewed"]);
+  expect(forwardMachineRequest).toHaveBeenCalledTimes(2);
+  // The broker renews its own token when this process reports the old one refused.
+  expect(vi.mocked(acquireMachineCredential).mock.calls.some(([options]) => options?.force)).toBe(
+    true,
+  );
+  expect(JSON.stringify(vi.mocked(forwardMachineRequest).mock.calls)).not.toMatch(
+    /authorization|bearer|token_one|token_renewed/iu,
+  );
   expect(directFetch).not.toHaveBeenCalled();
 });
 
