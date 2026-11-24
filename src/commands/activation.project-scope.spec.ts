@@ -174,6 +174,24 @@ describe("prim disable --scope project", () => {
     expect(isRepoActiveForCapture(repo())).toBe(true);
   });
 
+  it("says how to commit the opt-out where the repository ignores .claude", async () => {
+    // As in prim's own repository: a plain `git add` would skip the file and
+    // the opt-out would never leave this clone.
+    const root = repo();
+    writeFileSync(join(root, ".gitignore"), ".claude\n");
+    await run(root, "disable", "--scope", "project");
+    expect(printed[0]).toMatchObject({ declaredInactive: true, settingsIgnored: true });
+    expect(stderr).toContain("git add -f .claude/settings.json");
+
+    // Once it is tracked, git no longer ignores it and the hint goes away.
+    git(root, "add", "-f", ".claude/settings.json");
+    git(root, "commit", "--quiet", "-m", "chore: keep prim off here");
+    stderr = "";
+    await run(root, "disable", "--scope", "project");
+    expect(printed[1]).not.toHaveProperty("settingsIgnored");
+    expect(stderr).not.toContain("git add -f");
+  });
+
   it("changes nothing the second time", async () => {
     const root = repo();
     await run(root, "disable", "--scope", "project");

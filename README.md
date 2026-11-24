@@ -191,7 +191,8 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      capture delivers directly instead. `prim disable` opts a repository out for the rest of
      that session only, because each session starts from a fresh clone. To keep prim out of
      a repository for good, run `prim disable --scope project` in it and commit
-     `.claude/settings.json`: that records `PRIM_ACTIVE=false` there, every clone carries
+     `.claude/settings.json` (with `git add -f` where the repository ignores `.claude`;
+     prim says so): that records `PRIM_ACTIVE=false` there, every clone carries
      it, and prim then stays off in that repository unless someone turns it on themselves
      (`prim enable` in their own clone). `prim enable --scope project` removes it again.
 

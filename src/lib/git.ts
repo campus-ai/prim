@@ -131,6 +131,24 @@ export function originGithubRepository(cwd: string): string | null {
 }
 
 /**
+ * Whether git would leave `path` out of a commit because an ignore rule
+ * covers it. A file that is already tracked is not ignored, whatever the
+ * rules say. False when git cannot tell.
+ */
+export function isGitIgnored(cwd: string, path: string): boolean {
+  try {
+    execFileSync("git", ["check-ignore", "--quiet", "--", path], {
+      cwd,
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: GIT_TIMEOUT_MS,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The text of a checkout's own `.claude/settings.json` (the working-tree
  * file, normally committed), or null when there is none prim will read. A
  * real directory and a regular file of settings size only: a symlink could

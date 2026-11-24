@@ -30,7 +30,7 @@ import {
   ensureEffectiveGitHook,
   externalHookRemedy,
 } from "../lib/git-hooks.js";
-import { gitToplevel } from "../lib/git.js";
+import { gitToplevel, isGitIgnored } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
 import { printJson } from "../output.js";
 import { planProjectInactiveDeclaration } from "./claude-install.js";
@@ -219,11 +219,18 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
     await daemonRequest("statusline_invalidate", {}, { timeoutMs: 250 });
     process.stderr.write(`[prim] prim ${active ? "enabled" : "disabled"} in ${root}\n`);
     const declaredInactive = declaresInactive(root);
+    // An opt-out git ignores never reaches another clone: `git add` skips it
+    // without `-f`, and "commit it" alone would leave the user with nothing.
+    const ignored = Boolean(project && !active && isGitIgnored(root, ".claude/settings.json"));
     if (declaration?.changed)
       process.stderr.write(
         active
           ? `[prim] removed this repository's opt-out from ${declaration.path}; commit the change so new clones and Claude Code cloud sessions follow it\n`
           : `[prim] recorded this repository's opt-out (PRIM_ACTIVE=false) in ${declaration.path}; commit it so prim stays off in every clone and every Claude Code cloud session, until someone runs \`prim enable\` there\n`,
+      );
+    if (ignored)
+      process.stderr.write(
+        "[prim] this repository's .gitignore covers .claude/settings.json, so a plain `git add` skips it: stage it with `git add -f .claude/settings.json`, or the opt-out stays in this clone only\n",
       );
     else if (active && declaredInactive)
       process.stderr.write(
@@ -238,6 +245,7 @@ async function applyActivation(active: boolean, globals: OptionValues = {}): Pro
       repo: root,
       declaredInactive,
       ...(declaration?.changed ? { settingsPath: declaration.path } : {}),
+      ...(ignored ? { settingsIgnored: true } : {}),
       ...(binding
         ? {
             bindingStatus: binding.status,
