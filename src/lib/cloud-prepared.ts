@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isClaudeCloudSession } from "./cloud-env.js";
+import { insideClaudeCode, isClaudeCloudSession } from "./cloud-env.js";
 import { primConfigDirectory } from "./paths.js";
+
+// Who prepared a VM is decided by who is running the command.
+export { insideClaudeCode };
 
 /**
  * Written by `prim setup --cloud --prepare` into the cloud environment's cached
