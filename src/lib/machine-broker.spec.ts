@@ -45,9 +45,13 @@ describe("a Node process started with the broker's environment", () => {
 
   beforeEach(async () => {
     seen = [];
-    // A forward proxy that answers in the origin's place. Node's fetch opens
-    // a CONNECT tunnel through its proxy even for plain HTTP.
-    proxy = createServer();
+    // A forward proxy that answers in the origin's place. For plain HTTP a
+    // Node hands its proxy the whole request with the full URL (Node 26), or
+    // opens a CONNECT tunnel first (Node 22 and 24); either is "through it".
+    proxy = createServer((request, response) => {
+      seen.push(new URL(request.url ?? "").host);
+      response.end("through-proxy");
+    });
     proxy.on("connect", (request, socket) => {
       seen.push(request.url ?? "");
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
