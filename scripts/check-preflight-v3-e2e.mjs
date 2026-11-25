@@ -311,12 +311,26 @@ try {
     },
   );
   await scenario("candidate/evidence omissions without conflicts stay visible", async () => {
+    const truncatedCoverage = {
+      candidateCount: 0,
+      submittedCount: 0,
+      evaluatedCount: 0,
+      status: "not_run",
+      semanticBatchCount: 0,
+      completedSemanticBatchCount: 0,
+      selectionOmissions: [
+        { source: "candidate_scan", reason: "scan_limit", omittedCountLowerBound: 1 },
+      ],
+      evidenceOmissions: [],
+    };
     for (const reasonCode of ["candidate_set_truncated", "evidence_incomplete"]) {
       respond = () => ({
         ...compatible,
         verdict: "warn",
         reasonCode,
         message: "Some governing Decisions were not evaluated; coverage is incomplete.",
+        // candidate_set_truncated blanks the message, so only the omission can speak.
+        evaluationCoverage: truncatedCoverage,
       });
       const result = await hook();
       allowed(result);

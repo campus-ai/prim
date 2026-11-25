@@ -14,6 +14,7 @@ type Conflict = {
 
 type Coverage = {
   status?: unknown;
+  candidateCount?: unknown;
   selectionOmissions?: unknown;
   evidenceOmissions?: unknown;
 };
@@ -22,6 +23,8 @@ export type ApprovalEvidence = {
   conflicts: readonly Conflict[];
   message: string;
   reasonCode: string;
+  /** The wire verdict. Without it an empty check is never excused. */
+  verdict?: string;
   evaluationCoverage?: Coverage;
 };
 
@@ -75,12 +78,34 @@ function decisionLabel(conflict: Conflict): string {
     : `Decision ${id}: details unavailable; inspect it before approving.`;
 }
 
+/**
+ * A check that selected no candidates has nothing to evaluate. The server
+ * finalizes it without an evaluation status, which the wire reports as
+ * "not_run": a complete answer, not a skipped one. A missing or non-zero
+ * candidate count is not that case, and only an allow or a warn that lists no
+ * conflict is excused: an ask, a block, an unavailable verdict or a reported
+ * conflict beside an empty check is not trusted.
+ */
+export function isEmptyCheck(
+  check: Pick<ApprovalEvidence, "verdict" | "conflicts" | "evaluationCoverage">,
+): boolean {
+  const coverage = check.evaluationCoverage;
+  return (
+    coverage?.status === "not_run" &&
+    coverage.candidateCount === 0 &&
+    (check.verdict === "allow" || check.verdict === "warn") &&
+    check.conflicts.length === 0
+  );
+}
+
 function incomplete(evidence: ApprovalEvidence): boolean {
   const coverage = evidence.evaluationCoverage;
+  const settled =
+    coverage?.status === undefined || coverage.status === "completed" || isEmptyCheck(evidence);
   return (
     (Array.isArray(coverage?.selectionOmissions) && coverage.selectionOmissions.length > 0) ||
     (Array.isArray(coverage?.evidenceOmissions) && coverage.evidenceOmissions.length > 0) ||
-    (coverage?.status !== undefined && coverage.status !== "completed") ||
+    !settled ||
     ["candidate_set_truncated", "evidence_incomplete", "coverage_unverified"].includes(
       evidence.reasonCode,
     )

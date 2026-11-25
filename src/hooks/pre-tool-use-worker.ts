@@ -37,6 +37,7 @@ import {
   PREFLIGHT_TIMEOUT_MS,
   type PreflightRequest as PreflightRequestV3,
   boundedClientVersion,
+  coverageNote,
   proposalFor,
   proposalIsTruncated,
   requestPreflight,
@@ -264,22 +265,14 @@ async function main(): Promise<void> {
       if (result.verdict === "unavailable") {
         result.unavailable = `${result.unavailable || "Decision check is unavailable"}; change was not verified.`;
       }
-      const coverage = response.evaluationCoverage;
       const notes = [
         ...(targets.coverage === "unverified"
           ? [
               "[primitive] Some mutation targets could not be resolved; the complete change was not verified.",
             ]
           : []),
-        ...(coverage &&
-        (coverage.status !== "completed" ||
-          coverage.selectionOmissions?.length ||
-          coverage.evidenceOmissions?.length)
-          ? [
-              "[primitive] Decision coverage is incomplete; some candidates or evidence were not evaluated.",
-            ]
-          : []),
-      ];
+        coverageNote(response),
+      ].filter(Boolean);
       if (notes.length > 0) {
         const note = notes.join("\n");
         result.reason = [result.reason, note].filter(Boolean).join("\n");

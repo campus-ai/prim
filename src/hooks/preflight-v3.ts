@@ -4,7 +4,7 @@ import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
-import { approvalSummary } from "./approval-copy.js";
+import { approvalSummary, isEmptyCheck } from "./approval-copy.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
@@ -199,6 +199,24 @@ function proposedChangeExcerpt(proposal: string): string | undefined {
   return boundedHealthError(proposal);
 }
 
+const COVERAGE_NOTE =
+  "[primitive] Decision coverage is incomplete; some candidates or evidence were not evaluated.";
+
+/**
+ * The advisory for a check that left candidates or evidence unevaluated, or
+ * "" when it left none. A check that matched no Decision is complete. Every
+ * reason code is treated alike: a truncated candidate set whose reason and
+ * guidance resultForPreflight leaves blank has only this note to say so.
+ */
+export function coverageNote(response: PreflightResponse): string {
+  const coverage = response.evaluationCoverage;
+  if (!coverage) return "";
+  const settled = coverage.status === "completed" || isEmptyCheck(response);
+  return !settled || coverage.selectionOmissions?.length || coverage.evidenceOmissions?.length
+    ? COVERAGE_NOTE
+    : "";
+}
+
 export function resultForPreflight(
   response: PreflightResponse,
   preview = "Review the requested change.",
@@ -261,9 +279,8 @@ export function resultForPreflight(
             conflicts: response.conflicts,
             message,
             reasonCode: response.reasonCode,
-            evaluationCoverage: response.evaluationCoverage as
-              | { status?: unknown; selectionOmissions?: unknown; evidenceOmissions?: unknown }
-              | undefined,
+            verdict: response.verdict,
+            evaluationCoverage: response.evaluationCoverage,
           },
           preview,
         )
