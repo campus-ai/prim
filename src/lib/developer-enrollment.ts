@@ -86,8 +86,6 @@ type EnrollmentClient = Pick<CliClient, "post">;
  * How the enrollment start request asks for an organization-level environment
  * credential (one an org admin creates for a shared Claude Code cloud
  * environment) instead of an installation delegated to the signed-in user.
- * The server half is being built alongside this client; if it settles on
- * another field name or value, these two constants are the only change.
  */
 export const ENROLLMENT_KIND_FIELD = "kind";
 export const ENVIRONMENT_ENROLLMENT_KIND = "environment";
