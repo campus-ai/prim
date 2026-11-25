@@ -107,33 +107,54 @@ describe("coverageNote", () => {
     ).toBe(NOTE);
   });
 
-  it("does not excuse an empty check that reports a failure or a conflict", () => {
-    expect(
-      coverageNote(response({ verdict: "unavailable", reasonCode: "preflight_unavailable" })),
-    ).toBe(NOTE);
+  it.each(["ask", "block", "unavailable"] as const)(
+    "does not excuse an empty check behind a %s verdict",
+    (verdict) => {
+      expect(coverageNote(response({ verdict, reasonCode: "preflight_unavailable" }))).toBe(NOTE);
+    },
+  );
+
+  it("does not excuse an empty check that lists a conflict", () => {
     expect(
       coverageNote(
         response({
-          verdict: "ask",
-          reasonCode: "high_confidence_contradiction",
+          verdict: "warn",
+          reasonCode: "semantic_uncertain",
           conflicts: [{ decisionId: "dec_0123abcd" }],
         }),
       ),
     ).toBe(NOTE);
   });
 
-  it.each(["coverage_unverified", "candidate_set_truncated"])(
-    "stays silent for the %s outcome",
+  describe.each(["coverage_unverified", "candidate_set_truncated"])(
+    "for the %s outcome, whose reason and guidance are blank",
     (reasonCode) => {
-      for (const evaluationCoverage of [
-        coverage(),
-        coverage({ selectionOmissions: [selectionOmission] }),
-        coverage({ ...evaluated, status: "completed", selectionOmissions: [selectionOmission] }),
-      ]) {
-        expect(coverageNote(response({ verdict: "warn", reasonCode, evaluationCoverage }))).toBe(
-          "",
-        );
-      }
+      const warn = (evaluationCoverage: Coverage) =>
+        coverageNote(response({ verdict: "warn", reasonCode, evaluationCoverage }));
+
+      it("says nothing when no candidate was selected and nothing was omitted", () => {
+        expect(warn(coverage())).toBe("");
+      });
+
+      it("reports omissions from a check that selected no candidates", () => {
+        expect(warn(coverage({ selectionOmissions: [selectionOmission] }))).toBe(NOTE);
+      });
+
+      it("reports omissions from a completed evaluation", () => {
+        expect(
+          warn(
+            coverage({
+              ...evaluated,
+              status: "completed",
+              selectionOmissions: [selectionOmission],
+            }),
+          ),
+        ).toBe(NOTE);
+      });
+
+      it("says nothing when every candidate was evaluated and nothing was omitted", () => {
+        expect(warn(coverage({ ...evaluated, status: "completed" }))).toBe("");
+      });
     },
   );
 });

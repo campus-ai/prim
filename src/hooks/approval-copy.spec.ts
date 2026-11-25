@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ApprovalEvidence, approvalSummary, nothingToEvaluate } from "./approval-copy.js";
+import { type ApprovalEvidence, approvalSummary, isEmptyCheck } from "./approval-copy.js";
 
 const UNCHECKED = "Some potentially applicable decisions were not fully checked.";
 
@@ -9,6 +9,7 @@ function summary(overrides: Partial<ApprovalEvidence> = {}): string {
       conflicts: [],
       message: "Primitive requires review before this change.",
       reasonCode: "review_required",
+      verdict: "warn",
       ...overrides,
     },
     "Write “src/retry.ts”.",
@@ -17,14 +18,30 @@ function summary(overrides: Partial<ApprovalEvidence> = {}): string {
 
 const noOmissions = { selectionOmissions: [], evidenceOmissions: [] };
 
-describe("nothingToEvaluate", () => {
-  it("holds only for a check that did not run because it selected no candidates", () => {
-    expect(nothingToEvaluate({ status: "not_run", candidateCount: 0 })).toBe(true);
-    expect(nothingToEvaluate({ status: "not_run", candidateCount: 3 })).toBe(false);
-    expect(nothingToEvaluate({ status: "not_run" })).toBe(false);
-    expect(nothingToEvaluate({ status: "partial", candidateCount: 0 })).toBe(false);
-    expect(nothingToEvaluate({ status: "unknown", candidateCount: 0 })).toBe(false);
-    expect(nothingToEvaluate(undefined)).toBe(false);
+describe("isEmptyCheck", () => {
+  const empty = { status: "not_run", candidateCount: 0 };
+  const check = (overrides: Partial<Parameters<typeof isEmptyCheck>[0]> = {}) =>
+    isEmptyCheck({ verdict: "allow", conflicts: [], evaluationCoverage: empty, ...overrides });
+
+  it("holds for an allow or a warn that did not run because it selected no candidates", () => {
+    expect(check()).toBe(true);
+    expect(check({ verdict: "warn" })).toBe(true);
+  });
+
+  it("does not hold when candidates were selected, miscounted or evaluated", () => {
+    expect(check({ evaluationCoverage: { status: "not_run", candidateCount: 3 } })).toBe(false);
+    expect(check({ evaluationCoverage: { status: "not_run" } })).toBe(false);
+    expect(check({ evaluationCoverage: { status: "partial", candidateCount: 0 } })).toBe(false);
+    expect(check({ evaluationCoverage: { status: "unknown", candidateCount: 0 } })).toBe(false);
+    expect(check({ evaluationCoverage: undefined })).toBe(false);
+  });
+
+  it.each(["ask", "block", "unavailable", undefined])("does not hold for verdict %s", (verdict) => {
+    expect(check({ verdict })).toBe(false);
+  });
+
+  it("does not hold beside a reported conflict", () => {
+    expect(check({ conflicts: [{ decisionId: "dec_0123abcd" }] })).toBe(false);
   });
 });
 
@@ -66,6 +83,18 @@ describe("approvalSummary coverage line", () => {
       }
     }
   });
+
+  it.each(["ask", "block", "unavailable", undefined])(
+    "keeps the line when an empty check arrives with verdict %s",
+    (verdict) => {
+      expect(
+        summary({
+          verdict,
+          evaluationCoverage: { status: "not_run", candidateCount: 0, ...noOmissions },
+        }),
+      ).toContain(UNCHECKED);
+    },
+  );
 
   it("keeps the line when an empty check arrives beside a conflict", () => {
     expect(

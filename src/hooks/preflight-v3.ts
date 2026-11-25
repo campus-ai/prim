@@ -4,7 +4,7 @@ import type { PreflightResponseV3 } from "../contract/cli-http-v1.js";
 import { boundedHealthError } from "../lib/ansi.js";
 import { canonicalGitRoot, canonicalRepositoryPath } from "../lib/git.js";
 import type { Agent } from "./agent.js";
-import { approvalSummary, nothingToEvaluate } from "./approval-copy.js";
+import { approvalSummary, isEmptyCheck } from "./approval-copy.js";
 import { type ConflictCheckResult, extractFileTargets } from "./pre-tool-use-scoring.js";
 import { DEFAULT_RULES, scrub } from "./redact.js";
 import { analyzeShellTargets } from "./shell-targets.js";
@@ -199,27 +199,19 @@ function proposedChangeExcerpt(proposal: string): string | undefined {
   return boundedHealthError(proposal);
 }
 
-/** Outcomes whose coverage limit the verdict already carries; they add no notice. */
-function isSilentCoverageOutcome(reasonCode: string): boolean {
-  return reasonCode === "coverage_unverified" || reasonCode === "candidate_set_truncated";
-}
-
 const COVERAGE_NOTE =
   "[primitive] Decision coverage is incomplete; some candidates or evidence were not evaluated.";
 
 /**
  * The advisory for a check that left candidates or evidence unevaluated, or
- * "" when it left none. A check that matched no Decision is complete; one that
- * reports a conflict or an unavailable verdict is never excused as empty.
+ * "" when it left none. A check that matched no Decision is complete. Every
+ * reason code is treated alike: a truncated candidate set whose reason and
+ * guidance resultForPreflight leaves blank has only this note to say so.
  */
 export function coverageNote(response: PreflightResponse): string {
   const coverage = response.evaluationCoverage;
-  if (!coverage || isSilentCoverageOutcome(response.reasonCode)) return "";
-  const settled =
-    coverage.status === "completed" ||
-    (nothingToEvaluate(coverage) &&
-      response.verdict !== "unavailable" &&
-      response.conflicts.length === 0);
+  if (!coverage) return "";
+  const settled = coverage.status === "completed" || isEmptyCheck(response);
   return !settled || coverage.selectionOmissions?.length || coverage.evidenceOmissions?.length
     ? COVERAGE_NOTE
     : "";
@@ -232,7 +224,9 @@ export function resultForPreflight(
   proposalTruncated = false,
 ): ConflictCheckResult {
   const verdict = response.verdict === "block" ? "deny" : response.verdict;
-  const silentCoverageOutcome = isSilentCoverageOutcome(response.reasonCode);
+  const silentCoverageOutcome =
+    response.reasonCode === "coverage_unverified" ||
+    response.reasonCode === "candidate_set_truncated";
   // The wire response remains untouched for protocol compatibility. These
   // values cross into terminal and hook presentation, so normalize them once
   // at the mapping boundary before any host-specific renderer can consume them.
@@ -285,6 +279,7 @@ export function resultForPreflight(
             conflicts: response.conflicts,
             message,
             reasonCode: response.reasonCode,
+            verdict: response.verdict,
             evaluationCoverage: response.evaluationCoverage,
           },
           preview,
