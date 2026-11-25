@@ -478,4 +478,95 @@ describe("decisions create activation consent", () => {
       users: [{ kind: "role", role: "admin" }],
     });
   });
+
+  it.each([
+    ["docs/ga/", "docs/ga"],
+    ["docs/ga//", "docs/ga"],
+    ["./docs/ga", "docs/ga"],
+    ["./docs/ga/", "docs/ga"],
+    ["docs/ga", "docs/ga"],
+  ])("creates with --scope-dir %s sent as %s", async (typed, sent) => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-dir", typed);
+
+    expect(mocks.fetchCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: { location: { directories: [sent] } } }),
+    );
+    expect(process.exitCode).toBe(0);
+  });
+
+  it.each([
+    ["an absolute path", "/docs/ga"],
+    ["a parent segment", "docs/../secrets"],
+    ["a leading parent segment", "../docs"],
+    ["an empty string", ""],
+    ["the repository root", "./"],
+    ["a backslash", "docs\\ga"],
+  ])("refuses create --scope-dir with %s and sends nothing", async (_name, typed) => {
+    mocks.isRepoActiveForCapture.mockReturnValue(false);
+
+    await runCreate("--scope-dir", "packages/api", "--scope-dir", typed);
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(mocks.askConfirmation).not.toHaveBeenCalled();
+    expect(mocks.repoSyncId).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith(
+      `[prim] create rejected: --scope-dir ${JSON.stringify(typed)} is not a repository-relative directory; use a path such as docs/ga, with no leading "/", no "\\", and no empty, "." or ".." segment.`,
+    );
+    expect(logSpy).toHaveBeenCalledOnce();
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_location_scope" }, null, 2),
+    );
+  });
+
+  it("refuses create --scope-glob the server would ignore and sends nothing", async () => {
+    mocks.isRepoActiveForCapture.mockReturnValue(true);
+
+    await runCreate("--scope-glob", "src/**/*.{ts,tsx}");
+
+    expect(mocks.fetchCreate).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[prim] create rejected: --scope-glob "src/**/*.{ts,tsx}" is not an accepted glob; use a repository-relative pattern such as src/**/*.ts, with no leading "/", no empty, "." or ".." segment, and none of [ ] { } ! ( ) \\ ~ $ `.',
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_location_scope" }, null, 2),
+    );
+  });
+
+  it.each([
+    ["docs/ga/", "docs/ga"],
+    ["./docs/ga", "docs/ga"],
+    ["docs/ga", "docs/ga"],
+  ])("rescopes with --scope-dir %s sent as %s", async (typed, sent) => {
+    await runRescope("--scope-dir", typed);
+
+    expect(mocks.rescopeDecision).toHaveBeenCalledWith({
+      id: "decision-1",
+      location: { directories: [sent] },
+    });
+  });
+
+  it.each([
+    ["--scope-dir", "/docs/ga"],
+    ["--scope-dir", "docs/../secrets"],
+    ["--scope-dir", ""],
+    ["--scope-glob", "/src/**"],
+    ["--scope-glob", "src/**/"],
+  ])("refuses rescope %s %j and sends nothing", async (flag, typed) => {
+    await runRescope(flag, typed, "--for-role", "admin");
+
+    expect(mocks.rescopeDecision).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`[prim] rescope rejected: ${flag} ${JSON.stringify(typed)} is not`),
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({ ok: false, error: "invalid_location_scope" }, null, 2),
+    );
+  });
 });
