@@ -158,20 +158,21 @@ step-by-step the agent follows — and the manual fallback — live in
 
 Prim runs in [Claude Code cloud sessions](https://code.claude.com/docs/en/claude-code-on-the-web).
 Configure it once; each session then connects without manual steps. The repository must
-already be connected to Primitive (`prim github connect`, from your own machine).
+already be connected to Primitive (`npx --yes @primitive.ai/prim@latest github connect`
+in a clone of it, from your own machine).
 
 1. **Mint credentials for the environment** on your own machine. This signs you in once,
    enrolls a separate installation in your name, and prints its credentials. Nothing is
    stored locally, and your machine's own credentials are untouched:
 
    ```bash
-   prim auth enroll --new-installation "Claude Code cloud" --print-env
+   npx --yes @primitive.ai/prim@latest auth enroll --new-installation "Claude Code cloud" --print-env
    ```
 
 2. **Configure the [cloud environment](https://code.claude.com/docs/en/cloud-environments)**:
    - **Network access**: Limited, with `api.getprimitive.ai` and `signin.getprimitive.ai`
      under Allowed domains (both are blocked by default), and **Allow package managers**
-     left on so the setup script can install prim. A change to Allowed domains reaches
+     left on so the setup script can fetch prim. A change to Allowed domains reaches
      prim only in sessions started after it: a running session keeps the network rules
      it started with.
    - **Credentials**: give the secret to the environment's proxy, which no session can
@@ -194,9 +195,14 @@ already be connected to Primitive (`prim github connect`, from your own machine)
      ```bash
      #!/bin/bash
      set -euo pipefail
-     npm install -g @primitive.ai/prim@latest
-     prim setup --cloud --prepare
+     npx --yes @primitive.ai/prim@latest setup --cloud --prepare
      ```
+
+     No global install is needed: the hooks run from a runtime `--prepare` stages in
+     the image, and in a session prim's commands run as
+     `npx --yes @primitive.ai/prim@latest ...`. To have `prim` on the VM's PATH as well,
+     use `npm install -g @primitive.ai/prim@latest` followed by
+     `prim setup --cloud --prepare` instead.
 
      `--prepare` needs no credentials or network to Primitive. It wires prim into the
      VM's user-scope Claude Code settings, which every session reads at startup, so
