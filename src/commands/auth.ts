@@ -4,6 +4,7 @@ import { isNonInteractive } from "../lib/confirmation.js";
 import {
   enrollDeveloperInstallation,
   enrollEnvironmentInstallation,
+  enrollOrganizationEnvironment,
   prepareEnvironmentEnrollment,
 } from "../lib/developer-enrollment.js";
 /**
@@ -698,6 +699,7 @@ async function signInInteractively(options: { browser: boolean }): Promise<Inter
 type EnrollOptions = {
   ifSupported?: boolean;
   newInstallation?: string;
+  newEnvironment?: string;
   printEnv?: boolean;
   browser: boolean;
 };
@@ -721,6 +723,64 @@ function reportEnrollmentFailure(error: string, detail?: string): void {
     : stripControlChars(error);
   console.error(`Enrollment failed: ${human}`);
   process.exitCode = EXIT_FAIL;
+}
+
+/**
+ * `--new-environment`: an organization-level credential for a Claude Code cloud
+ * environment the organization shares. It only identifies sessions, so the
+ * guidance is about keeping it in the proxy, not about whose Decisions it owns.
+ */
+async function enrollNewEnvironment(options: EnrollOptions): Promise<void> {
+  if (
+    !options.newEnvironment ||
+    !options.printEnv ||
+    options.ifSupported ||
+    options.newInstallation
+  ) {
+    reportEnrollmentFailure(
+      "invalid_arguments",
+      "Use --new-environment <name> together with --print-env (and without --new-installation or --if-supported).",
+    );
+    return;
+  }
+  try {
+    const enrollment = await prepareEnvironmentEnrollment(options.newEnvironment);
+    console.error(
+      `Sign in as an organization admin to create an environment credential named "${stripControlChars(enrollment.name)}" for a Claude Code cloud environment your organization shares. This machine's own credentials are not changed.`,
+    );
+    const signIn = await signInInteractively({ browser: options.browser });
+    if (!signIn.ok) {
+      reportEnrollmentFailure(signIn.error, signIn.detail);
+      return;
+    }
+    const credential = await enrollOrganizationEnvironment(
+      enrollment,
+      signIn.credentials.accessToken,
+    );
+    process.stdout.write(`${credential.environment.join("\n")}\n`);
+    const signInHostName = signInHost(enrollment.configuration.issuer);
+    const apiHost = new URL(enrollment.siteUrl).hostname;
+    console.error(
+      [
+        `Environment credential "${stripControlChars(credential.displayName)}" belongs to your organization. It can only identify sessions: each session acts as the member whose GitHub account started it, once that member has linked their GitHub account (once, with \`prim auth link\` in their first session).`,
+        "The secret is shown only once and is not stored on this machine.",
+        // Every member of a shared environment can read its variables; its
+        // network secrets cannot be read back, so this is the way to hold it.
+        `Keep the secret out of the environment's variables: add a "Username and password" network secret for ${signInHostName} (username: the client ID, password: the client secret). As its variables, set PRIM_M2M_CLIENT_AUTH=network-secret and every line printed above except PRIM_M2M_CLIENT_SECRET.`,
+        "Put PRIM_M2M_CLIENT_SECRET in the variables only in an environment no one else uses: every member who uses a shared environment can read them.",
+        `Under Network access, allow ${[...new Set([apiHost, signInHostName])].join(" and ")}, and run \`npx --yes @primitive.ai/prim@latest setup --cloud --prepare\` in the environment's setup script.`,
+        "An organization admin can revoke the credential in Settings → Developer installations.",
+      ].join("\n"),
+    );
+    process.exitCode = EXIT_OK;
+  } catch (error) {
+    reportEnrollmentFailure(
+      error instanceof MachineAuthError ? error.code : "enrollment_failed",
+      error instanceof MachineAuthError
+        ? error.message
+        : "Enrollment could not finish. Check that you are an admin of the organization and its enrollment policy, then retry.",
+    );
+  }
 }
 
 async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
@@ -797,15 +857,24 @@ export function registerAuthCommands(program: Command) {
       "Enroll a separate installation that runs elsewhere, such as a Claude Code cloud environment (requires --print-env)",
     )
     .option(
+      "--new-environment <name>",
+      "Create an organization-level credential for a Claude Code cloud environment your organization shares; each session acts as the member who started it (requires --print-env)",
+    )
+    .option(
       "--print-env",
       "Print the new installation's PRIM_M2M_* credentials to STDOUT as .env lines for an environment",
     )
     .option("--no-browser", "Print the sign-in URL without opening a browser")
     .action(async (options: EnrollOptions) => {
-      if (options.newInstallation !== undefined || options.printEnv) {
+      if (
+        options.newInstallation !== undefined ||
+        options.newEnvironment !== undefined ||
+        options.printEnv
+      ) {
         // Credential output owns STDOUT here, so the refusal stays on STDERR.
         if (refuseCloudSignIn(reportEnrollmentFailure)) return;
-        await enrollNewInstallation(options);
+        if (options.newEnvironment !== undefined) await enrollNewEnvironment(options);
+        else await enrollNewInstallation(options);
         return;
       }
       try {

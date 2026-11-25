@@ -56,8 +56,10 @@ vi.mock("./machine-protocol.js", async (importOriginal) => ({
 import { readdirSync } from "node:fs";
 import { HttpError } from "../client.js";
 import {
+  ENROLLMENT_KIND_FIELD,
   enrollDeveloperInstallation,
   enrollEnvironmentInstallation,
+  enrollOrganizationEnvironment,
   installationEnvironment,
   prepareEnvironmentEnrollment,
 } from "./developer-enrollment.js";
@@ -448,4 +450,74 @@ describe("installationEnvironment", () => {
       ).toThrow(/cannot be written/u);
     },
   );
+});
+
+describe("organization environment credential enrollment", () => {
+  function serveEnvironment(redeem: Record<string, unknown> = {}) {
+    const starts: Record<string, unknown>[] = [];
+    let ciphertext = "";
+    mocks.post.mockImplementation(async (path, body) => {
+      if (path.endsWith("/start")) {
+        starts.push(body);
+        ciphertext = publicEncrypt(
+          { key: body.publicKey, oaepHash: "sha256", padding: constants.RSA_PKCS1_OAEP_PADDING },
+          Buffer.from("environment-secret"),
+        ).toString("base64");
+        return { enrollmentId: "enrollment" };
+      }
+      if (path.endsWith("/redeem"))
+        return { ciphertext, clientId: "client_env", machineId: "env", ...redeem };
+      throw new Error(`unexpected ${path}`);
+    });
+    return starts;
+  }
+  const organizationLevel = {
+    machineId: "env",
+    clientId: "client_env",
+    displayName: "Team cloud",
+    organizationId: "org",
+    workosOrganizationId: "org_workos",
+    scopes: ["cli:session-identity"],
+  };
+
+  it("asks for the environment kind and prints the session identity line", async () => {
+    const starts = serveEnvironment();
+    mocks.verify.mockResolvedValue(organizationLevel);
+    const credential = await enrollOrganizationEnvironment(
+      await prepareEnvironmentEnrollment("Team cloud"),
+      "admin-jwt",
+    );
+    expect(starts[0]).toMatchObject({ [ENROLLMENT_KIND_FIELD]: "environment" });
+    expect(credential.environment).toEqual([
+      "PRIM_M2M_CLIENT_ID=client_env",
+      "PRIM_M2M_CLIENT_SECRET=environment-secret",
+      "PRIM_API_URL=https://api.example.com",
+      "PRIM_CLOUD_IDENTITY=session",
+    ]);
+    expect(mocks.bearer).toEqual(["admin-jwt"]);
+    expect(readdirSync(mocks.directory)).toEqual([]);
+  });
+
+  it("leaves the --new-installation request without a kind", async () => {
+    const starts = serveEnvironment({
+      authorizedUserId: "alex",
+      clientId: "client_cloud",
+      machineId: "cloud",
+    });
+    await enrollEnvironmentInstallation(await prepareEnvironmentEnrollment("cloud"), "human-jwt");
+    expect(starts[0]).not.toHaveProperty(ENROLLMENT_KIND_FIELD);
+  });
+
+  it("refuses a credential delegated to the admin and names it for revocation", async () => {
+    serveEnvironment();
+    mocks.verify.mockResolvedValue({ ...organizationLevel, authorizedUserId: "alex" });
+    const error = await enrollOrganizationEnvironment(
+      await prepareEnvironmentEnrollment("Team cloud"),
+      "admin-jwt",
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "delegation_mismatch" });
+    expect((error as Error).message).toMatch(
+      /Environment credential "Team cloud" was already registered/u,
+    );
+  });
 });

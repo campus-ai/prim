@@ -83,13 +83,31 @@ async function activatePending(
 type EnrollmentClient = Pick<CliClient, "post">;
 
 /**
+ * How the enrollment start request asks for an organization-level environment
+ * credential (one an org admin creates for a shared Claude Code cloud
+ * environment) instead of an installation delegated to the signed-in user.
+ * The server half is being built alongside this client; if it settles on
+ * another field name or value, these two constants are the only change.
+ */
+export const ENROLLMENT_KIND_FIELD = "kind";
+export const ENVIRONMENT_ENROLLMENT_KIND = "environment";
+/** The variable that turns on session identity in the environment it is set in. */
+export const SESSION_IDENTITY_ENVIRONMENT_LINE = "PRIM_CLOUD_IDENTITY=session";
+
+/**
  * Run one start → redeem exchange under a human session. The new secret is
  * encrypted to a key that exists only in this process, so the server never
  * returns it in the clear.
  */
 async function exchangeEnrollment(
   client: EnrollmentClient,
-  request: { installationId: string; displayName: string; authorizedUserId: string },
+  request: {
+    installationId: string;
+    displayName: string;
+    authorizedUserId: string;
+    /** An organization-level environment credential, delegated to no one. */
+    environment?: boolean;
+  },
   onStarted?: () => void,
 ): Promise<{ enrollmentId: string; clientId: string; machineId: string; secret: string }> {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -104,6 +122,7 @@ async function exchangeEnrollment(
         displayName: request.displayName,
         publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
         challenge: createHash("sha256").update(verifier).digest("hex"),
+        ...(request.environment ? { [ENROLLMENT_KIND_FIELD]: ENVIRONMENT_ENROLLMENT_KIND } : {}),
       },
       { signal },
     ),
@@ -119,11 +138,15 @@ async function exchangeEnrollment(
     ),
   );
   if (
-    !isCliEnrollmentRedeemResponse(response) ||
+    // An environment credential is delegated to no one, so its answer names
+    // no user; the identity check after the exchange confirms that.
+    !(request.environment || isCliEnrollmentRedeemResponse(response)) ||
     !machineString(response.clientId, 256) ||
     !machineString(response.ciphertext, 4096) ||
     !machineString(response.machineId, 128) ||
-    response.authorizedUserId !== request.authorizedUserId
+    (request.environment
+      ? response.authorizedUserId !== undefined
+      : response.authorizedUserId !== request.authorizedUserId)
   )
     throw new MachineAuthError(
       "invalid_enrollment",
@@ -241,8 +264,29 @@ export async function prepareEnvironmentEnrollment(
  * names it for revocation instead of leaving it unaccounted for.
  */
 export async function enrollEnvironmentInstallation(
+  enrollment: EnvironmentEnrollment,
+  humanAccessToken: string,
+): Promise<EnvironmentInstallation> {
+  return enrollSeparateCredential(enrollment, humanAccessToken, false);
+}
+
+/**
+ * Create an organization-level environment credential for a Claude Code cloud
+ * environment the organization shares: it can only start session identity
+ * checks, and each session then acts as the member who started it. The
+ * signed-in person must be an organization admin; the server decides.
+ */
+export async function enrollOrganizationEnvironment(
+  enrollment: EnvironmentEnrollment,
+  humanAccessToken: string,
+): Promise<EnvironmentInstallation> {
+  return enrollSeparateCredential(enrollment, humanAccessToken, true);
+}
+
+async function enrollSeparateCredential(
   { name, siteUrl, configuration }: EnvironmentEnrollment,
   humanAccessToken: string,
+  environment: boolean,
 ): Promise<EnvironmentInstallation> {
   const client = getBearerClient(humanAccessToken, siteUrl);
   const owner = await enrollmentOwner(
@@ -255,7 +299,12 @@ export async function enrollEnvironmentInstallation(
     // retires them) has nothing to do and is skipped.
     const { clientId, machineId, secret } = await exchangeEnrollment(
       client,
-      { installationId: randomUUID(), displayName: name, authorizedUserId: owner.authorizedUserId },
+      {
+        installationId: randomUUID(),
+        displayName: name,
+        authorizedUserId: owner.authorizedUserId,
+        environment,
+      },
       () => {
         registered = true;
       },
@@ -264,16 +313,19 @@ export async function enrollEnvironmentInstallation(
     const identity = await verifyMachineIdentity(siteUrl, tokens.accessToken, clientId);
     if (
       identity.machineId !== machineId ||
-      identity.authorizedUserId !== owner.authorizedUserId ||
+      identity.authorizedUserId !== (environment ? undefined : owner.authorizedUserId) ||
       identity.organizationId !== owner.organizationId
     )
       throw new MachineAuthError(
         "delegation_mismatch",
-        "The new installation does not carry the signed-in user's delegation.",
+        environment
+          ? "The new environment credential is not an organization-level credential of your organization."
+          : "The new installation does not carry the signed-in user's delegation.",
         true,
       );
+    const lines = installationEnvironment({ clientId, clientSecret: secret }, siteUrl);
     return {
-      environment: installationEnvironment({ clientId, clientSecret: secret }, siteUrl),
+      environment: environment ? [...lines, SESSION_IDENTITY_ENVIRONMENT_LINE] : lines,
       displayName: name,
       clientId,
       clientSecret: secret,
@@ -290,7 +342,7 @@ export async function enrollEnvironmentInstallation(
       error instanceof MachineAuthError ? error.message : "Enrollment could not finish.";
     throw new MachineAuthError(
       error instanceof MachineAuthError ? error.code : "enrollment_failed",
-      `${cause} Installation "${name}" ${registered ? "was already registered" : "may have been registered"}; ask an organization admin to revoke it in Settings → Developer installations.`,
+      `${cause} ${environment ? "Environment credential" : "Installation"} "${name}" ${registered ? "was already registered" : "may have been registered"}; ask an organization admin to revoke it in Settings → Developer installations.`,
     );
   }
 }

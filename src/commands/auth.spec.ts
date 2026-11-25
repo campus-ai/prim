@@ -48,6 +48,7 @@ vi.mock("../lib/developer-enrollment.js", async () => ({
     "../lib/developer-enrollment.js",
   )),
   enrollEnvironmentInstallation: vi.fn(),
+  enrollOrganizationEnvironment: vi.fn(),
   prepareEnvironmentEnrollment: vi.fn(),
 }));
 
@@ -71,6 +72,7 @@ import {
 } from "../client.js";
 import {
   enrollEnvironmentInstallation,
+  enrollOrganizationEnvironment,
   prepareEnvironmentEnrollment,
 } from "../lib/developer-enrollment.js";
 import {
@@ -879,6 +881,60 @@ describe("auth enroll --new-installation --print-env", () => {
     expect(stderr.indexOf("Or paste every line above")).toBeGreaterThan(networkSecret);
     expect(stderr).not.toContain("s3cr3t");
     expect(process.exitCode).toBe(0);
+  });
+
+  it("creates an organization environment credential with guidance for a shared environment", async () => {
+    deviceSignIn();
+    vi.mocked(enrollOrganizationEnvironment).mockResolvedValue({
+      environment: [
+        "PRIM_M2M_CLIENT_ID=client_team",
+        "PRIM_M2M_CLIENT_SECRET=t3am+/=",
+        "PRIM_CLOUD_IDENTITY=session",
+      ],
+      displayName: "Team cloud",
+      clientId: "client_team",
+      clientSecret: "t3am+/=",
+      machineId: "team",
+      authorizedUserId: "",
+      organizationId: "org",
+    });
+    const { stdout, stderr } = await run([
+      "--new-environment",
+      "Team cloud",
+      "--print-env",
+      "--no-browser",
+    ]);
+    expect(stdout).toBe(
+      "PRIM_M2M_CLIENT_ID=client_team\nPRIM_M2M_CLIENT_SECRET=t3am+/=\nPRIM_CLOUD_IDENTITY=session\n",
+    );
+    expect(prepareEnvironmentEnrollment).toHaveBeenCalledWith("Team cloud");
+    expect(enrollOrganizationEnvironment).toHaveBeenCalledWith(enrollment, "human-access");
+    expect(enrollEnvironmentInstallation).not.toHaveBeenCalled();
+    expect(commitCredentials).not.toHaveBeenCalled();
+    expect(stderr).toContain("Sign in as an organization admin");
+    expect(stderr).toContain("each session acts as the member whose GitHub account started it");
+    const networkSecret = stderr.indexOf(
+      'add a "Username and password" network secret for auth.example.com',
+    );
+    expect(networkSecret).toBeGreaterThan(-1);
+    expect(stderr.indexOf("only in an environment no one else uses")).toBeGreaterThan(
+      networkSecret,
+    );
+    expect(stderr).toContain("allow api.getprimitive.ai and auth.example.com");
+    expect(stderr).toContain("setup --cloud --prepare");
+    expect(stderr).not.toContain("t3am");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it.each([
+    [["--new-environment", "team"]],
+    [["--new-environment", "team", "--new-installation", "cloud", "--print-env"]],
+  ])("rejects the environment flag set %j before signing in", async (args) => {
+    const { stdout, stderr } = await run(args);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Enrollment failed: invalid_arguments");
+    expect(discoverWorkosConnect).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 
   it.each([
