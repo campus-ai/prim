@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.1.0-alpha.127](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.126...v0.1.0-alpha.127) (2026-11-25)
+
+
+### Features
+
+* **activation:** let a repository commit a lasting opt-out ([1f05aad](https://github.com/campus-ai/prim/commit/1f05aad7be36c4d40973c3bdb7d7964414bd9052))
+* **auth:** let the cloud proxy hold the tokens too ([24080ab](https://github.com/campus-ai/prim/commit/24080ab991fdbc96f76bb24781aff4be6be7c7b1))
+* **auth:** mint credentials for cloud environments ([43501e2](https://github.com/campus-ai/prim/commit/43501e221d3ac6883eadef6f3ae63a26726f9770))
+* **auth:** route the token broker through the proxy by itself ([63fead3](https://github.com/campus-ai/prim/commit/63fead3191d5c94e4dc1b91a361c24ee2f4b3857))
+* **auth:** take machine secrets from a cloud network secret ([0f2e8bd](https://github.com/campus-ai/prim/commit/0f2e8bde27459474510f2a3be0cb8e07de81f69b))
+* **git:** let a checkout declare its GitHub repository ([91e4f9e](https://github.com/campus-ai/prim/commit/91e4f9e297b1a9f97236a88ae1ac2b55ccb36539))
+* **setup:** add --cloud for Claude Code cloud environments ([fe7126b](https://github.com/campus-ai/prim/commit/fe7126b8ab2092be73da14f5a06e1f4c77792fec))
+* **setup:** prepare cloud environments without per-repository commits ([db88efc](https://github.com/campus-ai/prim/commit/db88efc69a11922d97ece40e6fc34493c051d56d))
+
+
+### Bug Fixes
+
+* **cloud:** keep the server's wait and refuse only what a machine cannot do ([#457](https://github.com/campus-ai/prim/issues/457)) ([16f938f](https://github.com/campus-ai/prim/commit/16f938f0958c117aca5b290e0491d9e26c773803))
+* **cloud:** name the fix a cloud session can actually make ([d614f94](https://github.com/campus-ai/prim/commit/d614f9470a2f6eb2b3328182aae9b8406515af52))
+* **cloud:** say an Allowed domains change needs a new session ([#464](https://github.com/campus-ai/prim/issues/464)) ([ae04905](https://github.com/campus-ai/prim/commit/ae049051b63074b275e6c86139cd8231e4ae3e12))
+* **decisions:** refuse a location scope the server would ignore ([#463](https://github.com/campus-ai/prim/issues/463)) ([d89d0f8](https://github.com/campus-ai/prim/commit/d89d0f8c36371063fdd9a3ddf9e92b60e24dad0d))
+* **hooks:** let a committed install do nothing where prim is absent ([#460](https://github.com/campus-ai/prim/issues/460)) ([7256bc1](https://github.com/campus-ai/prim/commit/7256bc1a84129bda21b640854a5a44ae8333c677))
+* **hooks:** stop calling an empty Decision check incomplete ([#461](https://github.com/campus-ai/prim/issues/461)) ([4e1f4b1](https://github.com/campus-ai/prim/commit/4e1f4b15aa680c4abca59da05758bb56eb3b496a))
+* **journal:** deliver captures made before a session knew its identity ([d43a01e](https://github.com/campus-ai/prim/commit/d43a01ea3337d7526d33ffd9981a0d6f428ef21c))
+* **reconcile:** say why the server refused a resolution ([#462](https://github.com/campus-ai/prim/issues/462)) ([255afee](https://github.com/campus-ai/prim/commit/255afee11a3602843d8215dd626f926a386da1f5))
+* **setup:** count a stored sign-in as a cloud credential ([5e1fafb](https://github.com/campus-ai/prim/commit/5e1fafb89fd2c0ef47ee4f9f461b624dbc5d9786))
+* **setup:** guide agents through Claude Code cloud sessions ([8288943](https://github.com/campus-ai/prim/commit/8288943114c8a499c2b6de3ada97e0476103d4ef))
+* **setup:** keep an in-session --prepare from claiming the image ([d424a6f](https://github.com/campus-ai/prim/commit/d424a6f8681a1d94085b8f406f6f1ce5b5ecd046))
+* **setup:** report every cloud prerequisite in one pass ([#455](https://github.com/campus-ai/prim/issues/455)) ([1e4aa38](https://github.com/campus-ai/prim/commit/1e4aa38265604254ecfa8101487f3dc5324cfb5e))
+* **uninstall:** never create integration files ([#454](https://github.com/campus-ai/prim/issues/454)) ([4278d05](https://github.com/campus-ai/prim/commit/4278d05f9c893bfebbde464fbb0b40a4dc4d30ed))
+
 ## [0.1.0-alpha.126](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.125...v0.1.0-alpha.126) (2026-11-17)
 
 
