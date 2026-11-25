@@ -144,7 +144,7 @@ async function fetchMachine(
       // A cloud VM reaches only the hosts its environment allows, and both of
       // Primitive's are blocked by default: name the one that failed.
       isClaudeCloudSession()
-        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).`
+        ? `Machine authentication could not reach ${hostOf(url)}. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited), then start a new cloud session (a running session keeps the network rules it started with).`
         : "Machine authentication is temporarily unavailable. Check the connection and retry.",
     );
   }

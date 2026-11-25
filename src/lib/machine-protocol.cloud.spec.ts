@@ -19,7 +19,7 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
     ).rejects.toMatchObject({
       code: "authentication_unavailable",
       message:
-        "Machine authentication could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited).",
+        "Machine authentication could not reach api.example.com. If this Claude Code cloud environment blocks it, add it to the environment's Allowed domains (Network access: Limited), then start a new cloud session (a running session keeps the network rules it started with).",
     });
   });
 

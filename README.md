@@ -171,7 +171,9 @@ already be connected to Primitive (`prim github connect`, from your own machine)
 2. **Configure the [cloud environment](https://code.claude.com/docs/en/cloud-environments)**:
    - **Network access**: Limited, with `api.getprimitive.ai` and `signin.getprimitive.ai`
      under Allowed domains (both are blocked by default), and **Allow package managers**
-     left on so the setup script can install prim.
+     left on so the setup script can install prim. A change to Allowed domains reaches
+     prim only in sessions started after it: a running session keeps the network rules
+     it started with.
    - **Credentials**: give the secret to the environment's proxy, which no session can
      read back. Under **Network secrets**, add a **Username and password** secret for host
      `signin.getprimitive.ai`: the `PRIM_M2M_CLIENT_ID` value step 1 printed as the

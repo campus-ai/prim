@@ -65,7 +65,7 @@ export function cloudEgressRemedy(
   signInHost?: string,
   env?: NodeJS.ProcessEnv,
 ): string {
-  return `add ${cloudAllowedDomains(siteUrl, signInHost, env).join(" and ")} to the cloud environment's Allowed domains (Network access: Limited)`;
+  return `add ${cloudAllowedDomains(siteUrl, signInHost, env).join(" and ")} to the cloud environment's Allowed domains (Network access: Limited), then start a new cloud session (a running session keeps the network rules it started with)`;
 }
 
 type ProbeResult = { ok: true; response: Response } | { ok: false; failure: string };

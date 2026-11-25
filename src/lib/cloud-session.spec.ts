@@ -251,7 +251,7 @@ describe("cloud egress guidance", () => {
       "signin.example.com",
     ]);
     expect(cloudEgressRemedy(API)).toBe(
-      "add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)",
+      "add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited), then start a new cloud session (a running session keeps the network rules it started with)",
     );
   });
 });
