@@ -54,7 +54,7 @@ export const PRIM_SKILL_REMINDER = primReminder("invoke the `prim` skill", "invo
 const CODEX_PRIM_ACTION = "follow the installed Prim workflow and use the `prim` CLI";
 export const CODEX_PRIM_REMINDER = primReminder(CODEX_PRIM_ACTION, CODEX_PRIM_ACTION);
 
-type ActiveProject = { root: string; binding?: RepositoryBindingResult };
+type ActiveProject = { root: string; binding?: RepositoryBindingResult; bindFailure?: unknown };
 
 async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
   try {
@@ -128,10 +128,11 @@ async function activeProjectRoot(cwd: string): Promise<ActiveProject | null> {
         // Collection scope is refreshed opportunistically and never delays a session.
       }
       return { root, binding };
-    } catch {
-      // Binding is opportunistic. A later enable/SessionStart retries it.
+    } catch (error) {
+      // Binding is opportunistic. A later enable/SessionStart retries it; a
+      // cloud session's diagnosis reads why it failed.
+      return { root, bindFailure: error };
     }
-    return { root };
   } catch {
     return null;
   }
@@ -210,6 +211,7 @@ export async function processSessionStart(
   let active = false;
   let skillState = { installed: 0, refreshed: 0 };
   let claudeBinding: RepositoryBindingResult | undefined;
+  let bindFailure: unknown;
   if (agent === "claude_code") {
     const activeProject = await activeProjectRoot(cwd);
     projectRoot = activeProject?.root ?? null;
@@ -218,6 +220,7 @@ export async function processSessionStart(
     // active: `activeProjectRoot` returns null for an unenabled repo, so an
     // opted-out checkout gets no reminder and no bind request.
     claudeBinding = activeProject?.binding;
+    bindFailure = activeProject?.bindFailure;
     try {
       skillState = await refreshClaudePlugins(
         cwd,
@@ -313,12 +316,12 @@ export async function processSessionStart(
 
   if (agent === "claude_code") {
     // In a Claude Code cloud session an unbound active repository usually means
-    // missing credentials or a blocked host, both of which otherwise fail open
-    // without a word. Name the fix where the user and agent will see it.
+    // missing or rejected credentials or a blocked host, all of which otherwise
+    // fail open without a word. Name the fix where the user and agent will see it.
     let cloudNotice: string | undefined;
     if (active && !claudeBinding && isClaudeCloudSession()) {
       try {
-        cloudNotice = await diagnoseCloudSession({ cwd: projectRoot ?? cwd });
+        cloudNotice = await diagnoseCloudSession({ cwd: projectRoot ?? cwd, bindFailure });
       } catch {
         // The diagnosis is advisory; SessionStart stays fail-soft.
       }
