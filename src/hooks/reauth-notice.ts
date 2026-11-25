@@ -4,6 +4,16 @@ import {
   isClaudeCloudSession,
 } from "../lib/cloud-env.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
+import { ENVIRONMENT_CREDENTIAL_REMEDY, sessionIdentityMode } from "../lib/session-identity.js";
+
+/** An organization-shared environment, whose credential an admin minted for everyone. */
+function sharedEnvironment(): boolean {
+  try {
+    return sessionIdentityMode();
+  } catch {
+    return false;
+  }
+}
 /**
  * The terminal-auth notice surfaced at SessionStart.
  *
@@ -36,9 +46,11 @@ export function reauthNoticeFields(
     // person who configured the environment fixes it there. The web transcript
     // shows no systemMessage, so the agent must be told to relay it.
     if (isClaudeCloudSession()) {
-      const notice = hasMachineConfiguration()
-        ? CLOUD_REJECTED_CREDENTIALS_NOTICE
-        : `Primitive is not connected in this Claude Code cloud session: its sign-in ended. To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`;
+      const notice = !hasMachineConfiguration()
+        ? `Primitive is not connected in this Claude Code cloud session: its sign-in ended. To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`
+        : sharedEnvironment()
+          ? `Primitive is not connected in this Claude Code cloud session: its environment credential was rejected. To fix it, ${ENVIRONMENT_CREDENTIAL_REMEDY}.`
+          : CLOUD_REJECTED_CREDENTIALS_NOTICE;
       return {
         systemMessage: notice,
         additionalContext: `${notice} Tell the user this in one sentence before starting their task.`,

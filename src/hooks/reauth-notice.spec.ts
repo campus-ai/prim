@@ -15,6 +15,7 @@ describe("reauthNoticeFields", () => {
       "PRIM_M2M_CLIENT_SECRET",
       "PRIM_M2M_CLIENT_AUTH",
       "PRIM_TOKEN",
+      "PRIM_CLOUD_IDENTITY",
     ])
       vi.stubEnv(name, undefined);
   });
@@ -53,6 +54,19 @@ describe("reauthNoticeFields", () => {
     expect(notice?.additionalContext).toBe(
       `${notice?.systemMessage} Tell the user this in one sentence before starting their task.`,
     );
+  });
+
+  it("sends an organization-shared environment's admin to --new-environment", () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_CLOUD_IDENTITY", "session");
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_shared");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
+    const notice = reauthNoticeFields("claude_code");
+    expect(notice?.systemMessage).toContain(
+      "Primitive is not connected in this Claude Code cloud session: its environment credential was rejected.",
+    );
+    expect(notice?.systemMessage).toContain("--new-environment");
+    expect(notice?.systemMessage).not.toContain("--new-installation");
   });
 
   it("never sends a cloud session to `prim auth login`, which it refuses", () => {

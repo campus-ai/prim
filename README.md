@@ -286,6 +286,68 @@ repository in Claude Code; where prim is not installed they do nothing. Upgrade 
 across a team before committing a new project install: older releases fail `prim doctor`
 on such a file, and the reinstall they suggest restores the earlier text.
 
+#### An environment your organization shares
+
+The credentials above belong to one person: in an environment several people use, every
+session's work would be attributed to whoever minted them. For an environment the whole
+organization shares, an organization admin creates an environment credential instead.
+It can do one thing: identify sessions. Each session's work is then attributed to the
+member who started it.
+
+1. **The admin creates the credential once**, on their own machine:
+
+   ```bash
+   npx --yes @primitive.ai/prim@latest auth enroll --new-environment "Team cloud" --print-env
+   ```
+
+   It prints `PRIM_M2M_CLIENT_ID`, `PRIM_M2M_CLIENT_SECRET`, and
+   `PRIM_CLOUD_IDENTITY=session` (plus `PRIM_API_URL` for a non-default deployment).
+
+2. **The admin configures the shared environment** as in the steps above, with these
+   differences:
+   - **Credentials**: every member can read a shared environment's variables, so hold
+     the secret as a **Username and password** network secret for host
+     `signin.getprimitive.ai` (username: the client ID, password: the client secret).
+     Set these **Environment variables**, keeping any other line the command printed
+     except `PRIM_M2M_CLIENT_SECRET`:
+
+     ```text
+     PRIM_M2M_CLIENT_ID=client_...
+     PRIM_M2M_CLIENT_AUTH=network-secret
+     PRIM_CLOUD_IDENTITY=session
+     ```
+
+     Put `PRIM_M2M_CLIENT_SECRET` in the variables only in an environment no one else
+     uses.
+   - **Network access** and the **Setup script** are the same as above:
+     `api.getprimitive.ai` and `signin.getprimitive.ai` under Allowed domains, and
+     `npx --yes @primitive.ai/prim@latest setup --cloud --prepare`.
+
+3. **Each member links their GitHub account once**, in their first session. Session
+   start tells them their GitHub account is not linked yet; the agent runs
+   `prim auth link`, which prints a sign-in URL and a code. The member signs in to
+   Primitive as themselves, and the session is attributed to them from then on. The
+   sign-in is used for the link alone and is not stored.
+
+After that, every session identifies its member with no action. At the start of each
+session, prim creates the session's `claude/…` branch on GitHub at its starting commit
+(Claude Code would create the same branch when it first pushes); Claude Code pushes as
+the GitHub account of the person who started the session, which is how Primitive learns
+whose session it is. Prim never force-pushes it, sets no upstream, and pushes nothing
+else. The member's token stays in the session's VM (owner-only, in prim's config
+directory) and lasts 12 hours, renewed while the session runs; a new session identifies
+again. Until a session is identified, nothing it captures is sent to Primitive, and a
+session that never identifies sends nothing as anyone.
+
+`prim setup --cloud` reports this as its `identity` step, `prim auth status` names the
+member the session acts as, and `prim doctor`'s `auth` line names the person the
+session is attributed to. Identification fails, with the fix named, when the session's
+checkout is not on its `claude/…` branch, when that branch is already on GitHub (a
+resumed session whose token lapsed, or one whose branch was pushed first: start a new
+session), when the push is refused, when GitHub's notice of the push does not reach
+Primitive within 15 seconds (check that Primitive's GitHub App has access to the
+repository), or when the repository is not connected to Primitive.
+
 ## Commands
 
 ### Setup
@@ -334,6 +396,9 @@ prim auth set-token <token>  # Save a bearer token (e.g. for CI)
 prim auth clear              # Remove saved tokens
 prim auth status             # Check authentication status
 prim auth enroll --new-installation <name> --print-env # Credentials for a cloud environment
+prim auth enroll --new-environment <name> --print-env # Organization credential for a shared cloud environment
+prim auth identify           # Identify who started this cloud session (shared environments)
+prim auth link               # Link your GitHub account to Primitive, once, from a cloud session
 prim auth api-keys mint --name <name> [--expires-at <epoch-ms>] # Mint a user key; secret prints once
 prim auth api-keys list [--limit <count>] [--after <api-key-id>] # List user-key metadata
 prim auth api-keys revoke <api-key-id> # Revoke a user key

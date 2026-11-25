@@ -907,11 +907,13 @@ async function machineClient(
     if (response.status === 401)
       throw new HttpError(
         401,
-        selected.tokenInjection
-          ? "Machine access was rejected. Check the cloud environment's OAuth 2.0 client credentials network secret, or mint a replacement credential if this one was revoked."
-          : rejectedCredentialsMessage(
-              "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
-            ),
+        selected.session
+          ? "Primitive rejected this cloud session's token after renewing it. To fix it, start a new cloud session, which identifies you again through GitHub."
+          : selected.tokenInjection
+            ? "Machine access was rejected. Check the cloud environment's OAuth 2.0 client credentials network secret, or mint a replacement credential if this one was revoked."
+            : rejectedCredentialsMessage(
+                "Machine access was rejected. Ask your administrator to check or rotate its credentials.",
+              ),
       );
     return parse(response);
   };

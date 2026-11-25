@@ -36,6 +36,11 @@ import {
 } from "./machine-protocol.js";
 import { withMachineCooldown } from "./machine-retry.js";
 import { primConfigDirectory } from "./paths.js";
+import {
+  acquireSessionCredential,
+  cachedSessionCredential,
+  sessionIdentityMode,
+} from "./session-identity.js";
 
 export type MachineStorage = "keychain" | "file" | "environment";
 export type MachineProfile = MachineConfiguration &
@@ -57,6 +62,16 @@ export type MachineCredential = MachineConfiguration &
      * API requests; `accessToken` is empty and requests go through the broker.
      */
     tokenInjection?: "network";
+    /**
+     * Session identity: the token acts as the member who started this cloud
+     * session, identified through GitHub (see session-identity.ts).
+     */
+    session?: {
+      userId: string;
+      displayName: string;
+      githubLogin?: string;
+      refreshAfter: number;
+    };
   };
 type SecretEntry = Pick<AsyncEntry, "getPassword" | "setPassword" | "deletePassword">;
 export type MachineDependencies = {
@@ -68,7 +83,17 @@ export type MachineDependencies = {
   entry?: (key: string) => SecretEntry;
   /** Only the credential broker itself performs environment exchanges directly. */
   localEnvironment?: boolean;
+  /**
+   * The environment credential itself, even in session identity mode, where
+   * every other caller gets the session's member credential instead.
+   */
+  environmentOnly?: boolean;
 };
+
+/** Session identity mode applies, and this caller wants the member, not the environment. */
+function sessionScoped(deps: MachineDependencies): boolean {
+  return !deps.localEnvironment && !deps.environmentOnly && sessionIdentityMode(deps);
+}
 
 const require = createRequire(import.meta.url);
 const SERVICE = "ai.primitive.prim.machine";
@@ -216,6 +241,10 @@ function ensureDirectory(directory: string): void {
 function writePrivate(path: string, value: unknown): void {
   atomicWriteFile(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
   protectPath(path, false);
+}
+/** Read an owner-only metadata file written by writeMachineMetadata. */
+export function readMachineMetadata(path: string): unknown | undefined {
+  return readPrivate(path);
 }
 function readPrivate(path: string): unknown | undefined {
   let raw: string;
@@ -475,6 +504,9 @@ export function machineContext(
   deps: MachineDependencies = {},
 ): (MachineIdentity & { issuer: string; generation: string; apiUrl: string }) | undefined {
   if (!hasMachineConfiguration(deps)) return undefined;
+  // A session's work belongs to its member: before the member is known there
+  // is no identity, so captures wait instead of naming the environment.
+  if (sessionScoped(deps)) return cachedSessionCredential(deps);
   const environment = environmentCredentials(deps);
   if (environment) {
     if (environmentTerminal === environment.generation) return undefined;
@@ -494,6 +526,7 @@ export function machineContext(
 export function cachedMachineCredential(
   deps: MachineDependencies = {},
 ): MachineCredential | undefined {
+  if (sessionScoped(deps)) return cachedSessionCredential(deps);
   const context = machineContext(deps);
   return context && cached?.generation === context.generation && cached.apiUrl === context.apiUrl
     ? cached
@@ -682,6 +715,7 @@ export async function acquireMachineCredential(
   deps: MachineDependencies = {},
 ): Promise<MachineCredential | undefined> {
   if (!hasMachineConfiguration(deps)) return undefined;
+  if (sessionScoped(deps)) return acquireSessionCredential(options, deps);
   const signal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)])
     : AbortSignal.timeout(10_000);

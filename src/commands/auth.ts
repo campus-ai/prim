@@ -1,9 +1,11 @@
+import { flush } from "../flusher.js";
 import { classifyJournalBuckets, summarizeRetainedBuckets } from "../journal-organization.js";
 import { listBuckets } from "../journal.js";
 import { isNonInteractive } from "../lib/confirmation.js";
 import {
   enrollDeveloperInstallation,
   enrollEnvironmentInstallation,
+  enrollOrganizationEnvironment,
   prepareEnvironmentEnrollment,
 } from "../lib/developer-enrollment.js";
 /**
@@ -12,6 +14,8 @@ import {
  * prim auth login             — Open browser to authenticate via WorkOS
  * prim auth set-token <token> — Save a bearer token for authenticated calls
  * prim auth clear             — Remove the saved token
+ * prim auth identify          — Identify a cloud session's person through GitHub
+ * prim auth link              — Link that GitHub account to Primitive, once
  * prim auth api-keys mint|list|revoke
  */
 
@@ -38,6 +42,7 @@ import {
   setStoredToken,
 } from "../client.js";
 import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "../lib/cloud-session.js";
+import { gitToplevel } from "../lib/git.js";
 import {
   type MachineStorage,
   acquireMachineCredential,
@@ -49,6 +54,16 @@ import {
   verifyAcquiredMachineIdentity,
 } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
+import { bindRepository } from "../lib/repository-binding.js";
+import {
+  SESSION_IDENTITY_VALUE,
+  SESSION_IDENTITY_VARIABLE,
+  type SessionIdentityOutcome,
+  ensureSessionIdentity,
+  linkSessionIdentity,
+  sessionIdentityMessage,
+  sessionIdentityMode,
+} from "../lib/session-identity.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import {
   WorkosConnectProtocolError,
@@ -266,7 +281,11 @@ export type AuthStatusResult = {
   accessTokenExpired: boolean;
   refreshTokenPresent: boolean;
   warnings: string[];
-  principalKind?: "machine";
+  /** "session": a cloud session acting as the member who started it. */
+  principalKind?: "machine" | "session";
+  /** How a session's member was identified. */
+  identity?: "github";
+  githubLogin?: string;
   machineId?: string;
   authorizedUserId?: string;
   enrollmentRequired?: boolean;
@@ -310,10 +329,97 @@ function authStatusResult(
   };
 }
 
+/** Failures of a session's identity that a later attempt may get past unchanged. */
+const SESSION_UNREACHABLE_CODES = new Set([
+  "identity_unavailable",
+  "verification_unavailable",
+  "authentication_unavailable",
+  "broker_unavailable",
+  "remote_unavailable",
+  "push_timeout",
+  "webhook_timeout",
+  "not_identified",
+  "challenge_open",
+  "too_many_challenges",
+]);
+
+/**
+ * Status in session identity mode: who the session acts as. It never starts
+ * an identity check; session start and `prim setup --cloud` do.
+ */
+async function verifySessionStatus(): Promise<AuthStatusResult> {
+  const session = { principalKind: "session" as const, identity: "github" as const };
+  try {
+    let machine = await acquireMachineCredential({
+      signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+    });
+    if (!machine?.session)
+      throw new MachineAuthError("not_identified", "This session has no identity yet.");
+    let identity: Awaited<ReturnType<typeof verifyAcquiredMachineIdentity>>;
+    try {
+      identity = await verifyAcquiredMachineIdentity(machine);
+    } catch (error) {
+      if (!(error instanceof MachineAuthError && error.code === "machine_access_rejected"))
+        throw error;
+      // Primitive refused the cached token. Renewing it either replaces it or
+      // names why it is gone (revoked session or link, rejected environment).
+      machine = await acquireMachineCredential({
+        force: true,
+        signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+      });
+      if (!machine?.session)
+        throw new MachineAuthError("not_identified", "This session has no identity yet.");
+      identity = await verifyAcquiredMachineIdentity(machine).catch((retry: unknown) => {
+        throw retry instanceof MachineAuthError && retry.code === "machine_access_rejected"
+          ? new MachineAuthError(
+              "session_rejected",
+              "Primitive rejected this cloud session's token after renewing it. To fix it, start a new cloud session, which identifies you again through GitHub.",
+              true,
+            )
+          : retry;
+      });
+    }
+    if (identity.authorizedUserId !== machine.session.userId)
+      throw new MachineAuthError(
+        "identity_changed",
+        "Primitive answered for another member than the one this session identified.",
+        true,
+      );
+    return {
+      ...authStatusResult("valid", "verified", "machine", false),
+      ...session,
+      machineId: machine.machineId,
+      authorizedUserId: machine.session.userId,
+      displayName: machine.session.displayName,
+      ...(machine.session.githubLogin ? { githubLogin: machine.session.githubLogin } : {}),
+      effectiveScopes: identity.scopes,
+      organizationId: machine.organizationId,
+      storageBackend: machine.storage,
+      accessTokenExpiresInMs: machine.expiresAt - Date.now(),
+      accessTokenExpired: machine.expiresAt <= Date.now(),
+    };
+  } catch (error) {
+    const code = error instanceof MachineAuthError ? error.code : "verification_unavailable";
+    const unreachable = !(error instanceof MachineAuthError) || SESSION_UNREACHABLE_CODES.has(code);
+    return {
+      ...authStatusResult(
+        unreachable ? "unreachable" : "invalid",
+        unreachable ? "verification_unavailable" : "access_rejected",
+        undefined,
+        false,
+      ),
+      ...session,
+      recoveryReason: code,
+      ...(error instanceof MachineAuthError ? { recoveryDetail: error.message } : {}),
+    };
+  }
+}
+
 /** Verify the selected credential without letting the protected probe rotate it again. */
 export async function verifyAuthStatus(): Promise<AuthStatusResult> {
   let machineMetadata: Partial<AuthStatusResult> = {};
   try {
+    if (hasMachineConfiguration() && sessionIdentityMode()) return await verifySessionStatus();
     if (hasMachineConfiguration()) {
       const context = machineContext();
       machineMetadata = {
@@ -462,6 +568,14 @@ function authStatusExitCode(status: AuthVerificationStatus): number {
 }
 
 function writeHumanAuthStatus(result: AuthStatusResult): void {
+  if (result.principalKind === "session") {
+    console.error(
+      result.authenticated
+        ? `Session attributed to ${stripControlChars(result.displayName ?? "")}${result.githubLogin ? ` (GitHub @${stripControlChars(result.githubLogin)})` : ""}: identified through GitHub; organization ${result.organizationId}.`
+        : `Session identity ${result.status}: ${result.recoveryReason}. ${result.recoveryDetail ? stripControlChars(result.recoveryDetail) : "Run prim setup --cloud for details."}`,
+    );
+    return;
+  }
   if (result.principalKind === "machine") {
     console.error(
       result.authenticated
@@ -532,7 +646,14 @@ type InteractiveSignIn =
  * storing it. `auth login` persists the result; minting a credential for
  * another installation uses it once and lets it go.
  */
-async function signInInteractively(options: { browser: boolean }): Promise<InteractiveSignIn> {
+async function signInInteractively(options: {
+  browser: boolean;
+  /**
+   * Only the device flow: it prints a URL and a code and polls, so it needs no
+   * inbound connection, which is all a cloud session can offer.
+   */
+  deviceOnly?: boolean;
+}): Promise<InteractiveSignIn> {
   const siteUrl = getSiteUrl();
 
   let discovery: Awaited<ReturnType<typeof discoverWorkosConnect>>;
@@ -577,6 +698,14 @@ async function signInInteractively(options: { browser: boolean }): Promise<Inter
       };
     }
   }
+
+  if (options.deviceOnly)
+    return {
+      ok: false,
+      error: "device_sign_in_unavailable",
+      detail:
+        "This Primitive server does not offer device sign-in, which linking from a cloud session needs.",
+    };
 
   let config: AuthBrokerConfig;
   try {
@@ -698,6 +827,7 @@ async function signInInteractively(options: { browser: boolean }): Promise<Inter
 type EnrollOptions = {
   ifSupported?: boolean;
   newInstallation?: string;
+  newEnvironment?: string;
   printEnv?: boolean;
   browser: boolean;
 };
@@ -721,6 +851,64 @@ function reportEnrollmentFailure(error: string, detail?: string): void {
     : stripControlChars(error);
   console.error(`Enrollment failed: ${human}`);
   process.exitCode = EXIT_FAIL;
+}
+
+/**
+ * `--new-environment`: an organization-level credential for a Claude Code cloud
+ * environment the organization shares. It only identifies sessions, so the
+ * guidance is about keeping it in the proxy, not about whose Decisions it owns.
+ */
+async function enrollNewEnvironment(options: EnrollOptions): Promise<void> {
+  if (
+    !options.newEnvironment ||
+    !options.printEnv ||
+    options.ifSupported ||
+    options.newInstallation
+  ) {
+    reportEnrollmentFailure(
+      "invalid_arguments",
+      "Use --new-environment <name> together with --print-env (and without --new-installation or --if-supported).",
+    );
+    return;
+  }
+  try {
+    const enrollment = await prepareEnvironmentEnrollment(options.newEnvironment);
+    console.error(
+      `Sign in as an organization admin to create an environment credential named "${stripControlChars(enrollment.name)}" for a Claude Code cloud environment your organization shares. This machine's own credentials are not changed.`,
+    );
+    const signIn = await signInInteractively({ browser: options.browser });
+    if (!signIn.ok) {
+      reportEnrollmentFailure(signIn.error, signIn.detail);
+      return;
+    }
+    const credential = await enrollOrganizationEnvironment(
+      enrollment,
+      signIn.credentials.accessToken,
+    );
+    process.stdout.write(`${credential.environment.join("\n")}\n`);
+    const signInHostName = signInHost(enrollment.configuration.issuer);
+    const apiHost = new URL(enrollment.siteUrl).hostname;
+    console.error(
+      [
+        `Environment credential "${stripControlChars(credential.displayName)}" belongs to your organization. It can only identify sessions: each session acts as the member whose GitHub account started it, once that member has linked their GitHub account (once, with \`prim auth link\` in their first session).`,
+        "The secret is shown only once and is not stored on this machine.",
+        // Every member of a shared environment can read its variables; its
+        // network secrets cannot be read back, so this is the way to hold it.
+        `Keep the secret out of the environment's variables: add a "Username and password" network secret for ${signInHostName} (username: the client ID, password: the client secret). As its variables, set PRIM_M2M_CLIENT_AUTH=network-secret and every line printed above except PRIM_M2M_CLIENT_SECRET.`,
+        "Put PRIM_M2M_CLIENT_SECRET in the variables only in an environment no one else uses: every member who uses a shared environment can read them.",
+        `Under Network access, allow ${[...new Set([apiHost, signInHostName])].join(" and ")}, and run \`npx --yes @primitive.ai/prim@latest setup --cloud --prepare\` in the environment's setup script.`,
+        "An organization admin can revoke the credential in Settings → Developer installations.",
+      ].join("\n"),
+    );
+    process.exitCode = EXIT_OK;
+  } catch (error) {
+    reportEnrollmentFailure(
+      error instanceof MachineAuthError ? error.code : "enrollment_failed",
+      error instanceof MachineAuthError
+        ? error.message
+        : "Enrollment could not finish. Check that you are an admin of the organization and its enrollment policy, then retry.",
+    );
+  }
 }
 
 async function enrollNewInstallation(options: EnrollOptions): Promise<void> {
@@ -797,15 +985,24 @@ export function registerAuthCommands(program: Command) {
       "Enroll a separate installation that runs elsewhere, such as a Claude Code cloud environment (requires --print-env)",
     )
     .option(
+      "--new-environment <name>",
+      "Create an organization-level credential for a Claude Code cloud environment your organization shares; each session acts as the member who started it (requires --print-env)",
+    )
+    .option(
       "--print-env",
       "Print the new installation's PRIM_M2M_* credentials to STDOUT as .env lines for an environment",
     )
     .option("--no-browser", "Print the sign-in URL without opening a browser")
     .action(async (options: EnrollOptions) => {
-      if (options.newInstallation !== undefined || options.printEnv) {
+      if (
+        options.newInstallation !== undefined ||
+        options.newEnvironment !== undefined ||
+        options.printEnv
+      ) {
         // Credential output owns STDOUT here, so the refusal stays on STDERR.
         if (refuseCloudSignIn(reportEnrollmentFailure)) return;
-        await enrollNewInstallation(options);
+        if (options.newEnvironment !== undefined) await enrollNewEnvironment(options);
+        else await enrollNewInstallation(options);
         return;
       }
       try {
@@ -1000,6 +1197,30 @@ export function registerAuthCommands(program: Command) {
     });
 
   auth
+    .command("identify")
+    .description(
+      "Identify who started this Claude Code cloud session through GitHub (environments with PRIM_CLOUD_IDENTITY=session)",
+    )
+    .option("--json", "Output as JSON (the default; kept for symmetry with auth status)")
+    .action(async () => {
+      if (refuseOutsideSessionIdentity()) return;
+      const outcome = await ensureSessionIdentity({ cwd: process.cwd(), explicit: true });
+      console.error(identityLine(outcome));
+      printJson(identityResult(outcome));
+      process.exitCode = outcome.status === "ok" ? EXIT_OK : EXIT_FAIL;
+    });
+
+  auth
+    .command("link")
+    .description(
+      "Link your GitHub account to your Primitive account, once, from a Claude Code cloud session that identifies people through GitHub",
+    )
+    .action(async () => {
+      if (refuseOutsideSessionIdentity()) return;
+      await linkGithubAccount();
+    });
+
+  auth
     .command("status")
     .description("Check authentication status and token expiry")
     .option("--json", "Output as JSON")
@@ -1009,6 +1230,135 @@ export function registerAuthCommands(program: Command) {
       else writeHumanAuthStatus(result);
       process.exit(authStatusExitCode(result.status));
     });
+}
+
+const SESSION_IDENTITY_NOT_CONFIGURED = `prim auth identify and prim auth link apply only in a Claude Code cloud session whose environment sets ${SESSION_IDENTITY_VARIABLE}=${SESSION_IDENTITY_VALUE} together with its environment credential (PRIM_M2M_CLIENT_ID); this session does not.`;
+
+function refuseOutsideSessionIdentity(): boolean {
+  let mode = false;
+  try {
+    mode = sessionIdentityMode() && hasMachineConfiguration();
+  } catch (error) {
+    reportFailure(
+      error instanceof MachineAuthError ? error.code : "invalid_machine_configuration",
+      error instanceof MachineAuthError ? error.message : String(error),
+    );
+    return true;
+  }
+  if (mode) return false;
+  reportFailure("session_identity_not_configured", SESSION_IDENTITY_NOT_CONFIGURED);
+  return true;
+}
+
+function identityLine(outcome: SessionIdentityOutcome): string {
+  if (outcome.status === "ok")
+    return `identity · ok: this session is attributed to ${stripControlChars(outcome.displayName)}${outcome.githubLogin ? ` (GitHub @${stripControlChars(outcome.githubLogin)})` : ""}`;
+  return `identity · ${outcome.status === "link_required" ? "link required" : "failed"}: ${stripControlChars(sessionIdentityMessage(outcome))}`;
+}
+
+/** The machine-readable identity result. It never carries a token. */
+function identityResult(outcome: SessionIdentityOutcome): Record<string, unknown> {
+  if (outcome.status === "ok")
+    return {
+      status: "ok",
+      identity: "github",
+      displayName: outcome.displayName,
+      ...(outcome.githubLogin ? { githubLogin: outcome.githubLogin } : {}),
+      reused: outcome.reused,
+    };
+  if (outcome.status === "link_required")
+    return {
+      status: "link_required",
+      githubLogin: outcome.githubLogin,
+      message: sessionIdentityMessage(outcome),
+      remedy: "run `prim auth link` and sign in at the URL it prints with the code it shows",
+    };
+  return {
+    status: "failed",
+    code: outcome.code,
+    cause: outcome.cause,
+    remedy: outcome.remedy,
+    message: sessionIdentityMessage(outcome),
+  };
+}
+
+/**
+ * `prim auth link`: a device sign-in, used once to link the GitHub account
+ * that started this session to the person who signs in. Interactive sign-in is
+ * otherwise refused in a cloud session; this is the one place it runs there,
+ * and its tokens are dropped when the link is made, never stored.
+ */
+async function linkGithubAccount(): Promise<void> {
+  const cwd = process.cwd();
+  const outcome = await ensureSessionIdentity({ cwd, explicit: true });
+  if (outcome.status === "ok") {
+    console.error(
+      `Already linked: this session is attributed to ${stripControlChars(outcome.displayName)}${outcome.githubLogin ? ` (GitHub @${stripControlChars(outcome.githubLogin)})` : ""}.`,
+    );
+    printJson({ ...identityResult(outcome), linked: true, alreadyLinked: true });
+    process.exitCode = EXIT_OK;
+    return;
+  }
+  if (outcome.status === "failed") {
+    reportFailure(outcome.code, sessionIdentityMessage(outcome));
+    return;
+  }
+  const login = stripControlChars(outcome.githubLogin);
+  console.error(
+    `GitHub account @${login} started this session. Sign in to Primitive as yourself to link it; this is needed once.`,
+  );
+  const signIn = await signInInteractively({ browser: false, deviceOnly: true });
+  if (!signIn.ok) {
+    reportFailure(signIn.error, signIn.detail);
+    return;
+  }
+  const linked = await linkSessionIdentity(outcome, signIn.credentials.accessToken, { cwd });
+  if (linked.status !== "ok") {
+    reportFailure(
+      linked.status === "failed" ? linked.code : "link_failed",
+      sessionIdentityMessage(linked),
+    );
+    return;
+  }
+  const name = stripControlChars(linked.displayName);
+  console.error(
+    `Linked GitHub account @${login} to ${name}. This session's work is now attributed to ${name}, and later sessions started from @${login} identify you automatically.`,
+  );
+  const setup = await completeLinkedSession(cwd);
+  printJson({ ...identityResult(linked), linked: true, ...setup });
+  process.exitCode = EXIT_OK;
+}
+
+/**
+ * What session start could not do without an identity: connect the
+ * repository, and deliver what was captured while the member was unknown.
+ */
+async function completeLinkedSession(
+  cwd: string,
+): Promise<{ repository?: string; flushed?: number }> {
+  const result: { repository?: string; flushed?: number } = {};
+  try {
+    const binding = await bindRepository(gitToplevel(cwd) ?? cwd, {
+      signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+      quietRefresh: true,
+    });
+    result.repository = binding.status;
+    console.error(
+      binding.status === "connected"
+        ? `Repository ${stripControlChars(binding.repositoryFullName)} is connected.`
+        : `Repository ${stripControlChars(binding.repositoryFullName)} is not connected to Primitive; run \`prim setup --cloud\` for the fix.`,
+    );
+  } catch {
+    console.error(
+      "The repository could not be connected yet; run `prim setup --cloud` for details.",
+    );
+  }
+  try {
+    result.flushed = (await flush()).flushed;
+  } catch {
+    // Pending captures stay journaled; the next delivery sends them.
+  }
+  return result;
 }
 
 async function readMachineSecret(fromStdin: boolean): Promise<string> {

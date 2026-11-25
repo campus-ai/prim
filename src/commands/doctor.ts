@@ -5,7 +5,7 @@ import {
 } from "../lib/cloud-env.js";
 import { isCloudMachineSession } from "../lib/cloud-session.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
-import { verifyAuthStatus } from "./auth.js";
+import { type AuthStatusResult, verifyAuthStatus } from "./auth.js";
 /**
  * `prim doctor` — one-shot capture-pipeline health check.
  *
@@ -225,10 +225,29 @@ export function classifyAuthCredential(
   return { name: "auth", status: "ok", detail };
 }
 
+/**
+ * A cloud session that identifies its person through GitHub: name the person
+ * its work is attributed to, or why it is attributed to no one yet.
+ */
+export function classifySessionAuth(status: AuthStatusResult): Check {
+  if (status.authenticated)
+    return {
+      name: "auth",
+      status: "ok",
+      detail: `session attributed to ${stripControlChars(status.displayName ?? status.authorizedUserId ?? "unknown")}${status.githubLogin ? ` (GitHub @${stripControlChars(status.githubLogin)})` : ""} · identified through GitHub · expires in ${Math.round((status.accessTokenExpiresInMs ?? 0) / 1000)}s`,
+    };
+  return {
+    name: "auth",
+    status: "fail",
+    detail: `session identity: ${status.recoveryDetail ? stripControlChars(status.recoveryDetail) : `${status.recoveryReason ?? "unknown"}; run prim setup --cloud for the fix`}`,
+  };
+}
+
 async function checkAuth(): Promise<Check> {
   try {
     if (hasMachineConfiguration()) {
       const status = await verifyAuthStatus();
+      if (status.principalKind === "session") return classifySessionAuth(status);
       return {
         name: "auth",
         status: status.authenticated ? "ok" : "fail",

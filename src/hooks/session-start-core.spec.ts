@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   markImplicit: vi.fn(),
   withdraw: vi.fn(),
   sessionEnded: vi.fn(),
+  identityMode: vi.fn(),
+  identify: vi.fn(),
 }));
 
 vi.mock("../client.js", () => ({
@@ -60,6 +62,11 @@ vi.mock("../lib/git-hooks.js", () => ({
 }));
 vi.mock("../lib/git.js", () => ({ gitToplevel: () => "/repo" }));
 vi.mock("../lib/repository-binding.js", () => ({ bindRepository: mocks.bind }));
+vi.mock("../lib/session-identity.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/session-identity.js")>()),
+  sessionIdentityMode: mocks.identityMode,
+  ensureSessionIdentity: mocks.identify,
+}));
 vi.mock("../lib/workspace-id.js", () => ({
   getOrCreateWorkspaceId: () => ({ status: "not_git" }),
 }));
@@ -85,6 +92,7 @@ beforeEach(() => {
   mocks.flag.mockReturnValue("true");
   mocks.withdraw.mockReturnValue(false);
   mocks.sessionEnded.mockReturnValue(false);
+  mocks.identityMode.mockReturnValue(false);
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -284,5 +292,83 @@ describe("repository binding at SessionStart", () => {
     expect((output as Output).hookSpecificOutput?.additionalContext ?? "").not.toContain(
       "connection is complete",
     );
+  });
+});
+
+describe("session identity at SessionStart", () => {
+  it("never runs outside session identity mode", async () => {
+    await processSessionStart(envelope, "claude_code");
+    expect(mocks.identify).not.toHaveBeenCalled();
+  });
+
+  it("identifies the session first and says nothing more when it worked", async () => {
+    mocks.identityMode.mockReturnValue(true);
+    mocks.identify.mockResolvedValue({ status: "ok", displayName: "Jane Doe", reused: false });
+    mocks.bind.mockResolvedValue({
+      status: "connected",
+      repoSyncId: "sync",
+      repositoryFullName: "acme/widgets",
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect(mocks.identify).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/repo", explicit: true }),
+    );
+    expect((output as Output).systemMessage).toBeUndefined();
+  });
+
+  it("asks the user to link once, and tells the agent how to run the link", async () => {
+    mocks.identityMode.mockReturnValue(true);
+    mocks.identify.mockResolvedValue({
+      status: "link_required",
+      githubLogin: "octojane",
+      challengeId: "challenge_1",
+      challengeExpiresAt: Date.now() + 60_000,
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const result = output as Output;
+    const notice =
+      "GitHub account @octojane started this Claude Code cloud session but is not linked to a Primitive account yet. To link it once, run `prim auth link` and sign in at the URL it prints with the code it shows; later sessions then identify you automatically. Until then, nothing this session captures is sent to Primitive.";
+    expect(result.systemMessage).toBe(notice);
+    expect(result.hookSpecificOutput?.additionalContext).toContain(
+      `${notice} Before starting their task, tell the user this in one sentence. When they agree, run \`prim auth link\` as a background command`,
+    );
+    // The identity notice is the whole story; no second diagnosis competes with it.
+    expect(mocks.diagnose).not.toHaveBeenCalled();
+  });
+
+  it("names a failure's cause and fix", async () => {
+    mocks.identityMode.mockReturnValue(true);
+    mocks.identify.mockResolvedValue({
+      status: "failed",
+      code: "webhook_timeout",
+      cause:
+        "GitHub's notice of the identity push to acme/widgets did not reach Primitive within 15 s",
+      remedy:
+        "check that Primitive's GitHub App is installed with access to acme/widgets, then run `prim setup --cloud` to try again",
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect((output as Output).systemMessage).toBe(
+      "Primitive could not identify who started this Claude Code cloud session: GitHub's notice of the identity push to acme/widgets did not reach Primitive within 15 s. To fix it, check that Primitive's GitHub App is installed with access to acme/widgets, then run `prim setup --cloud` to try again. Until then, nothing this session captures is sent to Primitive.",
+    );
+  });
+
+  it("keeps the identity notice when the environment credential is what failed", async () => {
+    // The refused environment credential also ends the machine session.
+    mocks.sessionEnded.mockReturnValue(true);
+    mocks.identityMode.mockReturnValue(true);
+    mocks.identify.mockResolvedValue({
+      status: "failed",
+      code: "environment_credential_rejected",
+      cause: "Primitive rejected the cloud environment's credential",
+      remedy:
+        'ask the organization admin who set up the environment to check its credential, or to mint a replacement with `prim auth enroll --new-environment "<name>" --print-env`; then start a new cloud session',
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const message = (output as Output).systemMessage ?? "";
+    expect(message).toMatch(
+      /^Primitive could not identify who started this Claude Code cloud session: Primitive rejected the cloud environment's credential\./u,
+    );
+    expect(message).toContain("--new-environment");
+    expect(message).not.toContain("--new-installation");
   });
 });
