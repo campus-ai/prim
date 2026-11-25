@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.128](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.127...v0.1.0-alpha.128) (2026-11-25)
+
+
+### Features
+
+* **cloud:** attribute each shared-environment session to its member ([#469](https://github.com/campus-ai/prim/issues/469)) ([612e28d](https://github.com/campus-ai/prim/commit/612e28d7faecc90a1148d0f3397c5e5e08696ee5))
+
+
+### Bug Fixes
+
+* **cloud:** report a refused credential at session start, not the repo ([#467](https://github.com/campus-ai/prim/issues/467)) ([ad7db2b](https://github.com/campus-ai/prim/commit/ad7db2b01e021c20149cfa7d40a1d383f606eb09))
+
 ## [0.1.0-alpha.127](https://github.com/campus-ai/prim/compare/v0.1.0-alpha.126...v0.1.0-alpha.127) (2026-11-25)
 
 
