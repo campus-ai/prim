@@ -453,7 +453,16 @@ describe("installationEnvironment", () => {
 });
 
 describe("organization environment credential enrollment", () => {
-  function serveEnvironment(redeem: Record<string, unknown> = {}) {
+  // The server's environment redeem; an installation's names its user instead.
+  const environmentRedeem = {
+    kind: "environment",
+    organizationId: "org",
+    scopes: ["cli:session-identity"],
+  };
+  function serveEnvironment(
+    redeem: Record<string, unknown> = {},
+    shape: Record<string, unknown> = environmentRedeem,
+  ) {
     const starts: Record<string, unknown>[] = [];
     let ciphertext = "";
     mocks.post.mockImplementation(async (path, body) => {
@@ -466,7 +475,13 @@ describe("organization environment credential enrollment", () => {
         return { enrollmentId: "enrollment" };
       }
       if (path.endsWith("/redeem"))
-        return { ciphertext, clientId: "client_env", machineId: "env", ...redeem };
+        return {
+          ciphertext,
+          clientId: "client_env",
+          machineId: "env",
+          ...shape,
+          ...redeem,
+        };
       throw new Error(`unexpected ${path}`);
     });
     return starts;
@@ -499,13 +514,34 @@ describe("organization environment credential enrollment", () => {
   });
 
   it("leaves the --new-installation request without a kind", async () => {
-    const starts = serveEnvironment({
-      authorizedUserId: "alex",
-      clientId: "client_cloud",
-      machineId: "cloud",
-    });
+    const starts = serveEnvironment(
+      { authorizedUserId: "alex", clientId: "client_cloud", machineId: "cloud" },
+      {},
+    );
     await enrollEnvironmentInstallation(await prepareEnvironmentEnrollment("cloud"), "human-jwt");
     expect(starts[0]).not.toHaveProperty(ENROLLMENT_KIND_FIELD);
+  });
+
+  it.each([
+    ["is not an environment", { kind: "installation" }],
+    ["names no kind", { kind: undefined }],
+    ["grants more than session identity", { scopes: ["cli:session-identity", "cli:read"] }],
+    ["grants another scope", { scopes: ["cli:read"] }],
+    ["names no scopes", { scopes: undefined }],
+    ["is delegated to someone", { authorizedUserId: "alex" }],
+  ])("refuses a redeem that %s before printing anything", async (_name, redeem) => {
+    serveEnvironment(redeem);
+    mocks.verify.mockResolvedValue(organizationLevel);
+    const error = await enrollOrganizationEnvironment(
+      await prepareEnvironmentEnrollment("Team cloud"),
+      "admin-jwt",
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "invalid_enrollment" });
+    expect((error as Error).message).toMatch(
+      /Environment credential "Team cloud" was already registered/u,
+    );
+    expect(String((error as Error).message)).not.toContain("environment-secret");
+    expect(mocks.verify).not.toHaveBeenCalled();
   });
 
   it("refuses a credential delegated to the admin and names it for revocation", async () => {

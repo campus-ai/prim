@@ -94,6 +94,19 @@ export const ENVIRONMENT_ENROLLMENT_KIND = "environment";
 /** The variable that turns on session identity in the environment it is set in. */
 export const SESSION_IDENTITY_ENVIRONMENT_LINE = "PRIM_CLOUD_IDENTITY=session";
 
+/** The only scope an environment credential may hold. */
+export const SESSION_IDENTITY_SCOPE = "cli:session-identity";
+
+function isEnvironmentRedeem(response: Record<string, unknown>): boolean {
+  return (
+    response.kind === ENVIRONMENT_ENROLLMENT_KIND &&
+    Array.isArray(response.scopes) &&
+    response.scopes.length === 1 &&
+    response.scopes[0] === SESSION_IDENTITY_SCOPE &&
+    !("authorizedUserId" in response)
+  );
+}
+
 /**
  * Run one start → redeem exchange under a human session. The new secret is
  * encrypted to a key that exists only in this process, so the server never
@@ -138,9 +151,13 @@ async function exchangeEnrollment(
     ),
   );
   if (
-    // An environment credential is delegated to no one, so its answer names
-    // no user; the identity check after the exchange confirms that.
-    !(request.environment || isCliEnrollmentRedeemResponse(response)) ||
+    // An environment credential is delegated to no one and may only identify
+    // sessions: its answer names no user, says it is an environment, and
+    // grants exactly the session identity scope. Anything else is refused
+    // before a secret is decrypted, let alone printed.
+    !(request.environment
+      ? isEnvironmentRedeem(response)
+      : isCliEnrollmentRedeemResponse(response)) ||
     !machineString(response.clientId, 256) ||
     !machineString(response.ciphertext, 4096) ||
     !machineString(response.machineId, 128) ||
