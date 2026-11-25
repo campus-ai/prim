@@ -8,6 +8,21 @@ const MAX_SETTINGS_BYTES = 1024 * 1024;
 const GITHUB_OWNER_PATTERN = /^(?![A-Za-z0-9-]*--)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const GITHUB_REPOSITORY_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$/u;
 
+/** prim's own credentials, held in the environment of a machine or cloud session. */
+const CREDENTIAL_VARIABLE = /^(?:PRIM_TOKEN|PRIM_M2M_\w+)$/u;
+
+/**
+ * The environment for a git child process: the caller's, without prim's
+ * credentials. Git runs hooks, credential helpers, ssh, and (for a local
+ * remote) the remote's own hooks with the environment it was given, and none
+ * of them needs a secret that authenticates prim.
+ */
+export function gitChildEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !CREDENTIAL_VARIABLE.test(name)),
+  );
+}
+
 /**
  * The repository's top-level working directory for `cwd` (default: process cwd),
  * or null outside a git work tree. One place for `git rev-parse --show-toplevel`
@@ -21,6 +36,7 @@ export function gitToplevel(cwd?: string): string | null {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: GIT_TIMEOUT_MS,
+      env: gitChildEnvironment(),
     }).trim();
   } catch {
     return null;
@@ -41,6 +57,7 @@ export function mainWorktreeRoot(cwd?: string): string | null {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: GIT_TIMEOUT_MS,
+        env: gitChildEnvironment(),
       },
     )
       .trim()
@@ -74,6 +91,7 @@ function gitValue(cwd: string, args: string[]): string | undefined {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: GIT_TIMEOUT_MS,
+      env: gitChildEnvironment(),
     }).trim();
     return value || undefined;
   } catch {
@@ -141,6 +159,7 @@ export function isGitIgnored(cwd: string, path: string): boolean {
       cwd,
       stdio: ["ignore", "ignore", "ignore"],
       timeout: GIT_TIMEOUT_MS,
+      env: gitChildEnvironment(),
     });
     return true;
   } catch {

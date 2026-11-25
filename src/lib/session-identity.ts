@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { CLOUD_GITHUB_CONNECT_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
 import { withFileLock } from "./file-lock.js";
-import { currentBranch, gitToplevel, githubRepositoryFullName } from "./git.js";
+import {
+  currentBranch,
+  gitChildEnvironment,
+  gitToplevel,
+  githubRepositoryFullName,
+} from "./git.js";
 import {
   type MachineCredential,
   type MachineDependencies,
@@ -513,7 +518,7 @@ async function git(
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       signal,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      env: { ...gitChildEnvironment(), GIT_TERMINAL_PROMPT: "0" },
       maxBuffer: 1024 * 1024,
     });
     return { ok: true, code: 0, stdout, stderr, timedOut: false };

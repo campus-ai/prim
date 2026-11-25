@@ -419,6 +419,33 @@ describe("identifying a session", () => {
     expect(remoteBranch(fixture.bare)).toBe(baseSha);
   });
 
+  it("keeps prim's credentials out of every git process the push starts", async () => {
+    // A local remote runs its hooks with the pushing git's environment.
+    const dump = join(temp("prim-identity-env-"), "env");
+    const hook = join(fixture.bare, "hooks", "post-receive");
+    writeFileSync(hook, `#!/bin/sh\nenv > '${dump}'\n`);
+    chmodSync(hook, 0o755);
+    vi.stubEnv("PRIM_TEST_MARKER", "visible");
+
+    expect(await identifyNow()).toMatchObject({ status: "ok" });
+
+    const seen = readFileSync(dump, "utf8");
+    expect(seen).toContain("PRIM_TEST_MARKER=visible");
+    expect(seen).not.toContain("environment-secret");
+    expect(seen).not.toMatch(/^PRIM_M2M_|^PRIM_TOKEN=/mu);
+    const { gitChildEnvironment } = await import("./git.js");
+    expect(
+      gitChildEnvironment({
+        PATH: "/bin",
+        PRIM_TOKEN: "t",
+        PRIM_M2M_CLIENT_ID: "c",
+        PRIM_M2M_CLIENT_SECRET: "s",
+        PRIM_M2M_CLIENT_AUTH: "network-secret",
+        PRIM_API_URL: "https://api.example.test",
+      }),
+    ).toEqual({ PATH: "/bin", PRIM_API_URL: "https://api.example.test" });
+  });
+
   it("reports the member in auth status and doctor, and why not before", async () => {
     await fresh();
     const before = await (await import("../commands/auth.js")).verifyAuthStatus();
