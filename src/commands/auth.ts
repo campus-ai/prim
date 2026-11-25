@@ -339,6 +339,8 @@ const SESSION_UNREACHABLE_CODES = new Set([
   "push_timeout",
   "webhook_timeout",
   "not_identified",
+  "challenge_open",
+  "too_many_challenges",
 ]);
 
 /**
@@ -348,12 +350,35 @@ const SESSION_UNREACHABLE_CODES = new Set([
 async function verifySessionStatus(): Promise<AuthStatusResult> {
   const session = { principalKind: "session" as const, identity: "github" as const };
   try {
-    const machine = await acquireMachineCredential({
+    let machine = await acquireMachineCredential({
       signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
     });
     if (!machine?.session)
       throw new MachineAuthError("not_identified", "This session has no identity yet.");
-    const identity = await verifyAcquiredMachineIdentity(machine);
+    let identity: Awaited<ReturnType<typeof verifyAcquiredMachineIdentity>>;
+    try {
+      identity = await verifyAcquiredMachineIdentity(machine);
+    } catch (error) {
+      if (!(error instanceof MachineAuthError && error.code === "machine_access_rejected"))
+        throw error;
+      // Primitive refused the cached token. Renewing it either replaces it or
+      // names why it is gone (revoked session or link, rejected environment).
+      machine = await acquireMachineCredential({
+        force: true,
+        signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS),
+      });
+      if (!machine?.session)
+        throw new MachineAuthError("not_identified", "This session has no identity yet.");
+      identity = await verifyAcquiredMachineIdentity(machine).catch((retry: unknown) => {
+        throw retry instanceof MachineAuthError && retry.code === "machine_access_rejected"
+          ? new MachineAuthError(
+              "session_rejected",
+              "Primitive rejected this cloud session's token after renewing it. To fix it, start a new cloud session, which identifies you again through GitHub.",
+              true,
+            )
+          : retry;
+      });
+    }
     if (identity.authorizedUserId !== machine.session.userId)
       throw new MachineAuthError(
         "identity_changed",

@@ -283,7 +283,9 @@ export async function processSessionStart(
 
   // Claude retains its existing terminal-auth notice; Codex renders the same
   // condition in its status report below so the report is the only auth line.
-  if (isSessionEnded() && agent !== "codex" && agent !== "cursor") {
+  // A shared environment's identity notice already names what is wrong and
+  // its fix; the generic terminal-auth notice would contradict it.
+  if (isSessionEnded() && agent !== "codex" && agent !== "cursor" && !identityNotice) {
     const notice = reauthNoticeFields(agent);
     if (notice) {
       return {

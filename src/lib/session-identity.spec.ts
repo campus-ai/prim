@@ -87,13 +87,19 @@ type Fixture = {
   url: string;
   server: Server;
   calls: Call[];
-  challenges: Map<string, { branch: string; baseSha: string }>;
+  challenges: Map<string, { branch: string; baseSha: string; expiresAt: number }>;
   linked: Set<string>;
   login: string;
   connected: boolean;
   webhook: boolean;
   reject?: string;
   refreshFails: boolean;
+  /** The refresh route's error when it refuses; the server's is invalid_session_token. */
+  refreshError: string;
+  /** Canned refusals, as the server words them. */
+  tokenRefusal?: { status: number; body: Record<string, unknown> };
+  linkRefusal?: { status: number; body: Record<string, unknown> };
+  challengeRefusal?: { status: number; body: Record<string, unknown> };
   refreshAfterMs: number;
   tokens: Map<string, number>;
   issued: number;
@@ -156,6 +162,7 @@ async function startFixture(bare: string): Promise<Fixture> {
     connected: true,
     webhook: true,
     refreshFails: false,
+    refreshError: "invalid_session_token",
     refreshAfterMs: 6 * 3_600_000,
     tokens: new Map<string, number>(),
     issued: 0,
@@ -195,16 +202,24 @@ async function startFixture(bare: string): Promise<Fixture> {
       return reply(401, { error: "unauthorized" });
     if (path === "/api/cli/session-identity/challenge" && request.method === "POST") {
       if (!fixture.connected) return reply(404, { error: "repository_not_connected" });
+      if (fixture.challengeRefusal)
+        return reply(fixture.challengeRefusal.status, fixture.challengeRefusal.body);
+      // Like the server: one open (unpushed, unexpired) challenge per branch.
+      const open = [...fixture.challenges.values()].some(
+        (row) =>
+          row.branch === body?.branch &&
+          row.expiresAt > Date.now() &&
+          remoteBranch(bare, row.branch) === undefined,
+      );
+      if (open) return reply(409, { error: "challenge_already_open" });
       const id = `challenge_${fixture.challenges.size + 1}`;
+      const expiresAt = Date.now() + 300_000;
       fixture.challenges.set(id, {
         branch: String(body?.branch),
         baseSha: String(body?.baseSha),
+        expiresAt,
       });
-      return reply(200, {
-        challengeId: id,
-        ref: `refs/heads/${String(body?.branch)}`,
-        expiresAt: Date.now() + 600_000,
-      });
+      return reply(200, { challengeId: id, ref: `refs/heads/${String(body?.branch)}`, expiresAt });
     }
     const status = /^\/api\/cli\/session-identity\/challenge\/(.+)$/u.exec(path);
     if (status && request.method === "GET") {
@@ -221,17 +236,20 @@ async function startFixture(bare: string): Promise<Fixture> {
       });
     }
     if (path === "/api/cli/session-identity/token") {
+      if (fixture.tokenRefusal)
+        return reply(fixture.tokenRefusal.status, fixture.tokenRefusal.body);
       if (!fixture.linked.has(fixture.login))
         return reply(409, { error: "github_account_not_linked", githubLogin: fixture.login });
       return reply(200, issue());
     }
     if (path === "/api/cli/session-identity/token/refresh") {
       if (fixture.refreshFails || !fixture.tokens.has(String(body?.accessToken)))
-        return reply(401, { error: "refresh_rejected" });
+        return reply(401, { error: fixture.refreshError });
       return reply(200, issue());
     }
     if (path === "/api/cli/session-identity/link") {
       if (auth !== "Bearer human_token") return reply(401, { error: "unauthorized" });
+      if (fixture.linkRefusal) return reply(fixture.linkRefusal.status, fixture.linkRefusal.body);
       fixture.linked.add(fixture.login);
       return reply(200, { linked: true, githubLogin: fixture.login });
     }
@@ -427,7 +445,9 @@ describe("identifying a session", () => {
     chmodSync(hook, 0o755);
     vi.stubEnv("PRIM_TEST_MARKER", "visible");
 
-    expect(await identifyNow()).toMatchObject({ status: "ok" });
+    // Only the push matters here, not how long the notice takes under load.
+    await identifyNow();
+    expect(remoteBranch(fixture.bare)).toBe(baseSha);
 
     const seen = readFileSync(dump, "utf8");
     expect(seen).toContain("PRIM_TEST_MARKER=visible");
@@ -521,13 +541,13 @@ describe("identifying a session", () => {
     expect(challengeCalls()).toHaveLength(1);
   });
 
-  it("after a failed refresh of an expired token, does not push a branch that exists", async () => {
+  it("after a refused refresh of an expired token, names it and pushes nothing", async () => {
     fixture.refreshAfterMs = 1_000;
     await identifyNow();
     fixture.refreshFails = true;
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 13 * 3_600_000);
     const outcome = await identifyNow();
-    expect(outcome).toMatchObject({ status: "failed", code: "branch_exists" });
+    expect(outcome).toMatchObject({ status: "failed", code: "session_revoked" });
     expect(challengeCalls()).toHaveLength(1);
   });
 });
@@ -720,5 +740,212 @@ describe("when the session cannot be identified", () => {
       cause: "acme/widgets is not connected to Primitive",
     });
     expect(remoteBranch(fixture.bare)).toBeUndefined();
+  });
+});
+
+describe("the server's refusals, by name", () => {
+  const UPDATE_PRIM = /update prim/u;
+  async function runAuth(...args: string[]) {
+    const stderr: string[] = [];
+    const stdout: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((value: string) => {
+      stderr.push(String(value));
+    });
+    vi.spyOn(console, "log").mockImplementation((value: string) => {
+      stdout.push(String(value));
+    });
+    await fresh();
+    const { registerAuthCommands } = await import("../commands/auth.js");
+    const program = new Command();
+    registerAuthCommands(program);
+    const cwd = process.cwd();
+    process.chdir(work);
+    try {
+      await program.parseAsync(["node", "prim", "auth", ...args]);
+    } finally {
+      process.chdir(cwd);
+      vi.restoreAllMocks();
+    }
+    return { stderr: stderr.join("\n"), stdout: stdout.join("\n") };
+  }
+
+  it.each([
+    ["identity_mismatch", { error: "identity_mismatch" }, "identity_mismatch"],
+    [
+      "a rejected challenge's reason",
+      { error: "challenge_rejected", reason: "identity_mismatch" },
+      "identity_mismatch",
+    ],
+    [
+      "a conflicting push",
+      { error: "challenge_rejected", reason: "conflicting_push" },
+      "conflicting_push",
+    ],
+    ["the 30-minute window", { error: "challenge_expired" }, "challenge_expired"],
+    [
+      "an exchanged challenge",
+      { error: "challenge_already_exchanged" },
+      "challenge_already_exchanged",
+    ],
+    ["a notice not received yet", { error: "challenge_pending" }, "webhook_timeout"],
+  ])("names %s at token exchange instead of asking to update prim", async (_name, body, code) => {
+    fixture.tokenRefusal = { status: 409, body };
+    const modules = await fresh();
+    const outcome = await identifyNow(modules);
+    expect(outcome).toMatchObject({ status: "failed", code });
+    if (outcome.status !== "failed") throw new Error("expected failure");
+    expect(modules.identity.sessionIdentityMessage(outcome)).not.toMatch(UPDATE_PRIM);
+  });
+
+  it("keeps a late link's expiry, rather than calling it a missing branch", async () => {
+    fixture.linked.clear();
+    expect(await identifyNow()).toMatchObject({ status: "link_required" });
+    // The person took longer than the server's exchange window to link.
+    fixture.tokenRefusal = { status: 409, body: { error: "challenge_expired" } };
+    fixture.linkRefusal = { status: 409, body: { error: "challenge_expired" } };
+    const { stdout } = await runAuth("link");
+    expect(JSON.parse(stdout)).toMatchObject({ error: "challenge_expired" });
+    expect(JSON.parse(stdout).detail).toContain("for 30 minutes");
+    expect(challengeCalls()).toHaveLength(1);
+  });
+
+  it.each([
+    ["push_after_expiry", "push_after_expiry"],
+    ["repository_mismatch", "repository_mismatch"],
+    ["conflicting_push", "conflicting_push"],
+    ["unsupported_sender", "unsupported_sender"],
+    ["a reason this prim does not know", "challenge_rejected"],
+  ])("names a challenge rejected for %s", async (reason, code) => {
+    fixture.reject = reason;
+    const modules = await fresh();
+    const outcome = await identifyNow(modules);
+    expect(outcome).toMatchObject({ status: "failed", code });
+    expect(fixture.calls.some((call) => call.path.endsWith("/token"))).toBe(false);
+  });
+
+  it("retries a refused push with the challenge it opened, not a second one", async () => {
+    const refuse = join(fixture.bare, "hooks", "pre-receive");
+    writeFileSync(refuse, "#!/bin/sh\nexit 1\n");
+    chmodSync(refuse, 0o755);
+    expect(await identifyNow()).toMatchObject({ status: "failed", code: "push_refused" });
+    rmSync(refuse);
+    // The server refuses a second open challenge for the branch.
+    expect(await identifyNow()).toMatchObject({ status: "ok" });
+    expect(challengeCalls()).toHaveLength(1);
+  });
+
+  it("asks whether a push it lost track of landed, instead of calling the branch taken", async () => {
+    const refuse = join(fixture.bare, "hooks", "pre-receive");
+    writeFileSync(refuse, "#!/bin/sh\nexit 1\n");
+    chmodSync(refuse, 0o755);
+    expect(await identifyNow()).toMatchObject({ status: "failed", code: "push_refused" });
+    rmSync(refuse);
+    // The branch reached GitHub after all, at the session's base commit.
+    git(work, "push", "--quiet", "--no-verify", "origin", `${baseSha}:refs/heads/${BRANCH}`);
+    expect(await identifyNow()).toMatchObject({ status: "ok" });
+    expect(challengeCalls()).toHaveLength(1);
+  });
+
+  it.each([
+    [409, "challenge_already_open", "challenge_open"],
+    [429, "too_many_open_challenges", "too_many_challenges"],
+  ])("names a challenge start refused with %i %s", async (status, error, code) => {
+    fixture.challengeRefusal = { status, body: { error } };
+    const modules = await fresh();
+    const outcome = await identifyNow(modules);
+    expect(outcome).toMatchObject({ status: "failed", code });
+    if (outcome.status !== "failed") throw new Error("expected failure");
+    expect(modules.identity.sessionIdentityMessage(outcome)).not.toMatch(UPDATE_PRIM);
+    expect(remoteBranch(fixture.bare)).toBeUndefined();
+  });
+
+  it.each(["jane", "jane@localhost", "jane@example.com "])(
+    "leaves out an email hint Primitive would refuse: %j",
+    async (email) => {
+      vi.stubEnv("CLAUDE_CODE_USER_EMAIL", email);
+      expect(await identifyNow()).toMatchObject({ status: "ok" });
+      const body = challengeCalls()[0]?.body ?? {};
+      if (email.trim() === "jane@example.com") expect(body.userEmailHint).toBe("jane@example.com");
+      else expect(body).not.toHaveProperty("userEmailHint");
+    },
+  );
+
+  it("refuses a session ID Primitive would refuse, before pushing", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE_SESSION_ID", "session 01/../x");
+    expect(await identifyNow()).toMatchObject({ status: "failed", code: "session_id_missing" });
+    expect(remoteBranch(fixture.bare)).toBeUndefined();
+  });
+
+  it("ends a revoked session's token for good, with the reason, and sends nothing", async () => {
+    await identifyNow();
+    // An admin removes the member's GitHub link: every token stops working.
+    fixture.tokens.clear();
+    fixture.refreshError = "session_revoked";
+    const modules = await fresh();
+    await expect(modules.client.getClient().get("/api/cli/decisions/recent")).rejects.toThrow(
+      /no longer accepts this session's member token/u,
+    );
+    expect(
+      readdirSync(config).filter((name) => /^session_identity_\w+\.json$/u.test(name)),
+    ).toEqual([]);
+    expect(modules.machine.machineContext()).toBeUndefined();
+    // Neither hooks nor an explicit retry push or open anything.
+    expect(await identifyNow()).toMatchObject({ status: "failed", code: "session_revoked" });
+    const status = await (await import("../commands/auth.js")).verifyAuthStatus();
+    expect(status).toMatchObject({ authenticated: false, recoveryReason: "session_revoked" });
+    expect(challengeCalls()).toHaveLength(1);
+    expect(
+      fixture.calls.filter(
+        (call) => call.path === "/api/cli/decisions/recent" && call.auth !== "Bearer prim_sess_1",
+      ),
+    ).toEqual([]);
+  });
+
+  it("names the session token, not the environment's credentials, in auth status", async () => {
+    await identifyNow();
+    fixture.tokens.clear();
+    await fresh();
+    const status = await (await import("../commands/auth.js")).verifyAuthStatus();
+    expect(status).toMatchObject({ authenticated: false, recoveryReason: "session_revoked" });
+    expect(status.recoveryDetail).not.toMatch(/--new-installation/u);
+  });
+
+  it("names the environment credential when refresh is refused at authentication", async () => {
+    fixture.refreshAfterMs = 1_000;
+    await identifyNow();
+    fixture.refreshFails = true;
+    fixture.refreshError = "Unauthorized";
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2_000);
+    const outcome = await identifyNow();
+    expect(outcome).toMatchObject({ status: "failed", code: "environment_credential_rejected" });
+    if (outcome.status !== "failed") throw new Error("expected failure");
+    expect(outcome.remedy).toContain("--new-environment");
+  });
+
+  it.each([
+    [
+      "member_already_linked",
+      { error: "member_already_linked", linkedGithubLogin: "jane-old" },
+      /already linked to GitHub account @jane-old.*remove that link in Primitive's settings first/su,
+    ],
+    [
+      "github_account_linked_to_another_member",
+      { error: "github_account_linked_to_another_member" },
+      /@octojane is already linked to another member/u,
+    ],
+    [
+      "identity_mismatch",
+      { error: "identity_mismatch" },
+      /different Primitive member than the one signed in to Claude.*sign in as yourself/su,
+    ],
+  ])("explains a link refused with %s", async (code, body, message) => {
+    fixture.linked.clear();
+    expect(await identifyNow()).toMatchObject({ status: "link_required" });
+    fixture.linkRefusal = { status: 409, body };
+    const { stdout } = await runAuth("link");
+    const result = JSON.parse(stdout);
+    expect(result).toMatchObject({ authenticated: false, error: code });
+    expect(result.detail).toMatch(message);
+    expect(result.detail).not.toMatch(UPDATE_PRIM);
   });
 });

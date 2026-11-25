@@ -56,8 +56,14 @@ const SESSION_ID_VARIABLE = "CLAUDE_CODE_REMOTE_SESSION_ID";
 /** Undocumented Claude Code variable; sent only as a cross-check. */
 const USER_EMAIL_VARIABLE = "CLAUDE_CODE_USER_EMAIL";
 const SESSION_TOKEN_PREFIX = "prim_sess_";
-const SESSION_BRANCH = /^claude\/[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/u;
+const SESSION_BRANCH = /^claude\/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u;
+/** The session IDs and email hints Primitive's challenge request accepts. */
+const SESSION_ID = /^[A-Za-z0-9._:-]{1,200}$/u;
+const EMAIL_HINT =
+  /^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/u;
+/** A recorded challenge is reused only while there is still time to push and be seen. */
+const CHALLENGE_REUSE_MARGIN_MS = 30_000;
 
 export const SESSION_IDENTITY_ROUTES = {
   challenge: "/api/cli/session-identity/challenge",
@@ -137,6 +143,73 @@ function failure(code: string, cause: string, remedy: string): SessionIdentityFa
 
 const RETRY_REMEDY = "run `prim setup --cloud` to try again";
 const NEW_SESSION_REMEDY = "start a new cloud session";
+/** The fix for an environment credential Primitive refuses. */
+export const ENVIRONMENT_CREDENTIAL_REMEDY =
+  'ask the organization admin who set up the environment to check its credential, or to mint a replacement with `prim auth enroll --new-environment "<name>" --print-env`; then start a new cloud session';
+
+/** A session whose member token Primitive no longer accepts. Only a new session recovers. */
+const SESSION_REVOKED = failure(
+  "session_revoked",
+  "Primitive no longer accepts this session's member token: an organization admin revoked the session or the member's GitHub link, the member left the organization, or the token was renewed elsewhere",
+  `${NEW_SESSION_REMEDY}, which identifies you again through GitHub (if your GitHub link was removed, run \`prim auth link\` there when it asks)`,
+);
+/** A verified challenge is exchangeable, and linkable, for a limited time. */
+const CHALLENGE_WINDOW_PASSED = failure(
+  "challenge_expired",
+  "this session's identity check expired before it was exchanged for a token (a verified check stays usable, including for linking a GitHub account, for 30 minutes)",
+  `${NEW_SESSION_REMEDY}, and if it asks you to link your GitHub account, run \`prim auth link\` there right away`,
+);
+const CHALLENGE_GONE = failure(
+  "challenge_not_found",
+  "Primitive no longer knows this session's identity check (the environment credential may have been replaced since)",
+  NEW_SESSION_REMEDY,
+);
+/** Failures that no retry in this session can get past. */
+const FINAL_CODES = new Set(["session_revoked", "environment_credential_rejected"]);
+
+/** Why Primitive rejected the push that was meant to identify the session. */
+function rejectionFailure(reason: unknown, repository: string): SessionIdentityFailure {
+  switch (reason) {
+    case "identity_mismatch":
+      return failure(
+        "identity_mismatch",
+        "the session branch was created by a GitHub account linked to a different Primitive member than the one signed in to Claude, so Primitive attributes this session to no one",
+        `${NEW_SESSION_REMEDY}; if it happens again, ask an organization admin to check members' GitHub links`,
+      );
+    case "push_after_expiry":
+      return failure(
+        "push_after_expiry",
+        `GitHub's notice of the identity push to ${repository} reached Primitive after the identity check had expired`,
+        `${NEW_SESSION_REMEDY}; if it happens again, check that Primitive's GitHub App on ${repository} delivers its notices`,
+      );
+    case "repository_mismatch":
+      return failure(
+        "repository_mismatch",
+        `Primitive received the identity push from a different repository than ${repository}`,
+        `check that this checkout's origin is ${repository} on GitHub, then ${NEW_SESSION_REMEDY}`,
+      );
+    case "conflicting_push":
+      return failure(
+        "conflicting_push",
+        `more than one GitHub account created the session branch on ${repository}, so Primitive cannot tell who started this session`,
+        NEW_SESSION_REMEDY,
+      );
+    case "unsupported_sender":
+      return failure(
+        "unsupported_sender",
+        `the session branch on ${repository} was created by a GitHub App or bot, not by a person's GitHub account`,
+        `check that the cloud environment pushes to GitHub as the person who started the session, then ${NEW_SESSION_REMEDY}`,
+      );
+    default:
+      return failure(
+        "challenge_rejected",
+        `Primitive rejected the identity push to ${repository}${
+          typeof reason === "string" ? ` (${terminalSafeLine(reason).slice(0, 120)})` : ""
+        }`,
+        `${NEW_SESSION_REMEDY}; if it happens again, ask an organization admin to check Primitive's GitHub App on ${repository}`,
+      );
+  }
+}
 
 /** The one-sentence message for an outcome, in the style of the cloud notices. */
 export function sessionIdentityMessage(
@@ -172,10 +245,10 @@ function sessionContext(deps: MachineDependencies): SessionContext | SessionIden
       'ask an organization admin to create one with `prim auth enroll --new-environment "<name>" --print-env` and add it to the environment, then start a new cloud session',
     );
   const sessionId = env[SESSION_ID_VARIABLE]?.trim();
-  if (!sessionId || !machineString(sessionId, 256))
+  if (!sessionId || !SESSION_ID.test(sessionId))
     return failure(
       "session_id_missing",
-      `this Claude Code cloud session does not report its session ID (${SESSION_ID_VARIABLE})`,
+      `this Claude Code cloud session does not report a session ID Primitive accepts (${SESSION_ID_VARIABLE})`,
       NEW_SESSION_REMEDY,
     );
   const apiUrl = machineApiUrl(env.PRIM_API_URL?.trim() || DEFAULT_API_URL);
@@ -483,7 +556,7 @@ function environmentFailure(error: unknown, apiUrl: string): SessionIdentityFail
     return failure(
       "environment_credential_rejected",
       "Primitive rejected the cloud environment's credential",
-      'ask the organization admin who set up the environment to check its credential, or to mint a replacement with `prim auth enroll --new-environment "<name>" --print-env`; then start a new cloud session',
+      ENVIRONMENT_CREDENTIAL_REMEDY,
     );
   const host = (() => {
     try {
@@ -602,6 +675,9 @@ async function pollChallenge(
       unreachable = error;
       continue;
     }
+    if (answer.status === 404) return CHALLENGE_GONE;
+    if (answer.status === 401 || answer.status === 403)
+      return environmentFailure(new MachineAuthError("rejected", "rejected", true), apiUrl);
     if (answer.status < 200 || answer.status > 299) {
       unreachable = new MachineAuthError("identity_unavailable", `HTTP ${answer.status}`);
       continue;
@@ -620,22 +696,8 @@ async function pollChallenge(
         `the identity check expired before Primitive received GitHub's notice of the push to ${repository}`,
         NEW_SESSION_REMEDY,
       );
-    if (status?.status === "rejected") {
-      const reason = (status as { reason?: unknown }).reason;
-      if (reason === "identity_mismatch")
-        return failure(
-          "identity_mismatch",
-          "the session branch was created by a GitHub account linked to a different Primitive member than the one signed in to Claude, so Primitive attributes this session to no one",
-          `${NEW_SESSION_REMEDY}; if it happens again, ask an organization admin to check members' GitHub links`,
-        );
-      return failure(
-        "challenge_rejected",
-        `Primitive rejected the identity push to ${repository}${
-          typeof reason === "string" ? ` (${terminalSafeLine(reason).slice(0, 120)})` : ""
-        }`,
-        `${NEW_SESSION_REMEDY}; if it happens again, ask an organization admin to check Primitive's GitHub App on ${repository}`,
-      );
-    }
+    if (status?.status === "rejected")
+      return rejectionFailure((status as { reason?: unknown }).reason, repository);
   }
   if (unreachable) return environmentFailure(unreachable, apiUrl);
   return failure(
@@ -740,34 +802,91 @@ async function recordFor(
   };
 }
 
+type Refreshed =
+  | { status: "ok"; record: SessionTokenRecord }
+  /** Primitive refused the token or the environment for good. */
+  | { status: "refused"; failure: SessionIdentityFailure }
+  | { status: "unavailable" };
+
 async function refreshToken(
   context: SessionContext,
   record: SessionTokenRecord,
   deps: SessionIdentityDependencies,
   signal?: AbortSignal,
-): Promise<SessionTokenRecord | undefined> {
+): Promise<Refreshed> {
+  let answer: ApiAnswer;
   try {
-    const answer = await environmentRequest(
+    answer = await environmentRequest(
       "POST",
       SESSION_IDENTITY_ROUTES.refresh,
       { accessToken: record.accessToken },
       deps,
       signal,
     );
-    const token = answer.status === 200 ? parseTokenAnswer(answer.value) : undefined;
-    if (!token || token.userId !== record.userId || token.organizationId !== record.organizationId)
-      return undefined;
-    // The member and their verified binding are unchanged; only the token is new.
+  } catch (error) {
+    signal?.throwIfAborted();
+    return error instanceof MachineAuthError && error.terminal
+      ? { status: "refused", failure: environmentFailure(error, context.apiUrl) }
+      : { status: "unavailable" };
+  }
+  const code = answerError(answer);
+  // The refresh route refuses a token it will never renew by name; any other
+  // refusal is the authentication layer refusing the environment credential.
+  if (answer.status === 401 && (code === "session_revoked" || code === "invalid_session_token"))
+    return { status: "refused", failure: SESSION_REVOKED };
+  if (answer.status === 401 || answer.status === 403)
     return {
+      status: "refused",
+      failure: environmentFailure(
+        new MachineAuthError("rejected", "rejected", true),
+        context.apiUrl,
+      ),
+    };
+  const token = answer.status === 200 ? parseTokenAnswer(answer.value) : undefined;
+  if (!token || token.userId !== record.userId || token.organizationId !== record.organizationId)
+    return { status: "unavailable" };
+  // The member and their verified binding are unchanged; only the token is new.
+  return {
+    status: "ok",
+    record: {
       ...record,
       accessToken: token.accessToken,
       expiresAt: token.expiresAt,
       refreshAfter: token.refreshAfter,
       displayName: token.displayName,
-    };
-  } catch {
-    signal?.throwIfAborted();
-    return undefined;
+    },
+  };
+}
+
+/** Why Primitive would not exchange a challenge, for the refusals it names. */
+function exchangeRefusal(
+  answer: ApiAnswer,
+  repository: string,
+): SessionIdentityFailure | undefined {
+  if (answer.status === 404) return CHALLENGE_GONE;
+  if (answer.status !== 409) return undefined;
+  switch (answerError(answer)) {
+    case "identity_mismatch":
+      return rejectionFailure("identity_mismatch", repository);
+    case "challenge_rejected":
+      return rejectionFailure(answer.value?.reason, repository);
+    case "challenge_expired":
+      return CHALLENGE_WINDOW_PASSED;
+    case "challenge_already_exchanged":
+      return failure(
+        "challenge_already_exchanged",
+        "this session's identity check was already exchanged for a token this VM does not hold",
+        NEW_SESSION_REMEDY,
+      );
+    case "challenge_pending":
+      // Recorded as a late notice, so a later attempt polls this challenge again.
+      return failure(
+        "webhook_timeout",
+        `GitHub's notice of the identity push to ${repository} has not reached Primitive yet`,
+        `check that Primitive's GitHub App is installed with access to ${repository}, then ${RETRY_REMEDY}`,
+      );
+    default:
+      return undefined;
   }
 }
 
@@ -801,6 +920,11 @@ async function exchangeChallenge(
       challengeExpiresAt: challenge.challengeExpiresAt,
     };
   }
+  const refused = exchangeRefusal(
+    answer,
+    (repositoryRoot && githubRepositoryFullName(repositoryRoot)) || "the repository",
+  );
+  if (refused) return refused;
   const token = answer.status === 200 ? parseTokenAnswer(answer.value) : undefined;
   if (!token) {
     if (answer.status === 401 || answer.status === 403)
@@ -903,6 +1027,17 @@ async function challengeAndPush(
     ["ls-remote", "--exit-code", "origin", `refs/heads/${branch}`],
     signal,
   );
+  // An earlier attempt in this session that opened a challenge for this branch
+  // may have pushed it after all (a push reported as timed out): Primitive
+  // decides from GitHub's notice whether that push proves anything, so ask it.
+  const recorded =
+    previous?.branch === branch && previous.challengeId
+      ? { challengeId: previous.challengeId, challengeExpiresAt: previous.challengeExpiresAt ?? 0 }
+      : undefined;
+  if (remote.ok && recorded) {
+    Object.assign(attempt, recorded);
+    return { ...recorded, repository };
+  }
   if (remote.ok)
     return failure(
       "branch_exists",
@@ -916,6 +1051,16 @@ async function challengeAndPush(
       `check the session's access to ${repository} on GitHub, then ${RETRY_REMEDY}`,
     );
 
+  // A challenge an earlier attempt opened for this branch and commit, whose
+  // push never landed, is still open: push for it rather than open another.
+  if (
+    recorded &&
+    previous?.baseSha === baseSha &&
+    recorded.challengeExpiresAt > Date.now() + CHALLENGE_REUSE_MARGIN_MS
+  ) {
+    Object.assign(attempt, recorded);
+    return pushSessionBranch(root, repository, branch, baseSha, recorded, signal);
+  }
   let answer: ApiAnswer;
   try {
     const email = env[USER_EMAIL_VARIABLE]?.trim();
@@ -927,7 +1072,8 @@ async function challengeAndPush(
         claudeSessionId: context.sessionId,
         branch,
         baseSha,
-        ...(email && machineString(email, 320) ? { userEmailHint: email } : {}),
+        // Only a cross-check: one Primitive would refuse is left out, not sent.
+        ...(email && email.length <= 320 && EMAIL_HINT.test(email) ? { userEmailHint: email } : {}),
       },
       deps,
       signal,
@@ -944,10 +1090,22 @@ async function challengeAndPush(
     );
   if (answer.status === 401 || answer.status === 403)
     return environmentFailure(new MachineAuthError("rejected", "rejected", true), context.apiUrl);
+  if (answer.status === 409 && answerError(answer) === "challenge_already_open")
+    return failure(
+      "challenge_open",
+      `an identity check for ${branch} on ${repository} is still open from an earlier attempt that this VM did not record`,
+      `wait five minutes, then ${RETRY_REMEDY}`,
+    );
+  if (answer.status === 429)
+    return failure(
+      "too_many_challenges",
+      "too many sessions of this cloud environment are being identified at once",
+      `wait a few minutes, then ${RETRY_REMEDY}`,
+    );
   const challengeId = answer.value?.challengeId;
   const challengeExpiresAt = parseInstant(answer.value?.expiresAt);
   if (answer.status !== 200 || !machineString(challengeId, 256) || !challengeExpiresAt)
-    return answer.status >= 500 || answer.status === 429
+    return answer.status >= 500
       ? environmentFailure(
           new MachineAuthError("identity_unavailable", `HTTP ${answer.status}`),
           context.apiUrl,
@@ -957,16 +1115,39 @@ async function challengeAndPush(
   if (answer.value?.ref !== `refs/heads/${branch}`) return SERVER_CONTRACT_FAILURE;
   attempt.challengeId = challengeId;
   attempt.challengeExpiresAt = challengeExpiresAt;
+  return pushSessionBranch(
+    root,
+    repository,
+    branch,
+    baseSha,
+    { challengeId, challengeExpiresAt },
+    signal,
+  );
+}
 
-  // An internal push of one existing commit to a branch that does not exist
-  // yet: no upstream, no force, nothing else. --no-verify and the empty hooks
-  // path keep every hook out of it (the repository's pre-push hook and prim's
-  // own git hooks), since it is not the user's push and must not be captured
-  // or gated as one. This is the only place prim skips hooks. Push settings
-  // the checkout may carry would add to it (push.followTags sends annotated
-  // tags, push.recurseSubmodules pushes submodules, push.gpgSign and
-  // push.pushOption send more than the ref), so each is overridden: the
-  // explicit refspec is the only thing that leaves.
+/**
+ * Create the session branch on GitHub at its base commit, for an open challenge.
+ *
+ * An internal push of one existing commit to a branch that does not exist
+ * yet: no upstream, no force, nothing else. --no-verify and the empty hooks
+ * path keep every hook out of it (the repository's pre-push hook and prim's
+ * own git hooks), since it is not the user's push and must not be captured
+ * or gated as one. This is the only place prim skips hooks. Push settings
+ * the checkout may carry would add to it (push.followTags sends annotated
+ * tags, push.recurseSubmodules pushes submodules, push.gpgSign and
+ * push.pushOption send more than the ref), so each is overridden: the
+ * explicit refspec is the only thing that leaves.
+ */
+async function pushSessionBranch(
+  root: string,
+  repository: string,
+  branch: string,
+  baseSha: string,
+  challenge: { challengeId: string; challengeExpiresAt: number },
+  signal?: AbortSignal,
+): Promise<
+  SessionIdentityFailure | { challengeId: string; challengeExpiresAt: number; repository: string }
+> {
   const push = await git(
     root,
     [
@@ -1003,7 +1184,7 @@ async function challengeAndPush(
           `creating the session branch ${branch} on ${repository} was refused (${gitDetail(push.stderr)})`,
           `check that the GitHub account that started this session can push to ${repository} and that the cloud environment lets the session push, then ${NEW_SESSION_REMEDY}`,
         );
-  return { challengeId, challengeExpiresAt, repository };
+  return { ...challenge, repository };
 }
 
 export type EnsureSessionIdentityOptions = {
@@ -1054,14 +1235,31 @@ export async function ensureSessionIdentity(
       if (record && !forced && tokenFresh(record)) return identified(record, true);
       if (record) {
         const refreshed = await refreshToken(ctx, record, deps, options.signal);
-        if (refreshed) {
-          writeToken(ctx, refreshed);
-          return identified(refreshed, true);
+        if (refreshed.status === "ok") {
+          writeToken(ctx, refreshed.record);
+          return identified(refreshed.record, true);
+        }
+        if (refreshed.status === "refused") {
+          // The token will never work again: drop it, so nothing more is
+          // attributed through it, and tell every later process why.
+          rmSync(ctx.tokenPath, { force: true });
+          writeState(ctx, {
+            sessionId: ctx.sessionId,
+            status: "failed",
+            code: refreshed.failure.code,
+            cause: refreshed.failure.cause,
+            remedy: refreshed.failure.remedy,
+            ...(record.repositoryRoot ? { repositoryRoot: record.repositoryRoot } : {}),
+            at: Date.now(),
+          });
+          return refreshed.failure;
         }
         // Not refreshed, but still good for a while: keep working with it.
         if (!forced && tokenValid(record)) return identified(record, true);
       }
       const state = readState(ctx);
+      // Nothing in this session gets past these; a new session is the fix.
+      if (!record && state && FINAL_CODES.has(state.code)) return outcomeFromState(state);
       const root =
         (options.cwd ? gitToplevel(options.cwd) : null) ??
         record?.repositoryRoot ??
@@ -1231,6 +1429,48 @@ export async function acquireSessionCredential(
   );
 }
 
+/** Why Primitive would not link the account, for the refusals it names. */
+function linkRefusal(answer: ApiAnswer, githubLogin: string): SessionIdentityFailure | undefined {
+  const login = (value: unknown) =>
+    machineString(value, 64) ? terminalSafeLine(value) : undefined;
+  switch (answerError(answer)) {
+    case "member_already_linked": {
+      const current =
+        login(answer.value?.linkedGithubLogin) ??
+        login(answer.value?.currentGithubLogin) ??
+        login(answer.value?.githubLogin);
+      return failure(
+        "member_already_linked",
+        `your Primitive account is already linked to ${current ? `GitHub account @${current}` : "another GitHub account"}, and Primitive links one GitHub account per member`,
+        `remove that link in Primitive's settings first, then run \`prim auth link\` again (in a new cloud session if this one has passed its 30 minutes)`,
+      );
+    }
+    case "github_account_linked_to_another_member":
+      return failure(
+        "github_account_linked_to_another_member",
+        `GitHub account @${githubLogin} is already linked to another member of this organization`,
+        `sign in as the member it is linked to; if that link is wrong, ask an organization admin to remove it in Primitive's settings, then ${NEW_SESSION_REMEDY}`,
+      );
+    case "identity_mismatch":
+      return failure(
+        "identity_mismatch",
+        "the person who signed in is a different Primitive member than the one signed in to Claude for this session, so Primitive refused the link and attributes this session to no one",
+        `${NEW_SESSION_REMEDY}, and when \`prim auth link\` asks, sign in as yourself`,
+      );
+    case "challenge_expired":
+      return CHALLENGE_WINDOW_PASSED;
+    case "challenge_not_found":
+    case "challenge_not_verified":
+      return failure(
+        "link_failed",
+        "this session's identity check can no longer be linked",
+        `${NEW_SESSION_REMEDY} and run \`prim auth link\` there as soon as it asks`,
+      );
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Link the GitHub account that pushed a verified challenge to the person
  * signed in with `humanAccessToken`, then take that member's token. The
@@ -1265,6 +1505,8 @@ export async function linkSessionIdentity(
   }
   if (answer.status !== 200 || answer.value?.linked !== true) {
     const code = answerError(answer);
+    const refused = linkRefusal(answer, challenge.githubLogin);
+    if (refused) return refused;
     return failure(
       "link_failed",
       `Primitive did not link GitHub account @${challenge.githubLogin}${

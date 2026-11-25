@@ -351,4 +351,24 @@ describe("session identity at SessionStart", () => {
       "Primitive could not identify who started this Claude Code cloud session: GitHub's notice of the identity push to acme/widgets did not reach Primitive within 15 s. To fix it, check that Primitive's GitHub App is installed with access to acme/widgets, then run `prim setup --cloud` to try again. Until then, nothing this session captures is sent to Primitive.",
     );
   });
+
+  it("keeps the identity notice when the environment credential is what failed", async () => {
+    // The refused environment credential also ends the machine session.
+    mocks.sessionEnded.mockReturnValue(true);
+    mocks.identityMode.mockReturnValue(true);
+    mocks.identify.mockResolvedValue({
+      status: "failed",
+      code: "environment_credential_rejected",
+      cause: "Primitive rejected the cloud environment's credential",
+      remedy:
+        'ask the organization admin who set up the environment to check its credential, or to mint a replacement with `prim auth enroll --new-environment "<name>" --print-env`; then start a new cloud session',
+    });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const message = (output as Output).systemMessage ?? "";
+    expect(message).toMatch(
+      /^Primitive could not identify who started this Claude Code cloud session: Primitive rejected the cloud environment's credential\./u,
+    );
+    expect(message).toContain("--new-environment");
+    expect(message).not.toContain("--new-installation");
+  });
 });
