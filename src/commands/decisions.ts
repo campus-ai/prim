@@ -72,11 +72,7 @@ import {
   formatRelateJson,
   isRelateRejection,
 } from "../decisions/link.js";
-import {
-  LocationScopeInputError,
-  scopeDirectories,
-  scopeGlobs,
-} from "../decisions/location-scope.js";
+import { LocationScopeInputError, locationScopeFromOptions } from "../decisions/location-scope.js";
 import { fetchRecent, formatRecentHuman, formatRecentJson } from "../decisions/recent.js";
 import {
   RepairAuthorizationError,
@@ -291,25 +287,6 @@ function rejectLocationScope(command: "create" | "rescope", error: LocationScope
   console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
   console.log(JSON.stringify({ ok: false, error: "invalid_location_scope" }, null, 2));
   process.exitCode = EXIT_USAGE;
-}
-
-/** The wire location scope; throws LocationScopeInputError for a selector the server ignores. */
-function locationScopeFromOptions(
-  options: Pick<RescopeOptions, "scopeRepo" | "scopeDir" | "scopeGlob" | "scopeBranch">,
-): DecisionLocationScope | undefined {
-  const location: DecisionLocationScope = {
-    ...(options.scopeRepo ? { repository: true } : {}),
-    ...(options.scopeDir && options.scopeDir.length > 0
-      ? { directories: scopeDirectories(options.scopeDir) }
-      : {}),
-    ...(options.scopeGlob && options.scopeGlob.length > 0
-      ? { globs: scopeGlobs(options.scopeGlob) }
-      : {}),
-    ...(options.scopeBranch && options.scopeBranch.length > 0
-      ? { branches: options.scopeBranch }
-      : {}),
-  };
-  return Object.keys(location).length === 0 ? undefined : location;
 }
 
 export function registerDecisionsCommands(program: Command): void {
