@@ -868,6 +868,28 @@ async function challengeAndPush(
         NEW_SESSION_REMEDY,
       );
   }
+  // The branch is created at a commit GitHub already has, so the push
+  // publishes no commit. Identification can run after the agent committed
+  // locally (an explicit retry, or a session start that never recorded its
+  // base), and then HEAD carries work the person never chose to push.
+  const published = await git(
+    root,
+    [
+      "for-each-ref",
+      "--count=1",
+      "--format=%(refname)",
+      "--contains",
+      baseSha,
+      "refs/remotes/origin/",
+    ],
+    signal,
+  );
+  if (!published.ok || published.stdout.trim() === "")
+    return failure(
+      "unpublished_commits",
+      `this checkout's commit ${baseSha.slice(0, 12)} is not on GitHub yet, and creating the session branch at it would publish it, so prim pushed nothing`,
+      `${NEW_SESSION_REMEDY} and let it identify you before committing`,
+    );
   attempt.baseSha = baseSha;
   // Creation only: a branch already on GitHub (a resumed VM, or the agent
   // pushed it) proves nothing about who started this session, so push nothing.

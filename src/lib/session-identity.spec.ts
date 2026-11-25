@@ -638,6 +638,32 @@ describe("when the session cannot be identified", () => {
     expect(challengeCalls()).toHaveLength(0);
   });
 
+  it("pushes no local commit: the branch is created only at a commit GitHub has", async () => {
+    // The agent committed before the session was identified.
+    git(work, "commit", "--quiet", "--allow-empty", "-m", "local work");
+    const local = git(work, "rev-parse", "HEAD");
+    const outcome = await identifyNow();
+    expect(outcome).toMatchObject({ status: "failed", code: "unpublished_commits" });
+    if (outcome.status !== "failed") throw new Error("expected failure");
+    expect(outcome.cause).toBe(
+      `this checkout's commit ${local.slice(0, 12)} is not on GitHub yet, and creating the session branch at it would publish it, so prim pushed nothing`,
+    );
+    expect(remoteBranch(fixture.bare)).toBeUndefined();
+    expect(() => git(fixture.bare, "cat-file", "-e", local)).toThrow();
+    expect(challengeCalls()).toHaveLength(0);
+  });
+
+  it("retries at the commit the session started from, not at later local work", async () => {
+    const refuse = join(fixture.bare, "hooks", "pre-receive");
+    writeFileSync(refuse, "#!/bin/sh\nexit 1\n");
+    chmodSync(refuse, 0o755);
+    expect(await identifyNow()).toMatchObject({ status: "failed", code: "push_refused" });
+    rmSync(refuse);
+    git(work, "commit", "--quiet", "--allow-empty", "-m", "local work");
+    expect(await identifyNow()).toMatchObject({ status: "ok" });
+    expect(remoteBranch(fixture.bare)).toBe(baseSha);
+  });
+
   it("pushes nothing from a checkout that is not on a claude/ branch", async () => {
     git(work, "checkout", "--quiet", "main");
     const outcome = await identifyNow();
