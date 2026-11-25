@@ -23,6 +23,12 @@ import { clearHooksWired, recordHooksWired } from "../lib/commit-heartbeat.js";
 import { MANAGED_GIT_HOOK_NAMES, ensureEffectiveGitHook } from "../lib/git-hooks.js";
 import { gitToplevel } from "../lib/git.js";
 import { type RepositoryBindingResult, bindRepository } from "../lib/repository-binding.js";
+import {
+  type SessionIdentityOutcome,
+  ensureSessionIdentity,
+  sessionIdentityMessage,
+  sessionIdentityMode,
+} from "../lib/session-identity.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import type { Agent } from "./agent.js";
 import { prepareCodexContext } from "./codex-context.js";
@@ -37,6 +43,26 @@ const REPOSITORY_BIND_TIMEOUT_MS = 1_000;
 // identity verification. One second failed that in a live VM and showed a
 // false "not connected" notice although later hooks connected fine.
 const CLOUD_REPOSITORY_BIND_TIMEOUT_MS = 10_000;
+// Identifying a session pushes its branch (10 s at most) and waits up to 15 s
+// for GitHub's notice to reach Primitive; the hook itself may run for 60 s.
+const SESSION_IDENTITY_TIMEOUT_MS = 35_000;
+
+/** What session start says when it could not tell who started the session. */
+export function sessionIdentityNotice(
+  outcome: SessionIdentityOutcome | undefined,
+): { notice: string; instruction: string } | undefined {
+  if (!outcome || outcome.status === "ok") return undefined;
+  const notice = `${sessionIdentityMessage(outcome)} Until then, nothing this session captures is sent to Primitive.`;
+  return outcome.status === "link_required"
+    ? {
+        notice,
+        instruction: `${notice} Before starting their task, tell the user this in one sentence. When they agree, run \`prim auth link\` as a background command (it waits until they finish signing in), and give them the sign-in URL and code it prints as soon as they appear.`,
+      }
+    : {
+        notice,
+        instruction: `${notice} Tell the user this in one sentence before starting their task.`,
+      };
+}
 
 // Keep these shared clauses in lockstep with the SKILL.md description. Claude
 // and Codex differ only in how they invoke the installed Prim workflow.
@@ -212,7 +238,29 @@ export async function processSessionStart(
   let skillState = { installed: 0, refreshed: 0 };
   let claudeBinding: RepositoryBindingResult | undefined;
   let bindFailure: unknown;
+  let identityNotice: ReturnType<typeof sessionIdentityNotice>;
   if (agent === "claude_code") {
+    // An organization-shared cloud environment: learn who started this
+    // session before anything is sent, so it is sent as them.
+    let identityMode = false;
+    try {
+      identityMode = sessionIdentityMode();
+    } catch {
+      // A misconfigured environment is diagnosed below like any other.
+    }
+    if (identityMode) {
+      try {
+        identityNotice = sessionIdentityNotice(
+          await ensureSessionIdentity({
+            cwd,
+            explicit: true,
+            signal: AbortSignal.timeout(SESSION_IDENTITY_TIMEOUT_MS),
+          }),
+        );
+      } catch {
+        // SessionStart is fail-soft; `prim setup --cloud` reports the identity step.
+      }
+    }
     const activeProject = await activeProjectRoot(cwd);
     projectRoot = activeProject?.root ?? null;
     active = projectRoot !== null;
@@ -318,8 +366,8 @@ export async function processSessionStart(
     // In a Claude Code cloud session an unbound active repository usually means
     // missing or rejected credentials or a blocked host, all of which otherwise
     // fail open without a word. Name the fix where the user and agent will see it.
-    let cloudNotice: string | undefined;
-    if (active && !claudeBinding && isClaudeCloudSession()) {
+    let cloudNotice: string | undefined = identityNotice?.notice;
+    if (active && !claudeBinding && isClaudeCloudSession() && !identityNotice) {
       try {
         cloudNotice = await diagnoseCloudSession({ cwd: projectRoot ?? cwd, bindFailure });
       } catch {
@@ -327,9 +375,11 @@ export async function processSessionStart(
       }
     }
     const additionalContext = [
-      cloudNotice
-        ? `${cloudNotice} Tell the user this in one sentence before starting their task.`
-        : undefined,
+      identityNotice
+        ? identityNotice.instruction
+        : cloudNotice
+          ? `${cloudNotice} Tell the user this in one sentence before starting their task.`
+          : undefined,
       claudeBinding ? claudeBindingReminder(claudeBinding, isClaudeCloudSession()) : undefined,
       active && skillState.installed > 0 ? PRIM_SKILL_REMINDER : undefined,
     ]

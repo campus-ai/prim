@@ -481,7 +481,7 @@ async function credentialResult(
   signal: AbortSignal,
 ): Promise<unknown> {
   try {
-    const current = cachedMachineCredential();
+    const current = cachedMachineCredential({ localEnvironment: true });
     const force =
       data.force === true &&
       (!current || data.observedTokenHash === tokenHash(current.accessToken));

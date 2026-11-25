@@ -3,9 +3,60 @@ import {
   classifyAuthCredential,
   classifyDaemonHealth,
   classifyRepositoryBinding,
+  classifySessionAuth,
 } from "./doctor.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("doctor auth line for a session identified through GitHub", () => {
+  it("names the person the session is attributed to", () => {
+    expect(
+      classifySessionAuth({
+        authenticated: true,
+        status: "valid",
+        reason: "verified",
+        tokenFile: null,
+        accessTokenExpiresInMs: 90_000,
+        accessTokenExpired: false,
+        refreshTokenPresent: false,
+        warnings: [],
+        principalKind: "session",
+        identity: "github",
+        displayName: "Jane Doe",
+        githubLogin: "octojane",
+      }),
+    ).toEqual({
+      name: "auth",
+      status: "ok",
+      detail:
+        "session attributed to Jane Doe (GitHub @octojane) · identified through GitHub · expires in 90s",
+    });
+  });
+
+  it("relays why the session is attributed to no one", () => {
+    const check = classifySessionAuth({
+      authenticated: false,
+      status: "invalid",
+      reason: "access_rejected",
+      tokenFile: null,
+      accessTokenExpiresInMs: null,
+      accessTokenExpired: false,
+      refreshTokenPresent: false,
+      warnings: [],
+      principalKind: "session",
+      identity: "github",
+      recoveryReason: "github_account_not_linked",
+      recoveryDetail:
+        "GitHub account @octojane started this Claude Code cloud session but is not linked to a Primitive account yet.",
+    });
+    expect(check).toEqual({
+      name: "auth",
+      status: "fail",
+      detail:
+        "session identity: GitHub account @octojane started this Claude Code cloud session but is not linked to a Primitive account yet.",
+    });
+  });
+});
 
 describe("doctor daemon check in Claude Code cloud sessions", () => {
   it("treats the cloud opt-out as healthy: capture delivers directly", () => {

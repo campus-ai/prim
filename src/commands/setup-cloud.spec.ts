@@ -939,3 +939,76 @@ describe("agent contract in cloud setup output", () => {
     });
   });
 });
+
+describe("the identity step in a session identity environment", () => {
+  function identityHarness(identify: Record<string, unknown>) {
+    const root = repo(true);
+    const h = harness({ cwd: root });
+    h.deps.env = { ...h.deps.env, PRIM_CLOUD_IDENTITY: "session" };
+    const run = h.deps.run;
+    h.deps.run = (args, capture) => {
+      if (args.join(" ") === "auth identify --json") {
+        h.calls.push(args);
+        return { code: identify.status === "ok" ? 0 : 1, stdout: JSON.stringify(identify) };
+      }
+      return run(args, capture);
+    };
+    return h;
+  }
+
+  it("identifies the session first, names the person, then sets up as before", () => {
+    const { deps, calls, notes, exit } = identityHarness({
+      status: "ok",
+      identity: "github",
+      displayName: "Jane Doe",
+      githubLogin: "octojane",
+    });
+    setupCloudSession(deps);
+    expect(calls).toEqual([
+      ["auth", "identify", "--json"],
+      ["auth", "status", "--json"],
+      ["daemon", "stop"],
+      ["hooks", "install"],
+      ["enable", "--non-interactive"],
+    ]);
+    expect(notes).toContain("identity · ok: attributed to Jane Doe (GitHub @octojane)");
+    expect(printed[0]).toMatchObject({ ok: true, results: { identity: "ok" } });
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing link with its remedy and tells the agent to run prim auth link", () => {
+    const { deps, calls, exit } = identityHarness({
+      status: "link_required",
+      githubLogin: "octojane",
+    });
+    setupCloudSession(deps);
+    expect(calls).toEqual([["auth", "identify", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      ok: false,
+      results: { identity: "link_required" },
+      remedies: [
+        "identity · link required: GitHub account @octojane is not linked to a Primitive account yet; run `prim auth link` and sign in at the URL it prints with the code it shows (once; later sessions identify you automatically)",
+      ],
+      instructions: expect.stringContaining("run `prim auth link` as a background command"),
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("reports a failure with its cause and fix, and skips checks that would fail for it", () => {
+    const { deps, calls } = identityHarness({
+      status: "failed",
+      code: "branch_exists",
+      cause:
+        "the session branch claude/x already exists on GitHub, so this session cannot prove who started it",
+      remedy: "start a new cloud session",
+    });
+    setupCloudSession(deps);
+    expect(calls).toEqual([["auth", "identify", "--json"]]);
+    expect(printed[0]).toMatchObject({
+      results: { identity: "failed" },
+      remedies: [
+        "identity · failed: the session branch claude/x already exists on GitHub, so this session cannot prove who started it; to fix it, start a new cloud session",
+      ],
+    });
+  });
+});

@@ -22,6 +22,7 @@ import { hasMachineConfiguration } from "../lib/machine-credentials.js";
 import { MachineAuthError } from "../lib/machine-protocol.js";
 import { SERVER_WAIT_PREFIX, clearMachineCooldowns } from "../lib/machine-retry.js";
 import { primConfigDirectory } from "../lib/paths.js";
+import { sessionIdentityMode } from "../lib/session-identity.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
 import { printJson } from "../output.js";
 import {
@@ -33,7 +34,8 @@ import {
 const EXIT_INCOMPLETE = 1;
 const EXIT_USAGE = 2;
 
-export type CloudSetupStep = "ok" | "failed" | "missing";
+/** `link_required`: only the identity step, until its person links GitHub once. */
+export type CloudSetupStep = "ok" | "failed" | "missing" | "link_required";
 
 export type CloudSetupDependencies = {
   run: (args: string[], capture?: boolean) => { code: number; stdout: string };
@@ -290,6 +292,62 @@ type SessionCheck = {
   env: NodeJS.ProcessEnv;
 };
 
+/**
+ * Session identity mode: who started this session, learned through GitHub.
+ * Every later step acts as that person, so nothing else can be verified
+ * until this succeeds.
+ */
+function identityReady({ deps, results, remedy, env }: SessionCheck): boolean {
+  let mode = false;
+  try {
+    mode = sessionIdentityMode({ env });
+  } catch {
+    return true;
+  }
+  if (!mode) return true;
+  deps.note("identity · identifying who started this session through GitHub…");
+  const ran = deps.run(["auth", "identify", "--json"], true);
+  let parsed: {
+    status?: unknown;
+    displayName?: unknown;
+    githubLogin?: unknown;
+    cause?: unknown;
+    remedy?: unknown;
+    message?: unknown;
+  } = {};
+  try {
+    parsed = JSON.parse(ran.stdout || "{}") as typeof parsed;
+  } catch {
+    parsed = {};
+  }
+  const text = (value: unknown): string | undefined =>
+    typeof value === "string" ? stripControlChars(value).replace(/\.$/u, "") : undefined;
+  if (parsed.status === "ok") {
+    const login = text(parsed.githubLogin);
+    deps.note(
+      `identity · ok: attributed to ${text(parsed.displayName) ?? "the linked member"}${login ? ` (GitHub @${login})` : ""}`,
+    );
+    results.identity = "ok";
+    return true;
+  }
+  if (parsed.status === "link_required") {
+    remedy(
+      `identity · link required: GitHub account @${text(parsed.githubLogin) ?? "unknown"} is not linked to a Primitive account yet; run \`prim auth link\` and sign in at the URL it prints with the code it shows (once; later sessions identify you automatically)`,
+    );
+    results.identity = "link_required";
+    return false;
+  }
+  const cause = text(parsed.cause);
+  const fix = text(parsed.remedy);
+  remedy(
+    cause && fix
+      ? `identity · failed: ${cause}; to fix it, ${fix}`
+      : "identity · failed; run `prim auth identify` to see why",
+  );
+  results.identity = "failed";
+  return false;
+}
+
 /** Whether the session has a credential Primitive accepts. */
 function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean {
   let machine: boolean;
@@ -432,7 +490,9 @@ function sessionSteps(
     remedies.push(message);
   };
   const check: SessionCheck = { deps, results, remedy, env: deps.env ?? process.env };
-  const credentials = credentialsReady(check);
+  // Without the session's person, every credential check below would fail
+  // for that one reason; report it once, as itself.
+  const credentials = identityReady(check) && credentialsReady(check);
   const root = repositoryRoot(check, outcome);
   // Whether the environment's image carries the hooks needs no repository; a
   // repository that opts out wants nothing set up, so nothing is judged for it.
@@ -545,7 +605,9 @@ function finish(
         : optedOut
           ? "This repository opts out of Primitive (PRIM_ACTIVE=false in its .claude/settings.json), so nothing was activated. Tell the user in one sentence, then continue their task; do not run prim enable unless they ask."
           : "Primitive is set up in this Claude Code cloud session. Tell the user in one sentence, then continue their task. There is no welcome or demo in cloud sessions."
-      : "Cloud setup is incomplete. Tell the user each remedy in one sentence before continuing; do not run prim auth login or prim auth enroll, which cannot work in a cloud session.";
+      : results.identity === "link_required"
+        ? "Cloud setup is waiting for a one-time GitHub link. Tell the user each remedy in one sentence before continuing. When they agree, run `prim auth link` as a background command (it waits until they finish signing in), give them the sign-in URL and code it prints, then run `prim setup --cloud` again; do not run prim auth login or prim auth enroll."
+        : "Cloud setup is incomplete. Tell the user each remedy in one sentence before continuing; do not run prim auth login or prim auth enroll, which cannot work in a cloud session.";
   printJson({
     ok: failed.length === 0,
     cloud: mode,
