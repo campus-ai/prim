@@ -18,7 +18,8 @@ export function isClaudeCloudSession(env: NodeJS.ProcessEnv = process.env): bool
 export function cloudProxyRouting(env: NodeJS.ProcessEnv = process.env): boolean {
   return (
     isClaudeCloudSession(env) &&
-    Boolean(env.HTTPS_PROXY || env.https_proxy) &&
+    // As Node reads them, so prim and the broker's own runtime cannot disagree.
+    Boolean(env.https_proxy ?? env.HTTPS_PROXY) &&
     (env.PRIM_M2M_CLIENT_ID !== undefined ||
       env.PRIM_M2M_CLIENT_SECRET !== undefined ||
       env.PRIM_M2M_CLIENT_AUTH !== undefined)
@@ -37,12 +38,20 @@ export function cloudDomainEditNote(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 /**
- * The environment's proxy failed by itself: an answer of its own to a
- * CONNECT, a hang-up, or silence. Said in place of the allowlist advice,
- * which would send the user to add domains they have already allowed.
+ * The environment's proxy failed by itself: it answered a CONNECT with a
+ * failure of its own, hung up, or could not be reached. Said in place of the
+ * allowlist advice, which would send the user to add domains they have
+ * already allowed.
  */
 export const CLOUD_PROXY_FAILING =
   "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.";
+
+/**
+ * The proxy said nothing in time. It has not said whether it would open the
+ * connection, so this neither blames the allowlist nor clears it.
+ */
+export const CLOUD_PROXY_SILENT =
+  "The cloud environment's proxy did not answer in time; retry shortly.";
 
 /**
  * True in a process Claude Code itself started (a tool call or a hook), which

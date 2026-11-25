@@ -31,6 +31,17 @@ describe("cloudProxyRouting", () => {
     ).toBe(false);
   });
 
+  it("reads the proxy's name as Node does: lower case first, and an empty one names none", () => {
+    const credentials = { CLAUDE_CODE_REMOTE: "true", PRIM_M2M_CLIENT_ID: "client_a" };
+    expect(cloudProxyRouting({ ...credentials, https_proxy: "http://p:1", HTTPS_PROXY: "" })).toBe(
+      true,
+    );
+    // Node would not use HTTPS_PROXY here, so the broker would not be routed by it.
+    expect(cloudProxyRouting({ ...credentials, https_proxy: "", HTTPS_PROXY: "http://p:1" })).toBe(
+      false,
+    );
+  });
+
   it("leaves a fixed token or a stored sign-in connecting directly", () => {
     expect(cloudProxyRouting(session)).toBe(false);
     expect(cloudProxyRouting({ ...session, PRIM_TOKEN: "human" })).toBe(false);

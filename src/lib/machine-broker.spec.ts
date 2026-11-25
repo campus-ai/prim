@@ -1,6 +1,15 @@
 import { execFile } from "node:child_process";
-import { createHmac } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, createHmac } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { type IncomingMessage, type Server, createServer, request } from "node:http";
 import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -18,7 +27,7 @@ import {
 } from "./machine-broker.js";
 import { type MachineCredential, environmentCredentials } from "./machine-credentials.js";
 import { MachineAuthError } from "./machine-protocol.js";
-import { recordProxyFailure } from "./machine-retry.js";
+import { proxyCooldown, recordProxyFailure } from "./machine-retry.js";
 
 const base = { directory: "/config", apiUrl: "https://api.example.com" };
 
@@ -236,6 +245,45 @@ describe("forwardToApi (the broker's half of a forwarded request)", () => {
     expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
   });
 
+  it("names the proxy's own failure in a cloud session, and no more than the proxy said", async () => {
+    const told = async (code: string) =>
+      (
+        (await forwardToApi(API, { method: "GET", path: "/api" }, signal(), (async () => {
+          throw new TypeError("fetch failed", {
+            cause: Object.assign(new Error("the proxy opened no tunnel"), { code }),
+          });
+        }) as typeof fetch)) as { error: { code: string; message: string; terminal: boolean } }
+      ).error;
+    const GENERIC = {
+      code: "authentication_unavailable",
+      message:
+        "The request to Primitive through the cloud environment's proxy failed. Check the connection and retry.",
+      terminal: false,
+    };
+    // Outside a cloud session there is no cloud environment's proxy to name.
+    expect(await told("PROXY_502")).toEqual(GENERIC);
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    try {
+      for (const code of ["PROXY_502", "PROXY_407", "PROXY_CLOSED", "PROXY_ECONNREFUSED"])
+        expect(await told(code)).toEqual({
+          code: "proxy_unavailable",
+          message:
+            "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+          terminal: false,
+        });
+      // Silence says nothing of the allowlist, either way.
+      expect(await told("PROXY_TIMEOUT")).toEqual({
+        code: "authentication_unavailable",
+        message: "The cloud environment's proxy did not answer in time; retry shortly.",
+        terminal: false,
+      });
+      // A host the proxy refuses is not the proxy failing.
+      expect(await told("PROXY_BLOCKED")).toEqual(GENERIC);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("passes an API refusal through as the API's answer", async () => {
     const result = await forwardToApi(
       API,
@@ -378,8 +426,11 @@ describe("forwarding through a running broker", () => {
   }
 
   /** Start a broker for `mode` and publish its descriptor where callers look. */
-  async function startBroker(mode: Mode) {
-    broker = createBrokerServer({ environment: mode, apiUrl, nonce: NONCE, acquire });
+  async function startBroker(
+    mode: Mode,
+    more: Partial<Parameters<typeof createBrokerServer>[0]> = {},
+  ) {
+    broker = createBrokerServer({ environment: mode, apiUrl, nonce: NONCE, acquire, ...more });
     const port = await listen(broker);
     writeFileSync(
       join(directory, `machine_broker_${GENERATION}.json`),
@@ -668,6 +719,230 @@ describe("forwarding through a running broker", () => {
         await close(proxy);
       }
     });
+
+    it("asks no proxy where the session is not routed through one", async () => {
+      // Network-token mode on a machine of the user's own: its Node may be
+      // set up with a proxy, and the broker's requests are plain fetch, as
+      // they were before there was a cloud session to route.
+      const asked: string[] = [];
+      const proxy = createServer();
+      proxy.on("connect", (request, socket) => {
+        asked.push(request.url ?? "");
+        socket.end("HTTP/1.1 502 Answer\r\nContent-Length: 0\r\n\r\n");
+      });
+      const named = `http://127.0.0.1:${await listen(proxy)}`;
+      vi.stubEnv("NODE_USE_ENV_PROXY", "1");
+      vi.stubEnv("HTTPS_PROXY", named);
+      vi.stubEnv("https_proxy", named);
+      vi.stubEnv("NO_PROXY", "");
+      vi.stubEnv("no_proxy", "");
+      try {
+        // Nothing listens here: a direct request is refused at once.
+        const nothing = createServer();
+        const closed = await listen(nothing);
+        await close(nothing);
+        apiUrl = `https://127.0.0.1:${closed}`;
+        await startBroker(environment);
+        await expect(
+          forward({ method: "GET", path: "/api/cli/auth/status" }),
+        ).rejects.toMatchObject({ code: "authentication_unavailable" });
+        expect(asked).toEqual([]);
+        // Routed, the same request asks the proxy first.
+        await close(broker);
+        await startBroker({ ...environment, routing: "proxy" });
+        await expect(
+          forward({ method: "GET", path: "/api/cli/auth/status" }),
+        ).rejects.toMatchObject({ code: "authentication_unavailable" });
+        expect(asked).toEqual([`127.0.0.1:${closed}`]);
+      } finally {
+        await close(proxy);
+      }
+    });
+  });
+
+  describe("what the broker tells its process of each request", () => {
+    let onRequest: ReturnType<
+      typeof vi.fn<() => { within: <T>(work: () => T) => T; over: (answered: boolean) => void }>
+    >;
+    let over: ReturnType<typeof vi.fn<(answered: boolean) => void>>;
+    /** Whether the request's work is under way, as its `within` sees it. */
+    let working: boolean;
+    let held: Array<() => void>;
+    const ask = (signal: AbortSignal) =>
+      forwardBrokerRequest({
+        directory,
+        apiUrl,
+        environment,
+        env: {},
+        request: { method: "GET", path: "/api/cli/decisions/recent" },
+        signal,
+      });
+
+    beforeEach(() => {
+      over = vi.fn();
+      working = false;
+      onRequest = vi.fn(() => ({
+        within: <T>(work: () => T): T => {
+          working = true;
+          const result = work();
+          void Promise.resolve(result).finally(() => {
+            working = false;
+          });
+          return result;
+        },
+        over,
+      }));
+      // An API that answers when the test says so.
+      held = [];
+      api.removeAllListeners("request");
+      api.on("request", (_request, response) => {
+        held.push(() => response.end('{"ok":true}'));
+      });
+    });
+
+    it("has a request in hand from its proof until its answer has gone", async () => {
+      await startBroker(environment, { onRequest });
+      const asked = ask(AbortSignal.timeout(5_000));
+      await vi.waitFor(() => expect(held).toHaveLength(1));
+      // In hand for as long as the broker works on it, and not a moment less.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(onRequest).toHaveBeenCalledOnce();
+      expect(over).not.toHaveBeenCalled();
+      held[0]?.();
+      expect((await asked).status).toBe(200);
+      // Over, and answered.
+      await vi.waitFor(() => expect(over).toHaveBeenCalledExactlyOnceWith(true));
+    });
+
+    it("has it no longer once the caller has left, whatever becomes of the answer", async () => {
+      await startBroker(environment, { onRequest });
+      const caller = new AbortController();
+      const asked = ask(caller.signal).catch((error: unknown) => error);
+      // The caller leaves once its request has reached the API.
+      await vi.waitFor(() => expect(held).toHaveLength(1), { timeout: 4_000 });
+      caller.abort();
+      expect(await asked).toBeDefined();
+      // The API has still not answered, and nobody is there to be answered:
+      // over, and left unanswered.
+      await vi.waitFor(() => expect(over).toHaveBeenCalledExactlyOnceWith(false), {
+        timeout: 4_000,
+      });
+      expect(onRequest).toHaveBeenCalledOnce();
+      expect(held).toHaveLength(1);
+    });
+
+    it("does a request's work within what it was told, so that what it opens is the request's", async () => {
+      // Each of the three kinds of request reaches Primitive in its own way.
+      const reached: Array<{ path: string; working: boolean }> = [];
+      const through = ((input: string | URL | Request, init?: RequestInit) => {
+        reached.push({ path: new URL(String(input)).pathname, working });
+        return fetch(input, init);
+      }) as typeof fetch;
+      api.removeAllListeners("request");
+      api.on("request", (_request, response) => response.end('{"issuer":"http://127.0.0.1:9"}'));
+      acquire.mockImplementation(async () => {
+        reached.push({ path: "the credential", working });
+        return { apiUrl, accessToken: HELD, storage: "environment" } as MachineCredential;
+      });
+      const port = await startBroker(routed, { onRequest, fetch: through });
+      const body = (extra: Record<string, unknown> = {}) =>
+        JSON.stringify({ generation: GENERATION, timestamp: Date.now(), ...extra });
+      expect(await raw(port, "/credential", body({ force: false }))).toBe(200);
+      expect(await raw(port, "/forward", envelope(), "forward-request")).toBe(200);
+      expect(await raw(port, "/probe", body(), "probe-request")).toBe(200);
+      expect(onRequest).toHaveBeenCalledTimes(3);
+      expect(reached.map(({ path }) => path)).toEqual([
+        "the credential",
+        "the credential",
+        "/api/cli/auth/status",
+        "/api/cli/auth/m2m/config",
+        // The sign-in service that configuration names.
+        "/",
+      ]);
+      expect(reached.every((reach) => reach.working)).toBe(true);
+      expect(working).toBe(false);
+    });
+
+    it("has nothing in hand for a request it turns away", async () => {
+      const port = await startBroker(routed, { onRequest });
+      // No proof of this purpose, of this generation, or of this moment.
+      expect(await raw(port, "/forward", envelope())).toBe(403);
+      expect(await raw(port, "/forward", envelope(), "probe-request")).toBe(403);
+      expect(
+        await raw(port, "/forward", envelope({ generation: "e".repeat(64) }), "forward-request"),
+      ).toBe(403);
+      expect(
+        await raw(
+          port,
+          "/forward",
+          envelope({ timestamp: Date.now() - 60_000 }),
+          "forward-request",
+        ),
+      ).toBe(403);
+      expect(await raw(port, "/probe", "not json", "probe-request")).toBe(400);
+      expect(onRequest).not.toHaveBeenCalled();
+      expect(held).toEqual([]);
+    });
+
+    it("has nothing in hand for a request whose body has yet to arrive", async () => {
+      const port = await startBroker(routed, { onRequest });
+      const body = envelope();
+      // Everything a proven request opens with, and then nothing.
+      const outgoing = request({
+        host: "127.0.0.1",
+        port,
+        path: "/forward",
+        method: "POST",
+        agent: false,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(Buffer.byteLength(body)),
+          "X-Prim-Proof": hmac(KEY, "forward-request", body),
+        },
+      });
+      outgoing.once("error", () => undefined);
+      outgoing.flushHeaders();
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(onRequest).not.toHaveBeenCalled();
+        // The same request, once all of it is there, is in hand.
+        outgoing.end(body);
+        await vi.waitFor(() => expect(onRequest).toHaveBeenCalledOnce());
+      } finally {
+        outgoing.destroy();
+      }
+    });
+
+    it("stops a probe when the caller that asked for it has left", async () => {
+      const asked: AbortSignal[] = [];
+      const silent = ((_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal;
+          asked.push(signal);
+          signal.addEventListener("abort", () => reject(signal.reason));
+        })) as typeof fetch;
+      await startBroker(routed, { onRequest, fetch: silent });
+      const caller = new AbortController();
+      const probed = probeBrokerEgress({
+        directory,
+        apiUrl,
+        environment: routed,
+        env: {},
+        signal: caller.signal,
+      }).catch((error: unknown) => error);
+      // The caller leaves once the probe's first request is under way.
+      await vi.waitFor(() => expect(asked).toHaveLength(1), { timeout: 4_000 });
+      const left = Date.now();
+      caller.abort();
+      expect(await probed).toBeDefined();
+      await vi.waitFor(() => expect(asked[0]?.aborted).toBe(true), { timeout: 2_000 });
+      // Because the caller left, well before the probe's own three seconds.
+      expect(Date.now() - left).toBeLessThan(2_500);
+      await vi.waitFor(() => expect(over).toHaveBeenCalledExactlyOnceWith(false), {
+        timeout: 4_000,
+      });
+      expect(asked).toHaveLength(1);
+    });
   });
 
   describe("a broker that did not answer", () => {
@@ -731,10 +1006,28 @@ describe("forwarding through a running broker", () => {
     let stop: ((code?: number) => void) | undefined;
     let send: typeof process.send;
     let own: NonNullable<ReturnType<typeof environmentCredentials>>;
+    let signals: Record<"SIGTERM" | "SIGINT", NodeJS.SignalsListener[]>;
     const sockets: ReturnType<typeof connect>[] = [];
     const descriptor = () => join(directory, `machine_broker_${own.generation}.json`);
     const retryFiles = () =>
       readdirSync(directory).filter((name) => name.startsWith("machine_retry_"));
+    /** Where this deployment and client's cooldown is kept, and nowhere else. */
+    const cooldownName = () =>
+      `machine_retry_${createHash("sha256").update(`${apiUrl}\0client_cloud`).digest("hex")}.json`;
+    /** The handlers this broker added for `signal`, which a test may not send. */
+    const added = (signal: "SIGTERM" | "SIGINT") =>
+      (process.listeners(signal) as NodeJS.SignalsListener[]).filter(
+        (listener) => !signals[signal].includes(listener),
+      );
+    /** Open `count` connections from this process, as a runaway fetch does. */
+    const open = (count: number) => {
+      const { port } = api.address() as AddressInfo;
+      for (let index = 0; index < count; index += 1) {
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", () => undefined);
+        sockets.push(socket);
+      }
+    };
 
     beforeEach(async () => {
       // A cloud session whose proxy holds the token: this process relays.
@@ -752,12 +1045,19 @@ describe("forwarding through a running broker", () => {
       // The broker tells its parent it is ready; this process's parent is the test runner.
       send = process.send;
       process.send = undefined;
+      signals = {
+        SIGTERM: process.listeners("SIGTERM") as NodeJS.SignalsListener[],
+        SIGINT: process.listeners("SIGINT") as NodeJS.SignalsListener[],
+      };
       stop = await startMachineBroker(exit);
     });
     afterEach(() => {
       stop?.();
+      for (const signal of ["SIGTERM", "SIGINT"] as const)
+        for (const listener of added(signal)) process.removeListener(signal, listener);
       process.send = send;
       for (const socket of sockets.splice(0)) socket.destroy();
+      vi.useRealTimers();
       vi.unstubAllEnvs();
     });
 
@@ -770,6 +1070,80 @@ describe("forwarding through a running broker", () => {
         request: { method: "GET", path },
         signal,
       });
+
+    /**
+     * Callers in a process of their own, as prim's commands are: `count` at
+     * a time, `each` asking `endpoint` that many times. A connection opened
+     * in this process is one the broker counts, whoever it was for. Answers
+     * how many were answered well.
+     */
+    async function callers(
+      endpoint: "/forward" | "/probe",
+      count: number,
+      each: number,
+    ): Promise<number> {
+      const { port, nonce } = JSON.parse(readFileSync(descriptor(), "utf8"));
+      const script = `
+        import { createHmac } from "node:crypto";
+        const { PORT, NONCE, KEY, GENERATION, ENDPOINT } = process.env;
+        const purpose = ENDPOINT === "/forward" ? "forward-request" : "probe-request";
+        let well = 0;
+        await Promise.all(
+          Array.from({ length: Number(process.env.CALLERS) }, async () => {
+            for (let asked = 0; asked < Number(process.env.EACH); asked += 1) {
+              const body = JSON.stringify({
+                generation: GENERATION,
+                timestamp: Date.now(),
+                ...(ENDPOINT === "/forward"
+                  ? { method: "GET", path: "/api/cli/decisions/recent", headers: {} }
+                  : {}),
+              });
+              const proof = createHmac("sha256", KEY)
+                .update(NONCE + "\\0" + purpose + "\\0" + body)
+                .digest("hex");
+              const response = await fetch("http://127.0.0.1:" + PORT + ENDPOINT, {
+                method: "POST",
+                body,
+                headers: { "Content-Type": "application/json", "X-Prim-Proof": proof },
+              });
+              const answer = JSON.parse((await response.json()).body);
+              if (response.status === 200 && (answer.status === 200 || answer.api === "ok"))
+                well += 1;
+            }
+          }),
+        );
+        console.log(well);
+      `;
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+          env: {
+            PATH: process.env.PATH,
+            NODE_NO_WARNINGS: "1",
+            PORT: String(port),
+            NONCE: nonce,
+            KEY: own.clientSecret,
+            GENERATION: own.generation,
+            ENDPOINT: endpoint,
+            CALLERS: String(count),
+            EACH: String(each),
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+        },
+      );
+      return Number(stdout.trim().split("\n").at(-1));
+    }
+    /** Have the API end each connection with its answer, and count them. */
+    function connectionEach(): () => number {
+      let connections = 0;
+      api.on("connection", () => {
+        connections += 1;
+      });
+      answer = { ...answer, headers: { ...answer.headers, Connection: "close" } };
+      return () => connections;
+    }
 
     it("keeps running through slow answers, failing answers, and callers that give up", async () => {
       expect(JSON.parse(readFileSync(descriptor(), "utf8"))).toMatchObject({ pid: process.pid });
@@ -792,37 +1166,180 @@ describe("forwarding through a running broker", () => {
       expect(retryFiles()).toEqual([]);
     });
 
-    it("gives up only when its connections run away: a cooldown first, then its descriptor, then the process", () => {
+    it("keeps running under a load of healthy requests, each on a connection of its own", async () => {
+      const connections = connectionEach();
+      expect(await callers("/forward", 8, 60)).toBe(480);
+      // Thirty times what is kept to spare, and none of it drawn on.
+      expect(connections()).toBeGreaterThanOrEqual(480);
+      expect(exit).not.toHaveBeenCalled();
+      expect(existsSync(descriptor())).toBe(true);
+      expect(retryFiles()).toEqual([]);
+      // What those requests did not use is not kept for a runaway to spend:
+      // once they are over, there are only the few connections to spare.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      open(16);
+      expect(exit).not.toHaveBeenCalled();
+      open(1);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      stop = undefined;
+    }, 30_000);
+
+    it("allows a probe the connections it takes, as it does any other request", async () => {
+      const connections = connectionEach();
+      expect(await callers("/probe", 1, 40)).toBe(40);
+      expect(connections()).toBeGreaterThanOrEqual(40);
+      expect(exit).not.toHaveBeenCalled();
+      expect(existsSync(descriptor())).toBe(true);
+      expect(retryFiles()).toEqual([]);
+    }, 30_000);
+
+    it("counts no connections where the session is not routed through the proxy", async () => {
+      // The same credentials on a machine of the user's own: no cloud session.
+      stop?.();
+      exit.mockClear();
+      vi.stubEnv("CLAUDE_CODE_REMOTE", "");
+      const credentials = environmentCredentials({});
+      if (!credentials) throw new Error("missing fixture credentials");
+      expect(credentials.routing).toBeUndefined();
+      own = credentials;
+      stop = await startMachineBroker(exit);
+      open(500);
+      expect((await relay("/api/cli/decisions/recent")).status).toBe(200);
+      open(500);
+      expect(exit).not.toHaveBeenCalled();
+      expect(existsSync(descriptor())).toBe(true);
+      expect(retryFiles()).toEqual([]);
+    });
+
+    it("counts nothing once it has been told to stop", () => {
+      stop?.();
+      stop = undefined;
+      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+      // Whatever this process opens while it ends is nobody's runaway.
+      open(100);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+      expect(retryFiles()).toEqual([]);
+    });
+
+    it("gives up when more connections open than its requests account for: a cooldown first, then its descriptor, then the process", () => {
       // What the process had on disk at the moment it would have ended.
-      let atExit: { cooldown: unknown; descriptor: boolean } | undefined;
+      let atExit: { cooldown: string[]; state: unknown; descriptor: boolean } | undefined;
       exit.mockImplementation(() => {
-        const [name] = retryFiles();
+        const cooldown = retryFiles();
         atExit = {
-          cooldown: name ? JSON.parse(readFileSync(join(directory, name), "utf8")) : undefined,
+          cooldown,
+          state: JSON.parse(readFileSync(join(directory, cooldown[0] ?? ""), "utf8")),
           descriptor: existsSync(descriptor()),
         };
       });
-      // As a fetch retrying a closed CONNECT does: connections without end.
-      const { port } = api.address() as AddressInfo;
-      for (let index = 0; index < 700; index += 1) {
-        const socket = connect(port, "127.0.0.1");
-        socket.on("error", () => undefined);
-        sockets.push(socket);
-      }
+      // No request in hand: a few connections to spare, then no more.
+      open(16);
+      expect(exit).not.toHaveBeenCalled();
+      open(1);
       expect(exit).toHaveBeenCalledExactlyOnceWith(1);
       expect(atExit).toEqual({
-        cooldown: { failures: 1, retryAt: expect.any(Number), proxy: true },
+        // Under this deployment and client, where the next command looks.
+        cooldown: [cooldownName()],
+        state: { failures: 1, retryAt: expect.any(Number), proxy: true },
         descriptor: false,
+      });
+      expect(proxyCooldown(directory, apiUrl, "client_cloud")).toMatchObject({
+        code: "proxy_unavailable",
       });
       stop = undefined;
     });
 
-    it("ends the process when told to stop, withdrawing its descriptor", () => {
-      stop?.();
+    it("tells the caller whose request ran away that the proxy is failing", async () => {
+      // The API stands in for Node here: while it holds the request, this
+      // process opens connection after connection, as a retrying fetch does.
+      const prompt = api.listeners("request")[0] as (...args: unknown[]) => Promise<void>;
+      api.removeAllListeners("request");
+      let openedBeforeGivingUp = 0;
+      api.on("request", (request, response) => {
+        if (request.url !== "/runaway") return void prompt(request, response);
+        while (exit.mock.calls.length === 0 && openedBeforeGivingUp < 500) {
+          openedBeforeGivingUp += 1;
+          open(1);
+        }
+      });
+      await expect(relay("/runaway")).rejects.toMatchObject({
+        code: "proxy_unavailable",
+        message:
+          "The cloud environment's proxy is failing (not the Allowed domains list); retry shortly.",
+      });
+      // One request's allowance and the spare, whatever came before it.
+      expect(openedBeforeGivingUp).toBeLessThanOrEqual(8 + 16 + 1);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(existsSync(descriptor())).toBe(false);
       stop = undefined;
+    });
+
+    it("still withdraws its descriptor and ends when the cooldown cannot be written", () => {
+      // Something in the way of the cooldown file.
+      mkdirSync(join(directory, cooldownName()));
+      open(17);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(existsSync(descriptor())).toBe(false);
+      stop = undefined;
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "still ends when neither the cooldown nor its descriptor can be touched",
+      () => {
+        // The directory has become read-only under it.
+        chmodSync(directory, 0o500);
+        try {
+          open(17);
+          expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+          expect(retryFiles()).toEqual([]);
+          expect(existsSync(descriptor())).toBe(true);
+        } finally {
+          chmodSync(directory, 0o700);
+        }
+        stop = undefined;
+      },
+    );
+
+    it.each(["SIGTERM", "SIGINT"] as const)(
+      "ends the process on %s, withdrawing its descriptor",
+      (signal) => {
+        const [handler] = added(signal);
+        expect(handler).toBeTypeOf("function");
+        handler?.(signal);
+        expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+        expect(existsSync(descriptor())).toBe(false);
+        expect(retryFiles()).toEqual([]);
+        stop = undefined;
+      },
+    );
+
+    it("counts those five minutes from the last request it served", async () => {
+      stop?.();
+      exit.mockClear();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      stop = await startMachineBroker(exit);
+      vi.advanceTimersByTime(4 * 60_000);
+      expect((await relay("/api/cli/decisions/recent")).status).toBe(200);
+      vi.advanceTimersByTime(4 * 60_000);
+      expect(exit).not.toHaveBeenCalled();
+      expect(existsSync(descriptor())).toBe(true);
+      vi.advanceTimersByTime(60_000);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+      stop = undefined;
+    });
+
+    it("ends the process after five minutes with nothing asked of it", async () => {
+      stop?.();
+      exit.mockClear();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      stop = await startMachineBroker(exit);
+      expect(existsSync(descriptor())).toBe(true);
+      vi.advanceTimersByTime(5 * 60_000 - 1);
+      expect(exit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
       expect(exit).toHaveBeenCalledExactlyOnceWith(0);
       expect(existsSync(descriptor())).toBe(false);
-      expect(retryFiles()).toEqual([]);
+      stop = undefined;
     });
   });
 

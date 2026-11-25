@@ -21,8 +21,9 @@ type ProbeResult = { ok: true; response: Response } | { ok: false; failure: stri
  * Name what a failed probe means. Only two things are a block: DNS that will
  * not resolve the host, and the proxy answering a CONNECT for it with 403
  * (see checkTunnel, which reads the proxy's status; the text of a failed
- * `fetch` does not carry it). Any other answer from the proxy, or none, is
- * the proxy failing and keeps its PROXY_ code.
+ * `fetch` does not carry it). Any other answer from the proxy, or none, keeps
+ * its PROXY_ code: a proxy that said nothing in time has not said whether the
+ * host is allowed, which is not what a host that did not answer means.
  */
 function probeFailure(error: unknown): "blocked" | "timeout" | string {
   const name = error instanceof Error ? error.name : "";
@@ -30,15 +31,19 @@ function probeFailure(error: unknown): "blocked" | "timeout" | string {
   const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause;
   const code = typeof cause?.code === "string" ? cause.code : "";
   if (code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "PROXY_BLOCKED") return "blocked";
-  if (code === "PROXY_TIMEOUT") return "timeout";
   return code || "network error";
 }
 
-async function probe(url: string, fetchImpl: typeof fetch): Promise<ProbeResult> {
+async function probe(
+  url: string,
+  fetchImpl: typeof fetch,
+  abandoned?: AbortSignal,
+): Promise<ProbeResult> {
   try {
+    const deadline = AbortSignal.timeout(PROBE_TIMEOUT_MS);
     const response = await fetchImpl(url, {
       redirect: "manual",
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
     });
     return { ok: true, response };
   } catch (error) {
@@ -53,13 +58,20 @@ async function probe(url: string, fetchImpl: typeof fetch): Promise<ProbeResult>
  * it must run in the process that makes prim's requests: the token broker
  * where prim sends them through the cloud environment's proxy. Unless a
  * `fetch` is given, a routed process asks the proxy first (tunnelCheckedFetch).
+ * Nothing more is asked once `abandoned` aborts: whoever wanted to know has
+ * left.
  */
 export async function probeEgress(
   apiUrl: string,
   signIn: boolean,
   fetchImpl: typeof fetch = tunnelCheckedFetch(),
+  abandoned?: AbortSignal,
 ): Promise<EgressReport> {
-  const config = await probe(`${apiUrl.replace(/\/+$/u, "")}/api/cli/auth/m2m/config`, fetchImpl);
+  const config = await probe(
+    `${apiUrl.replace(/\/+$/u, "")}/api/cli/auth/m2m/config`,
+    fetchImpl,
+    abandoned,
+  );
   if (!config.ok) return { api: config.failure };
   if (!signIn) {
     await config.response.body?.cancel().catch(() => undefined);
@@ -72,8 +84,8 @@ export async function probeEgress(
   } catch {
     issuer = undefined;
   }
-  if (!issuer) return { api: "ok" };
-  const answer = await probe(issuer, fetchImpl);
+  if (!issuer || abandoned?.aborted) return { api: "ok" };
+  const answer = await probe(issuer, fetchImpl, abandoned);
   if (answer.ok) await answer.response.body?.cancel().catch(() => undefined);
   return {
     api: "ok",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -42,8 +42,16 @@ const openTunnels = new Set();
 // How many more CONNECTs the stand-in proxy answers before it closes each
 // one without a word, as a proxy that is failing may.
 let answerBudget = Number.POSITIVE_INFINITY;
+// How long the proxy takes to hang up on a CONNECT it will not answer: a
+// proxy one network hop away is not instant.
+let hangUpDelayMs = 0;
 // Closes just the CONNECT this many from now: a single reset.
 let closeNth = 0;
+// Hosts whose CONNECT the stand-in proxy takes and never answers.
+const silentHosts = new Set();
+// How many more CONNECTs to a host the proxy answers before it hangs up on
+// every one: the first is the broker's check, the rest are its request's.
+const answersLeft = new Map();
 // How long the cloud API takes to answer, when it is being slow.
 let cloudApiDelayMs = 0;
 // The local port of each connection the proxy itself opened.
@@ -307,12 +315,19 @@ try {
   proxy.on("connection", () => proxyConnections++);
   proxy.on("connect", (request, socket, head) => {
     const [host, requested] = request.url.split(":");
-    if (answerBudget <= 0) {
+    if (silentHosts.has(host)) {
+      tunnels.push(`silent ${request.url}`);
+      socket.on("error", () => undefined);
+      return;
+    }
+    if (answerBudget <= 0 || answersLeft.get(host) === 0) {
       tunnels.push(`closed ${request.url}`);
-      socket.destroy();
+      if (hangUpDelayMs > 0) setTimeout(() => socket.destroy(), hangUpDelayMs);
+      else socket.destroy();
       return;
     }
     answerBudget -= 1;
+    if (answersLeft.has(host)) answersLeft.set(host, answersLeft.get(host) - 1);
     if (closeNth > 0) {
       closeNth -= 1;
       if (closeNth === 0) {
@@ -544,9 +559,14 @@ try {
   // diagnosis does, then take hosts off the stand-in proxy's allowlist.
   const brokerAsk = async (endpoint, fields = {}, signal = undefined) => {
     const broker = await routedBroker();
+    // A credential request is signed for no purpose but its own.
     const proof = (purpose, text) =>
       createHmac("sha256", cloudSecret)
-        .update(`${broker.nonce}\0${endpoint}-${purpose}\0${text}`)
+        .update(
+          endpoint === "credential"
+            ? `${broker.nonce}\0${text}`
+            : `${broker.nonce}\0${endpoint}-${purpose}\0${text}`,
+        )
         .digest("hex");
     const body = JSON.stringify({
       generation: routedBrokers[0].slice("machine_broker_".length, -".json".length),
@@ -599,6 +619,22 @@ try {
     for (let waited = 0; waited < withinMs && alive(pid); waited += 50) await delay(50);
     return !alive(pid);
   };
+  // An explicit check, as `prim setup --cloud` makes it, lifts the proxy's
+  // cooldown without forgetting its count. Against a proxy still failing that
+  // costs one attempt, cut short, and leaves a longer wait than the last.
+  const liftCooldowns = async () => {
+    for (const name of await readdir(config)) {
+      if (!name.startsWith("machine_retry_")) continue;
+      const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
+      if (waiting.serverRetryAfter) continue;
+      if (!waiting.proxy) await rm(join(config, name));
+      else
+        await writeFile(
+          join(config, name),
+          JSON.stringify({ failures: waiting.failures, retryAt: 0, proxy: true }),
+        );
+    }
+  };
   const steady = await routedBroker();
   pids.add(steady.pid);
   answerBudget = 0;
@@ -630,6 +666,36 @@ try {
   assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
   assert.equal((await routedBroker()).pid, steady.pid, "the same broker serves on");
   reports.push("a proxy that closes or fails CONNECTs is reported as such and never retried");
+  // A proxy that takes a CONNECT and says nothing has not said the host is
+  // blocked, nor that it is allowed. The probe gives a host three seconds and
+  // the check gives the proxy five, so it is the probe's time that runs out:
+  // the broker must still report the proxy's silence, and a command, which
+  // waits out the check, must be told of it too.
+  silentHosts.add("api.prim.invalid");
+  await dropTunnels("api.prim.invalid");
+  const askedOfSilence = Date.now();
+  assert.deepEqual(await brokerProbe(), { api: "PROXY_TIMEOUT" }, "silence is the proxy's own");
+  measured.msToReportASilentProxy = Date.now() - askedOfSilence;
+  assert.ok(
+    measured.msToReportASilentProxy < 4500,
+    `the probe answers when its own time is up: ${measured.msToReportASilentProxy} ms`,
+  );
+  const silentStatus = await cloudStatus(inSession);
+  assert.equal(silentStatus.status, "unreachable", JSON.stringify(silentStatus));
+  assert.equal(
+    silentStatus.recoveryDetail,
+    "The cloud environment's proxy did not answer in time; retry shortly.",
+    JSON.stringify(silentStatus),
+  );
+  silentHosts.clear();
+  silentHosts.add("signin.prim.invalid");
+  await dropTunnels("signin.prim.invalid");
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("PROXY_TIMEOUT") });
+  silentHosts.clear();
+  await liftCooldowns();
+  assert.ok(alive(steady.pid), "a silent proxy ends no broker");
+  assert.deepEqual(await brokerProbe(), { api: "ok", signIn: signIn("ok") });
+  reports.push("a proxy that says nothing is reported as its silence, by probe and by command");
   // None of these is a broker reconnecting without end, and none may end it:
   // one CONNECT the proxy resets, an upstream that is slow, a caller that
   // gives up. (The proxy's own 502, above, is another.)
@@ -660,9 +726,35 @@ try {
   );
   const abandoned = await forwardRead(AbortSignal.timeout(300)).catch((error) => error.name);
   assert.equal(abandoned, "TimeoutError", "the caller gave up on a slow request");
+  // Nor a caller that leaves a probe: twelve at once, each gone before the
+  // API has answered. The broker asks nothing more in their names, so
+  // nothing opens that no request accounts for.
+  cloudApiDelayMs = 400;
+  await dropTunnels();
+  connectionsBefore = proxyConnections;
+  const beforeLeaving = tunnels.length;
+  const left = await Promise.all(
+    Array.from({ length: 12 }, () =>
+      brokerAsk("probe", {}, AbortSignal.timeout(150)).catch((error) => error.name),
+    ),
+  );
+  assert.ok(
+    left.every((name) => name === "TimeoutError"),
+    JSON.stringify(left),
+  );
+  await delay(900);
+  measured.proxyConnectionsForTwelveAbandonedProbes = proxyConnections - connectionsBefore;
+  assert.deepEqual(
+    tunnels.slice(beforeLeaving).filter((entry) => entry.includes("signin.prim.invalid")),
+    [],
+    "a probe nobody waits for does not go on to the sign-in service",
+  );
   cloudApiDelayMs = 0;
   await delay(500);
-  assert.ok(alive(steady.pid), "a reset, a slow upstream and an impatient caller end no broker");
+  assert.ok(
+    alive(steady.pid),
+    "a reset, a slow upstream, an impatient caller and abandoned probes end no broker",
+  );
   assert.equal((await routedBroker()).pid, steady.pid);
   assert.deepEqual(
     (await readdir(config)).filter((name) => name.startsWith("machine_retry_")),
@@ -670,7 +762,35 @@ try {
     "and none of them starts a cooldown",
   );
   assert.equal((await cloudStatus(inSession)).status, "valid");
-  reports.push("a reset, a slow upstream, an impatient caller and a proxy 502 end no broker");
+  reports.push(
+    "a reset, a slow upstream, an impatient caller, abandoned probes and a proxy 502 end no broker",
+  );
+  // Nor may a healthy proxy under load: eight callers sending signed requests
+  // as fast as an instant API answers them are not a broker out of control.
+  connectionsBefore = proxyConnections;
+  const flooded = {};
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      for (let sent = 0; sent < 60; sent += 1) {
+        const answer = await forwardRead().catch((error) => ({ status: String(error) }));
+        flooded[answer.status] = (flooded[answer.status] ?? 0) + 1;
+      }
+    }),
+  );
+  await delay(300);
+  measured.healthyLoad = {
+    answers: flooded,
+    proxyConnections: proxyConnections - connectionsBefore,
+  };
+  assert.deepEqual(flooded, { 200: 480 }, JSON.stringify(measured.healthyLoad));
+  assert.ok(alive(steady.pid), "a load of healthy requests ends no broker");
+  assert.equal((await routedBroker()).pid, steady.pid);
+  assert.deepEqual(
+    (await readdir(config)).filter((name) => name.startsWith("machine_retry_")),
+    [],
+    "and starts no cooldown",
+  );
+  reports.push("eight callers at full speed through a healthy proxy end no broker");
   // The proxy answers one CONNECT for each command, then closes the rest: the
   // broker's check passes, and the request it hands to `fetch` meets a proxy
   // that hangs up. Node 22 and 24 then reconnect without end. The broker
@@ -715,7 +835,7 @@ try {
     raced.every((answer) => answer.status === "unreachable"),
     told,
   );
-  assert.ok(proxyConnections - connectionsBefore < 5000, `reconnecting must be cut short: ${told}`);
+  assert.ok(proxyConnections - connectionsBefore <= 150, `reconnecting must be cut short: ${told}`);
   if (spinning) {
     assert.ok(
       raced.every((answer) => answer.recoveryReason === "proxy_unavailable"),
@@ -732,22 +852,6 @@ try {
     );
   }
   for (const pid of brokersSeen) pids.add(pid);
-  // An explicit check, as `prim setup --cloud` makes it, lifts the proxy's
-  // cooldown without forgetting its count. Against a proxy still failing that
-  // costs one attempt, cut short, and leaves a longer wait than the last.
-  const liftCooldowns = async () => {
-    for (const name of await readdir(config)) {
-      if (!name.startsWith("machine_retry_")) continue;
-      const waiting = JSON.parse(await readFile(join(config, name), "utf8"));
-      if (waiting.serverRetryAfter) continue;
-      if (!waiting.proxy) await rm(join(config, name));
-      else
-        await writeFile(
-          join(config, name),
-          JSON.stringify({ failures: waiting.failures, retryAt: 0, proxy: true }),
-        );
-    }
-  };
   if (spinning) {
     await liftCooldowns();
     await dropTunnels();
@@ -765,13 +869,104 @@ try {
     };
     assert.equal(rechecked.recoveryReason, "proxy_unavailable", JSON.stringify(rechecked));
     assert.ok(
-      proxyConnections - connectionsBefore < 1500,
+      proxyConnections - connectionsBefore <= 30,
       `an explicit check must not set the reconnecting loose again: ${JSON.stringify(measured.explicitCheckOfAProxyStillHangingUp)}`,
     );
     assert.ok(
       waiting.proxy === true && waiting.failures === cooldowns[0].failures + 1,
       `and the wait that follows it must be longer, not begun again: ${JSON.stringify(waiting)}`,
     );
+  }
+  // The reconnecting is counted, not timed: a proxy that takes its time to
+  // hang up is given no more connections than one that does it at once.
+  if (spinning) {
+    measured.connectionsBeforeGivingUpByHangUpDelay = {};
+    for (const delayMs of [0, 3, 10, 100]) {
+      await liftCooldowns();
+      await dropTunnels();
+      hangUpDelayMs = delayMs;
+      answerBudget = 1;
+      connectionsBefore = proxyConnections;
+      const told = await cloudStatus(inSession);
+      await delay(500);
+      const settled = proxyConnections;
+      await delay(500);
+      answerBudget = Number.POSITIVE_INFINITY;
+      hangUpDelayMs = 0;
+      const count = settled - connectionsBefore;
+      measured.connectionsBeforeGivingUpByHangUpDelay[delayMs] = count;
+      assert.equal(
+        told.recoveryReason,
+        "proxy_unavailable",
+        `at ${delayMs} ms the command must be told the proxy is failing: ${JSON.stringify(told)}`,
+      );
+      assert.ok(count <= 30, `at ${delayMs} ms the broker gave up after ${count} connections`);
+      assert.equal(proxyConnections, settled, `at ${delayMs} ms nothing reconnects afterwards`);
+    }
+  }
+  // Nor is it given more beside other work. A warm broker is asked to renew
+  // its token while the proxy answers the sign-in service's check and hangs
+  // up on the request, and requests to forward keep arriving all the while.
+  // What the reconnecting opens is charged to the renewal: each request
+  // served beside it gives it one connection at most, however long that
+  // request waits, so it is cut short all the same.
+  if (spinning) {
+    measured.reconnectingBesideOtherRequests = {};
+    for (const [delayMs, perSecond] of [
+      [100, 2],
+      [500, 1],
+    ]) {
+      await liftCooldowns();
+      assert.equal((await cloudStatus(inSession)).status, "valid");
+      const broker = await routedBroker();
+      pids.add(broker.pid);
+      const held = await brokerAsk("credential", { force: false });
+      await forwardRead();
+      await dropTunnels();
+      hangUpDelayMs = delayMs;
+      answersLeft.set("signin.prim.invalid", 1);
+      const before = tunnels.length;
+      const since = Date.now();
+      const renewal = brokerAsk("credential", {
+        force: true,
+        observedTokenHash: createHash("sha256").update(held.credential.accessToken).digest("hex"),
+      }).catch(() => undefined);
+      let forwards = 0;
+      const others = (async () => {
+        while (alive(broker.pid) && Date.now() - since < 30000) {
+          forwards += 1;
+          forwardRead().catch(() => undefined);
+          await delay(1000 / perSecond);
+        }
+      })();
+      const gaveUp = await gone(broker.pid, 30000);
+      const ms = Date.now() - since;
+      await Promise.all([others, renewal]);
+      await delay(500);
+      answersLeft.clear();
+      hangUpDelayMs = 0;
+      const count = tunnels
+        .slice(before)
+        .filter((entry) => entry.includes("signin.prim.invalid")).length;
+      const beside = `${delayMs} ms, ${perSecond} a second`;
+      measured.reconnectingBesideOtherRequests[beside] = { connections: count, ms, forwards };
+      const told = JSON.stringify(measured.reconnectingBesideOtherRequests[beside]);
+      assert.ok(gaveUp, `beside ${beside} the broker must still give up: ${told}`);
+      // Its own allowance and the spare, one for each request beside it,
+      // and what little of the spare came back meanwhile.
+      assert.ok(
+        count <= 24 + forwards + 2,
+        `beside ${beside} it takes one connection from each request, no more: ${told}`,
+      );
+      const waiting = [];
+      for (const name of await readdir(config))
+        if (name.startsWith("machine_retry_"))
+          waiting.push(JSON.parse(await readFile(join(config, name), "utf8")));
+      assert.ok(
+        waiting.length === 1 && waiting[0].proxy === true,
+        `and it leaves the cooldown that names the proxy: ${JSON.stringify(waiting)}`,
+      );
+    }
   }
   // The proxy has recovered, and the next explicit check finds it so.
   await liftCooldowns();

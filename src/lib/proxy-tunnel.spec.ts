@@ -4,8 +4,8 @@ import type { Duplex } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkTunnel,
+  connectionBudget,
   envProxyFor,
-  onRunawayConnections,
   tunnelCheckedFetch,
   usesEnvProxy,
 } from "./proxy-tunnel.js";
@@ -311,12 +311,30 @@ describe("tunnelCheckedFetch", () => {
       name: "AbortError",
     });
     expect(Date.now() - started).toBeLessThan(1_500);
+    // A caller whose own time runs out while the proxy has yet to answer is
+    // told that: the proxy did not answer in time, whoever was counting.
     started = Date.now();
-    await expect(checked(API, { signal: AbortSignal.timeout(200) })).rejects.toMatchObject({
-      name: "TimeoutError",
-    });
+    const outOfTime = await checked(API, { signal: AbortSignal.timeout(200) }).catch(
+      (error: unknown) => error,
+    );
+    expect(outOfTime).toBeInstanceOf(TypeError);
+    expect(codeOf(outOfTime)).toBe("PROXY_TIMEOUT");
     expect(Date.now() - started).toBeLessThan(1_500);
     expect(inner).not.toHaveBeenCalled();
+  });
+
+  it("leaves a caller's time running out to the request once the proxy has answered", async () => {
+    // Then it is the host that is slow, which is another thing to be told.
+    const slow = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+        ),
+    );
+    await expect(
+      tunnelCheckedFetch({ env: routed(), fetch: slow })(API, { signal: AbortSignal.timeout(150) }),
+    ).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(slow).toHaveBeenCalledOnce();
   });
 
   it("asks the proxy once for each request, whatever becomes of the request", async () => {
@@ -334,9 +352,9 @@ describe("tunnelCheckedFetch", () => {
   });
 });
 
-describe("onRunawayConnections", () => {
+describe("connectionBudget", () => {
   let target: ReturnType<typeof createTcpServer>;
-  let stop: (() => void) | undefined;
+  let budget: ReturnType<typeof connectionBudget> | undefined;
   const sockets: Socket[] = [];
 
   beforeEach(async () => {
@@ -344,13 +362,13 @@ describe("onRunawayConnections", () => {
     await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
   });
   afterEach(async () => {
-    stop?.();
-    stop = undefined;
+    budget?.stop();
+    budget = undefined;
     for (const socket of sockets.splice(0)) socket.destroy();
     await new Promise<void>((resolve) => target.close(() => resolve()));
   });
 
-  /** Open `count` client connections, as fast as a process can. */
+  /** Open `count` client connections, as a request's work or a runaway does. */
   function open(count: number): void {
     const { port } = target.address() as AddressInfo;
     for (let index = 0; index < count; index += 1) {
@@ -359,42 +377,499 @@ describe("onRunawayConnections", () => {
       sockets.push(socket);
     }
   }
-
-  it("reports, once, a process opening connections faster than any healthy load", () => {
-    const onRunaway = vi.fn();
-    stop = onRunawayConnections(onRunaway);
-    // A fetch retrying a closed CONNECT opens thousands a second.
-    open(700);
-    expect(onRunaway).toHaveBeenCalledOnce();
-    open(700);
-    expect(onRunaway).toHaveBeenCalledOnce();
-  });
-
-  it("says nothing of the most a full broker opens at once", () => {
-    const onRunaway = vi.fn();
-    stop = onRunawayConnections(onRunaway);
-    // 64 connections served, each a check and a request, and as many again.
-    open(64 * 2 * 2);
-    expect(onRunaway).not.toHaveBeenCalled();
-  });
-
-  it("counts a window at a time, so a steady load never adds up", async () => {
-    const onRunaway = vi.fn();
-    stop = onRunawayConnections(onRunaway, 10, 40);
-    for (let round = 0; round < 5; round += 1) {
-      open(10);
-      await new Promise((resolve) => setTimeout(resolve, 60));
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  /** Open connections one at a time until the budget is overrun; how many it took. */
+  function until(onOverrun: ReturnType<typeof vi.fn>, most = 1_000): number {
+    let opened = 0;
+    while (onOverrun.mock.calls.length === 0 && opened < most) {
+      opened += 1;
+      open(1);
     }
-    expect(onRunaway).not.toHaveBeenCalled();
-    open(11);
-    expect(onRunaway).toHaveBeenCalledOnce();
+    return opened;
+  }
+
+  it("allows a request the connections its work can take, and a few to spare", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const request = budget.accept();
+    // A check and a request each for discovery, the exchange, the identity
+    // check and the request forwarded; then a reset or two along the way.
+    request.within(() => open(8 + 16));
+    expect(onOverrun).not.toHaveBeenCalled();
+    request.over();
   });
 
-  it("stops counting when told to", () => {
-    const onRunaway = vi.fn();
-    onRunawayConnections(onRunaway, 5)();
-    open(50);
-    expect(onRunaway).not.toHaveBeenCalled();
+  it("gives up on the twenty-fifth connection of a request that asked for a handful", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const request = budget.accept();
+    request.within(() => open(24));
+    expect(onOverrun).not.toHaveBeenCalled();
+    request.within(() => open(1));
+    expect(onOverrun).toHaveBeenCalledOnce();
+    // Once is enough: the process is ending.
+    request.within(() => open(500));
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it.each([0, 3, 10, 100])(
+    "gives up after the same number of connections when each hang-up takes %i ms",
+    async (hangUpMs) => {
+      let opened = 0;
+      let openedAtOverrun: number | undefined;
+      budget = connectionBudget(() => {
+        openedAtOverrun = opened;
+      });
+      // A loop is sequential: the next connection follows the last one's
+      // hang-up, however long that took. No rate is too slow to be counted.
+      await budget.accept().within(async () => {
+        while (openedAtOverrun === undefined && opened < 200) {
+          opened += 1;
+          open(1);
+          if (hangUpMs > 0 && opened < 30 && opened % 8 === 0) await pause(hangUpMs);
+        }
+      });
+      expect(openedAtOverrun).toBe(25);
+    },
+  );
+
+  it("is not moved by the wall clock, whichever way it is set", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const request = budget.accept();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    try {
+      request.within(() => open(12));
+      clock.mockReturnValue(now - 3_600_000);
+      request.within(() => open(12));
+      clock.mockReturnValue(now + 86_400_000);
+      expect(onOverrun).not.toHaveBeenCalled();
+      request.within(() => open(1));
+      expect(onOverrun).toHaveBeenCalledOnce();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("covers sixty-four callers at once, each cold", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const requests = Array.from({ length: 64 }, () => budget?.accept());
+    // Every connection a request can take, for every one of them.
+    for (const request of requests) request?.within(() => open(8));
+    expect(onOverrun).not.toHaveBeenCalled();
+    for (const request of requests) request?.over();
+    // And none of it out of what is kept to spare.
+    open(16);
+    expect(onOverrun).not.toHaveBeenCalled();
+    open(1);
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it("never mistakes a load of healthy requests for a runaway, however fast or long", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    // Eight callers at a time, as fast as they can go: a check and a request each.
+    for (let round = 0; round < 1_000; round += 1) {
+      const requests = Array.from({ length: 8 }, () => budget?.accept());
+      for (const request of requests) request?.within(() => open(2));
+      for (const request of requests) request?.over();
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    expect(onOverrun).not.toHaveBeenCalled();
+  });
+
+  it("banks nothing from finished requests for a runaway to spend", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    // A long and frugal life: ten thousand requests, one connection each.
+    for (let served = 0; served < 10_000; served += 1) {
+      const request = budget.accept();
+      request.within(() => open(1));
+      request.over();
+      // Saying a request is over twice takes nothing away twice.
+      request.over();
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    // Then one request whose connections never stop.
+    expect(budget.accept().within(() => until(onOverrun))).toBe(25);
+  });
+
+  it("gives a runaway one connection from each request served beside it, and no more", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    // One request starts reconnecting and uses up what it was good for.
+    const runaway = budget.accept();
+    runaway.within(() => open(8));
+    // Healthy requests come and go meanwhile, each leaving most of its
+    // allowance unused, and the runaway opens three connections while each
+    // of them is being served.
+    let opened = 8;
+    for (let served = 0; served < 500 && onOverrun.mock.calls.length === 0; served += 1) {
+      const healthy = budget.accept();
+      healthy.within(() => open(2));
+      for (let again = 0; again < 3 && onOverrun.mock.calls.length === 0; again += 1) {
+        opened += 1;
+        runaway.within(() => open(1));
+      }
+      healthy.over();
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    // One from each request that passed, two from the spare: eight requests
+    // empty it, and the ninth has only its one to give.
+    expect(opened).toBe(8 + 8 * 3 + 2);
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a request that covered another's connection the rest of its own", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun, { spare: 0 });
+    const spent = budget.accept();
+    spent.within(() => open(8));
+    const waiting = budget.accept();
+    // The connection the waiting request needs, opened in the other's name.
+    spent.within(() => open(1));
+    expect(onOverrun).not.toHaveBeenCalled();
+    waiting.within(() => open(7));
+    expect(onOverrun).not.toHaveBeenCalled();
+    waiting.within(() => open(1));
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it("is lent nothing by its own request, nor by one that is over", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const others = Array.from({ length: 63 }, () => budget?.accept());
+    for (const other of others) other?.over();
+    const runaway = budget.accept();
+    expect(runaway.within(() => until(onOverrun))).toBe(8 + 16 + 1);
+  });
+
+  it("leaves a healthy request its own allowance while a runaway spends the spare", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const runaway = budget.accept();
+    runaway.within(() => open(8 + 16));
+    // Every connection the cold request beside it can take is still its own.
+    const healthy = budget.accept();
+    healthy.within(() => open(8));
+    expect(onOverrun).not.toHaveBeenCalled();
+  });
+
+  it("goes on charging a request for what its work set going, by itself and after it", async () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const request = budget.accept();
+    // As Node's reconnecting does: each connection sets the next one going,
+    // and none of it waits for the request that began it, or ends with it.
+    let opened = 0;
+    await new Promise<void>((resolve) =>
+      request.within(() => {
+        const again = () => {
+          if (onOverrun.mock.calls.length > 0 || opened >= 200) return resolve();
+          opened += 1;
+          open(1);
+          // Its caller leaves after the fourth.
+          if (opened === 4) request.over();
+          setImmediate(again);
+        };
+        setImmediate(again);
+      }),
+    );
+    // Its own allowance and the spare, as if it were still being served:
+    // no more for being over, and no less.
+    expect(opened).toBe(8 + 16 + 1);
+  });
+
+  it("covers what opens in the name of callers that left, each out of what that caller left", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    // A caller leaves with a request already waiting on its connection, and
+    // Node 24 opens the replacement in the name of the one that left: four
+    // hundred times over, and none of it out of the spare.
+    for (let caller = 0; caller < 400; caller += 1) {
+      const request = budget.accept();
+      request.within(() => open(2));
+      request.over();
+      request.within(() => open(2));
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    expect(onOverrun).not.toHaveBeenCalled();
+    open(16);
+    expect(onOverrun).not.toHaveBeenCalled();
+    open(1);
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it("covers what opens in a long-spent request's name for a caller that left unanswered", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    const first = budget.accept();
+    first.within(() => open(8));
+    first.over();
+    // Each caller leaves at once, and the replacement its request was
+    // waiting for opens after it has gone, with nobody being served.
+    for (let caller = 0; caller < 400; caller += 1) {
+      const gone = budget.accept();
+      gone.within(() => open(1));
+      gone.over(false);
+      first.within(() => open(1));
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    expect(onOverrun).not.toHaveBeenCalled();
+  });
+
+  it("remembers only the last sixteen callers that left, and nothing of one that was answered", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    for (let caller = 0; caller < 100; caller += 1) budget.accept().over(false);
+    for (let caller = 0; caller < 100; caller += 1) budget.accept().over(true);
+    // A runaway after them all: its own, one from each of the sixteen, and
+    // the spare.
+    expect(budget.accept().within(() => until(onOverrun))).toBe(8 + 16 + 16 + 1);
+  });
+
+  it("takes a request for over once, however often it is said", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun, { spare: 0 });
+    const spent = budget.accept();
+    spent.within(() => open(8));
+    const answered = budget.accept();
+    answered.over(true);
+    // Said again as if its caller had left: it was answered, and lends nothing.
+    answered.over(false);
+    spent.within(() => open(1));
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  it("covers what opens in a long-spent request's name for each request that waits on it", () => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
+    // Node 22 opens every such replacement in the name of the request that
+    // first opened that line of connections, which has long had none left.
+    const first = budget.accept();
+    first.within(() => open(8));
+    first.over();
+    for (let caller = 0; caller < 400; caller += 1) {
+      const waiting = budget.accept();
+      waiting.within(() => open(1));
+      first.within(() => open(1));
+      waiting.within(() => open(1));
+      waiting.over();
+      for (const socket of sockets.splice(0)) socket.destroy();
+    }
+    expect(onOverrun).not.toHaveBeenCalled();
+    // And once more with nobody waiting: that one is the spare's.
+    first.within(() => open(16));
+    expect(onOverrun).not.toHaveBeenCalled();
+    first.within(() => open(1));
+    expect(onOverrun).toHaveBeenCalledOnce();
+  });
+
+  describe("with Node's own fetch", () => {
+    let origin: Server;
+    let url: string;
+    beforeEach(async () => {
+      // Each answer ends its connection, so each request opens one.
+      origin = createServer((_request, response) => {
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
+      url = `http://127.0.0.1:${(origin.address() as AddressInfo).port}/`;
+    });
+    afterEach(async () => {
+      origin.closeAllConnections();
+      await new Promise<void>((resolve) => origin.close(() => resolve()));
+    });
+    const ask = async () => (await fetch(url)).text();
+
+    it("charges the connection a fetch opens to the request that asked", async () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { perRequest: 1, spare: 0 });
+      // Over already, so nothing covers the connection but its being this
+      // request's own: were it opened in no name, it would be nobody's.
+      const asked = budget.accept();
+      asked.over();
+      expect(await asked.within(ask)).toBe("ok");
+      expect(onOverrun).not.toHaveBeenCalled();
+      await asked.within(ask);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("charges each of many requests at once for its own, and no other's", async () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { perRequest: 3, spare: 0 });
+      await Promise.all(
+        Array.from({ length: 24 }, async () => {
+          const request = budget?.accept();
+          request?.over();
+          // Three connections each, one after the other: all it is good for.
+          await request?.within(async () => {
+            for (let asked = 0; asked < 3; asked += 1) await ask();
+          });
+        }),
+      );
+      expect(onOverrun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a connection opened in no request's name", () => {
+    it("is charged to the newest request in hand that has any left, then to the spare", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun);
+      // An older request is still at work when a newer one comes and goes.
+      const older = budget.accept();
+      const newer = budget.accept();
+      open(8);
+      newer.over();
+      // The older one has all of its own left.
+      open(8);
+      older.over();
+      open(16);
+      expect(onOverrun).not.toHaveBeenCalled();
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("is covered by the requests in hand only while they are served", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun);
+      const requests = Array.from({ length: 64 }, () => budget?.accept());
+      open(40);
+      expect(onOverrun).not.toHaveBeenCalled();
+      // What they had left goes with them.
+      for (const request of requests) request?.over();
+      expect(until(onOverrun)).toBe(17);
+    });
+
+    it("is covered by nobody whose caller has left", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { spare: 0 });
+      // Remembered for the one connection Node may open in a request's
+      // name on its account, and for nothing else.
+      budget.accept().over(false);
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("is not charged to a request whose own work opened it", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { spare: 0 });
+      const request = budget.accept();
+      const other = budget.accept();
+      // In the first request's name: its eight, and not the other's.
+      request.within(() => open(8));
+      expect(onOverrun).not.toHaveBeenCalled();
+      // In nobody's: the other's eight cover these.
+      open(8);
+      expect(onOverrun).not.toHaveBeenCalled();
+      other.within(() => open(1));
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("what is kept to spare", () => {
+    let clock = 0;
+    const now = () => clock;
+    beforeEach(() => {
+      clock = 1_000_000;
+    });
+
+    it("comes back one connection each fifteen seconds, and no faster", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { now });
+      open(16);
+      clock += 15_000;
+      open(1);
+      expect(onOverrun).not.toHaveBeenCalled();
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("is spent to the last before the time since counts for nothing", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { now });
+      open(16);
+      clock += 14_999;
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("never holds more than sixteen, however long nothing is spent", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { now });
+      open(16);
+      clock += 86_400_000;
+      open(16);
+      expect(onOverrun).not.toHaveBeenCalled();
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("saves up no time while it is full", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { now });
+      // Fourteen quiet seconds earn nothing towards the next one back.
+      clock += 14_000;
+      open(16);
+      clock += 1_500;
+      open(1);
+      expect(onOverrun).toHaveBeenCalledOnce();
+    });
+
+    it("lets through what opens connections no faster than they come back", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun, { now });
+      // Four a minute, for a day: not a process out of control.
+      for (let opened = 0; opened < 5_760; opened += 1) {
+        clock += 15_000;
+        open(1);
+        for (const socket of sockets.splice(0)) socket.destroy();
+      }
+      expect(onOverrun).not.toHaveBeenCalled();
+    });
+
+    it("still gives up on a runaway that takes half a second, or a second and a half, over each", () => {
+      for (const hangUpMs of [500, 1_500]) {
+        const onOverrun = vi.fn();
+        const slow = connectionBudget(onOverrun, { now });
+        let opened = 0;
+        slow.accept().within(() => {
+          while (onOverrun.mock.calls.length === 0 && opened < 1_000) {
+            opened += 1;
+            clock += hangUpMs;
+            open(1);
+          }
+        });
+        slow.stop();
+        for (const socket of sockets.splice(0)) socket.destroy();
+        // Its allowance, the spare, and the little that came back meanwhile.
+        expect(opened).toBeGreaterThanOrEqual(25);
+        expect(opened).toBeLessThanOrEqual(28);
+      }
+    });
+
+    it("is not moved by the wall clock", () => {
+      const onOverrun = vi.fn();
+      budget = connectionBudget(onOverrun);
+      open(16);
+      const wall = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 86_400_000);
+      try {
+        open(1);
+        expect(onOverrun).toHaveBeenCalledOnce();
+      } finally {
+        wall.mockRestore();
+      }
+    });
+  });
+
+  it("spends nothing once stopped", () => {
+    const onOverrun = vi.fn();
+    connectionBudget(onOverrun).stop();
+    open(100);
+    expect(onOverrun).not.toHaveBeenCalled();
   });
 
   it.each<[string, Answer[], (signal: AbortSignal) => typeof fetch]>([
@@ -430,25 +905,31 @@ describe("onRunawayConnections", () => {
       ["close"],
       () => (async () => new Response("unreached")) as typeof fetch,
     ],
-  ])("is never set off by %s", async (name, proxyAnswers, inner) => {
-    const onRunaway = vi.fn();
-    stop = onRunawayConnections(onRunaway);
+  ])("is never overrun by %s", async (name, proxyAnswers, inner) => {
+    const onOverrun = vi.fn();
+    budget = connectionBudget(onOverrun);
     // Twenty such requests at once, three times over, each through the check.
     for (let round = 0; round < 3; round += 1) {
       answers = [...proxyAnswers];
       await Promise.all(
         Array.from({ length: 20 }, async () => {
+          const request = budget?.accept();
           const controller = new AbortController();
           const checked = tunnelCheckedFetch({ env: routed(), fetch: inner(controller.signal) });
           if (name === "a caller's own abort") setTimeout(() => controller.abort(), 50);
-          await checked(API, { signal: controller.signal }).then(
-            (response) => response.text(),
-            () => undefined,
+          await request?.within(() =>
+            checked(API, { signal: controller.signal }).then(
+              (response) => response.text(),
+              () => undefined,
+            ),
           );
+          request?.over();
         }),
       );
     }
-    expect(asked).toHaveLength(60);
-    expect(onRunaway).not.toHaveBeenCalled();
+    // Each asked the proxy once, unless its caller had left before it could.
+    if (name === "a caller's own abort") expect(asked.length).toBeLessThanOrEqual(60);
+    else expect(asked).toHaveLength(60);
+    expect(onOverrun).not.toHaveBeenCalled();
   });
 });

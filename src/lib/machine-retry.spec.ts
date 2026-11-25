@@ -266,9 +266,142 @@ describe("machine cooldown", () => {
       serverRetryAfter: true,
       proxy: true,
     });
+    // Told as the wait it is, with how long: "shortly" could be a quarter of an hour.
+    const waiting = /^The sign-in service asked prim to wait; retry in about (59|60)s$/u;
+    await expect(attempt(directory, vi.fn())).rejects.toMatchObject({
+      code: "token_service_unavailable",
+      message: expect.stringMatching(waiting),
+    });
+    expect(proxyCooldown(directory, API, CLIENT)?.message).toMatch(waiting);
     // Not prim's to forget, whatever else is wrong.
     clearMachineCooldowns(directory);
     expect(state(directory).retryAt).toBe(asked);
+  });
+
+  it("never cuts a running wait short when a broker gives up", () => {
+    const directory = tempDir();
+    // A minute of prim's own backoff still to run; the fourth failure's
+    // own wait would be eight to sixteen seconds.
+    coolDown(directory);
+    const running = state(directory).retryAt;
+
+    recordProxyFailure(directory, API, CLIENT);
+
+    expect(state(directory)).toEqual({ failures: 4, retryAt: running, proxy: true });
+  });
+
+  it.each([
+    ["prim's own backoff", {}],
+    ["a wait the server asked for", { serverRetryAfter: true }],
+    ["a proxy's failure", { proxy: true }],
+  ])("reads %s on disk as no longer than fifteen minutes", async (_kind, extra) => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const directory = tempDir();
+    const before = Date.now();
+    // Edited by hand, or left ahead by a clock since set back: ten years out.
+    const written = { failures: 3, retryAt: before + 315_360_000_000, ...extra };
+    writeFileSync(cooldownPath(directory), JSON.stringify(written));
+    const request = vi.fn();
+    const told = await attempt(directory, request).catch((error: MachineAuthError) => error);
+    expect(request).not.toHaveBeenCalled();
+    const { retryAt } = told as MachineAuthError;
+    expect(retryAt).toBeGreaterThanOrEqual(before + 15 * 60_000);
+    expect(retryAt).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
+    // Written back as read, and nothing else about it changed: the wait runs
+    // down from here instead of standing fifteen minutes off for ever.
+    expect(state(directory)).toEqual({ ...written, retryAt });
+    await expect(attempt(directory, request)).rejects.toMatchObject({ retryAt });
+    if ("proxy" in extra) expect(proxyCooldown(directory, API, CLIENT)).toMatchObject({ retryAt });
+  });
+
+  it("deletes a record that waits longer than prim ever writes, whatever it claims to be", async () => {
+    for (const extra of [{}, { serverRetryAfter: true }, { proxy: true }]) {
+      const directory = tempDir();
+      writeFileSync(
+        cooldownPath(directory),
+        JSON.stringify({ failures: 3, retryAt: Date.now() + 315_360_000_000, ...extra }),
+      );
+      // Not as any server asked, and not a count of failures worth keeping.
+      clearMachineCooldowns(directory);
+      expect(readdirSync(directory)).toEqual([]);
+      await expect(attempt(directory, async () => "token")).resolves.toBe("token");
+    }
+    // Fifteen minutes itself is a wait a server may have asked for.
+    const directory = tempDir();
+    const asked = Date.now() + 15 * 60_000 - 1_000;
+    writeFileSync(
+      cooldownPath(directory),
+      JSON.stringify({ failures: 1, retryAt: asked, serverRetryAfter: true }),
+    );
+    clearMachineCooldowns(directory);
+    expect(state(directory).retryAt).toBe(asked);
+  });
+
+  it("does not take a server's wait that has run out for one still asked", () => {
+    const directory = tempDir();
+    const before = Date.now();
+    writeFileSync(
+      cooldownPath(directory),
+      JSON.stringify({ failures: 3, retryAt: before - 60_000, serverRetryAfter: true }),
+    );
+
+    recordProxyFailure(directory, API, CLIENT);
+
+    // The broker's own cooldown, from now: not the old wait, armed in the past.
+    const recorded = state(directory);
+    expect(recorded).toEqual({ failures: 4, retryAt: expect.any(Number), proxy: true });
+    expect(recorded.retryAt).toBeGreaterThanOrEqual(before + 8_000);
+  });
+
+  it("tells the first command a server makes wait what every later one is told", async () => {
+    const asked = () =>
+      new MachineAuthError(
+        "token_service_unavailable",
+        "The machine token service is temporarily unavailable.",
+        false,
+        Date.now() + 120_000,
+      );
+    const first = (directory: string) =>
+      attempt(directory, () => {
+        throw asked();
+      }).catch((error: Error) => error.message);
+    // Outside a cloud session the failure keeps its own words.
+    expect(await first(tempDir())).toBe("The machine token service is temporarily unavailable.");
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const directory = tempDir();
+    const waiting = /^The sign-in service asked prim to wait; retry in about (119|120)s$/u;
+    expect(await first(directory)).toMatch(waiting);
+    expect(await first(directory)).toMatch(waiting);
+    // A failure with no wait asked keeps its own words there too.
+    expect(
+      await attempt(tempDir(), () => {
+        throw new MachineAuthError("token_service_unavailable", "busy");
+      }).catch((error: Error) => error.message),
+    ).toBe("busy");
+  });
+
+  it.each([
+    ["more failures than prim counts", { failures: 99, retryAt: Date.now() + 60_000, proxy: true }],
+    ["a count that is not a number", { failures: "3", retryAt: Date.now() + 60_000, proxy: true }],
+    ["a time before time", { failures: 3, retryAt: -1, proxy: true }],
+    [
+      "a server's wait it cannot read",
+      { failures: 99, retryAt: Date.now() + 60_000, serverRetryAfter: true },
+    ],
+    ["no record at all", "not json"],
+  ])("deletes a cooldown that holds %s, rather than keep or renew it", async (_name, record) => {
+    const directory = tempDir();
+    writeFileSync(
+      cooldownPath(directory),
+      typeof record === "string" ? record : JSON.stringify(record),
+    );
+    // Left alone, it stops every command.
+    await expect(attempt(directory, vi.fn())).rejects.toMatchObject({ code: "invalid_storage" });
+
+    clearMachineCooldowns(directory);
+
+    expect(existsSync(cooldownPath(directory))).toBe(false);
+    await expect(attempt(directory, async () => "token")).resolves.toBe("token");
   });
 
   it("keeps a cooldown some other failure started to its own words", async () => {

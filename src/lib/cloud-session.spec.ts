@@ -38,10 +38,16 @@ function egress(blocked: string[]): typeof fetch {
  * NODE_USE_ENV_PROXY=1 does, against a stand-in proxy that answers every
  * CONNECT with `answer`. `reached` is the request itself, were one sent.
  */
-async function diagnoseThroughProxy(answer: number | "close") {
+async function diagnoseThroughProxy(
+  answer: number | "close" | "silent",
+  // Silence is waited out; anything the proxy says is given time to arrive.
+  timeoutMs: number | undefined = answer === "silent" ? 150 : 2_000,
+) {
   const proxy = createServer();
+  const held: Duplex[] = [];
   proxy.on("connect", (_request, socket: Duplex) => {
     if (answer === "close") socket.destroy();
+    else if (answer === "silent") held.push(socket);
     else socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
   });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
@@ -55,11 +61,13 @@ async function diagnoseThroughProxy(answer: number | "close") {
           HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
         },
         fetch: reached,
+        timeoutMs,
       }),
       siteUrl: API,
     });
     return { notice, reached };
   } finally {
+    for (const socket of held) socket.destroy();
     await new Promise<void>((resolve) => proxy.close(() => resolve()));
   }
 }
@@ -206,6 +214,35 @@ describe("diagnoseCloudSession", () => {
     expect(notice).toContain("PRIM_M2M_CLIENT_AUTH=network-secret");
     expect(notice).not.toContain("PRIM_M2M_CLIENT_SECRET in the cloud environment");
   });
+
+  it("says only that a silent proxy did not answer: nothing of the allowlist either way", async () => {
+    const { notice, reached } = await diagnoseThroughProxy("silent");
+    expect(notice).toBe(
+      "Primitive is not connected in this Claude Code cloud session: the cloud environment's proxy did not answer in time; retry shortly.",
+    );
+    expect(reached).not.toHaveBeenCalled();
+    // The same, in the same words, when the broker is the one that asked.
+    const routed = { ...machineEnv(), HTTPS_PROXY: "http://127.0.0.1:3128" };
+    for (const report of [
+      { api: "PROXY_TIMEOUT" },
+      { api: "ok", signIn: { host: "signin.getprimitive.ai", result: "PROXY_TIMEOUT" } },
+    ])
+      expect(
+        await diagnoseCloudSession({ env: routed, brokerProbe: async () => report, siteUrl: API }),
+      ).toBe(notice);
+  });
+
+  it("says that of a silent proxy within prim's own deadlines, with nothing set for it", async () => {
+    // The probe's three seconds run out before the check's five: what the
+    // session reads must not depend on which of the two was counting.
+    const started = Date.now();
+    const { notice, reached } = await diagnoseThroughProxy("silent", undefined);
+    expect(notice).toBe(
+      "Primitive is not connected in this Claude Code cloud session: the cloud environment's proxy did not answer in time; retry shortly.",
+    );
+    expect(Date.now() - started).toBeLessThan(4_500);
+    expect(reached).not.toHaveBeenCalled();
+  }, 10_000);
 
   it("reads the proxy's 403 to a CONNECT as a blocked host", async () => {
     const { notice, reached } = await diagnoseThroughProxy(403);

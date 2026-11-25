@@ -44,10 +44,12 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
   });
 
   /** Discovery through a stand-in proxy that answers every CONNECT with `answer`. */
-  async function discoverThroughProxy(answer: number | "close"): Promise<Error> {
+  async function discoverThroughProxy(answer: number | "close" | "silent"): Promise<Error> {
     const proxy = createServer();
+    const held: Duplex[] = [];
     proxy.on("connect", (_request, socket: Duplex) => {
       if (answer === "close") socket.destroy();
+      else if (answer === "silent") held.push(socket);
       else socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
     });
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
@@ -61,9 +63,12 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
             HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
           },
           fetch: unreachable,
+          // Silence is waited out; an answer is given time to arrive.
+          timeoutMs: answer === "silent" ? 150 : 2_000,
         }),
       ).catch((error: unknown) => error as Error);
     } finally {
+      for (const socket of held) socket.destroy();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
   }
@@ -80,6 +85,18 @@ describe("machine authentication guidance in Claude Code cloud sessions", () => 
       });
     },
   );
+
+  it("says of a proxy that does not answer only that, and starts no cooldown in the proxy's name", async () => {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    const silent = await discoverThroughProxy("silent");
+    // Not the proxy's fault for certain, and not the allowlist's either.
+    expect(silent).toMatchObject({
+      code: "authentication_unavailable",
+      terminal: false,
+      message: "The cloud environment's proxy did not answer in time; retry shortly.",
+    });
+    expect(silent.message).not.toContain("Allowed domains");
+  });
 
   it("keeps the allowlist advice for a host the proxy refuses", async () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "true");

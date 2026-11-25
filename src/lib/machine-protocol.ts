@@ -1,5 +1,6 @@
 import {
   CLOUD_PROXY_FAILING,
+  CLOUD_PROXY_SILENT,
   CLOUD_REJECTED_CREDENTIALS_REMEDY,
   cloudDomainEditNote,
   isClaudeCloudSession,
@@ -145,20 +146,33 @@ export function proxyFault(retryAt?: number): MachineAuthError {
 }
 
 /**
- * A failed request as the proxy's own fault, in a cloud session, when that
- * is what checkTunnel found: any answer to a CONNECT but 200 and 403, a
- * hang-up, or silence. Its 403 is a host it refuses, and stays the
- * allowlist's business.
+ * A failed request as the proxy's own doing, in a cloud session, when that
+ * is what checkTunnel found. Any answer to a CONNECT but 200 and 403, a
+ * hang-up, or a proxy that cannot be reached is its fault. Silence is only
+ * silence: the proxy has not said whether it would open the connection, so
+ * that is reported as such and starts no cooldown in the proxy's name. Its
+ * 403 is a host it refuses, and stays the allowlist's business.
  */
 export function proxyFaultOf(error: unknown): MachineAuthError | undefined {
   const code = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
-  return typeof code === "string" &&
-    code.startsWith("PROXY_") &&
-    code !== "PROXY_BLOCKED" &&
-    isClaudeCloudSession()
-    ? proxyFault()
-    : undefined;
+  if (typeof code !== "string" || !code.startsWith("PROXY_") || !isClaudeCloudSession())
+    return undefined;
+  if (code === "PROXY_BLOCKED") return undefined;
+  return code === "PROXY_TIMEOUT"
+    ? new MachineAuthError("authentication_unavailable", CLOUD_PROXY_SILENT)
+    : proxyFault();
 }
+
+/**
+ * What a service that answered a request with a status it could not serve
+ * (a 429 or a 5xx) is reported as, by the failure's code. The host was
+ * reached, so whatever is wrong is not the network between prim and it.
+ */
+export const ANSWERED_UNAVAILABLE = {
+  token_service_unavailable: "The machine token service is temporarily unavailable.",
+  discovery_unavailable: "Machine authentication discovery is unavailable.",
+  verification_unavailable: "Machine verification is temporarily unavailable.",
+} as const;
 
 async function fetchMachine(
   url: string,
@@ -208,7 +222,7 @@ export async function discoverMachineConfiguration(
       response.status === 404 ? "server_upgrade_required" : "discovery_unavailable",
       response.status === 404
         ? "This server does not support machine authentication yet."
-        : "Machine authentication discovery is unavailable.",
+        : ANSWERED_UNAVAILABLE.discovery_unavailable,
     );
   return parseMachineConfiguration(await readMachineJson(response, 16 * 1024));
 }
@@ -257,7 +271,7 @@ export async function exchangeMachineCredentials(
           : rejectedCredentialsMessage(
               "Machine credentials were rejected. Ask your administrator to rotate or enable them.",
             )
-        : "The machine token service is temporarily unavailable.",
+        : ANSWERED_UNAVAILABLE.token_service_unavailable,
       terminal,
       terminal ? undefined : machineRetryAt(response),
     );
@@ -389,7 +403,7 @@ export async function readMachineIdentity(
         ? rejectedCredentialsMessage(
             "The API rejected this machine. Ask your administrator to check its registration and scopes.",
           )
-        : "Machine verification is temporarily unavailable.",
+        : ANSWERED_UNAVAILABLE.verification_unavailable,
       terminal,
     );
   }
@@ -419,7 +433,7 @@ export function parseInjectedMachineIdentity(
   if (status < 200 || status > 299)
     throw new MachineAuthError(
       "verification_unavailable",
-      "Machine verification is temporarily unavailable.",
+      ANSWERED_UNAVAILABLE.verification_unavailable,
     );
   let data: Record<string, unknown>;
   try {

@@ -16,6 +16,8 @@ type RetryState = {
   retryAt: number;
   serverRetryAfter?: unknown;
   proxy?: unknown;
+  /** The record on disk waits longer than prim ever writes (see readRetryState). */
+  overlong?: boolean;
 };
 
 /**
@@ -27,8 +29,13 @@ type RetryState = {
  * A proxy's failure is asked about again at once, since the explicit check is
  * the user asking whether it is fixed, but it is not forgotten: its count of
  * failures stays. If the proxy is still failing, the check costs one attempt
- * (which the broker cuts short, see onRunawayConnections) and the wait that
+ * (which the broker cuts short, see connectionBudget) and the wait that
  * follows is longer than the last, instead of starting over at a second.
+ *
+ * A record prim would itself refuse to read is deleted, whatever it claims to
+ * be: kept, it would stop every command for good. So is one that waits longer
+ * than prim ever writes, a server's wait included: it is not as the server
+ * asked.
  */
 export function clearMachineCooldowns(directory: string): void {
   let names: string[];
@@ -40,22 +47,21 @@ export function clearMachineCooldowns(directory: string): void {
   for (const name of names) {
     if (!/^machine_retry_[0-9a-f]{64}\.json$/u.test(name)) continue;
     const path = join(directory, name);
+    let state: RetryState | undefined;
     try {
-      const state = JSON.parse(readFileSync(path, "utf8")) as Partial<RetryState>;
-      if (state.serverRetryAfter === true) continue;
-      if (state.proxy === true && Number.isSafeInteger(state.failures)) {
+      state = readRetryState(path);
+    } catch {
+      // Unreadable state is no reason to keep waiting.
+    }
+    if (state?.serverRetryAfter === true && !state.overlong) continue;
+    try {
+      if (state?.proxy === true && !state.overlong)
         atomicWriteFile(
           path,
           JSON.stringify({ failures: state.failures, retryAt: 0, proxy: true }),
           { mode: 0o600 },
         );
-        continue;
-      }
-    } catch {
-      // Unreadable state is no reason to keep waiting.
-    }
-    try {
-      rmSync(path, { force: true });
+      else rmSync(path, { force: true });
     } catch {
       // The check still runs; it reports the cooldown if one remains.
     }
@@ -71,11 +77,43 @@ export const SERVER_WAIT_PREFIX = "The sign-in service asked prim to wait";
 /** A Retry-After is honoured, but not one that would outlast the session by years. */
 const MAX_SERVER_WAIT_MS = 15 * 60_000;
 
+const serverWait = (retryAt: number): string =>
+  `${SERVER_WAIT_PREFIX}; retry in about ${Math.ceil((retryAt - Date.now()) / 1000)}s`;
+
+/**
+ * What a running cooldown tells whoever meets it. In a cloud session each
+ * kind has its own words. A wait the server asked for comes first, with how
+ * long: it may be minutes, whatever else has since gone wrong.
+ */
+function cooldownError(state: RetryState): MachineAuthError {
+  if (isClaudeCloudSession() && state.serverRetryAfter !== true && state.proxy === true)
+    // A failing proxy is named for what it is: only the proxy recovering ends it.
+    return proxyFault(state.retryAt);
+  return new MachineAuthError(
+    "token_service_unavailable",
+    !isClaudeCloudSession()
+      ? "Machine authentication is cooling down after a temporary failure. Retry later."
+      : state.serverRetryAfter === true
+        ? // Cloud setup keeps this wait too, so pointing at it would loop.
+          serverWait(state.retryAt)
+        : // The cooldown hides the failure that started it; cloud setup
+          // retries at once and names the cause.
+          cloudSetupPointer("Machine authentication is cooling down after a temporary failure"),
+    false,
+    state.retryAt,
+  );
+}
+
 function retryPath(directory: string, apiUrl: string, clientId: string): string {
   const key = createHash("sha256").update(`${apiUrl}\0${clientId}`).digest("hex");
   return join(directory, `machine_retry_${key}.json`);
 }
 
+/**
+ * The cooldown on disk. No wait is honoured for longer than the longest prim
+ * writes: a record further out was edited by hand, or was left ahead by a
+ * clock since set back, and is read as that longest wait from now.
+ */
 function readRetryState(path: string): RetryState {
   try {
     const stat = lstatSync(path);
@@ -89,7 +127,8 @@ function readRetryState(path: string): RetryState {
       data.retryAt < 0
     )
       throw new Error("Invalid retry state");
-    return data;
+    const latest = Date.now() + MAX_SERVER_WAIT_MS;
+    return data.retryAt > latest ? { ...data, retryAt: latest, overlong: true } : data;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT")
       throw new MachineAuthError("invalid_storage", "Machine retry state is unreadable.");
@@ -99,7 +138,8 @@ function readRetryState(path: string): RetryState {
 
 /**
  * One more failure. A wait the server asked for is kept as asked, up to the
- * cap; otherwise each failure doubles prim's own wait, up to a minute or two.
+ * cap; otherwise each failure doubles prim's own wait, up to a minute or two,
+ * and never cuts short a wait that is already running.
  */
 function recordFailure(
   path: string,
@@ -111,7 +151,7 @@ function recordFailure(
   const backoff = Math.min(60_000, 1000 * 2 ** (failures - 1));
   const retryAt =
     serverRetryAt === undefined
-      ? Date.now() + Math.ceil(backoff * (1 + Math.random()))
+      ? Math.max(state.retryAt, Date.now() + Math.ceil(backoff * (1 + Math.random())))
       : Math.min(serverRetryAt, Date.now() + MAX_SERVER_WAIT_MS);
   atomicWriteFile(
     path,
@@ -129,7 +169,7 @@ function recordFailure(
 /**
  * Start a cooldown from outside a request: the token broker is giving up
  * because the environment's proxy has it reconnecting without end (see
- * onRunawayConnections). Whatever starts next waits it out, and says why. A
+ * connectionBudget). Whatever starts next waits it out, and says why. A
  * wait the server asked for, if one is running, still stands as asked.
  */
 export function recordProxyFailure(directory: string, apiUrl: string, clientId: string): void {
@@ -145,8 +185,8 @@ export function recordProxyFailure(directory: string, apiUrl: string, clientId: 
 }
 
 /**
- * The proxy's fault, if a cloud session has a cooldown for one running: why
- * a broker that gave up is gone.
+ * What a cloud session's running cooldown says, if a proxy's failure is part
+ * of it: why a broker that gave up is gone.
  */
 export function proxyCooldown(
   directory: string,
@@ -156,7 +196,7 @@ export function proxyCooldown(
   try {
     const state = readRetryState(retryPath(directory, apiUrl, clientId));
     return state.proxy === true && state.retryAt > Date.now() && isClaudeCloudSession()
-      ? proxyFault(state.retryAt)
+      ? cooldownError(state)
       : undefined;
   } catch {
     return undefined;
@@ -174,23 +214,12 @@ export async function withMachineCooldown<T>(
   signal?.throwIfAborted();
   const path = retryPath(directory, apiUrl, clientId);
   const state = readRetryState(path);
-  if (state.retryAt > Date.now()) {
-    // A failing proxy is named for what it is: only the proxy recovering ends it.
-    if (state.proxy === true && isClaudeCloudSession()) throw proxyFault(state.retryAt);
-    throw new MachineAuthError(
-      "token_service_unavailable",
-      !isClaudeCloudSession()
-        ? "Machine authentication is cooling down after a temporary failure. Retry later."
-        : state.serverRetryAfter === true
-          ? // Cloud setup keeps this wait too, so pointing at it would loop.
-            `${SERVER_WAIT_PREFIX}; retry in about ${Math.ceil((state.retryAt - Date.now()) / 1000)}s`
-          : // The cooldown hides the failure that started it; cloud setup
-            // retries at once and names the cause.
-            cloudSetupPointer("Machine authentication is cooling down after a temporary failure"),
-      false,
-      state.retryAt,
-    );
+  if (state.overlong) {
+    // Written back as read, so that it runs down instead of standing off.
+    const { overlong: _overlong, ...kept } = state;
+    atomicWriteFile(path, JSON.stringify(kept), { mode: 0o600 });
   }
+  if (state.retryAt > Date.now()) throw cooldownError(state);
   try {
     const result = await request();
     rmSync(path, { force: true });
@@ -208,7 +237,15 @@ export async function withMachineCooldown<T>(
       ].includes(error.code)
     ) {
       const retryAt = recordFailure(path, state, error.code === "proxy_unavailable", error.retryAt);
-      throw new MachineAuthError(error.code, error.message, false, retryAt);
+      // In a cloud session the first command told to wait says so, with how
+      // long, as every command after it will.
+      const asked = error.retryAt !== undefined && isClaudeCloudSession();
+      throw new MachineAuthError(
+        error.code,
+        asked ? serverWait(retryAt) : error.message,
+        false,
+        retryAt,
+      );
     }
     throw error;
   }

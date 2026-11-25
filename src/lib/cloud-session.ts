@@ -1,6 +1,7 @@
 import { getSiteUrl } from "../client.js";
 import {
   CLOUD_CREDENTIALS_REMEDY,
+  CLOUD_PROXY_SILENT,
   cloudDomainEditNote,
   cloudProxyRouting,
   isClaudeCloudSession,
@@ -80,6 +81,9 @@ function unreachable(what: string, failure: string, remedy: string): string {
   if (failure === "blocked") return `this environment cannot reach ${what}. To fix it, ${remedy}.`;
   if (failure === "timeout")
     return `${what} did not answer in time. If this persists, check that you ${remedy.replace(/^add /u, "added ")}.`;
+  // The proxy said nothing in time, which says nothing of the allowlist.
+  if (failure === "PROXY_TIMEOUT")
+    return `${CLOUD_PROXY_SILENT[0]?.toLowerCase()}${CLOUD_PROXY_SILENT.slice(1)}`;
   // The proxy answered with a failure of its own, or hung up (see
   // checkTunnel): an outage, which no edit to the allowlist repairs.
   if (failure.startsWith("PROXY_"))

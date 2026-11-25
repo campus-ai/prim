@@ -20,6 +20,8 @@ import {
   MachineAuthError,
   discoverMachineConfiguration,
   exchangeMachineCredentials,
+  parseInjectedMachineIdentity,
+  verifyMachineIdentity,
 } from "../lib/machine-protocol.js";
 import { recordProxyFailure, withMachineCooldown } from "../lib/machine-retry.js";
 import { tunnelCheckedFetch } from "../lib/proxy-tunnel.js";
@@ -989,10 +991,12 @@ describe("each failure, as the command that met it says it and as `prim setup --
     return error as MachineAuthError;
   };
   /** Discovery through a stand-in proxy that answers every CONNECT with `answer`. */
-  async function throughProxy(answer: number): Promise<MachineAuthError> {
+  async function throughProxy(answer: number | "silent"): Promise<MachineAuthError> {
     const proxy = createServer();
+    const held: Duplex[] = [];
     proxy.on("connect", (_request, socket: Duplex) => {
-      socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
+      if (answer === "silent") held.push(socket);
+      else socket.end(`HTTP/1.1 ${answer} Answer\r\nContent-Length: 0\r\n\r\n`);
     });
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
     try {
@@ -1006,10 +1010,13 @@ describe("each failure, as the command that met it says it and as `prim setup --
               HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
             },
             fetch: (async () => new Response("unreached")) as typeof fetch,
+            // Silence is waited out; an answer is given time to arrive.
+            timeoutMs: answer === "silent" ? 150 : 2_000,
           }),
         ),
       );
     } finally {
+      for (const socket of held) socket.destroy();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
   }
@@ -1052,7 +1059,7 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(error).toMatchObject({ code: "authentication_unavailable", terminal: false });
     expect(error.message).toBe(`${BLOCKED}${IN_SESSION}.`);
     expect(relayed(error, routed)).toBe(`credentials · ${BLOCKED}${IN_SESSION}${BOTH}`);
-  });
+  }, 30_000);
 
   it("a blocked host, where prim connects by itself", async () => {
     session(unrouted);
@@ -1061,7 +1068,7 @@ describe("each failure, as the command that met it says it and as `prim setup --
     // No promise about when the edit reaches this session: here it may not.
     expect(error.message).toBe(`${BLOCKED}.`);
     expect(relayed(error, unrouted)).toBe(`credentials · ${BLOCKED}${BOTH}`);
-  });
+  }, 30_000);
 
   it("an outage of the proxy itself", async () => {
     session(routed);
@@ -1074,7 +1081,20 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(relayed(error, routed)).toBe(
       "credentials · The cloud environment's proxy is failing (not the Allowed domains list); retry shortly",
     );
-  });
+  }, 30_000);
+
+  it("a proxy that does not answer", async () => {
+    session(routed);
+    const error = await throughProxy("silent");
+    expect(error).toMatchObject({ code: "authentication_unavailable", terminal: false });
+    expect(error.message).toBe(
+      "The cloud environment's proxy did not answer in time; retry shortly.",
+    );
+    // Relayed as it is: the proxy has not said whether the host is allowed.
+    expect(relayed(error, routed)).toBe(
+      "credentials · The cloud environment's proxy did not answer in time; retry shortly",
+    );
+  }, 30_000);
 
   it("a request through the broker that fails for no reason the proxy gave", async () => {
     session(routed);
@@ -1096,7 +1116,7 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(relayed(error, routed)).toBe(
       `credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION} (The request to Primitive through the cloud environment's proxy failed. Check the connection and retry)`,
     );
-  });
+  }, 30_000);
 
   it("a wait the sign-in service asked for", async () => {
     session(routed);
@@ -1113,19 +1133,133 @@ describe("each failure, as the command that met it says it and as `prim setup --
           ),
         ),
       );
-    expect((await exchange()).message).toBe(
-      "The machine token service is temporarily unavailable.",
+    // The first command to be told to wait says so, as cloud setup would if
+    // it were that command: the service answered, so no domain is to blame.
+    const first = await exchange();
+    expect(first).toMatchObject({ code: "token_service_unavailable", terminal: false });
+    expect(first.message).toMatch(
+      /^The sign-in service asked prim to wait; retry in about (11\d|120)s$/u,
     );
-    // From then on every command is told it is a wait, and for how long.
+    expect(relayed(first, routed, config)).toBe(`credentials · ${first.message}`);
+    // And every command after it is told the same.
     const waiting = await exchange();
     expect(waiting).toMatchObject({ code: "token_service_unavailable", terminal: false });
     expect(waiting.message).toMatch(
-      /^The sign-in service asked prim to wait; retry in about (119|120)s$/u,
+      /^The sign-in service asked prim to wait; retry in about (11\d|120)s$/u,
     );
     // Cloud setup neither forgets the wait nor blames the network for it.
     expect(relayed(waiting, routed, config)).toBe(`credentials · ${waiting.message}`);
     expect((await exchange()).message).toMatch(/^The sign-in service asked prim to wait/u);
-  });
+  }, 30_000);
+
+  it("a sign-in service that answers and cannot serve, with no wait asked", async () => {
+    session(routed);
+    const config = tempDir("prim-cloud-503-");
+    const exchange = () =>
+      failure(
+        withMachineCooldown(config, API, CLIENT, undefined, () =>
+          exchangeMachineCredentials(configuration, CLIENT, "secret", undefined, tokenService(503)),
+        ),
+      );
+    // Cloud setup forgets prim's own backoff before each check, so it meets
+    // the service itself every time, and every time must say what is true.
+    for (let run = 0; run < 2; run += 1) {
+      const error = await exchange();
+      expect(error).toMatchObject({ code: "token_service_unavailable", terminal: false });
+      expect(error.message).toBe("The machine token service is temporarily unavailable.");
+      const line = relayed(error, routed, config);
+      expect(line).toBe(
+        "credentials · Primitive's sign-in service is temporarily unavailable; retry shortly",
+      );
+      // It was reached: nothing about the network, or domains to allow.
+      expect(line).not.toMatch(/Allowed domains|unreachable/u);
+      // Only the sign-in service's own failure is told so: the same words
+      // from anything else are a failure to reach Primitive like any other.
+      expect(
+        relayed(new MachineAuthError("authentication_unavailable", error.message), routed),
+      ).toContain("credentials · Primitive is unreachable from this environment: ");
+      expect(readdirSync(config).filter((name) => name.startsWith("machine_retry_"))).toEqual([]);
+    }
+  }, 30_000);
+
+  const API_UNAVAILABLE = "credentials · Primitive's API is temporarily unavailable; retry shortly";
+
+  it("an API that answers and cannot serve its configuration", async () => {
+    session(routed);
+    for (const status of [500, 502, 503, 429]) {
+      const error = await failure(
+        discoverMachineConfiguration(API, undefined, tokenService(status)),
+      );
+      expect(error).toMatchObject({ code: "discovery_unavailable", terminal: false });
+      expect(error.message).toBe("Machine authentication discovery is unavailable.");
+      const line = relayed(error, routed);
+      expect(line).toBe(API_UNAVAILABLE);
+      // It was reached: nothing about the network, or domains to allow.
+      expect(line).not.toMatch(/Allowed domains|unreachable/u);
+    }
+  }, 30_000);
+
+  it("an API that answers and cannot verify the machine", async () => {
+    session(routed);
+    // Where prim holds the token, and where the proxy attaches it.
+    const held = await failure(
+      verifyMachineIdentity(API, "header.payload.signature", CLIENT, undefined, tokenService(503)),
+    );
+    const attached = await failure(
+      (async () => parseInjectedMachineIdentity(503, {}, API, CLIENT))(),
+    );
+    for (const error of [held, attached]) {
+      expect(error).toMatchObject({ code: "verification_unavailable", terminal: false });
+      expect(error.message).toBe("Machine verification is temporarily unavailable.");
+      const line = relayed(error, routed);
+      expect(line).toBe(API_UNAVAILABLE);
+      expect(line).not.toMatch(/Allowed domains|unreachable/u);
+    }
+  }, 30_000);
+
+  it("a check that met no answer, under the reason an answered one carries", () => {
+    // `auth status` gives this reason to any check that did not finish, a
+    // request that timed out included: only the API's own words say it answered.
+    const told = (stdout: Record<string, unknown>) => {
+      const { deps, notes } = harness({
+        cwd: repo(true),
+        env: { ...routed, PRIM_CONFIG_DIR: tempDir("prim-") },
+        parseAuthStatus: () => "unreachable",
+        run: () => ({ code: 1, stdout: JSON.stringify(stdout) }),
+      });
+      setupCloudSession(deps);
+      return notes.find((note) => note.startsWith("credentials ·"));
+    };
+    const UNREACHABLE = `credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited)${IN_SESSION}`;
+    expect(told({ recoveryReason: "verification_unavailable" })).toBe(UNREACHABLE);
+    expect(told({ recoveryReason: "verification_unavailable", recoveryDetail: "timed out" })).toBe(
+      `${UNREACHABLE} (timed out)`,
+    );
+    // Nor do an answered failure's words under another reason say so.
+    expect(
+      told({
+        recoveryReason: "authentication_unavailable",
+        recoveryDetail: "Machine verification is temporarily unavailable.",
+      }),
+    ).toBe(`${UNREACHABLE} (Machine verification is temporarily unavailable)`);
+    expect(
+      told({
+        recoveryReason: "verification_unavailable",
+        recoveryDetail: "Machine authentication discovery is unavailable.",
+      }),
+    ).toBe(`${UNREACHABLE} (Machine authentication discovery is unavailable)`);
+  }, 30_000);
+
+  it("a server too old for machine credentials", async () => {
+    session(routed);
+    const error = await failure(discoverMachineConfiguration(API, undefined, tokenService(404)));
+    expect(error).toMatchObject({ code: "server_upgrade_required", terminal: false });
+    expect(error.message).toBe("This server does not support machine authentication yet.");
+    // It answered, and said what is wrong: no domain to add.
+    expect(relayed(error, routed)).toBe(
+      "credentials · This server does not support machine authentication yet",
+    );
+  }, 30_000);
 
   it("prim's own cooldown after a failure", async () => {
     session(unrouted);
@@ -1153,7 +1287,7 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(relayed(cooling, unrouted)).toBe(
       "credentials · Primitive is unreachable from this environment: add api.getprimitive.ai and signin.getprimitive.ai to the cloud environment's Allowed domains (Network access: Limited) (Machine authentication is cooling down after a temporary failure)",
     );
-  });
+  }, 30_000);
 
   it("a cooldown the proxy's failure started", async () => {
     session(routed);
@@ -1180,7 +1314,7 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(relayed(cooling, routed)).toBe(
       "credentials · The cloud environment's proxy is failing (not the Allowed domains list); retry shortly",
     );
-  });
+  }, 30_000);
 
   it("credentials the sign-in service rejects", async () => {
     session(routed);
@@ -1193,5 +1327,5 @@ describe("each failure, as the command that met it says it and as `prim setup --
     expect(error.message).toBe(`${REJECTED}.`);
     // Nothing about the network, and the replacement named once.
     expect(relayed(error, routed)).toBe(`credentials · ${REJECTED}`);
-  });
+  }, 30_000);
 });

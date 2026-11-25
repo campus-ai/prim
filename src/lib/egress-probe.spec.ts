@@ -95,9 +95,74 @@ describe("probeEgress through the cloud environment's proxy", () => {
     }
   });
 
-  it("reports a proxy that says nothing as a timeout", async () => {
+  it("reports a proxy that says nothing as its silence, not as a host that did not answer", async () => {
+    // The proxy has not said whether it would open the connection.
     const { env } = await proxyAnswering({ "api.example.invalid": "silent" });
     expect(await probeEgress(API, true, tunnelCheckedFetch({ env, timeoutMs: 150 }))).toEqual({
+      api: "PROXY_TIMEOUT",
+    });
+  });
+
+  it("reports that silence within its own deadlines, with nothing set for it", async () => {
+    // The probe gives a host three seconds and the check gives the proxy
+    // five, so it is the probe's time that runs out on a silent proxy; the
+    // report must still be the proxy's silence, and come when the probe's
+    // time is up.
+    const { asked, env } = await proxyAnswering({ "api.example.invalid": "silent" });
+    const inner = origin();
+    const started = Date.now();
+    expect(await probeEgress(API, true, tunnelCheckedFetch({ env, fetch: inner }))).toEqual({
+      api: "PROXY_TIMEOUT",
+    });
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(2_900);
+    expect(took).toBeLessThan(4_500);
+    expect(asked).toEqual(["api.example.invalid"]);
+    expect(inner).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("reports a sign-in host the proxy stays silent on in the same word", async () => {
+    const { env } = await proxyAnswering({ "signin.example.invalid": "silent" });
+    expect(
+      await probeEgress(API, true, tunnelCheckedFetch({ env, fetch: origin(), timeoutMs: 150 })),
+    ).toEqual({ api: "ok", signIn: signIn("PROXY_TIMEOUT") });
+  });
+
+  it("asks nothing more once whoever wanted to know has left", async () => {
+    const { asked, env } = await proxyAnswering({});
+    const abandoned = new AbortController();
+    const inner = vi.fn(async (_input: string | URL | Request) => {
+      // The caller leaves while the API's answer is on its way.
+      abandoned.abort();
+      return Response.json({ issuer: "https://signin.example.invalid" });
+    });
+    expect(
+      await probeEgress(API, true, tunnelCheckedFetch({ env, fetch: inner }), abandoned.signal),
+    ).toEqual({ api: "ok" });
+    // The sign-in service is neither asked of the proxy nor requested.
+    expect(asked).toEqual(["api.example.invalid"]);
+    expect(inner).toHaveBeenCalledOnce();
+  });
+
+  it("gives up the request in hand when whoever wanted to know leaves", async () => {
+    const { asked, env } = await proxyAnswering({ "api.example.invalid": "silent" });
+    const abandoned = new AbortController();
+    const inner = origin();
+    setTimeout(() => abandoned.abort(), 50);
+    const started = Date.now();
+    // Whatever it says, nobody is there to read it: only that it stops.
+    await probeEgress(API, true, tunnelCheckedFetch({ env, fetch: inner }), abandoned.signal);
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(asked).toEqual(["api.example.invalid"]);
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it("reports a host that takes too long, once the proxy let the request through, as a timeout", async () => {
+    const { env } = await proxyAnswering({});
+    const slow = (async () => {
+      throw new DOMException("The operation timed out", "TimeoutError");
+    }) as typeof fetch;
+    expect(await probeEgress(API, true, tunnelCheckedFetch({ env, fetch: slow }))).toEqual({
       api: "timeout",
     });
   });

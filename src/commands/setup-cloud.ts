@@ -2,6 +2,7 @@ import { declaresInactive, explicitlyActive, hasProjectPrimInstall } from "../li
 import {
   CLOUD_GITHUB_CONNECT_REMEDY,
   CLOUD_PROXY_FAILING,
+  CLOUD_PROXY_SILENT,
   CLOUD_SETUP_POINTER,
 } from "../lib/cloud-env.js";
 import {
@@ -23,7 +24,7 @@ import { resolveStoredCredential } from "../lib/credentials.js";
 import { gitToplevel, githubRepositoryFullName } from "../lib/git.js";
 import { stageHookRuntime } from "../lib/hook-runtime.js";
 import { hasMachineConfiguration } from "../lib/machine-credentials.js";
-import { MachineAuthError } from "../lib/machine-protocol.js";
+import { ANSWERED_UNAVAILABLE, MachineAuthError } from "../lib/machine-protocol.js";
 import { SERVER_WAIT_PREFIX, clearMachineCooldowns } from "../lib/machine-retry.js";
 import { primConfigDirectory } from "../lib/paths.js";
 import { stripControlChars } from "../lib/terminal-safe.js";
@@ -325,7 +326,7 @@ function credentialsReady({ deps, results, remedy, env }: SessionCheck): boolean
     const detail = authFailureDetail(status.stdout);
     remedy(
       auth === "unreachable"
-        ? unreachableRemedy(detail, env)
+        ? unreachableRemedy(detail, authFailureReason(status.stdout), env)
         : machine
           ? `credentials · ${detail ?? "rejected"}${
               // Guidance that already names the replacement needs no second copy.
@@ -475,16 +476,31 @@ function sessionSteps(
 /**
  * Why the credential check could not reach Primitive, said once. A wait the
  * sign-in service asked for is not a network fault, and no setting ends it.
- * Nor does any setting repair the environment's proxy when it is the proxy
- * that is failing: that is relayed as it is, with no word about domains the
- * user may already have allowed. A failure that names the host it could not
- * reach keeps that host, which may not be the default one, and adds the full
- * list instead of repeating the fix. Where the fix is an edit to Allowed
- * domains, the remedy itself says when that edit reaches this session.
+ * Nor is a host that answered and could not serve, whether Primitive's API or
+ * its sign-in service: it was reached, so no domain is to blame. Each such
+ * failure has its own code, but a code alone is not proof (a running cooldown
+ * and a caller's own timeout borrow two of them), so the service's own words
+ * are matched too. Nor does any setting repair the environment's proxy when
+ * it is the proxy that is failing or silent: that is relayed as it is, with
+ * no word about domains the user may already have allowed. A failure that
+ * names the host it could not reach keeps that host, which may not be the
+ * default one, and adds the full list instead of repeating the fix. Where the
+ * fix is an edit to Allowed domains, the remedy itself says when that edit
+ * reaches this session.
  */
-function unreachableRemedy(detail: string | undefined, env: NodeJS.ProcessEnv): string {
+function unreachableRemedy(
+  detail: string | undefined,
+  reason: string | undefined,
+  env: NodeJS.ProcessEnv,
+): string {
   if (detail?.startsWith(SERVER_WAIT_PREFIX)) return `credentials · ${detail}`;
-  if (detail && CLOUD_PROXY_FAILING.startsWith(detail)) return `credentials · ${detail}`;
+  // The server answered that it is too old for machine credentials: as it says.
+  if (reason === "server_upgrade_required" && detail) return `credentials · ${detail}`;
+  const answered = ANSWERED_UNAVAILABLE[reason as keyof typeof ANSWERED_UNAVAILABLE];
+  if (detail && answered?.startsWith(detail))
+    return `credentials · Primitive's ${reason === "token_service_unavailable" ? "sign-in service" : "API"} is temporarily unavailable; retry shortly`;
+  if (detail && [CLOUD_PROXY_FAILING, CLOUD_PROXY_SILENT].some((said) => said.startsWith(detail)))
+    return `credentials · ${detail}`;
   if (detail?.includes("Allowed domains"))
     return `credentials · ${detail}; prim needs ${cloudAllowedDomains(undefined, undefined, env).join(" and ")} allowed`;
   return `credentials · Primitive is unreachable from this environment: ${cloudEgressRemedy(undefined, undefined, env)}${detail ? ` (${detail})` : ""}`;
@@ -513,6 +529,16 @@ function enrollmentRequired(stdout: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/** The machine credential failure's code from `auth status --json`, if any. */
+function authFailureReason(stdout: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout || "{}") as { recoveryReason?: unknown };
+    return typeof parsed.recoveryReason === "string" ? parsed.recoveryReason : undefined;
+  } catch {
+    return undefined;
   }
 }
 

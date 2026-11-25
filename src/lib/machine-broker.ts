@@ -23,7 +23,7 @@ import {
 } from "./machine-protocol.js";
 import { proxyCooldown, recordProxyFailure } from "./machine-retry.js";
 import { primConfigDirectory } from "./paths.js";
-import { onRunawayConnections, tunnelCheckedFetch } from "./proxy-tunnel.js";
+import { connectionBudget, tunnelCheckedFetch } from "./proxy-tunnel.js";
 import { readBoundedJson } from "./workos-connect.js";
 
 const MAX_RESPONSE_BYTES = 96 * 1024;
@@ -639,15 +639,29 @@ export function createBrokerServer(options: {
   environment: Environment;
   apiUrl: string;
   nonce: string;
-  /** Called for each authenticated request, to keep an idle broker alive. */
-  onRequest?: () => void;
+  /**
+   * Called for each authenticated request, which keeps an idle broker alive.
+   * If it answers, the request's work is run `within` what it answers, and
+   * `over` is called when the request is over, with whether it was answered
+   * (see connectionBudget).
+   */
+  onRequest?: () =>
+    | { within: <T>(work: () => T) => T; over: (answered: boolean) => void }
+    | undefined;
   /** How this broker reaches Primitive (see tunnelCheckedFetch). */
   fetch?: typeof fetch;
   /** The credential this broker holds, exchanged or renewed when needed. */
   acquire?: AcquireCredential;
 }): Server {
   const { environment, apiUrl, nonce } = options;
-  const reach = options.fetch ?? tunnelCheckedFetch();
+  // Asking the proxy first is for a session whose requests ride the cloud
+  // environment's proxy. Anywhere else the broker makes its requests as it
+  // always has, whatever proxy the user's own Node is set up with.
+  const reach =
+    options.fetch ??
+    (environment.routing === "proxy"
+      ? tunnelCheckedFetch()
+      : (((input, init) => fetch(input, init)) as typeof fetch));
   const acquire: AcquireCredential =
     options.acquire ??
     ((request) => acquireMachineCredential(request, { localEnvironment: true, fetch: reach }));
@@ -719,13 +733,16 @@ export function createBrokerServer(options: {
         response.writeHead(403).end();
         return;
       }
-      options.onRequest?.();
+      const served = options.onRequest?.();
+      if (served) response.once("close", () => served.over(response.writableFinished));
       const controller = new AbortController();
       response.once("close", () => {
         if (!response.writableFinished) controller.abort();
       });
-      let result: unknown;
-      if (forwarding) {
+      const work = async (): Promise<unknown> => {
+        // The proxy reaches the sign-in service itself when it holds the token.
+        if (probing) return probeEgress(apiUrl, !proxyHoldsToken, reach, controller.signal);
+        if (!forwarding) return credentialResult(acquire, apiUrl, data, controller.signal);
         // Where prim holds the token, the broker attaches the one it holds:
         // it issued every caller's copy, and a caller that sent its own
         // would hand it to whatever answers on this port before knowing
@@ -733,21 +750,11 @@ export function createBrokerServer(options: {
         const held = proxyHoldsToken
           ? undefined
           : await credentialResult(acquire, apiUrl, {}, controller.signal);
-        result =
-          held && "error" in held
-            ? held
-            : await forwardToApi(
-                apiUrl,
-                data,
-                controller.signal,
-                reach,
-                held?.credential.accessToken,
-              );
-      } else if (probing)
-        // The proxy reaches the sign-in service itself when it holds the token.
-        result = await probeEgress(apiUrl, !proxyHoldsToken, reach);
-      else result = await credentialResult(acquire, apiUrl, data, controller.signal);
-      const body = JSON.stringify(result);
+        return held && "error" in held
+          ? held
+          : forwardToApi(apiUrl, data, controller.signal, reach, held?.credential.accessToken);
+      };
+      const body = JSON.stringify(await (served ? served.within(work) : work()));
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({
@@ -783,26 +790,43 @@ export async function startMachineBroker(
     environment,
     apiUrl,
     nonce,
-    onRequest: () => idle.refresh(),
+    onRequest: () => {
+      idle.refresh();
+      return budget?.accept();
+    },
   });
   // Ends the process, not just the server: a request Node is still retrying
   // would otherwise keep it alive and busy, with no descriptor to find it by.
   const close = (code = 0) => {
     clearTimeout(idle);
-    stopWatching();
+    budget?.stop();
     server.closeAllConnections();
     server.close();
-    if (readDescriptor(path)?.nonce === nonce) rmSync(path, { force: true });
+    try {
+      if (readDescriptor(path)?.nonce === nonce) rmSync(path, { force: true });
+    } catch {
+      // Withdrawn or not, the process ends.
+    }
     exit(code);
   };
-  // A request met a proxy that answered the check and closed its CONNECT,
-  // and Node 22 or 24 is retrying it for as long as this process lives. The
-  // cooldown comes first: whatever starts next waits, and says the proxy is
-  // failing, instead of meeting the same proxy at once.
-  const stopWatching = onRunawayConnections(() => {
-    recordProxyFailure(directory, apiUrl, environment.clientId);
-    close(1);
-  });
+  // More connections than the requests that opened them account for: one met
+  // a proxy that answered the check and closed its CONNECT, and Node 22 or 24
+  // is retrying it for as long as this process lives. The cooldown comes
+  // first, so that whatever starts next waits, and says the proxy is failing,
+  // instead of meeting the same proxy at once; but the process ends whether
+  // or not the cooldown could be written. Only a broker routed through the
+  // cloud environment's proxy counts: elsewhere nothing has changed.
+  const budget =
+    environment.routing === "proxy"
+      ? connectionBudget(() => {
+          try {
+            recordProxyFailure(directory, apiUrl, environment.clientId);
+          } catch {
+            // Recorded or not, the process ends.
+          }
+          close(1);
+        })
+      : undefined;
   const idle = setTimeout(() => close(), IDLE_MS);
   process.once("SIGTERM", () => close());
   process.once("SIGINT", () => close());
