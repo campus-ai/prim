@@ -13,7 +13,7 @@ import { performReconcile } from "./reconcile.js";
 const ORIGINAL_EXIT_CODE = process.exitCode;
 const GENERIC_REMEDY = "[prim] This credential is not permitted to record a resolution.\n";
 const CLOUD_REMEDY =
-  "[prim] Resolving a check is not available to this Claude Code cloud session's credential. Supersede or withdraw the Decision instead (`prim decisions supersede`, `prim decisions withdraw`); both are permitted.\n";
+  "[prim] This Claude Code cloud session's credential is not permitted to record a resolution. Recording an outcome does not bypass the gate or change a Decision; continue without the record.\n";
 
 let stderr: string;
 let stdout: string[];
@@ -71,7 +71,7 @@ describe("prim reconcile --check: a refused resolution", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  it("points a cloud machine session at supersede and withdraw", async () => {
+  it("tells a cloud machine session to continue without the record", async () => {
     vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
     vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
     vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
@@ -84,6 +84,23 @@ describe("prim reconcile --check: a refused resolution", () => {
     expect(stderr).toBe(`[prim] resolution failed (403): machine_scope_required\n${CLOUD_REMEDY}`);
     expect(result.json).toEqual({ ok: false, status: 403, error: "machine_scope_required" });
     expect(result.exitCode).toBe(2);
+  });
+
+  it("names no lifecycle command to a refused credential", async () => {
+    for (const cloud of [false, true]) {
+      if (cloud) {
+        vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+        vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+        vi.stubEnv("PRIM_M2M_CLIENT_SECRET", "secret");
+        vi.stubEnv("PRIM_TOKEN", undefined);
+      }
+      stderr = "";
+      stdout = [];
+
+      await resolve(refused(403, { error: "machine_scope_required" }));
+
+      expect(stderr).not.toMatch(/supersede|withdraw|prim decisions/iu);
+    }
   });
 
   it("gives a person's sign-in in a cloud session the plain sentence", async () => {
@@ -182,6 +199,34 @@ describe("prim reconcile --check: a refused resolution", () => {
 
     expect(stderr).toBe("[prim] resolution failed (404): not_found[2J forged line\n");
     expect(result.json).toEqual({ ok: false, status: 404, error });
+  });
+
+  it("bounds an oversized error and message on both streams", async () => {
+    const megabyte = 1024 * 1024;
+    const error = "e".repeat(megabyte);
+    const message = "m".repeat(megabyte);
+
+    const result = await resolve(refused(409, { error, message }));
+
+    expect(stderr).toBe(
+      `[prim] resolution failed (409): ${"e".repeat(239)}…: ${"m".repeat(239)}…\n`,
+    );
+    expect(result.json).toEqual({
+      ok: false,
+      status: 409,
+      error: `${"e".repeat(499)}…`,
+      message: `${"m".repeat(499)}…`,
+    });
+    expect(stdout[0]?.length).toBeLessThan(1100);
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("passes a server string at the STDOUT cap through unchanged", async () => {
+    const error = "e".repeat(500);
+
+    const result = await resolve(refused(409, { error }));
+
+    expect(result.json).toEqual({ ok: false, status: 409, error });
   });
 });
 
