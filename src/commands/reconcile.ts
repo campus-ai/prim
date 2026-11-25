@@ -6,8 +6,10 @@
 
 import type { Command } from "commander";
 import { HttpError, getClient } from "../client.js";
-import { isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
+import { isCliErrorResponse, isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
 import { decisionIdentifier } from "../decisions/identity.js";
+import { isCloudMachineSession } from "../lib/cloud-session.js";
+import { terminalSafeLine } from "../lib/terminal-safe.js";
 
 type ReconcileOptions = {
   check?: string;
@@ -32,6 +34,20 @@ function isDomainRejection(err: unknown): err is HttpError {
     err.status >= HTTP_CLIENT_ERROR_MIN &&
     err.status < HTTP_SERVER_ERROR_MIN
   );
+}
+
+/** The refusal as the server worded it: an `error` code and, on some routes, a `message`. */
+function serverRefusal(error: unknown): { error?: string; message?: string } {
+  if (!(error instanceof HttpError) || !isCliErrorResponse(error.body)) return {};
+  const { error: code, message } = error.body;
+  return { error: code, ...(typeof message === "string" ? { message } : {}) };
+}
+
+/** What a machine credential refused the resolve route can do instead. */
+function machineScopeRemedy(): string {
+  return isCloudMachineSession()
+    ? "Resolving a check is not available to this Claude Code cloud session's credential. Supersede or withdraw the Decision instead (`prim decisions supersede`, `prim decisions withdraw`); both are permitted."
+    : "This credential is not permitted to record a resolution.";
 }
 
 export async function performReconcile(
@@ -85,8 +101,16 @@ async function performResolution(idOrShortId: string, opts: ReconcileOptions): P
     process.stderr.write(`[prim] recorded ${opts.outcome} for check ${opts.check}\n`);
   } catch (error) {
     const status = error instanceof HttpError ? error.status : undefined;
-    process.stderr.write(`[prim] resolution failed${status ? ` (${status})` : ""}\n`);
-    console.log(JSON.stringify({ ok: false, status }));
+    const refusal = serverRefusal(error);
+    const detail = [refusal.error, refusal.message].filter(Boolean).join(": ");
+    process.stderr.write(
+      `${terminalSafeLine(`[prim] resolution failed${status ? ` (${status})` : ""}${detail ? `: ${detail}` : ""}`)}\n`,
+    );
+    if (status === 403 && refusal.error === "machine_scope_required") {
+      process.stderr.write(`[prim] ${machineScopeRemedy()}\n`);
+    }
+    // STDOUT carries the server's own values; only the STDERR line is normalized.
+    console.log(JSON.stringify({ ok: false, status, ...refusal }));
     process.exitCode = isDomainRejection(error) ? EXIT_USAGE : EXIT_SERVER;
   }
 }
