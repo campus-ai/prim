@@ -6,8 +6,10 @@
 
 import type { Command } from "commander";
 import { HttpError, getClient } from "../client.js";
-import { isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
+import { isCliErrorResponse, isReconcileResolutionResponse } from "../contract/cli-http-v1.js";
 import { decisionIdentifier } from "../decisions/identity.js";
+import { boundedHealthError } from "../lib/ansi.js";
+import { isCloudMachineSession } from "../lib/cloud-session.js";
 
 type ReconcileOptions = {
   check?: string;
@@ -32,6 +34,36 @@ function isDomainRejection(err: unknown): err is HttpError {
     err.status >= HTTP_CLIENT_ERROR_MIN &&
     err.status < HTTP_SERVER_ERROR_MIN
   );
+}
+
+const MAX_REFUSAL_FIELD_CHARS = 500;
+
+/** Cap a server string so STDOUT stays one modest line; a shorter value is passed as sent. */
+function capped(value: string): string {
+  return value.length <= MAX_REFUSAL_FIELD_CHARS
+    ? value
+    : `${value.slice(0, MAX_REFUSAL_FIELD_CHARS - 1)}…`;
+}
+
+/** The refusal as the server worded it: an `error` code and, on some routes, a `message`. */
+function serverRefusal(error: unknown): { error?: string; message?: string } {
+  if (!(error instanceof HttpError) || !isCliErrorResponse(error.body)) return {};
+  const { error: code, message } = error.body;
+  return {
+    error: capped(code),
+    ...(typeof message === "string" ? { message: capped(message) } : {}),
+  };
+}
+
+/**
+ * What to tell a machine credential the resolve route refused. It names no
+ * lifecycle command: the record is bookkeeping, and an agent that followed a
+ * Decision must not be steered into changing it to get past a refusal.
+ */
+function machineScopeRemedy(): string {
+  return isCloudMachineSession()
+    ? "This Claude Code cloud session's credential is not permitted to record a resolution. Recording an outcome does not bypass the gate or change a Decision; continue without the record."
+    : "This credential is not permitted to record a resolution.";
 }
 
 export async function performReconcile(
@@ -85,8 +117,20 @@ async function performResolution(idOrShortId: string, opts: ReconcileOptions): P
     process.stderr.write(`[prim] recorded ${opts.outcome} for check ${opts.check}\n`);
   } catch (error) {
     const status = error instanceof HttpError ? error.status : undefined;
-    process.stderr.write(`[prim] resolution failed${status ? ` (${status})` : ""}\n`);
-    console.log(JSON.stringify({ ok: false, status }));
+    const refusal = serverRefusal(error);
+    // Each server string is made terminal-safe and bounded before it reaches STDERR.
+    const detail = [refusal.error, refusal.message]
+      .map((value) => boundedHealthError(value))
+      .filter(Boolean)
+      .join(": ");
+    process.stderr.write(
+      `[prim] resolution failed${status ? ` (${status})` : ""}${detail ? `: ${detail}` : ""}\n`,
+    );
+    if (status === 403 && refusal.error === "machine_scope_required") {
+      process.stderr.write(`[prim] ${machineScopeRemedy()}\n`);
+    }
+    // STDOUT carries the server's own values, capped in length but not otherwise rewritten.
+    console.log(JSON.stringify({ ok: false, status, ...refusal }));
     process.exitCode = isDomainRejection(error) ? EXIT_USAGE : EXIT_SERVER;
   }
 }
