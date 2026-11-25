@@ -935,14 +935,29 @@ async function challengeAndPush(
   // yet: no upstream, no force, nothing else. --no-verify and the empty hooks
   // path keep every hook out of it (the repository's pre-push hook and prim's
   // own git hooks), since it is not the user's push and must not be captured
-  // or gated as one. This is the only place prim skips hooks.
+  // or gated as one. This is the only place prim skips hooks. Push settings
+  // the checkout may carry would add to it (push.followTags sends annotated
+  // tags, push.recurseSubmodules pushes submodules, push.gpgSign and
+  // push.pushOption send more than the ref), so each is overridden: the
+  // explicit refspec is the only thing that leaves.
   const push = await git(
     root,
     [
       "-c",
       "core.hooksPath=/dev/null",
+      "-c",
+      "push.followTags=false",
+      "-c",
+      "push.recurseSubmodules=no",
+      "-c",
+      "push.gpgSign=false",
+      "-c",
+      "push.pushOption=",
       "push",
       "--no-verify",
+      "--no-follow-tags",
+      "--no-recurse-submodules",
+      "--no-signed",
       "--quiet",
       "origin",
       `${baseSha}:refs/heads/${branch}`,

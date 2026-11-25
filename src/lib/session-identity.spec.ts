@@ -404,6 +404,21 @@ describe("identifying a session", () => {
     expect([...inspection.deliverableBuckets].sort()).toEqual([pendingBucket, memberBucket].sort());
   });
 
+  it("pushes only the session branch, whatever the checkout's push settings", async () => {
+    // Settings that would otherwise send more than the branch with it.
+    git(work, "config", "push.followTags", "true");
+    git(work, "config", "push.gpgSign", "if-asked");
+    git(work, "tag", "-a", "local-only", "-m", "not for GitHub");
+    const refs = () => git(fixture.bare, "for-each-ref", "--format=%(refname)").split("\n");
+    const before = refs();
+
+    expect(await identifyNow()).toMatchObject({ status: "ok" });
+
+    expect(refs()).toEqual([...before, `refs/heads/${BRANCH}`].sort());
+    expect(git(fixture.bare, "tag", "--list")).toBe("");
+    expect(remoteBranch(fixture.bare)).toBe(baseSha);
+  });
+
   it("reports the member in auth status and doctor, and why not before", async () => {
     await fresh();
     const before = await (await import("../commands/auth.js")).verifyAuthStatus();
