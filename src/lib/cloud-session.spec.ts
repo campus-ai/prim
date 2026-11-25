@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "../client.js";
+import { CLOUD_REJECTED_CREDENTIALS_NOTICE } from "./cloud-env.js";
 import { cloudAllowedDomains, cloudEgressRemedy, diagnoseCloudSession } from "./cloud-session.js";
 
 const API = "https://api.getprimitive.ai";
@@ -234,6 +236,73 @@ describe("diagnoseCloudSession", () => {
       siteUrl: API,
     });
     expect(notice).toContain("prim setup --cloud");
+  });
+
+  describe("when Primitive refused the session's bind", () => {
+    const rejection = (code: string) =>
+      new HttpError(401, "The cloud environment's credentials were rejected.", { error: code });
+
+    it("names the rejected credentials, not the repository, for a revoked installation", async () => {
+      // Token exchange succeeds; Primitive's API refuses the installation. A
+      // network secret is retried after a pause, so the session is not ended.
+      for (const [env, code] of [
+        [
+          cloudEnv({ PRIM_M2M_CLIENT_ID: "client_cloud", PRIM_M2M_CLIENT_AUTH: "network-secret" }),
+          "machine_access_rejected",
+        ],
+        [
+          cloudEnv({ PRIM_M2M_CLIENT_ID: "client_cloud", PRIM_M2M_CLIENT_AUTH: "network-secret" }),
+          "machine_identity_rejected",
+        ],
+        [
+          cloudEnv({ PRIM_M2M_CLIENT_ID: "client_cloud", PRIM_M2M_CLIENT_AUTH: "network-token" }),
+          "network_token_rejected",
+        ],
+        [machineEnv(), "machine_access_rejected"],
+      ] as const) {
+        const fetchSpy = vi.fn(egress([]));
+        const notice = await diagnoseCloudSession({
+          env,
+          fetch: fetchSpy,
+          siteUrl: API,
+          bindFailure: rejection(code),
+        });
+        expect(notice).toBe(CLOUD_REJECTED_CREDENTIALS_NOTICE);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      }
+    });
+
+    it("says the same for a secret the token exchange refused", async () => {
+      const notice = await diagnoseCloudSession({
+        env: cloudEnv({
+          PRIM_M2M_CLIENT_ID: "client_cloud",
+          PRIM_M2M_CLIENT_AUTH: "network-secret",
+        }),
+        fetch: egress([]),
+        siteUrl: API,
+        bindFailure: rejection("machine_credentials_rejected"),
+      });
+      expect(notice).toBe(CLOUD_REJECTED_CREDENTIALS_NOTICE);
+    });
+
+    it("keeps the repository pointer for a failure that is not a rejection", async () => {
+      for (const bindFailure of [
+        new HttpError(503, "Machine verification is temporarily unavailable."),
+        new HttpError(500, "HTTP 500"),
+        new DOMException("timed out", "TimeoutError"),
+        undefined,
+      ]) {
+        const notice = await diagnoseCloudSession({
+          env: machineEnv(),
+          fetch: egress([]),
+          siteUrl: API,
+          bindFailure,
+        });
+        expect(notice).toBe(
+          "Primitive is not connected in this Claude Code cloud session: the repository could not be connected. Run `prim setup --cloud` for details.",
+        );
+      }
+    });
   });
 
   it("accepts a stored human credential as present", async () => {

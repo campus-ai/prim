@@ -26,6 +26,14 @@ export const CLOUD_CREDENTIALS_REMEDY =
 export const CLOUD_REJECTED_CREDENTIALS_REMEDY =
   'correct the credentials in the cloud environment\'s settings, or if the installation was revoked mint a replacement on your own machine with `prim auth enroll --new-installation "Claude Code cloud" --print-env`; then start a new cloud session';
 
+/**
+ * What a cloud session says when Primitive refused its machine credential.
+ * The sign-in service refuses a wrong secret at the token exchange; Primitive's
+ * API refuses a revoked or disabled installation after it. Either way the fix
+ * is the same, so the session says the same thing.
+ */
+export const CLOUD_REJECTED_CREDENTIALS_NOTICE = `Primitive is not connected in this Claude Code cloud session: its credentials were rejected. To fix it, ${CLOUD_REJECTED_CREDENTIALS_REMEDY}.`;
+
 /** `prim github connect` drives a browser sign-in, which a cloud VM cannot. */
 export const CLOUD_GITHUB_CONNECT_REMEDY =
   "run `prim github connect` in a clone of it on your own machine, then start a new cloud session";

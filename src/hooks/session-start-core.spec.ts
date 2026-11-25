@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -9,11 +12,21 @@ const mocks = vi.hoisted(() => ({
   setActive: vi.fn(),
   markImplicit: vi.fn(),
   withdraw: vi.fn(),
+  sessionEnded: vi.fn(),
 }));
 
 vi.mock("../client.js", () => ({
   getSiteUrl: () => "https://api.example.com",
-  isSessionEnded: () => false,
+  isSessionEnded: mocks.sessionEnded,
+  HttpError: class HttpError extends Error {
+    constructor(
+      readonly status: number,
+      message: string,
+      readonly body?: unknown,
+    ) {
+      super(message);
+    }
+  },
 }));
 vi.mock("../commands/claude-plugin.js", () => ({
   refreshClaudePlugins: async () => ({ installed: 0, refreshed: 0 }),
@@ -51,6 +64,8 @@ vi.mock("../lib/workspace-id.js", () => ({
   getOrCreateWorkspaceId: () => ({ status: "not_git" }),
 }));
 
+import { HttpError } from "../client.js";
+import { CLOUD_REJECTED_CREDENTIALS_NOTICE } from "../lib/cloud-env.js";
 import { processSessionStart } from "./session-start-core.js";
 
 const NOTICE = "Primitive is not connected in this Claude Code cloud session: test.";
@@ -69,8 +84,12 @@ beforeEach(() => {
   mocks.gate.mockReturnValue(true);
   mocks.flag.mockReturnValue("true");
   mocks.withdraw.mockReturnValue(false);
+  mocks.sessionEnded.mockReturnValue(false);
 });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("processSessionStart in a Claude Code cloud session", () => {
   it("tells the user and the agent why an active repository could not connect", async () => {
@@ -102,6 +121,77 @@ describe("processSessionStart in a Claude Code cloud session", () => {
     mocks.diagnose.mockRejectedValue(new Error("boom"));
     const { output } = await processSessionStart(envelope, "claude_code");
     expect((output as Output).systemMessage).toBeUndefined();
+  });
+});
+
+describe("a rejected credential at SessionStart in a Claude Code cloud session", () => {
+  const RELAY = `${CLOUD_REJECTED_CREDENTIALS_NOTICE} Tell the user this in one sentence before starting their task.`;
+  let configDir: string;
+
+  function machineCredentials(extra: Record<string, string | undefined>) {
+    vi.stubEnv("CLAUDE_CODE_REMOTE", "true");
+    vi.stubEnv("PRIM_CONFIG_DIR", configDir);
+    vi.stubEnv("PRIM_TOKEN", undefined);
+    vi.stubEnv("PRIM_M2M_CLIENT_ID", "client_cloud");
+    vi.stubEnv("PRIM_M2M_CLIENT_SECRET", undefined);
+    vi.stubEnv("PRIM_M2M_CLIENT_AUTH", undefined);
+    for (const [name, value] of Object.entries(extra)) vi.stubEnv(name, value);
+  }
+
+  beforeEach(async () => {
+    configDir = mkdtempSync(join(tmpdir(), "prim-session-start-"));
+    // The real diagnosis, so the notice is the one a session would show.
+    const actual =
+      await vi.importActual<typeof import("../lib/cloud-session.js")>("../lib/cloud-session.js");
+    mocks.diagnose.mockImplementation(actual.diagnoseCloudSession);
+  });
+  afterEach(() => rmSync(configDir, { recursive: true, force: true }));
+
+  it("names the rejected credentials when Primitive's API refuses a revoked installation", async () => {
+    // The token exchange succeeds; /api/cli/auth/status answers 401. With a
+    // network secret the rejection is retried later, so the session is not ended.
+    machineCredentials({ PRIM_M2M_CLIENT_AUTH: "network-secret" });
+    for (const code of [
+      "machine_access_rejected",
+      "machine_identity_rejected",
+      "machine_credentials_rejected",
+    ]) {
+      mocks.bind.mockRejectedValue(
+        new HttpError(401, "The cloud environment's credentials were rejected.", { error: code }),
+      );
+      const { output } = await processSessionStart(envelope, "claude_code");
+      const result = output as Output;
+      expect(result.systemMessage).toBe(CLOUD_REJECTED_CREDENTIALS_NOTICE);
+      expect(result.hookSpecificOutput?.additionalContext).toContain(RELAY);
+      expect(JSON.stringify(result)).not.toContain("the repository could not be connected");
+    }
+  });
+
+  it("keeps the same notice for a rejection that ended the session at the token exchange", async () => {
+    machineCredentials({ PRIM_M2M_CLIENT_SECRET: "secret" });
+    mocks.sessionEnded.mockReturnValue(true);
+    mocks.bind.mockRejectedValue(
+      new HttpError(401, "rejected", { error: "machine_credentials_rejected" }),
+    );
+    const { output } = await processSessionStart(envelope, "claude_code");
+    expect(output).toEqual({
+      systemMessage: CLOUD_REJECTED_CREDENTIALS_NOTICE,
+      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: RELAY },
+    });
+    expect(mocks.diagnose).not.toHaveBeenCalled();
+  });
+
+  it("still sends a repository that is not connected to the developer's machine", async () => {
+    machineCredentials({ PRIM_M2M_CLIENT_AUTH: "network-secret" });
+    mocks.bind.mockResolvedValue({ status: "unbound", repositoryFullName: "campus-ai/prim" });
+    const { output } = await processSessionStart(envelope, "claude_code");
+    const result = output as Output;
+    expect(result.systemMessage).toBeUndefined();
+    expect(result.hookSpecificOutput?.additionalContext).toContain(
+      'Primitive needs a one-time GitHub connection for campus-ai/prim. Run `prim github connect` in a clone of it on your own machine, then start a new cloud session."',
+    );
+    expect(JSON.stringify(result)).not.toContain("credentials were rejected");
+    expect(mocks.diagnose).not.toHaveBeenCalled();
   });
 });
 
@@ -179,10 +269,12 @@ describe("repository binding at SessionStart", () => {
     expect(context).not.toContain("drive the browser-based GitHub App workflow");
   });
 
-  it("diagnoses a failed cloud bind against the session's repository", async () => {
+  it("diagnoses a failed cloud bind against the session's repository and its failure", async () => {
     mocks.cloud.mockReturnValue(true);
+    const failure = new Error("fetch failed");
+    mocks.bind.mockRejectedValue(failure);
     await processSessionStart(envelope, "claude_code");
-    expect(mocks.diagnose).toHaveBeenCalledWith({ cwd: "/repo" });
+    expect(mocks.diagnose).toHaveBeenCalledWith({ cwd: "/repo", bindFailure: failure });
   });
 
   it("keeps the one-second bind budget on a developer machine", async () => {

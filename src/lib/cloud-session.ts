@@ -1,5 +1,9 @@
-import { getSiteUrl } from "../client.js";
-import { CLOUD_CREDENTIALS_REMEDY, isClaudeCloudSession } from "./cloud-env.js";
+import { HttpError, getSiteUrl } from "../client.js";
+import {
+  CLOUD_CREDENTIALS_REMEDY,
+  CLOUD_REJECTED_CREDENTIALS_NOTICE,
+  isClaudeCloudSession,
+} from "./cloud-env.js";
 import { resolveStoredCredential } from "./credentials.js";
 import { githubRepositoryFullName, originIdentifiesRepository } from "./git.js";
 import { NETWORK_TOKEN_AUTH, hasMachineConfiguration } from "./machine-credentials.js";
@@ -104,6 +108,17 @@ function unreachable(what: string, failure: string, remedy: string): string {
 }
 
 /**
+ * Whether a request failed because Primitive refused the machine credential.
+ * The machine client answers 401 for every terminal machine-auth failure: a
+ * secret refused at the token exchange, an installation the API refuses
+ * (machine_access_rejected, machine_identity_rejected, network_token_rejected),
+ * and a token the API still refuses after renewal.
+ */
+function credentialRejected(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 401;
+}
+
+/**
  * Explain why prim could not connect a Claude Code cloud session, or return
  * undefined outside one. A cloud VM blocks Primitive's hosts by default and
  * starts without credentials; both otherwise fail open silently, which reads
@@ -116,6 +131,8 @@ export async function diagnoseCloudSession(
     fetch?: typeof fetch;
     siteUrl?: string;
     cwd?: string;
+    /** Why the session's repository bind failed, if it did. */
+    bindFailure?: unknown;
   } = {},
 ): Promise<string | undefined> {
   const env = options.env ?? process.env;
@@ -137,6 +154,11 @@ export async function diagnoseCloudSession(
   }
   if (!machine && !resolveStoredCredential(env))
     return `${prefix}: it has no credentials. To fix it, ${CLOUD_CREDENTIALS_REMEDY}.`;
+  // A refused credential in plain variables ends the session, and SessionStart
+  // says so before asking here. One the environment's proxy holds (a network
+  // secret or token) is retried after a pause instead, so its refusal arrives
+  // here, where every probe below would pass and the repository take the blame.
+  if (machine && credentialRejected(options.bindFailure)) return CLOUD_REJECTED_CREDENTIALS_NOTICE;
   if (options.cwd !== undefined && !githubRepositoryFullName(options.cwd))
     return `${prefix}: ${repositoryIdentityRemedy(options.cwd)}.`;
 
