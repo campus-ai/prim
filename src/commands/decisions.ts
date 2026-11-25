@@ -72,6 +72,7 @@ import {
   formatRelateJson,
   isRelateRejection,
 } from "../decisions/link.js";
+import { LocationScopeInputError, locationScopeFromOptions } from "../decisions/location-scope.js";
 import { fetchRecent, formatRecentHuman, formatRecentJson } from "../decisions/recent.js";
 import {
   RepairAuthorizationError,
@@ -282,18 +283,10 @@ function rejectUserScope(command: "create" | "rescope", error: UserScopeInputErr
   process.exitCode = EXIT_USAGE;
 }
 
-function locationScopeFromOptions(
-  options: Pick<RescopeOptions, "scopeRepo" | "scopeDir" | "scopeGlob" | "scopeBranch">,
-): DecisionLocationScope | undefined {
-  const location: DecisionLocationScope = {
-    ...(options.scopeRepo ? { repository: true } : {}),
-    ...(options.scopeDir && options.scopeDir.length > 0 ? { directories: options.scopeDir } : {}),
-    ...(options.scopeGlob && options.scopeGlob.length > 0 ? { globs: options.scopeGlob } : {}),
-    ...(options.scopeBranch && options.scopeBranch.length > 0
-      ? { branches: options.scopeBranch }
-      : {}),
-  };
-  return Object.keys(location).length === 0 ? undefined : location;
+function rejectLocationScope(command: "create" | "rescope", error: LocationScopeInputError): void {
+  console.error(terminalSafeLine(`[prim] ${command} rejected: ${error.message}.`));
+  console.log(JSON.stringify({ ok: false, error: "invalid_location_scope" }, null, 2));
+  process.exitCode = EXIT_USAGE;
 }
 
 export function registerDecisionsCommands(program: Command): void {
@@ -657,7 +650,16 @@ export function registerDecisionsCommands(program: Command): void {
         throw error;
       }
       const requestedFiles = opts.files ?? [];
-      const location = locationScopeFromOptions(opts);
+      let location: DecisionLocationScope | undefined;
+      try {
+        location = locationScopeFromOptions(opts);
+      } catch (error) {
+        if (error instanceof LocationScopeInputError) {
+          rejectLocationScope("create", error);
+          return;
+        }
+        throw error;
+      }
       let explicitScope: Pick<CreateRequest, "files" | "protocolVersion" | "repoSyncId" | "scope"> =
         {};
       if (requestedFiles.length > 0 || location !== undefined) {
@@ -811,7 +813,16 @@ export function registerDecisionsCommands(program: Command): void {
         }
         throw error;
       }
-      const location = locationScopeFromOptions(opts);
+      let location: DecisionLocationScope | undefined;
+      try {
+        location = locationScopeFromOptions(opts);
+      } catch (error) {
+        if (error instanceof LocationScopeInputError) {
+          rejectLocationScope("rescope", error);
+          return;
+        }
+        throw error;
+      }
       const hasLocationSelector = location !== undefined;
       const hasNonLocationScope = time !== undefined || users !== undefined;
       process.exitCode = await rescopeDecision({
