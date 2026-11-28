@@ -761,7 +761,7 @@ prim moves tail           # Pretty-print recent journal entries
 prim moves flush          # Drain the local journals to the server (also runs from hooks)
 ```
 
-Any other command except `uninstall` and a `setup` that starts the daemon (or
+Any other command except `uninstall`, `demo`, `migration`, and a `setup` that starts the daemon (or
 one of its steps) that finds Moves waiting over a minute (or cannot tell how
 long) hands them to a detached background `prim moves flush` and never waits for
 it. It starts none while a live daemon on the same version and deployment, with
@@ -777,6 +777,89 @@ or `PRIM_CONFIG_DIR` / `XDG_CONFIG_HOME/prim`). Compare that file with the trace
 If the identity cannot be read or created immediately, uploads omit that header
 and continue. Invalid stored identities are never silently replaced. Older
 clients remain unattributed until updated and their uploader process restarted.
+
+### Drain-first migration preparation
+
+End all coding-agent sessions and legacy hook invocations before starting. Deploy
+and verify a release containing the maintenance commands in every legacy runtime
+that can write this profile, including the daemon and staged hook runtimes. Stop
+older daemons. A stopped daemon alone does not stop hooks from appending journals.
+Older cached sessions and direct invocations of older `npx` releases do not honor
+the pause; they must stay closed throughout handoff and rollback. The immutable
+runtime selector does not replace a staged runtime merely because source bytes
+changed at the same package version and Node path. This source change does not
+publish a new CLI version or repair installed runtimes automatically.
+
+With the original API configuration and authority still available:
+
+```bash
+prim migration pause                      # Retain maintenanceId from JSON
+prim migration status --id <maintenanceId>
+prim migration drain --id <maintenanceId>
+prim migration ready --id <maintenanceId>
+```
+
+These commands print one JSON object to stdout and narration to stderr. The
+version-1 status includes the canonical `configRoot`, `maintenanceId`, `paused`,
+`quiescent`, `inventoryComplete`, `drained`, `ready`, `activeLeases`,
+`handoffReserved`, and bounded `blockers` containing relative paths, reasons, and byte counts, never journal
+bodies or credential values. `scope` is `cooperative-runtime-only` and
+`legacySessionsMustBeClosed` is always true. `ready` exits nonzero unless the
+matching pause holds, every admitted operation has finished, and the complete
+journal tree is clear. A status snapshot is advisory; the handoff coordinator must
+recheck under the shared maintenance lock before its local configuration changes.
+
+Pause persists across process exit. `pause --timeout-ms 0..30000` bounds its wait
+for earlier admitted operations (default 5000 ms); a nonzero exit leaves the pause
+in place. New appends, direct uploads, and ordinary drains refuse admission.
+Already admitted HTTP deliveries remain tracked through response or timeout;
+pausing does not cancel them or acknowledge uncaptured work. Hook failures retain
+the host's existing fail-soft behavior and print a maintenance warning to stderr.
+This fence does not suspend other Decision checks or presence traffic.
+
+Drain uses the existing uploader and original authority for the current API only.
+Repeat it under each original API/authority as necessary without editing journal
+identities. The readiness inventory walks every API and organization partition,
+including `_unbound` and older unpartitioned layouts. Pending data, retained
+rotations, quarantine, checkpoints, unknown files, symlinks, unsafe permissions,
+and incomplete or over-bound inventories block handoff. A zero flush count or a
+contended drain lock is never a certificate that queues are empty. Do not delete,
+move, or discard retained data to force readiness; resolve delivery under its
+original authority or keep migration blocked.
+
+Control records are private and bounded (4096 bytes each, at most 512 activity
+leases); journal inventory is bounded to 4096 entries and five levels beneath
+`moves`. Status performs dead-process lease housekeeping under the admission lock
+but does not modify journal data. A live PID, including PID reuse, is never
+expired by age. Malformed control records fail closed. Existing directories must
+be owned by the current user and not writable by group/other; permissions are
+never silently changed. The durable marker is `migration-maintenance.json`, with
+short-lived leases in `migration-activity` and the existing file-lock protocol at
+`.migration-maintenance.lock`.
+
+Keep the pause while authenticating the native app afresh and switching hooks
+through the handoff coordinator. No credential import is part of this sequence.
+Retain legacy journals, credentials, and installation for rollback. If abandoning
+preparation, explicitly resume only after confirming hooks still target legacy:
+
+```bash
+prim migration resume --id <maintenanceId>
+```
+
+The coordinator durably reserves the pause before switching configuration, using
+`migration-handoff-reservation.json` with a transaction ID and canonical directory
+reference. This reservation survives a coordinator crash and remains after native
+commit. Only the guarded coordinator can release it after verified safe rollback
+or abort. Plain `resume` has no reservation bypass.
+
+Resume refuses while admitted activity or a handoff reservation remains and
+removes only its matching pause. Neither preparation nor resume switches hooks,
+clears credentials, or removes retained data. Run `pnpm build && pnpm test:migration-maintenance` for the
+isolated process E2E, using private temporary profiles and a loopback HTTP server.
+Add `node scripts/check-migration-maintenance.mjs --staged` to exercise the CLI
+copied by the production immutable-runtime stager into that temporary profile.
+It covers protocol behavior and concurrency; it does not qualify legacy capture
+latency, power-loss recovery, older binaries, or a real installed cutover.
 
 ### Skill
 

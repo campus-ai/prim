@@ -49,6 +49,7 @@ import {
   rotationIdentity,
   sweepOrphanedDrainCheckpoints,
 } from "./drain-progress.js";
+import { withMaintenanceActivitySync } from "./lib/migration-maintenance.js";
 import { primConfigDirectory } from "./lib/paths.js";
 import type { Move } from "./protocol/move.js";
 
@@ -104,11 +105,13 @@ const SAFE_BUCKET = /^[A-Za-z0-9_-]+$/;
 const RESERVED_BUCKETS = new Set([UNBOUND_BUCKET, "_legacy"]);
 
 export function appendMoveToPath(path: string, move: Move): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-  }
-  appendFileSync(path, `${JSON.stringify(move)}\n`, { mode: FILE_MODE });
+  withMaintenanceActivitySync("append", () => {
+    const dir = dirname(path);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+    }
+    appendFileSync(path, `${JSON.stringify(move)}\n`, { mode: FILE_MODE });
+  });
 }
 
 function bucketDir(orgId: string | undefined): string {

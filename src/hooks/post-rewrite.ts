@@ -25,6 +25,7 @@ import { appendMove } from "../journal.js";
 import { isRepoActiveForCapture, repoSyncId } from "../lib/activation.js";
 import { cachedCollectScopeAdmits } from "../lib/collect-scope.js";
 import { githubRepositoryFullName, resolveRepositoryContext } from "../lib/git.js";
+import { reportMaintenancePause } from "../lib/migration-maintenance.js";
 import { unattendedEnv } from "../lib/unattended.js";
 import { getOrCreateWorkspaceId } from "../lib/workspace-id.js";
 import {
@@ -242,6 +243,7 @@ if (!process.env.VITEST) {
   try {
     runPostRewrite();
   } catch (error) {
+    reportMaintenancePause(error);
     if (process.env.PRIM_HOOK_DEBUG) {
       const detail = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[prim-post-rewrite] capture failed: ${detail}\n`);

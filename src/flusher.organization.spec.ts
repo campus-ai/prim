@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -368,9 +368,17 @@ describe("credential-bound journal draining", () => {
     const journal = await import("./journal.js");
     const { HttpError } = await import("./client.js");
     const { FlushError, flush } = await import("./flusher.js");
-    for (let index = 0; index < 501; index += 1) {
-      journal.appendMove(move(`partial-${String(index)}`), "org_local");
-    }
+    const captured = journal.appendMove(move("partial-0"), "org_local");
+    // Keep real routing/authority stamping, then seed the remaining drain input
+    // without timing hundreds of capture-admission fsyncs as fixture setup.
+    appendFileSync(
+      journal.journalPath("org_local"),
+      Array.from(
+        { length: 500 },
+        (_, index) =>
+          `${JSON.stringify({ ...captured, moveId: `partial-${String(index + 1)}` })}\n`,
+      ).join(""),
+    );
 
     const failure = await flush().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(FlushError);
